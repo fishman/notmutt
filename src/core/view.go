@@ -219,6 +219,22 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 	return fmt.Errorf("view: unknown thread %q", id)
 }
 
+// SetAtts records the cache job's attachment list under the view lock
+// (see the View doc comment). Unknown ids are a no-op: the message left
+// the view between the scan and the write.
+func (v *View) SetAtts(msgID string, atts []Attachment) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		for _, m := range t.msgs {
+			if m.ID == msgID {
+				m.Atts = atts
+				return
+			}
+		}
+	}
+}
+
 // buildTree attaches each message under the nearest present reference;
 // messages without a present parent become roots. Multiple roots get a
 // synthetic ghost root (mutt "[...]" row).

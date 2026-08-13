@@ -222,3 +222,26 @@ func TestConcurrentMergeAndRows(t *testing.T) {
 	}
 	<-done
 }
+
+func TestViewSetAtts(t *testing.T) {
+	atts := []Attachment{{Name: "f.pdf", MimeType: "application/pdf", Size: 10}}
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("m1", 100)})})
+	v.SetAtts("m1", atts)
+	rows := v.Rows()
+	if len(rows) != 1 || len(rows[0].Msg.Atts) != 1 || rows[0].Msg.Atts[0].Name != "f.pdf" {
+		t.Fatalf("Atts not recorded: %+v", rows)
+	}
+	// unknown id: no-op, the message stays untouched
+	v.SetAtts("gone", atts)
+	rows = v.Rows()
+	if len(rows[0].Msg.Atts) != 1 || rows[0].Msg.Atts[0].Name != "f.pdf" {
+		t.Fatalf("unknown id must not change Atts: %+v", rows)
+	}
+	// SetAtts before the message exists: no panic, no-op
+	v2 := NewView("inbox", "tag:inbox")
+	v2.SetAtts("m1", atts)
+	if rows := v2.Rows(); len(rows) != 0 {
+		t.Fatalf("empty view must stay empty: %d rows", len(rows))
+	}
+}

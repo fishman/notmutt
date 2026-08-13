@@ -79,7 +79,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 				}
 				k := cache.Key{Path: p, Size: fi.Size(), Mtime: fi.ModTime().Unix()}
 				if atts, ok, err := c.cache.Get(k); err == nil && ok {
-					m.Atts = atts
+					c.view.SetAtts(m.ID, atts)
 					c.bus.Publish(core.CacheResult{MsgID: m.ID, Atts: atts})
 					return
 				}
@@ -88,7 +88,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 					continue
 				}
 				c.cache.Put(k, atts)
-				m.Atts = atts
+				c.view.SetAtts(m.ID, atts)
 				c.bus.Publish(core.CacheResult{MsgID: m.ID, Atts: atts})
 				return
 			}

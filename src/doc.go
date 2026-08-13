@@ -1,4 +1,4 @@
-package notmutt
+package main
 
 import (
 	_ "github.com/BurntSushi/toml"

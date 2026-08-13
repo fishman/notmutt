@@ -292,7 +292,7 @@ func randHex(r *rand.Rand, n int) string {
 func genMsgs(r *rand.Rand, n int, prefix string) []*Message {
 	msgs := make([]*Message, n)
 	for i := range msgs {
-		msgs[i] = &Message{ID: prefix + "-" + randHex(r, 8), Timestamp: r.Int63n(1e9)}
+		msgs[i] = &Message{ID: prefix + "-" + randHex(r, 8), Timestamp: r.Int63n(100)}
 	}
 	sort.Slice(msgs, func(i, j int) bool { return MsgLess(msgs[i], msgs[j]) })
 	return msgs
@@ -315,7 +315,7 @@ func sameMsgs(a, b []*Message) bool {
 func genThreads(r *rand.Rand, n int, prefix string) []*Thread {
 	ts := make([]*Thread, n)
 	for i := range ts {
-		ts[i] = &Thread{ID: prefix + "-" + randHex(r, 8), LastDate: r.Int63n(1e9)}
+		ts[i] = &Thread{ID: prefix + "-" + randHex(r, 8), LastDate: r.Int63n(100)}
 	}
 	sort.Slice(ts, func(i, j int) bool { return ThreadLess(ts[i], ts[j]) })
 	return ts
@@ -345,7 +345,8 @@ func TestDiffApplyPropertyMessages(t *testing.T) {
 			new[i].ID = old[i].ID
 			new[i].Timestamp = old[i].Timestamp
 		}
-		// timestamp shifts move elements both up and down the sort
+		// timestamps are dense (range 100), so shifts cross neighbors:
+		// moves happen in both directions
 		if len(new) > 0 && r.Intn(4) == 0 {
 			k := r.Intn(len(new))
 			if r.Intn(2) == 0 {
@@ -373,6 +374,8 @@ func TestDiffApplyPropertyThreads(t *testing.T) {
 			new[i].ID = old[i].ID
 			new[i].LastDate = old[i].LastDate
 		}
+		// LastDates are dense (range 100), so shifts cross neighbors:
+		// moves happen in both directions
 		if len(new) > 0 && r.Intn(4) == 0 {
 			k := r.Intn(len(new))
 			if r.Intn(2) == 0 {
@@ -382,7 +385,6 @@ func TestDiffApplyPropertyThreads(t *testing.T) {
 			}
 		}
 		sort.Slice(new, func(i, j int) bool { return ThreadLess(new[i], new[j]) })
-		ops := DiffSorted(old, new, ThreadLess, threadKey)
 		got := Apply(old, ops)
 		if !sameThreads(got, new) {
 			t.Fatalf("iter %d: apply(diff) != new\nold=%v\nnew=%v\ngot=%v", iter, threadIDs(old), threadIDs(new), threadIDs(got))
@@ -464,7 +466,11 @@ type Op[T any] struct {
 // DiffSorted merges old and new (both sorted by less, unique keys) into
 // replayable ops. Positions are in the current list at the time each op
 // applies, so Apply(old, ops) == new. A remove+insert of the same key
-// collapses into a Move (second pass, still O(n+m)).
+// collapses into a Move (second pass, still O(n+m)). Equality is
+// key-order equality: matched keys keep the old element (values are not
+// updated), and moved elements retain old values. Callers reconcile
+// element fields from the incoming snapshot. less must be a strict total
+// order on keys.
 func DiffSorted[T any](old, new []T, less func(a, b T) bool, key func(T) string) []Op[T] {
 	var ops []Op[T]
 	i, j := 0, 0
@@ -487,32 +493,25 @@ func DiffSorted[T any](old, new []T, less func(a, b T) bool, key func(T) string)
 	}
 	for ; j < len(new); j++ {
 		ops = append(ops, Op[T]{Kind: OpInsert, Item: new[j], To: j})
-		j++
 	}
 	return collapseMoves(ops, key)
 }
 
-// collapseMoves turns remove-then-insert pairs of the same key into a
-// Move. The pair's own indices are exactly the Move's From/To: both
-// reference their stream-position frames, so the collapsed op is
-// equivalent to the original two (the property test is the gate). The
-// reverse direction (insert then remove - an element rising) would need
-// rewrites of every intervening op's index: it stays as remove+insert
-// churn.
+// collapseMoves turns an ADJACENT remove-then-insert pair of the same key
+// into a Move. Only adjacent pairs collapse: between them the walk
+// advances via matched pairs alone, so From and To reference the same
+// frame and the collapsed op is equivalent to the original two (the
+// property test is the gate). Any intervening op shifts the frames, and
+// the reverse order (insert then remove - an element rising) never
+// collapses: both stay as remove+insert churn.
 func collapseMoves[T any](ops []Op[T], key func(T) string) []Op[T] {
-	insertAt := make(map[string]int, len(ops))
-	for i, op := range ops {
-		if op.Kind == OpInsert {
-			insertAt[key(op.Item)] = i
-		}
-	}
 	out := make([]Op[T], 0, len(ops))
-	for i, op := range ops {
-		if op.Kind == OpRemove {
-			if ai, ok := insertAt[op.Key]; ok && ai > i {
-				out = append(out, Op[T]{Kind: OpMove, Key: op.Key, From: op.From, To: ops[ai].To})
-				continue
-			}
+	for i := 0; i < len(ops); i++ {
+		op := ops[i]
+		if op.Kind == OpRemove && i+1 < len(ops) && ops[i+1].Kind == OpInsert && key(ops[i+1].Item) == op.Key {
+			out = append(out, Op[T]{Kind: OpMove, Key: op.Key, From: op.From, To: ops[i+1].To})
+			i++
+			continue
 		}
 		out = append(out, op)
 	}
@@ -531,7 +530,9 @@ func insertAtIdx[T any](items []T, item T, i int) []T {
 }
 
 // Apply replays ops in order over items; the result equals the new list
-// the ops were diffed from.
+// the ops were diffed from. Apply mutates items' backing array in place;
+// callers must use the returned slice and must not retain the original
+// header or alias the backing array.
 func Apply[T any](items []T, ops []Op[T]) []T {
 	for _, op := range ops {
 		switch op.Kind {
@@ -3781,7 +3782,7 @@ git commit -m "Add soak and cursor-invariant tests; M1 acceptance"
 
 - **Spec coverage**: section 1 (acceptance) -> tasks 14-15; section 2 (layout) -> task 1; section 3 (config) -> task 5 + task 12 validation; section 4 (bus) -> task 4; section 5 (worker) -> tasks 8-9; section 6 (view model) -> tasks 2-3, 6; section 7 (refresh) -> task 10; section 8 (diff) -> task 3; section 9 (testing) -> tasks 3, 15; section 10 (MIME cache) -> task 7 + cachejob; section 11 (UI) -> task 11; section 13 (out of scope) -> not implemented, as designed.
 - **Known deferrals**: load-more batching past the first page (knob, spec section 12); tag glyph priority list from tag-groups (spec section 6 note); the worker never publishes `QueryBatch` (the cache job keys on `ViewDiff`; the event type stays defined per spec section 4); cgo Tag/New unimplemented (read-only handle, benchmark measures reads).
-- **Consistency**: one comparator pair (`ThreadLess`/`MsgLess`), one diff engine (`DiffSorted`/`Apply`), one cache key type. Type names used across tasks: `core.Message`, `core.Thread`, `core.Row`, `core.Op`, `notmuch.Action`, `notmuch.Reply`, `notmuch.TagOp`, `cache.Key`, `config.Config`, `tui.Model`, `tui.EventMsg`. The diff engine is exercised only through `DiffSorted`/`Apply`; `Apply` with a `Move` op is `removeAt` then `insertAtIdx`, which equals the original remove+insert pair - the property test is the gate.
+- **Consistency**: one comparator pair (`ThreadLess`/`MsgLess`), one diff engine (`DiffSorted`/`Apply`), one cache key type. Type names used across tasks: `core.Message`, `core.Thread`, `core.Row`, `core.Op`, `notmuch.Action`, `notmuch.Reply`, `notmuch.TagOp`, `cache.Key`, `config.Config`, `tui.Model`, `tui.EventMsg`. The diff engine is exercised only through `DiffSorted`/`Apply`; `Apply` with a `Move` op is `removeAt` then `insertAtIdx`, which equals the original remove+insert pair - the property test is the gate. `Apply` mutates the caller's backing array in place and preserves old values for matched/moved keys (key-order equality): callers use the returned slice and reconcile element fields from the incoming snapshot. `collapseMoves` merges only ADJACENT remove-then-insert pairs (a sinking element); non-adjacent and rising moves stay as remove+insert churn (verified sound: the plan's original any-later matching panics on old=[k(10),x(8)] new=[y(9),x(8),k(5)]).
 
 ## Execution
 

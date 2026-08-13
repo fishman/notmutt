@@ -239,6 +239,78 @@ commit, sanitizers (ASAN/UBSAN), fuzzing on the mail-parsing boundary,
 static analysis in CI. The mail parser is the trust boundary - it must be
 fuzzed like the firmware it is.
 
+### R11. Truecolor theming engine
+
+Theming covers mutt's color surface but is configured better. Mutt
+objects that must exist (from `muttrc/theme/onedark.muttrc` +
+`muttrc/base.colors`): normal, indicator, status, tree, tilde, prompt,
+message, progress, error, search; index + index_number/author/subject/
+date/flags; hdrdefault, header (per-header regex), quoted0-5, body
+(regex rules: URLs, email addresses, *bold* _underlined_ /italic/),
+signature, attachment; compose_header + compose_security_encrypt/sign/
+both; sidebar_new/flagged/ordinary/indicator; index_tag + index_tags.
+
+Better configuration, all in TOML:
+
+- Palette indirection with escape hatches: `[palette]` holds named
+  colors; per-variant `[palette.dark]`/`[palette.light]` override
+  single names when variants genuinely diverge, without touching
+  styles. Styles reference palette names OR raw hex - a one-off color
+  pins hex directly and never pollutes the palette. Resolution order:
+  style hex > variant palette > base palette. Truecolor is the
+  baseline; no 256-color mapping.
+- No repetition: styles inherit (a base `normal` style; fg/bg/attrs
+  default to normal unless overridden). A theme states only what
+  differs.
+- Attrs unified per style (bold/italic/underline/reverse) - not mutt's
+  separate attribute objects.
+- Index coloring is TAG-driven, not mutt's `~X` patterns: `~l <tag>`
+  and `index_tag` become declarative `[index.tag.<name>]` styles
+  (muttrc/base.colors already colors by notmuch tags; notmutt makes it
+  data). Tag styles compose with the exclusive tag groups (R2/R6) and
+  with the base index style; conflicts resolve by the group priority.
+- Index row layout is a fixed-slot template, not mutt's format string.
+  `[index.row]` lists slots in order (number, flags, attachment, date,
+  author, subject, count, tags - the muttrc `index_format` is the
+  reference for the slot list, never the mechanism). Optional slots
+  (attachment, tag slots) ALWAYS reserve their column and render blank
+  when the content is absent - alignment never shifts per row.
+- Tag slots: `[index.tags] max = N` fixed cells, filled by a display
+  priority list (hard tag group first) - at most N glyphs show,
+  whichever tags are present, blank-padded otherwise. Glyph transforms
+  (`tag-transforms` in muttrc) are config data; the raw emoji/strings
+  never hardcode in code.
+- Column widths are in terminal cells (wcwidth), not runes: emoji
+  glyphs are double-width, so truncation and padding count cells or
+  alignment breaks exactly like mutt's conditional format.
+- Regex rules keep mutt's semantics: ordered, last match wins, more
+  specific overrides less.
+- Light/dark variants in one theme file: `[theme.dark]` / `[theme.light]`,
+  `default` selects. Switching is a config-store notification - the
+  same observer path as any config change, so the UI re-renders live
+  with zero reload.
+- The onedark theme in `muttrc/theme/onedark.muttrc` is the reference
+  port; the base16 palette collection in `muttrc/themes/palette/` is
+  the import source (a converter is a future task, not M1).
+
+### R12. Dark/light sync via DBus (optional build tag)
+
+A build-tag-gated DBus integration that switches the theme variant with
+the system. `//go:build linux && dbus`: the code and the godbus/dbus
+dependency exist ONLY in the `dbus` build; default builds, macOS, and
+Windows are DBus-free (darwin/windows excluded by build constraints).
+
+- Reads the system color scheme via xdg-desktop-portal:
+  `org.freedesktop.portal.Settings` - `Read("org.freedesktop.appearance",
+  "color-scheme")` plus the `SettingChanged` signal for live updates.
+  GSettings/GTK-theme-name as fallback if the portal is absent.
+- The scheme change arrives as an event on the event bus
+  (ColorSchemeChanged(dark|light)); the theme store resolves the
+  variant; observers re-render. Same async path as everything else.
+- No portal/DBus available: `:theme` command switches manually.
+- Supply chain: godbus/dbus is a dependency only in the dbus build;
+  it is pinned and vetted like everything else (R7 policy).
+
 ## Reference code in this workspace
 
 - `neomutt/background/` - the background job model that R4's send-job
@@ -301,6 +373,17 @@ fuzzed like the firmware it is.
   (no unicode dashes/quotes) in all output and code.
 - Context: read files with limit/offset where possible; prefer Edit over
   Write; match existing patterns verbatim.
+
+Security (SECURITY.md is normative for trust boundaries; the hard rules):
+- argv exec only. Never interpolate mail content, filenames, or queries
+  into shell strings - tokenize commands at config load, pass data as
+  argv (F4).
+- Sanitize rendered mail content: strip ESC/C0 control chars and OSC
+  before it reaches the terminal (F1).
+- Never log message bodies, headers, or passphrases (F6).
+- 0600 on files, 0700 on dirs, for everything written (F5, F7).
+- Parser-adjacent code passes the fuzz targets in SECURITY.md before it
+  is accepted (F1-F4, F10).
 
 ## Non-goals
 

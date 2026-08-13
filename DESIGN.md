@@ -48,6 +48,8 @@ the client too (timer-less operation), but transport stays external.
    (AGENTS.md, hard-tag exclusivity).
 6. The TUI is a library in waiting. Core has zero terminal dependencies.
 7. Minimal, vetted dependencies. Supply chain policy in AGENTS.md R7.
+8. Trust boundaries are explicit and fuzzed, never trusted (SECURITY.md:
+   argv-only exec, terminal sanitization, log redaction, 0600).
 
 ## 3. Layer structure
 
@@ -229,7 +231,80 @@ crypto.Provider (core interface, PromptFunction hooks)
 - New crypto must be a dialogue: composing with a sign/encrypt decision
   in flight, pause/restart semantics apply to the crypto transform too.
 
-## 8. Config (R8)
+## 8. Theming and dark mode (R11, R12)
+
+Theme = palette + styles + variants, resolved at load into a readonly
+style table; resolution errors are load errors (unknown palette name,
+bad hex, unknown object - fail loudly, not at render).
+
+```
+[palette]        named truecolor colors (onedark reference: muttrc/theme/onedark.muttrc)
+[palette.dark]   per-variant overrides of single names
+[theme.dark]     styles: fg/bg/attrs referencing palette names or raw hex
+[theme.light]    optional override variant
+[theme.default]  = "dark"
+```
+
+- Styles inherit from `normal`; per-object overrides state only diffs.
+- Two escape hatches so indirection never blocks: a style may pin raw
+  hex (one-off color, no palette entry), and a variant palette
+  overrides a name when variants genuinely diverge. Resolution order:
+  style hex > variant palette > base palette.
+- Index coloring: `[theme.dark.index.tag.deleted]` style maps notmuch
+  tags to styles (base.colors' `~l`/index_tag concept as data). Tag
+  styles layer over the base index style; exclusive-group priority
+  resolves conflicts.
+- Regex styles (body URLs/emails, header ^From:) ordered, last wins
+  (mutt semantics).
+- The resolved style table feeds BubbleTea styles at render; content
+  sanitization (SECURITY.md F1) stays a separate layer - styling never
+  sees raw mail bytes.
+- Variant switch = config-store notification (ColorSchemeChanged event
+  from the dbus watcher, or `:theme` command): observers re-render,
+  no reload. The store already has the observer machinery (section 9).
+
+### Index row model (R11)
+
+The index line is a fixed-slot template, not a format string. Mutt's
+`index_format` conditionals (`%?X?yes&no?`, `%<GA?%GA&>`) shrink the
+row when content is absent - the author column shifts per row and the
+row length varies with tag count. The slot model reserves every
+column; only content is per-row.
+
+```
+[index.row]              # slots in order (muttrc base.muttrc index_format is the reference)
+number  = { width = 2 }
+flags   = { width = 1 }
+attach  = { width = 2, optional = true }   # glyph or blank; column always reserved
+date    = { width = 16, format = "%y/%m/%d %I:%M%p" }
+author  = { width = 15, truncate = "left" }
+subject = { fill = true }
+count   = { width = 6 }                    # "(1234)" - parens are part of the slot
+tags    = { max = 2, order = ["archive", "deleted", "sent", "draft", "pending", "spam", "inbox", "unread"] }
+
+[tag-transforms]         # glyph table as config data (muttrc tag-transforms)
+deleted = "[x]"
+archive = "[A]"
+```
+
+- Optional slots always render their width: attach column shows the
+  glyph or blanks; the two tag cells show up to two glyphs, whichever
+  tags are present, blank-padded.
+- `tags.order` is the display priority (hard tag group first by
+  default): with more than `max` tags present, the highest-priority
+  ones win, deterministically.
+- Widths are terminal cells (wcwidth): emoji glyphs are double-width;
+  go-runewidth (or equivalent) sizes and truncates, never rune counts.
+- The row template lives in the view model; the tui index renders it
+  from core state (section 3).
+
+DBus watcher (R12): build tag `dbus`, linux-only build constraint.
+Godbus/dbus pinned; watches xdg-desktop-portal
+org.freedesktop.portal.Settings for color-scheme changes, emits
+ColorSchemeChanged on the event bus. Absent by default, absent on
+macOS/Windows. No watcher: manual `:theme`.
+
+## 9. Config (R8)
 
 TOML files (e.g. ~/.config/notmutt/config.toml, accounts/*.toml). The
 parser feeds a typed, validated, observable store in the ConfigSet mold
@@ -271,7 +346,7 @@ hooks and custom filters. The event bus and dialogue APIs are the stable
 Lua surface (neovim model: event loop, RPC-shaped API, Lua as extension
 language).
 
-## 9. TUI (R5)
+## 10. TUI (R5)
 
 BubbleTea. The `tui/` package provides: index view, pager view, dialogue
 boxes, tab bar, menu, statusline - all pure renderers of core state
@@ -280,7 +355,7 @@ client wires them. Extraction path: `tui/` is versioned separately from
 day one (own module, own README); publishing is a packaging step, not a
 refactor.
 
-## 10. Mail library (R6)
+## 11. Mail library (R6)
 
 Use libraries, do not port neomutt C code:
 
@@ -294,7 +369,7 @@ Use libraries, do not port neomutt C code:
 If a library falls short on a requirement (e.g. exotic MIME), port the
 specific neomutt piece, not the whole parser.
 
-## 11. Library stack (R7)
+## 12. Library stack (R7)
 
 | concern      | choice                                         |
 |--------------|------------------------------------------------|
@@ -305,11 +380,12 @@ specific neomutt piece, not the whole parser.
 | mail compose | go-message (mail package)                      |
 | crypto       | NO library - system gpg + openssl CLIs (R10)   |
 | notmuch      | aerc's cgo-free pattern: notmuch CLI via exec (worker/notmuch/lib), or in-tree cgo bindings - decide at M1 by benchmarking |
+| cell width   | mattn/go-runewidth (wcwidth for aligned rows)  |
 | config       | BurntSushi/toml or pelletier/go-toml           |
 | lua (later)  | gopher-lua                                     |
 | cli          | cobra (or stdlib flag if it suffices)          |
 
-## 12. Directory layout
+## 13. Directory layout
 
 ```
 notmutt/
@@ -325,7 +401,7 @@ notmutt/
   lua/           (future) scripting bindings
 ```
 
-## 13. Data flow: new mail arrives
+## 14. Data flow: new mail arrives
 
 1. Job `sync` runs mbsync + notmuch new (background).
 2. Job `filter` runs post-new pipeline (folder rules, header rules,
@@ -337,7 +413,7 @@ notmutt/
 5. User replies in a compose tab; send runs as a job; the dialogue shows
    progress; fcc lands via notmuch.
 
-## 14. Milestones
+## 15. Milestones
 
 - M1 skeleton: config store (typed, observable), event loop, notmuch
   query layer with message-mode, minimal index + pager.
@@ -350,7 +426,7 @@ notmutt/
 - M5 extraction: publish `tui/` module as a standalone Go module; Lua
   bindings on the core API.
 
-## 15. Risks
+## 16. Risks
 
 - notmuch access pattern: cgo-free CLI-per-query (aerc's current worker)
   pays process spawn per query but avoids cgo complexity and is exactly

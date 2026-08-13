@@ -1631,6 +1631,22 @@ func TestBboltCorruptPayloadDiscarded(t *testing.T) {
 		t.Fatal("corrupt entry must be deleted")
 	}
 }
+
+func TestBboltEmptyListHit(t *testing.T) {
+	c, err := Open(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	k := Key{Path: "/m/Mail/e", Size: 1, Mtime: 1}
+	if err := c.Put(k, []core.Attachment{}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := c.Get(k)
+	if err != nil || !ok || len(got) != 0 {
+		t.Fatalf("empty list must be a hit, got %v ok=%v err=%v", got, ok, err)
+	}
+}
 ```
 
 `src/cache/scan_test.go`:
@@ -1694,6 +1710,36 @@ func TestScanPlainTextNoAttachments(t *testing.T) {
 	atts, err := ScanAttachments(path)
 	if err != nil || len(atts) != 0 {
 		t.Fatalf("plain text: %v %v", atts, err)
+	}
+}
+
+func TestScanLatin1PartBeforeAttachment(t *testing.T) {
+	latin1 := strings.Replace(mimeSample,
+		"Content-Type: text/plain",
+		`Content-Type: text/plain; charset=iso-8859-1`, 1)
+	path := filepath.Join(t.TempDir(), "l.eml")
+	os.WriteFile(path, []byte(latin1), 0600)
+	atts, err := ScanAttachments(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 || atts[0].Name != "evil.txt" {
+		t.Fatalf("attachment after latin-1 part must be found, got %+v", atts)
+	}
+}
+
+func TestScanContentTypeNameParam(t *testing.T) {
+	named := strings.Replace(mimeSample,
+		"Content-Type: application/octet-stream\nContent-Disposition: attachment; filename=\"evil.txt\"",
+		`Content-Type: application/pdf; name="report.pdf"`, 1)
+	path := filepath.Join(t.TempDir(), "n.eml")
+	os.WriteFile(path, []byte(named), 0600)
+	atts, err := ScanAttachments(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 || atts[0].Name != "report.pdf" {
+		t.Fatalf("want name= param attachment report.pdf, got %+v", atts)
 	}
 }
 ```

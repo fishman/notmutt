@@ -117,7 +117,7 @@ func (w *Worker) handle(a Action) {
 	case ActClose:
 		err = w.backend.Close(ctx)
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 		err = ErrLockTimeout
 		w.bus.Publish(core.WorkerLockTimeout{Kind: actionName(a.Kind)})
 	}

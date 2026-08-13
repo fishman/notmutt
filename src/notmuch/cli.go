@@ -25,7 +25,11 @@ func NewCLI() *CLIBackend {
 
 func defaultRun(ctx context.Context, name string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	return out, err
 }
 
 func (b *CLIBackend) Open(ctx context.Context, dbPath string) error {

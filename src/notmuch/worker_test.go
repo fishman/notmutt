@@ -103,6 +103,53 @@ func TestWorkerLockTimeout(t *testing.T) {
 	}
 }
 
+type killBackend struct {
+	inner Backend
+}
+
+func (b *killBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
+func (b *killBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
+func (b *killBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
+	<-ctx.Done()
+	return nil, errors.New("signal: killed")
+}
+func (b *killBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
+	return b.inner.Thread(ctx, id)
+}
+func (b *killBackend) Tag(ctx context.Context, q string, ops []TagOp) error {
+	return b.inner.Tag(ctx, q, ops)
+}
+func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
+	return b.inner.Revision(ctx)
+}
+func (b *killBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
+
+// exec.CommandContext reports a killed process as "signal: killed", not
+// context.DeadlineExceeded; the worker must map that shape too.
+func TestWorkerMapsKillErrorToLockTimeout(t *testing.T) {
+	bus := core.NewBus()
+	w := NewWorker(bus, &killBackend{inner: &fakeBackend{}}, 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+	ch := bus.Subscribe()
+	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(rpl.Err, ErrLockTimeout) {
+		t.Fatalf("expected ErrLockTimeout in reply, got %v", rpl.Err)
+	}
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.WorkerLockTimeout); !ok {
+			t.Fatalf("expected WorkerLockTimeout, got %T", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no WorkerLockTimeout event")
+	}
+}
+
 func TestWorkerBackendError(t *testing.T) {
 	bus := core.NewBus()
 	w := NewWorker(bus, &fakeBackend{err: errors.New("boom")}, time.Second)

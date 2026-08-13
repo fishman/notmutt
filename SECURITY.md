@@ -36,6 +36,13 @@ fuzzed or tested, not trusted.
 8. **Same-user processes**: out of scope - a same-user attacker can
    ptrace the client or read the keyboard regardless. (Linux yama
    ptrace_scope mitigates; not relied on.)
+9. **DBus session bus -> dbus watcher (R12, build tag `dbus`)**. The
+   portal and DE daemons are same-session peers, not a trust anchor.
+   Session bus only, NEVER the system bus (cross-user surface on
+   multi-user machines). Malformed D-Bus data is hostile input (F11).
+10. **Mail content -> content-matching regexes** (theme body/header
+    rules, filter/view queries). Attacker-controlled text against
+    user-supplied patterns: engine must be linear-time (F12).
 
 ## Findings
 
@@ -70,9 +77,29 @@ fuzzed or tested, not trusted.
 
 ### MEDIUM
 
+- **F11. DBus watcher input validation (R12).** SettingChanged signals
+  and Read replies arrive from same-session peers: a rogue portal, a
+  compromised DE component, or malformed messages. The watcher must:
+  validate the color-scheme value as a strict enum (0 no-preference,
+  1 dark, 2 light - anything else ignored); map variant names by exact
+  match with fallback to `default`; emit exactly one event type. No
+  file/config access driven by D-Bus data. Malformed messages must not
+  crash the client - recover and continue on the last variant.
+  Impact if violated: theme flip at worst, availability at bug level;
+  confidentiality untouched (the event carries no mail data).
+- **F12. Content-matching regexes are linear-time only (rule).** Theme
+  body/header regex rules and filter/view queries match against
+  attacker-controlled mail content (trust boundary 10). Go's regexp
+  (RE2) is linear-time by construction - no backtracking, no ReDoS.
+  Rule: every regex engine that matches mail content must be
+  non-backtracking. If Lua scripting (R8) introduces another pattern
+  engine, verify it is non-backtracking before it touches content.
 - **F5. Job output and temp files.** Send/output temp files may contain
   mail content: 0600 perms, temp dir 0700. Output ring in memory is
-  fine; nothing may be world-readable.
+  fine; nothing may be world-readable. The derived MIME cache (R13)
+  is written 0600 too; it may hold attacker-influenced strings
+  (attachment filenames), and its reads always pass the same
+  sanitize/render/mailcap paths as fresh parses.
 - **F6. Log redaction.** Debug logs must never contain message bodies,
   headers, or passphrases. Rule: loggers take structured fields;
   content never enters the log path. This is a permanent review rule,
@@ -91,6 +118,16 @@ fuzzed or tested, not trusted.
   Security bias: CLI-per-query unless the benchmark forces cgo; if
   cgo, the bindings are a reviewed, minimal, fuzz-covered module.
 
+### LOW
+
+- **F13. Tag glyphs are equality-only lookups.** Tag names originate
+  partly from header rules (attacker-influenced: a rule can tag on a
+  header-derived value). The glyph table (R11 tag-transforms) matches
+  by exact tag-name equality; unknown tags render nothing. Tag names
+  never flow into regexes, exec, or string interpolation - argv-only
+  stays the only tag transport (F4). Violation is cosmetic at worst,
+  but the equality-only rule is what keeps it cosmetic.
+
 ### LOW / accepted noise
 
 - Same-user attacks (ptrace, keyboard): out of model, noted above.
@@ -107,6 +144,11 @@ fuzzed or tested, not trusted.
 3. reply-construction with hostile headers (F3)
 4. filter rule query builder (TOML rules -> notmuch argv)
 5. pager content sanitizer (escape-sequence corpus)
+6. tag glyph lookup + row template resolution with hostile tag names
+   (equality-only property, F13)
+7. dbus watcher value handling with malformed variant/signal corpus
+   (build-tag gated, F11)
+8. MIME cache payload parse with corrupt/truncated corpus (R13, F5)
 
 ## Agent rules (mirrors AGENTS.md)
 

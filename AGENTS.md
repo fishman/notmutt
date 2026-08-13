@@ -304,12 +304,38 @@ Windows are DBus-free (darwin/windows excluded by build constraints).
   `org.freedesktop.portal.Settings` - `Read("org.freedesktop.appearance",
   "color-scheme")` plus the `SettingChanged` signal for live updates.
   GSettings/GTK-theme-name as fallback if the portal is absent.
+  Session bus only, never the system bus; the color-scheme value is
+  validated as a strict enum (0/1/2), variants resolve by exact name
+  with fallback to default (SECURITY.md F11).
 - The scheme change arrives as an event on the event bus
   (ColorSchemeChanged(dark|light)); the theme store resolves the
   variant; observers re-render. Same async path as everything else.
 - No portal/DBus available: `:theme` command switches manually.
 - Supply chain: godbus/dbus is a dependency only in the dbus build;
   it is pinned and vetted like everything else (R7 policy).
+
+### R13. Derived mail cache (MIME metadata)
+
+notmuch IS the header cache: subjects, authors, dates, tags, thread
+ids are stored in its DB and served by queries without opening mail
+files (R1 - no duplicate header store). The only per-message data
+notmuch cannot serve is MIME-derived: attachment presence and list,
+structure, sizes - those need a file open and parse.
+
+- A `Cache` interface (Get/Put/Delete) with pluggable backends; the
+  default backend is an embedded pure-Go KV store (bbolt). Interface
+  first, so the backend can change without touching the notmuch layer
+  (same boundary discipline as the filter engine, R2).
+- Keyed by (path, size, mtime): renames (flag renames, afew folder
+  moves) and edits invalidate naturally; steady state is hit-only.
+- Payload is small structs (attachment list: name/type/size).
+  Compression is a future knob, not a requirement - measure first.
+- Client-local state is tags, not flags: reply/forward markers are
+  +replied/+forwarded tags (R1). Nothing else needs storing.
+- Cache files are 0600 (SECURITY.md F5); cached strings (attachment
+  filenames, attacker-influenced) always pass the same
+  sanitize/render/mailcap paths as fresh data - never trusted by
+  virtue of being cached.
 
 ## Reference code in this workspace
 

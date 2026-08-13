@@ -139,6 +139,23 @@ index rebuilds its thread tree (`notmuch/notmuch.c:2183-2308`). notmutt:
   must be cheap enough that auto-refresh on new mail is continuous, not
   periodic.
 
+### Derived MIME cache (R13)
+
+The index row needs attachment presence - the one field notmuch cannot
+serve (its DB holds headers and tags, not MIME structure). Files open
+only for MIME scans; results land in a pluggable KV cache:
+
+- `Cache` interface (Get/Put/Delete); bbolt default backend (pure Go,
+  embedded). Interface first: swapping the store is a config change,
+  not a refactor.
+- Key: (path, size, mtime). Flag renames and afew folder moves change
+  the path; edits change size/mtime. Steady state: cache hits only.
+- Content: {attachments: [{name, type, size}]}. Filenames are
+  attacker-influenced: writes are 0600 (F5), reads feed the same
+  render/mailcap paths as fresh parses (F2).
+- Flags are tags (R1): replied/forwarded land as notmuch tags; the
+  cache never stores mail flags.
+
 ## 5. Dialogue state machines (R4)
 
 A dialogue is a struct in `core/` with:
@@ -381,6 +398,7 @@ specific neomutt piece, not the whole parser.
 | crypto       | NO library - system gpg + openssl CLIs (R10)   |
 | notmuch      | aerc's cgo-free pattern: notmuch CLI via exec (worker/notmuch/lib), or in-tree cgo bindings - decide at M1 by benchmarking |
 | cell width   | mattn/go-runewidth (wcwidth for aligned rows)  |
+| cache        | bbolt (embedded KV) behind a `Cache` interface (R13) |
 | config       | BurntSushi/toml or pelletier/go-toml           |
 | lua (later)  | gopher-lua                                     |
 | cli          | cobra (or stdlib flag if it suffices)          |

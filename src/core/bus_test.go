@@ -27,7 +27,7 @@ func TestBusFanout(t *testing.T) {
 
 func TestBusSlowSubscriberDrops(t *testing.T) {
 	b := NewBus()
-	b.Subscribe() // nobody drains this one
+	ch := b.Subscribe() // nobody drains this one
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 200; i++ {
@@ -39,5 +39,18 @@ func TestBusSlowSubscriberDrops(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("publish blocked on a slow subscriber")
+	}
+	got := 0
+drain:
+	for {
+		select {
+		case <-ch:
+			got++
+		case <-time.After(100 * time.Millisecond):
+			break drain
+		}
+	}
+	if got != 64 {
+		t.Fatalf("got %d events, want 64 (buffer capacity)", got)
 	}
 }

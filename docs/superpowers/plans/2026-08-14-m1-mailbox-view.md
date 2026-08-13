@@ -2235,7 +2235,7 @@ import (
 	"notmutt/core"
 )
 
-type runFn func(ctx context.Context, name string, args ...string) ([]byte, error)
+type runFn func(ctx context.Context, name string, args []string) ([]byte, error)
 
 // CLIBackend drives the notmuch CLI. argv only, never a shell (F4).
 type CLIBackend struct {
@@ -2246,9 +2246,13 @@ func NewCLI() *CLIBackend {
 	return &CLIBackend{run: defaultRun}
 }
 
-func defaultRun(ctx context.Context, name string, args ...string) ([]byte, error) {
+func defaultRun(ctx context.Context, name string, args []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	return cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	return out, err
 }
 
 func (b *CLIBackend) Open(ctx context.Context, dbPath string) error {
@@ -2453,8 +2457,8 @@ type fakeBackend struct {
 	err error
 }
 
-func (f *fakeBackend) Open(ctx context.Context, p string) error              { return f.err }
-func (f *fakeBackend) Close(ctx context.Context) error                        { return f.err }
+func (f *fakeBackend) Open(ctx context.Context, p string) error { return f.err }
+func (f *fakeBackend) Close(ctx context.Context) error          { return f.err }
 func (f *fakeBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
 	return []core.Message{{ID: "m1", ThreadID: "t1"}}, f.err
 }
@@ -2507,7 +2511,7 @@ type blockingBackend struct {
 }
 
 func (b *blockingBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
-func (b *blockingBackend) Close(ctx context.Context) error           { return b.inner.Close(ctx) }
+func (b *blockingBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
 func (b *blockingBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
@@ -2530,7 +2534,7 @@ func TestWorkerLockTimeout(t *testing.T) {
 	defer cancel()
 	go w.Start(ctx)
 	ch := bus.Subscribe()
-	if _, err := w.Call(Action{Kind: ActRevision}); err != nil {
+	if _, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -2540,6 +2544,53 @@ func TestWorkerLockTimeout(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("no lock timeout event")
+	}
+}
+
+type killBackend struct {
+	inner Backend
+}
+
+func (b *killBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
+func (b *killBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
+func (b *killBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
+	<-ctx.Done()
+	return nil, errors.New("signal: killed")
+}
+func (b *killBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
+	return b.inner.Thread(ctx, id)
+}
+func (b *killBackend) Tag(ctx context.Context, q string, ops []TagOp) error {
+	return b.inner.Tag(ctx, q, ops)
+}
+func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
+	return b.inner.Revision(ctx)
+}
+func (b *killBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
+
+// exec.CommandContext reports a killed process as "signal: killed", not
+// context.DeadlineExceeded; the worker must map that shape too.
+func TestWorkerMapsKillErrorToLockTimeout(t *testing.T) {
+	bus := core.NewBus()
+	w := NewWorker(bus, &killBackend{inner: &fakeBackend{}}, 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+	ch := bus.Subscribe()
+	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(rpl.Err, ErrLockTimeout) {
+		t.Fatalf("expected ErrLockTimeout in reply, got %v", rpl.Err)
+	}
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.WorkerLockTimeout); !ok {
+			t.Fatalf("expected WorkerLockTimeout, got %T", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no WorkerLockTimeout event")
 	}
 }
 
@@ -2617,24 +2668,27 @@ type Reply struct {
 // Worker owns backend access. Actions are handled serially; every op runs
 // under a lock budget - a timeout becomes ErrLockTimeout plus a
 // WorkerLockTimeout event, never a blocked UI. Start must run before
-// any Call.
+// any Call; Call waits on ready so the ctx install is synchronized.
 type Worker struct {
 	bus     *core.Bus
 	backend Backend
 	timeout time.Duration
 	actions chan Action
 	ctx     context.Context
+	ready   chan struct{}
 }
 
 func NewWorker(bus *core.Bus, backend Backend, timeout time.Duration) *Worker {
 	return &Worker{
 		bus: bus, backend: backend, timeout: timeout,
 		actions: make(chan Action, 16),
+		ready:   make(chan struct{}),
 	}
 }
 
 func (w *Worker) Start(ctx context.Context) {
 	w.ctx = ctx
+	close(w.ready)
 	for {
 		select {
 		case <-ctx.Done():
@@ -2647,6 +2701,7 @@ func (w *Worker) Start(ctx context.Context) {
 
 // Call is synchronous request/response; safe from any goroutine.
 func (w *Worker) Call(a Action) (Reply, error) {
+	<-w.ready
 	a.replyCh = make(chan Reply, 1)
 	select {
 	case w.actions <- a:
@@ -2688,7 +2743,7 @@ func (w *Worker) handle(a Action) {
 	case ActClose:
 		err = w.backend.Close(ctx)
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 		err = ErrLockTimeout
 		w.bus.Publish(core.WorkerLockTimeout{Kind: actionName(a.Kind)})
 	}
@@ -2723,7 +2778,30 @@ func actionName(k ActionKind) string {
 go test ./notmuch/ -v
 ```
 
-Expected: all 9 tests pass.
+Expected: all 12 tests pass (7 CLI from task 8 + 5 worker).
+
+**Task 9 coordination notes (verified 2026-08-14):**
+- Startup sync: `Call` waits on a `ready` channel closed by `Start` after
+  installing ctx - the plan's original block raced (Call could read a nil
+  ctx before `go w.Start(ctx)` ran; deterministic panic in the tests).
+- Lock-budget mapping (review finding, verified on go 1.26.5):
+  `exec.CommandContext` reports a killed subprocess as `*exec.ExitError`
+  "signal: killed", NOT context.DeadlineExceeded - `errors.Is` alone
+  never fired. Two-part fix: cli.go `defaultRun` maps ctx expiry to
+  `ctx.Err()` (backend contract), worker.handle adds
+  `|| ctx.Err() == context.DeadlineExceeded` (shape-independent).
+  Regression test `TestWorkerMapsKillErrorToLockTimeout` fails against
+  the unfixed code.
+- `TestWorkerLockTimeout` uses ActQuery (blockingBackend blocks only on
+  Query; the plan's original ActRevision never blocked and the event
+  never fired).
+- The test count is 12 (7 CLI + 5 worker), not the plan's stale 9.
+- WorkerLockTimeout has no consumer in M1: task 12's runRefresher keys on
+  WorkerDone/ConfigChanged; the event stays available for a UI status
+  line later.
+- Task 13's cgo backend cannot be interrupted by ctx (C calls ignore it);
+  on a locked DB its reads may overrun the budget - the CLI stays the
+  default, cgo is benchmark-only (SECURITY.md F10).
 
 - [ ] **Step 5: Commit**
 

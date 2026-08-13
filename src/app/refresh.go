@@ -57,7 +57,7 @@ func (r *refresher) cycle() {
 	// Drift is deliberate: messages retagged out of the view query still
 	// bump lastmod, so their threads re-merge and can linger with stale
 	// rows, while wholly deleted threads never appear in the changed set.
-	// The reconcile soak timer (periodic full reload, T12) is the net.
+	// The reconcile soak timer (periodic full reload, future work) is the net.
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
 		// Swallow is deliberate: a lock timeout already surfaced as

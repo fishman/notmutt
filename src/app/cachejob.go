@@ -16,14 +16,13 @@ const scanPage = 40
 // concurrent scans. Results land in the row model; the TUI repaints on
 // any event.
 type cacheJob struct {
-	bus    *core.Bus
-	worker workerAPI
-	view   *core.View
-	cache  cache.Cache
+	bus   *core.Bus
+	view  *core.View
+	cache cache.Cache
 }
 
 func newCacheJob(bus *core.Bus, w workerAPI, view *core.View, dbPath string) *cacheJob {
-	cj := &cacheJob{bus: bus, worker: w, view: view}
+	cj := &cacheJob{bus: bus, view: view}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return cj
 	}

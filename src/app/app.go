@@ -49,8 +49,8 @@ func Run() error {
 	tui.SetTagOpHandler(func(msgID string, add bool) {
 		go func() {
 			worker.Call(notmuch.Action{
-				Kind:  notmuch.ActTag,
-				Query: "id:\"" + strings.ReplaceAll(msgID, `"`, `\"`) + `"`,
+				Kind:   notmuch.ActTag,
+				Query:  "id:\"" + strings.ReplaceAll(msgID, `"`, `""`) + `"`,
 				TagOps: []notmuch.TagOp{{Tag: "unread", Add: add}},
 			})
 		}()

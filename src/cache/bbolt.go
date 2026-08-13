@@ -35,32 +35,36 @@ func Open(path string) (*Bbolt, error) {
 
 func (b *Bbolt) Get(k Key) ([]core.Attachment, bool, error) {
 	var atts []core.Attachment
-	var found bool
+	var hit, valid bool
 	err := b.db.View(func(tx *bbolt.Tx) error {
 		v := tx.Bucket(bucket).Get([]byte(k.String()))
 		if v == nil {
 			return nil
 		}
-		atts = decode(v)
-		found = true
+		hit = true
+		atts, valid = decode(v)
 		return nil
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	if found && atts == nil {
+	if !hit {
+		return nil, false, nil
+	}
+	if !valid {
 		b.Delete(k) // corrupt entry: discard
 		return nil, false, nil
 	}
-	return atts, found, nil
+	// A hit with nil atts means "no attachments", never a miss.
+	return atts, true, nil
 }
 
-func decode(v []byte) []core.Attachment {
+func decode(v []byte) ([]core.Attachment, bool) {
 	var atts []core.Attachment
 	if err := gob.NewDecoder(bytes.NewReader(v)).Decode(&atts); err != nil {
-		return nil
+		return nil, false
 	}
-	return atts
+	return atts, true
 }
 
 func (b *Bbolt) Put(k Key, atts []core.Attachment) error {

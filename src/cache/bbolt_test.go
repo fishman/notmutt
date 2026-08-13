@@ -72,3 +72,19 @@ func TestBboltCorruptPayloadDiscarded(t *testing.T) {
 		t.Fatal("corrupt entry must be deleted")
 	}
 }
+
+func TestBboltEmptyListHit(t *testing.T) {
+	c, err := Open(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	k := Key{Path: "/m/Mail/e", Size: 1, Mtime: 1}
+	if err := c.Put(k, []core.Attachment{}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok, err := c.Get(k)
+	if err != nil || !ok || len(got) != 0 {
+		t.Fatalf("empty list must be a hit, got %v ok=%v err=%v", got, ok, err)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/emersion/go-message"
+	_ "github.com/emersion/go-message/charset"
 
 	"notmutt/core"
 )
@@ -20,7 +21,7 @@ func ScanAttachments(path string) ([]core.Attachment, error) {
 	}
 	defer f.Close()
 	m, err := message.Read(f)
-	if err != nil {
+	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 		return nil, err
 	}
 	var atts []core.Attachment
@@ -42,6 +43,9 @@ func walk(m *message.Entity, atts *[]core.Attachment) {
 		if err == io.EOF {
 			return
 		}
+		if message.IsUnknownCharset(err) || message.IsUnknownEncoding(err) {
+			continue // bodies are never read, so these are spurious here
+		}
 		if err != nil {
 			return
 		}
@@ -58,10 +62,15 @@ func walk(m *message.Entity, atts *[]core.Attachment) {
 
 func filename(p *message.Entity) string {
 	_, params, err := p.Header.ContentDisposition()
-	if err != nil {
-		return ""
+	if err == nil && params["filename"] != "" {
+		return params["filename"]
 	}
-	return params["filename"]
+	// Exchange-era mail and list archives identify attachments by the
+	// Content-Type name= param instead of Content-Disposition.
+	if _, params, err := p.Header.ContentType(); err == nil && params != nil {
+		return params["name"]
+	}
+	return ""
 }
 
 func isAttachment(p *message.Entity) bool {

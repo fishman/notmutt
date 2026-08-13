@@ -58,3 +58,33 @@ func TestScanPlainTextNoAttachments(t *testing.T) {
 		t.Fatalf("plain text: %v %v", atts, err)
 	}
 }
+
+func TestScanLatin1PartBeforeAttachment(t *testing.T) {
+	latin1 := strings.Replace(mimeSample,
+		"Content-Type: text/plain",
+		`Content-Type: text/plain; charset=iso-8859-1`, 1)
+	path := filepath.Join(t.TempDir(), "l.eml")
+	os.WriteFile(path, []byte(latin1), 0600)
+	atts, err := ScanAttachments(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 || atts[0].Name != "evil.txt" {
+		t.Fatalf("attachment after latin-1 part must be found, got %+v", atts)
+	}
+}
+
+func TestScanContentTypeNameParam(t *testing.T) {
+	named := strings.Replace(mimeSample,
+		"Content-Type: application/octet-stream\nContent-Disposition: attachment; filename=\"evil.txt\"",
+		`Content-Type: application/pdf; name="report.pdf"`, 1)
+	path := filepath.Join(t.TempDir(), "n.eml")
+	os.WriteFile(path, []byte(named), 0600)
+	atts, err := ScanAttachments(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 || atts[0].Name != "report.pdf" {
+		t.Fatalf("want name= param attachment report.pdf, got %+v", atts)
+	}
+}

@@ -45,6 +45,22 @@ func TestCLIQuery(t *testing.T) {
 	}
 }
 
+func TestCLIQueryNoLimit(t *testing.T) {
+	b := NewCLI()
+	var got []string
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		got = args
+		return []byte(searchJSON), nil
+	})
+	if _, err := b.Query(context.Background(), "tag:inbox", 0); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"search", "--format=json", "--sort=newest-first", "tag:inbox"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("limit=0 must omit --limit: %v", got)
+	}
+}
+
 func TestCLIThread(t *testing.T) {
 	b := NewCLI()
 	fakeRun(b, func(name string, args []string) ([]byte, error) {

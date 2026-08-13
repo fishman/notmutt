@@ -1,0 +1,6 @@
+[ui]
+keymap = "vim"
+
+[view.inbox]
+query = "tag:inbox"
+threads = true

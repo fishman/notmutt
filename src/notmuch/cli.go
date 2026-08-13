@@ -42,11 +42,12 @@ type searchItem struct {
 	Authors   string   `json:"authors"`
 	Subject   string   `json:"subject"`
 	Tags      []string `json:"tags"`
-	ID        string   `json:"id"`
 }
 
-// Query runs one search run plus one files run, pairing paths by index
-// (maildir: one file per message; a count mismatch leaves Paths short).
+// Query returns one stub per matching thread. The search summary carries
+// thread ids and thread-level fields only; per-message data (ids,
+// filenames, headers) comes from Thread. The refresh cycle groups by
+// ThreadID and fetches full threads, so the stub's ID stays empty.
 func (b *CLIBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
 	args := []string{"search", "--format=json", "--sort=newest-first"}
 	if limit > 0 {
@@ -63,52 +64,73 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit int) ([]core
 	}
 	msgs := make([]core.Message, len(items))
 	for i, it := range items {
-		msgs[i] = core.Message{ID: it.ID, ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags}
-	}
-	paths, err := b.run(ctx, "notmuch", []string{"search", "--output=files", "--sort=newest-first", query})
-	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(paths)), "\n")
-		if lines[0] != "" {
-			for i := range msgs {
-				if i >= len(lines) {
-					break
-				}
-				msgs[i].Paths = append(msgs[i].Paths, lines[i])
-			}
-		}
+		msgs[i] = core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags}
 	}
 	return msgs, nil
 }
 
-type showItem struct {
-	ID         string   `json:"id"`
-	Thread     string   `json:"thread"`
-	Timestamp  int64    `json:"timestamp"`
-	Authors    string   `json:"authors"`
-	Subject    string   `json:"subject"`
-	Tags       []string `json:"tags"`
-	References []string `json:"references"`
+type showMsg struct {
+	ID        string            `json:"id"`
+	Timestamp int64             `json:"timestamp"`
+	Tags      []string          `json:"tags"`
+	Filename  []string          `json:"filename"`
+	Headers   map[string]string `json:"headers"`
 }
 
-// Thread fetches one thread's messages with references (show json is
-// grouped by thread: a list of lists).
+// showNode is one [message|null, [children]] pair of the show json tree.
+type showNode struct {
+	Msg      *showMsg
+	Children []showNode
+}
+
+func (n *showNode) UnmarshalJSON(b []byte) error {
+	var parts [2]json.RawMessage
+	if err := json.Unmarshal(b, &parts); err != nil {
+		return err
+	}
+	if string(parts[0]) != "null" {
+		var m showMsg
+		if err := json.Unmarshal(parts[0], &m); err != nil {
+			return err
+		}
+		n.Msg = &m
+	}
+	return json.Unmarshal(parts[1], &n.Children)
+}
+
+// Thread fetches one thread's messages. show json carries no thread ids
+// and no per-message reference lists: ThreadID comes from the query
+// argument, References from the tree nesting (root-first chain; the view
+// picks the nearest ancestor).
 func (b *CLIBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
 	out, err := b.run(ctx, "notmuch", []string{"show", "--format=json", "--body=false", "thread:" + threadID})
 	if err != nil {
 		return nil, fmt.Errorf("notmuch show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	var groups [][]showItem
+	var groups [][]showNode
 	if err := json.Unmarshal(out, &groups); err != nil {
 		return nil, fmt.Errorf("notmuch show: parse: %w", err)
 	}
 	var msgs []core.Message
-	for _, g := range groups {
-		for _, it := range g {
+	var walk func(nodes []showNode, chain []string)
+	walk = func(nodes []showNode, chain []string) {
+		for _, n := range nodes {
+			if n.Msg == nil {
+				walk(n.Children, chain)
+				continue
+			}
+			refs := make([]string, len(chain))
+			copy(refs, chain)
 			msgs = append(msgs, core.Message{
-				ID: it.ID, ThreadID: it.Thread, Timestamp: it.Timestamp,
-				Author: it.Authors, Subject: it.Subject, Tags: it.Tags, References: it.References,
+				ID: n.Msg.ID, ThreadID: threadID, Timestamp: n.Msg.Timestamp,
+				Author: n.Msg.Headers["From"], Subject: n.Msg.Headers["Subject"],
+				Tags: n.Msg.Tags, Paths: n.Msg.Filename, References: refs,
 			})
+			walk(n.Children, append(refs, n.Msg.ID))
 		}
+	}
+	for _, g := range groups {
+		walk(g, nil)
 	}
 	return msgs, nil
 }

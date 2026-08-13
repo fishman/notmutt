@@ -7,9 +7,11 @@ import (
 	"testing"
 )
 
-const searchJSON = `[{"thread":"t1","timestamp":1700000000,"authors":"A B","subject":"S","tags":["inbox","unread"],"id":"m1","total":1,"matched":1}]`
+const searchJSON = `[{"thread":"t1","timestamp":1700000000,"date_relative":"1 hour ago","matched":1,"total":2,"authors":"Ann","subject":"hello","query":["thread:t1 and tag:inbox",null],"tags":["inbox","unread"]}]`
 
-const showJSON = `[[{"id":"m1","thread":"t1","timestamp":1700000000,"authors":"A B","subject":"S","tags":["inbox"],"references":["p1"]}]]`
+const showJSON = `[[[{"id":"m1","match":true,"excluded":false,"filename":["/m/Mail/x/1"],"timestamp":1700000000,"tags":["inbox"],"headers":{"Subject":"hello","From":"Ann <ann@x>"},"duplicate":0},[[{"id":"m2","match":true,"excluded":false,"filename":["/m/Mail/x/2"],"timestamp":1700000001,"tags":["inbox"],"headers":{"Subject":"re: hello","From":"Bob <bob@x>"},"duplicate":0},[]]]]]]`
+
+const nullJSON = `[[[null,[[{"id":"m2","match":true,"excluded":false,"filename":["/m/Mail/x/2"],"timestamp":1700000001,"tags":["inbox"],"headers":{"Subject":"re: hello","From":"Bob <bob@x>"},"duplicate":0},[]]]]]]`
 
 func fakeRun(b *CLIBackend, respond func(name string, args []string) ([]byte, error)) {
 	b.run = func(ctx context.Context, name string, args []string) ([]byte, error) {
@@ -19,24 +21,27 @@ func fakeRun(b *CLIBackend, respond func(name string, args []string) ([]byte, er
 
 func TestCLIQuery(t *testing.T) {
 	b := NewCLI()
+	var got []string
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
-		if strings.Contains(strings.Join(args, " "), "--output=files") {
-			return []byte("/m/Mail/x/1\n"), nil
-		}
+		got = args
 		return []byte(searchJSON), nil
 	})
 	msgs, err := b.Query(context.Background(), "tag:inbox", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].ID != "m1" || msgs[0].ThreadID != "t1" || msgs[0].Author != "A B" {
-		t.Fatalf("parse wrong: %+v", msgs)
+	if len(msgs) != 1 || msgs[0].ThreadID != "t1" || msgs[0].Timestamp != 1700000000 || msgs[0].Author != "Ann" || msgs[0].Subject != "hello" {
+		t.Fatalf("stub parse wrong: %+v", msgs)
 	}
-	if len(msgs[0].Paths) != 1 || msgs[0].Paths[0] != "/m/Mail/x/1" {
-		t.Fatalf("paths pairing wrong: %+v", msgs[0].Paths)
+	if msgs[0].ID != "" {
+		t.Fatalf("summary carries no message ids; ID must stay empty: %+v", msgs[0])
 	}
 	if msgs[0].Tags[0] != "inbox" {
 		t.Fatalf("tags wrong: %+v", msgs[0].Tags)
+	}
+	want := []string{"search", "--format=json", "--sort=newest-first", "--limit=10", "tag:inbox"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv wrong: %v", got)
 	}
 }
 
@@ -49,8 +54,37 @@ func TestCLIThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].References[0] != "p1" {
-		t.Fatalf("thread parse wrong: %+v", msgs)
+	if len(msgs) != 2 || msgs[0].ID != "m1" || msgs[1].ID != "m2" {
+		t.Fatalf("tree walk wrong: %+v", msgs)
+	}
+	if msgs[0].ThreadID != "t1" || msgs[1].ThreadID != "t1" {
+		t.Fatalf("ThreadID must come from the argument: %+v", msgs)
+	}
+	if len(msgs[1].References) != 1 || msgs[1].References[0] != "m1" {
+		t.Fatalf("references chain wrong: %+v", msgs[1].References)
+	}
+	if len(msgs[0].References) != 0 {
+		t.Fatalf("root must have empty references: %+v", msgs[0].References)
+	}
+	if msgs[1].Subject != "re: hello" || msgs[1].Author != "Bob <bob@x>" {
+		t.Fatalf("headers parse wrong: %+v", msgs[1])
+	}
+	if len(msgs[0].Paths) != 1 || msgs[0].Paths[0] != "/m/Mail/x/1" {
+		t.Fatalf("filenames wrong: %+v", msgs[0].Paths)
+	}
+}
+
+func TestCLIThreadSkipsNullRoot(t *testing.T) {
+	b := NewCLI()
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		return []byte(nullJSON), nil
+	})
+	msgs, err := b.Thread(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != "m2" || msgs[0].ThreadID != "t1" {
+		t.Fatalf("null root walk wrong: %+v", msgs)
 	}
 }
 

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"notmutt/core"
 )
@@ -80,9 +81,12 @@ func TestQuit(t *testing.T) {
 func TestEventMsgRepaints(t *testing.T) {
 	m := model()
 	m.view.SetCursor("a")
-	next, _ := m.Update(EventMsg{Event: core.ViewDiff{View: "inbox"}})
+	next, nextCmd := m.Update(EventMsg{Event: core.ViewDiff{View: "inbox"}})
 	if next.(Model).CursorIndex() != 1 {
 		t.Fatalf("cursor by id after event = %d", next.(Model).CursorIndex())
+	}
+	if nextCmd == nil {
+		t.Fatal("EventMsg must re-arm the bridge")
 	}
 }
 
@@ -126,6 +130,35 @@ func TestToggleRead(t *testing.T) {
 	}
 	if hasTag(row.Msg.Tags, "unread") {
 		t.Fatalf("unread not removed: %v", row.Msg.Tags)
+	}
+}
+
+func TestPadCellsRightExactWidth(t *testing.T) {
+	// 2-cell rune at the boundary: truncation stops at 15 cells, padding
+	// must restore the slot to exactly 16
+	got := padCellsRight(strings.Repeat("你", 7)+"a"+"你", 16)
+	if runewidth.StringWidth(got) != 16 {
+		t.Fatalf("padCellsRight returned %d cells, want 16: %q", runewidth.StringWidth(got), got)
+	}
+	if runewidth.StringWidth(padCellsRight("short", 16)) != 16 {
+		t.Fatal("short pad must also be exactly 16 cells")
+	}
+}
+
+func TestRenderSanitizesControls(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
+	})})
+	m := New(view, nil)
+	m.width, m.height = 80, 24
+	out := m.View()
+	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;
+	// check the injected sequences specifically
+	for _, leak := range []string{"\x1b]", "\x07", "\x1b[31m", "\x1b[41m"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("control chars leaked into render:\n%q", out)
+		}
 	}
 }
 

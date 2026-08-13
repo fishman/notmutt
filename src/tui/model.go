@@ -84,18 +84,22 @@ func (m *Model) toggleRead() {
 	if !ok || row.Msg == nil {
 		return
 	}
+	tags := append([]string(nil), row.Msg.Tags...)
 	has := false
-	for _, t := range row.Msg.Tags {
+	for _, t := range tags {
 		if t == "unread" {
 			has = true
 		}
 	}
-	// optimistic local flip; the refresh cycle converges from DB truth
+	// optimistic local flip on a fresh copy: removeTag compacts in place,
+	// and the view's message shares its backing array with the refresher's
+	// snapshot, so in-place compaction would corrupt the next merge
 	if has {
-		row.Msg.Tags = removeTag(row.Msg.Tags, "unread")
+		tags = removeTag(tags, "unread")
 	} else {
-		row.Msg.Tags = append(row.Msg.Tags, "unread")
+		tags = append(tags, "unread")
 	}
+	row.Msg.Tags = tags
 	onTagOp(row.Msg.ID, !has)
 }
 
@@ -192,9 +196,11 @@ func renderRow(n int, row core.Row) string {
 	b.WriteByte(' ')
 	b.WriteString(padCellsRight(formatDate(row.Msg.Timestamp), 15))
 	b.WriteByte(' ')
-	b.WriteString(padCellsRight(truncCells(row.Msg.Author, 16), 16))
+	author := stripControls(row.Msg.Author)
+	b.WriteString(padCellsRight(truncCells(author, 16), 16))
 	b.WriteByte(' ')
-	b.WriteString(truncCells(row.Msg.Subject, 40))
+	subject := stripControls(row.Msg.Subject)
+	b.WriteString(truncCells(subject, 40))
 	b.WriteByte(' ')
 	b.WriteString(tagGlyphs(row.Msg))
 	return b.String()
@@ -240,11 +246,28 @@ func tagGlyphs(m *core.Message) string {
 		if n >= 2 {
 			break
 		}
-		b.WriteString(padCellsRight(truncCells(t, 4), 4))
+		b.WriteString(padCellsRight(truncCells(stripControls(t), 4), 4))
 		b.WriteByte(' ')
 		n++
 	}
 	return strings.TrimRight(b.String(), " ")
+}
+
+// stripControls drops C0/DEL/C1 control runes so mail content can never
+// inject terminal escapes (F1).
+func stripControls(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || (r >= 0x7F && r <= 0x9F) }) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // truncCells truncates s to at most w terminal cells; padCellsRight pads
@@ -264,9 +287,6 @@ func truncCells(s string, w int) string {
 }
 
 func padCellsRight(s string, w int) string {
-	cells := runewidth.StringWidth(s)
-	if cells >= w {
-		return truncCells(s, w)
-	}
-	return s + strings.Repeat(" ", w-cells)
+	t := truncCells(s, w)
+	return t + strings.Repeat(" ", w-runewidth.StringWidth(t))
 }

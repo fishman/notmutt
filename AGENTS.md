@@ -76,6 +76,65 @@ by an integrated filter engine, so the filter interface must be a boundary:
 a module that consumes notmuch documents + a rule set and produces tag
 changes. Same contract for both implementations.
 
+The MailMover is NATIVE in the client (afew/MailMover.py is the
+reference logic, never the runtime). Every account owns a folder
+space (the muttrc `folder:/^gmail\//` account-tag pattern as data:
+`[accounts.<name>] folder = "gmail"`), and mover rules are defined
+PER ACCOUNT: tag -> folder, resolved only within that account's
+folder space. No global priority table exists - a tag under an
+account is unambiguous by construction; within-account provider
+variants (Gmail vs standard folder names) may be an ordered list,
+first existing wins, `*` globs allowed. Same-maildir-tree skip,
+copy-then-delete (sources deleted only after all copies succeeded).
+
+Provider presets ship as data (a `presets/` tree, the muttrc base16
+palette pattern): a preset is the tag -> folder-name map for a
+provider (gmail, outlook, icloud, generic-imap). Accounts inherit by
+`preset = "gmail"` and override per tag; user presets in the config
+dir override built-ins by name. Default move rules derive from the
+hard tag group (`tag:<t>` moves to t's folder - the rule is universal,
+only the folder names vary); only non-standard rules (e.g. the trash
+return-to-inbox rule in muttrc/afew/config) are written explicitly.
+
+The filter engine owns the FULL classification pipeline - folder
+rules, header rules, and the mover all run inside the client; the
+muttrc post-new hook and afew are reference shapes, not backends.
+Folder rules are DERIVED from the account + preset data: each hard
+tag's candidates become `folder:"<account>/<candidate>"` OR-queries
+with auto NOT-guards (muttrc/notmuch/tags proves the shape), account
+tags derive from the account folder prefix (`folder:/^gmail\//`).
+The hard-tag priority (archive > deleted > sent > draft > pending >
+spam) IS the exclusive group's list order - no cross-untag rules
+exist (the tags-file conflict chain is the pain this replaces).
+`-inbox` is the same machinery: any hard tag removes inbox. Header
+rules stay data (muttrc/notmuch/post-new): query + add, guards
+enforced by the engine. Conditional rules stay explicit:
+delivery-gated untag-reversal, trash return-to-inbox. Read-only
+accounts (toptal) get folder tags but no moves. Side effects
+(address cache, notification) subscribe to the filter job's
+completion event; they are not hook steps.
+
+The filter contract is per-message (afew's filter shape): a filter
+gets a message snapshot and returns tag ops. Declarative query rules
+are the data-driven implementation of this contract; algorithmic
+filters (afew's SpamFilter, DMIMValidation - not implemented yet)
+plug in later as registered Go implementations behind the same
+interface, selected by `[filter.<name>] type = "..."` - unknown type
+is a load error under strict load. The exclusive-group resolution
+runs after every filter, so algorithmic output (bayes spam, DKIM
+verdicts) normalizes into hard-tag exclusivity like query rules.
+Content-consuming filters run in-process in the filter job; they
+never hold DB handles (the worker owns the DB) and never send
+content anywhere.
+The mover updates the DB through the client's own notmuch layer, not
+a subprocess - the revision bump is picked up by the next refresh
+cycle, so the stale-handle problem afew works around (MailMover.py
+:214-220) does not exist here. DRY-RUN is a first-class job mode:
+resolve every target, write nothing, report what-would-move (per
+message from -> to, unresolved fallback, skipped) into the job output
+ring for review. Validation flow: dry-run, review the report, then
+live run - the first runs against a real mailbox are always dry.
+
 ### R3. Async read/update with incremental thread views
 
 All notmuch reads and updates happen asynchronously; the UI never blocks on
@@ -132,6 +191,15 @@ mail, BubbleTea for TUI, goroutines for the async model, libnotmuch via
 cgo (aerc's in-tree binding pattern). Supply-chain policy is mandatory
 (below).
 
+Idiomatic Go is a design rule: stdlib first, gofmt-clean, clear over
+clever. DRY is an architectural rule, not a style preference: a
+concept exists once. Where two features share data or behavior, one
+derives from the other - the account + preset data drives both the
+derived folder rules and the mover; the canonical sort comparator is
+one function, shared by the worker's batch emission and the view's
+diff merge-walk. Duplicated concepts across modules are design
+errors, not TODOs.
+
 ### R8. Config TOML; Lua bindings later
 
 All configuration is TOML. The TOML schema must be designed so Lua bindings
@@ -141,12 +209,18 @@ model (neovim/ checkout in this workspace): libuv event loop, RPC
 (msgpack), Lua as extension language, UI attached via protocol. UI async
 design should be compatible with that model.
 
-Config model: mirror neomutt's ConfigSet design
-(`neomutt-docs/docs/config.md`): every key is a typed value (string,
-number, bool, enum, path, list, regex, sort) with a validator, a default,
-and an observer/notification system. The TOML layer is a typed, validated,
-observable store - config changes notify the async core, never read
-ad-hoc from disk.
+Config model: TOML is the config language and the file shape IS the
+schema shape. Config files unmarshal into typed Go structs (1:1 with
+the TOML), with neomutt's ConfigSet properties (`neomutt-docs/docs/
+config.md`) as requirements, not mechanism: typed values (string,
+number, bool, enum, path, list, regex, sort), validators, defaults,
+observers. Load is strict - unknown keys are load errors, no silent
+typos. The store is the single write path: runtime mutations (theme
+variant, keymap switch) go through typed per-section setters that
+notify per-section observers on the event bus; the async core never
+reads config ad-hoc from disk. A flat key registry is the C-era
+mechanism for neomutt's flat `set key = value` language; TOML's
+document shape needs struct-mapped tables, not dotted keys.
 
 ### R9. Keybindings: vim by default, emacs as an option, configurable
 
@@ -213,12 +287,15 @@ Question: Rust, Zig, or Go?
 | Lua | mlua (mature, used by neovim) | gopher-lua (stale-ish) | none |
 | supply chain (user concern: AI-generated code) | crates.io has the worst AI-generated-crate flood; mitigated by tiny dep set + vetting + cargo-audit + vendoring | module proxy + checksum db, typosquatting still exists | smallest surface (no registry sprawl, vendoring natural) |
 
-Decision: Rust. Decisive factors: mail-parser/mail-builder and ratatui are
-the best-in-class for the two hardest parts (MIME + extractable TUI); mlua
-is the same Lua binding neovim uses (aligns with R8); tokio is the only
-mature async story of the three. Zig would be greenfield on every single
-dimension. Go is viable (aerc proves the model) but weaker on the
-extractable-TUI requirement.
+Decision: Go (R7 is binding; the analysis above is the record).
+Decisive factors: go-message is aerc's production parser - the same
+client whose worker model notmutt mirrors (R3/R4), so the mail
+library is proven against the reference architecture; goroutines
+make the async model native; official notmuch bindings live in
+notmuch contrib/. The Rust column's strengths (ratatui, mlua,
+tokio) are real; they lost on integration surface - mirroring
+aerc's proven stack beats best-in-class per part. Zig remains
+greenfield on every dimension.
 
 Supply-chain policy (the user's stated concern is real; treat it as a hard
 constraint):
@@ -336,6 +413,12 @@ structure, sizes - those need a file open and parse.
   filenames, attacker-influenced) always pass the same
   sanitize/render/mailcap paths as fresh data - never trusted by
   virtue of being cached.
+
+The reference repos (neomutt, aerc, afew, neovim, muttrc) are advisory:
+they prove the mail concept, the config intent, and the failure modes -
+not the implementation. Design decisions are made for notmutt (Go, TOML,
+async), never inherited from C tools. When a reference behavior is cited,
+the spec must say why it serves notmutt, not cite it as authority.
 
 ## Reference code in this workspace
 

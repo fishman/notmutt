@@ -189,22 +189,93 @@ Contract shared with afew:
 filters: query -> tag changes
 ```
 
-Two backends, same contract: afew (initial) and an integrated engine
-(later). The integrated engine:
+The engine is the implementation; afew and the muttrc post-new hook
+are the reference rule shapes, not backends. The pipeline runs
+inside the client as the filter job, in order:
 
-- Rules are data (TOML): `[filter.<name>] query = ...  add = [...]
-  remove = [...]`.
-- Idempotency is enforced by the engine: every rule runs with the
-  NOT-guards it needs; re-runs only touch new mail.
-- Exclusive tag groups are declared once:
+1. Folder rules - DERIVED from the account + preset data the mover
+   resolves (muttrc/notmuch/tags is the reference shape, not the
+   source): each hard tag's candidate folders become
+   `folder:"<account>/<candidate>"` OR-queries with auto
+   NOT-guards; account tags derive from the account folder prefix.
+   No hand-written folder queries exist.
+2. Exclusive-group resolution - the hard group, list order is
+   priority (archive > deleted > sent > draft > pending > spam):
+   a message keeps only its highest-priority hard tag. `-inbox`
+   (tag:inbox AND any hard tag) is the same machinery.
+3. Header rules - data: query + add, NOT-guards enforced by the
+   engine (muttrc/notmuch/post-new: work/xolo/meeting/cfp/
+   conference/exhibition/receipt/newsletter).
+4. Conditional rules stay explicit: delivery-gated untag-reversal,
+   trash return-to-inbox (muttrc/afew/config).
+5. Mover (below). Read-only accounts (toptal) get folder tags but
+   no moves.
+6. Side effects (address cache, notification) subscribe to the
+   filter job's completion event - not hook steps.
+
+The filter contract is per-message, and it is the engine boundary
+(afew's filter shape: gate + handle):
+
+```
+type Filter interface {
+    Name() string
+    Interesting(msg *core.Message) bool        // gate: unchanged mail skipped
+    Handle(msg *core.Message, q *Query) []Op   // tag ops; q = worker-mediated
+}                                              // read-only queries (thread
+                                               // members for KillThreads-style
+                                               // thread filters)
+```
+
+Declarative TOML rules ARE this interface, data-driven. Algorithmic
+filters (afew SpamFilter, DMIMValidation - not implemented yet) are
+registered Go implementations behind the same interface, selected by
+`[filter.<name>] type = "..."`; unknown type is a load error. They
+run in the filter job, in-process, argv-free (F4); they read message
+files through the client's read path (path-stale tolerant, section
+7) and never hold DB handles. The exclusive-group resolution
+normalizes whatever they produce. Stateful filters (bayes corpus)
+may need a maintenance command later (afew -t equivalent) - not part
+of the filter slice, the contract must not preclude it.
+
+Rules are data (TOML): `[filter.<name>] query = ...  add = [...]
+  remove = [...]`. Idempotency is enforced by the engine: every rule
+  runs with the NOT-guards it needs; re-runs only touch new mail.
+  Exclusive tag groups are declared once:
   `[tag-groups] hard = ["archive", "deleted", "sent", "draft", "pending",
   "spam"]`. Applying any tag in a group removes the others automatically,
   engine-side, after all rules ran. Adding a tag to a group requires no
   rule changes - this fixes the muttrc cross-untagging pain.
-- Account tags derive from folder paths (folder:/^gmail\//) - same rule
-  shape as today.
-- The mover keeps afew's `folder_priorities` model: per-account candidate
-  lists, first existing folder wins, `*` globs.
+- The mover is native (afew/MailMover.py is the reference logic, not
+  the runtime; AGENTS.md R2). Each account owns a folder space
+  (`[accounts.<name>] folder = "gmail"` - the muttrc
+  `folder:/^gmail\//` pattern as data), and rules are per-account:
+  tag -> folder, resolved only within that account's space. No
+  global priority table: a tag under an account is unambiguous by
+  construction. Within-account provider variants (Gmail vs standard
+  names) may be an ordered list, first existing wins, `*` globs.
+  Same-maildir-tree skip keeps `folder:` prefix queries from pulling
+  mail out of organizational subfolders; copy-then-delete so no
+  message is ever lost to a failed copy; rename modes (auto: mbsync
+  UID files only).
+- The mover updates the DB through the client's own notmuch layer
+  (`notmuch new` via the worker), not a subprocess; the revision bump
+  feeds the next refresh cycle (section 4) - afew's stale-handle
+  close/reopen workaround is moot by design.
+- DRY-RUN is a first-class job mode: resolve every target, write
+  nothing, emit a what-would-move report (per message from -> to,
+  fallback-used and unresolved, skipped) into the job output ring for
+  review. Validation flow: dry-run, review, live run.
+- Default move rules derive from the hard tag group: `tag:<t>` moves
+  to t's folder (muttrc/afew/config proves the rule shape is
+  identical across accounts - only folder names vary). Non-standard
+  rules stay explicit (the trash return-to-inbox rule).
+- Provider presets ship as data (`presets/` - the base16 palette
+  pattern): tag -> folder-name map per provider (gmail, outlook,
+  icloud, generic-imap), grounded in muttrc/afew/config for gmail.
+  Account inheritance: `preset = "gmail"` in `[accounts.<name>]`;
+  per-account rules override per tag; unknown preset = load error.
+  User presets load from the config dir and override built-ins by
+  name.
 - Triggers: notmuch post-new hook for mail indexed outside the client;
   in-client: after `notmuch new`, after sync jobs, on tag ops that affect
   folder tags.
@@ -323,17 +394,23 @@ macOS/Windows. No watcher: manual `:theme`.
 
 ## 9. Config (R8)
 
-TOML files (e.g. ~/.config/notmutt/config.toml, accounts/*.toml). The
-parser feeds a typed, validated, observable store in the ConfigSet mold
-(neomutt-docs/docs/config.md): every key has a type, validator, default;
-changes notify observers on the event bus. No ad-hoc disk reads.
+TOML files (e.g. ~/.config/notmutt/config.toml, accounts/*.toml,
+themes/*.toml). The file shape IS the schema shape: files unmarshal
+into typed Go structs, 1:1 with the TOML tables (AGENTS.md R8). Load
+is strict (unknown keys error), defaults merge under file values,
+per-section validators run at load. The store is the single write
+path: runtime mutations go through typed setters that notify
+per-section observers on the event bus - no ad-hoc disk reads, no
+stringly-typed paths. (ConfigSet's flat key registry is neomutt's
+mechanism for its flat config language; TOML documents get structs.)
 
 Schema draft:
 
 ```toml
 [accounts.jelveh]
 primary_email = "reza@jelveh.me"
-folders = ["jelveh/*"]
+folder = "jelveh"           # account's notmuch folder space (muttrc folder:/^jelveh\//)
+preset = "generic-imap"     # optional: inherit tag -> folder names from a provider preset
 
 [tag-groups]
 hard = ["archive", "deleted", "sent", "draft", "pending", "spam"]
@@ -346,9 +423,19 @@ add = ["archive"]
 query = "tag:inbox and not tag:deleted and not tag:spam"
 threads = true
 
-[mover.folder_priorities]
+[mover.rules.gmail]         # per-account: tag -> folder, resolved inside the account space
+archive = ["Archives", "Archive"]   # provider variants, first existing wins
+deleted = "[Gmail]/Trash"
+
+# presets/gmail.toml - built-in, shipped as data (grounded in muttrc/afew/config)
+[preset.gmail]
 archive = ["Archives", "Archive"]
 deleted = ["[Gmail]/Trash", "Trash", "Deleted Items"]
+spam    = ["[Gmail]/Spam", "Spam", "Junk*"]
+pending = ["Pending"]
+draft   = ["[Gmail]/Drafts", "Drafts"]
+sent    = ["[Gmail]/Sent Mail", "Sent"]
+inbox   = ["INBOX"]
 
 [ui]
 keymap = "vim"          # "vim" (mutt-style) or "emacs"; per-context overrides below

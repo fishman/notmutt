@@ -107,10 +107,15 @@ Node { message, children: []*Node,       // children via References links
 - Canonical sort, client-side: never trust notmuch output order.
   Thread level by last-date, message level by sort_aux (reverse-date),
   tiebreak by id bytes - a total order, or equal keys churn the diff.
+  The comparator is ONE function, shared with the worker's batch
+  sorting (section 5) - two comparators will drift (DRY rule).
 - Row template (R11): fixed slots (number, flags, attachment, date,
   author, subject, count, tag glyphs); optional slots reserve width,
   blank when absent; widths in terminal cells (go-runewidth). Tag
-  glyphs from the transform table, max-2 slots, priority order.
+  glyphs from the transform table, max-2 slots, priority order. M1
+  priority: `[index.tags] order` when present, else transform-table
+  insertion order; when the tag-groups slice lands, group order
+  becomes that source - one priority list, never two.
 - Flags are tags (R1): unread/replied/forwarded/deleted render from
   notmuch tags; no local flag state.
 - Selection identity: cursor tracks message-id (fallback thread-id),
@@ -248,3 +253,16 @@ for i < len(old) || j < len(new):
   (reduces the changeset query itself); lastmod already covers it.
 - Cache compression (bbolt + zstd) - measure first.
 - Multiple account stores.
+
+## 13. Out of scope, designed elsewhere
+
+- The full classification pipeline is native: folder rules (derived
+  from accounts + presets), exclusive hard-tag groups with list-order
+  priority, header rules as data, the native MailMover with dry-run,
+  and the per-message filter contract (declarative query rules plus
+  registered algorithmic filters like SpamFilter/DMIMValidation
+  behind the same interface - not implemented yet).
+  AGENTS.md R2, DESIGN.md section 6. Lands with the filter-engine
+  slice, not M1. Dry-run is first-class: the first mover runs against
+  the real mailbox are always dry, with the what-would-move report
+  reviewable in the job output ring.

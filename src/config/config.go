@@ -32,7 +32,7 @@ func Default() Config {
 }
 
 // Load merges file values over defaults. Unknown keys are load errors
-// with file:line (strict load, R8). A missing file means defaults.
+// naming the key (strict load, R8). A missing file means defaults.
 func Load(path string) (Config, error) {
 	cfg := Default()
 	md, err := toml.DecodeFile(path, &cfg)

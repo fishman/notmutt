@@ -72,3 +72,17 @@ func TestLoadEmptyViewQueryErrors(t *testing.T) {
 		t.Fatal("expected error for empty view query")
 	}
 }
+
+func TestLoadThreadsFalseOverridesDefault(t *testing.T) {
+	cfg, err := Load(write(t, `
+[view.inbox]
+query = "tag:inbox"
+threads = false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Views["inbox"].Threads {
+		t.Fatal("threads = false must override the default true")
+	}
+}

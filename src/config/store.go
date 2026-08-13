@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 )
@@ -22,7 +23,9 @@ func NewStore(cfg Config) *Store {
 func (s *Store) Config() Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cfg
+	c := s.cfg
+	c.Views = maps.Clone(s.cfg.Views)
+	return c
 }
 
 func (s *Store) Subscribe(section string, fn func()) {

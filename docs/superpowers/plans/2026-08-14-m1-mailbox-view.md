@@ -1018,6 +1018,7 @@ git commit -m "Add strict TOML config store with typed section observers"
 
 **Files:**
 - Create: `src/core/view.go`, `src/core/view_test.go`
+- Amend: `src/core/types.go` - add `Row.Ghost` (additive, safe)
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1079,8 +1080,14 @@ func TestMergeThreadMoves(t *testing.T) {
 	old2 := NewThread("old", []*Message{msg("a", 100), msg("c", 500)})
 	v.MergeThreads([]*Thread{old2, newer})
 	rows := v.Rows()
-	if rows[0].Msg.ID != "c" {
-		t.Fatalf("moved thread should be first, got %+v", rows[0])
+	if len(rows) != 4 {
+		t.Fatalf("want ghost + 3 rows, got %d", len(rows))
+	}
+	if !rows[0].Ghost {
+		t.Fatalf("moved thread has two roots, must render ghost first: %+v", rows[0])
+	}
+	if rows[1].Msg.ID != "c" {
+		t.Fatalf("moved thread should be first, got %+v", rows[1])
 	}
 }
 
@@ -1092,8 +1099,11 @@ func TestMergeThreadMerge(t *testing.T) {
 	merged := NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})
 	v.MergeThreads([]*Thread{merged})
 	rows := v.Rows()
-	if len(rows) != 2 {
+	if len(rows) != 3 {
 		t.Fatalf("thread merge lost rows: %d", len(rows))
+	}
+	if !rows[0].Ghost {
+		t.Fatalf("merged thread must render ghost row: %+v", rows[0])
 	}
 }
 
@@ -1111,7 +1121,9 @@ func TestCollapseHidesChildren(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	th := NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})
 	v.MergeThreads([]*Thread{th})
-	v.Threads[0].Collapsed = true
+	if err := v.SetCollapsed("t1", true); err != nil {
+		t.Fatal(err)
+	}
 	rows := v.Rows()
 	if len(rows) != 1 {
 		t.Fatalf("collapsed thread must render 1 row, got %d", len(rows))
@@ -1120,7 +1132,125 @@ func TestCollapseHidesChildren(t *testing.T) {
 		t.Fatalf("collapsed row must still count the thread, got %d", rows[0].Count)
 	}
 }
+
+func TestMergeTagConvergence(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	m := msg("a", 100)
+	m.Tags = []string{"inbox", "unread"}
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{m})})
+	fresh := msg("a", 100)
+	fresh.Tags = []string{"inbox", "work"}
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{fresh})})
+	rows := v.Rows()
+	if rows[0].Msg != m {
+		t.Fatalf("matched message must be retained, not replaced: %+v", rows[0].Msg)
+	}
+	if len(rows[0].Msg.Tags) != 2 || rows[0].Msg.Tags[0] != "inbox" || rows[0].Msg.Tags[1] != "work" {
+		t.Fatalf("snapshot tags must win, got %v", rows[0].Msg.Tags)
+	}
+}
+
+func TestDepth3Chain(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	t1 := NewThread("t1", []*Message{
+		msg("root", 100),
+		msg("mid", 200, "root"),
+		msg("leaf", 300, "root", "mid"),
+	})
+	v.MergeThreads([]*Thread{t1})
+	rows := v.Rows()
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
+	}
+	for i, want := range []struct {
+		id    string
+		depth int
+	}{{"root", 0}, {"mid", 1}, {"leaf", 2}} {
+		if rows[i].Msg.ID != want.id || rows[i].Depth != want.depth {
+			t.Fatalf("row %d wrong: %+v", i, rows[i])
+		}
+	}
+}
+
+func TestCursorClamps(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	t1 := NewThread("t1", []*Message{msg("m1", 100)})
+	t2 := NewThread("t2", []*Message{msg("m2", 200)})
+	t3 := NewThread("t3", []*Message{msg("m3", 300)})
+	v.MergeThreads([]*Thread{t3, t2, t1})
+	v.SetCursor("m2")
+	if r, ok := v.CursorRow(); !ok || r.Msg.ID != "m2" {
+		t.Fatalf("cursor should sit on m2, got %+v ok=%v", r, ok)
+	}
+	// t2 leaves the view; the cursor must stay at index 1, not jump to 0
+	v.MergeThreads([]*Thread{t3, t1})
+	r, ok := v.CursorRow()
+	if !ok || r.Msg.ID != "m1" {
+		t.Fatalf("cursor must clamp to previous index (m1), got %+v ok=%v", r, ok)
+	}
+}
+
+func TestGhostRootRow(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	t1 := NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})
+	v.MergeThreads([]*Thread{t1})
+	rows := v.Rows()
+	if len(rows) != 3 {
+		t.Fatalf("want ghost + 2 rows, got %d", len(rows))
+	}
+	if !rows[0].Ghost || rows[0].Msg != nil || rows[0].Depth != 0 || rows[0].Count != 2 {
+		t.Fatalf("first row must be the ghost marker: %+v", rows[0])
+	}
+	if rows[1].Msg.ID != "b" || rows[1].Depth != 1 || rows[1].Root {
+		t.Fatalf("second row wrong: %+v", rows[1])
+	}
+	if rows[2].Msg.ID != "a" || rows[2].Depth != 1 || rows[2].Root {
+		t.Fatalf("third row wrong: %+v", rows[2])
+	}
+}
+
+func TestCollapseSurvivesMerge(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})
+	if err := v.SetCollapsed("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})})
+	rows := v.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("collapse lost after merge: %d rows", len(rows))
+	}
+	if rows[0].Count != 2 {
+		t.Fatalf("count must reflect the merged thread, got %d", rows[0].Count)
+	}
+}
+
+func TestSetCollapsedUnknownErrors(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	if err := v.SetCollapsed("nope", true); err == nil {
+		t.Fatal("SetCollapsed must error on unknown thread")
+	}
+}
+
+func TestConcurrentMergeAndRows(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100), msg("b", 200, "a")})})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100), msg("b", 200, "a")})})
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if rows := v.Rows(); len(rows) != 2 {
+			t.Fatalf("want 2 rows, got %d", len(rows))
+		}
+	}
+	<-done
+}
 ```
+`
 
 - [ ] **Step 2: Run to verify they fail**
 
@@ -1138,13 +1268,25 @@ Expected: `undefined: NewView`.
 ```go
 package core
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+	"sync"
+)
 
+// View is a forest of thread trees ordered by last date. All state
+// access goes through the locked methods (Rows, MergeThreads,
+// SetCursor, CursorRow, SetCollapsed); touching Threads, message
+// fields, or Collapsed from another goroutine is a data race. The
+// cache job's Atts writes are T12 wiring and must also go through the
+// view under its lock.
 type View struct {
 	Name     string
 	Query    string
 	Threads  []*Thread // sorted by ThreadLess
+	mu       sync.Mutex
 	cursorID string
+	lastRow  int
 }
 
 func NewView(name, query string) *View {
@@ -1189,6 +1331,12 @@ func (t *Thread) Count() int {
 // Rows flattens the thread forest depth-first. Collapsed threads render
 // only their root row.
 func (v *View) Rows() []Row {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.rowsLocked()
+}
+
+func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
 		rows = append(rows, flattenThread(t, t.Collapsed)...)
@@ -1205,8 +1353,12 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 	var walk func(*Node, int)
 	walk = func(node *Node, depth int) {
 		if node.Msg == nil {
+			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Count: count})
+			if collapsed {
+				return
+			}
 			for _, c := range node.Children {
-				walk(c, depth)
+				walk(c, depth+1)
 			}
 			return
 		}
@@ -1224,20 +1376,61 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 
 // MergeThreads diffs the incoming threads into the view: thread-level
 // diff plus per-thread message diffs for threads present on both sides.
-// Input must be sorted by ThreadLess. The cursor survives by id.
+// Input is sorted defensively (the caller's slice is not modified).
+// Matched messages keep their identity; the snapshot reconciles their
+// fields (reconcile-then-replay is the ordering the optimistic layer
+// of T11/T12 builds on, per plan section 8). The cursor survives by
+// id.
 func (v *View) MergeThreads(threads []*Thread) {
-	ops := DiffSorted(v.Threads, threads, ThreadLess, func(t *Thread) string { return t.ID })
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sorted := append([]*Thread(nil), threads...)
+	sort.Slice(sorted, func(i, j int) bool { return ThreadLess(sorted[i], sorted[j]) })
+	ops := DiffSorted(v.Threads, sorted, ThreadLess, func(t *Thread) string { return t.ID })
 	v.Threads = Apply(v.Threads, ops)
-	for _, in := range threads {
+	for _, in := range sorted {
 		cur := findThread(v.Threads, in.ID)
 		if cur == nil {
 			continue // pure insert: already carries its tree
 		}
 		mops := DiffSorted(cur.msgs, in.msgs, MsgLess, func(m *Message) string { return m.ID })
 		cur.msgs = Apply(cur.msgs, mops)
+		// Matched keys keep old elements, so snapshot fields must be
+		// reconciled onto them. Reconcile-then-replay is the ordering
+		// the optimistic layer (T11/T12) builds on: apply snapshot
+		// truth first, then replay pending local ops.
+		for i, j := 0, 0; i < len(cur.msgs) && j < len(in.msgs); {
+			c, f := cur.msgs[i], in.msgs[j]
+			if c.ID == f.ID {
+				reconcileMsg(c, f)
+				i++
+				j++
+			} else if MsgLess(c, f) {
+				i++
+			} else {
+				j++
+			}
+		}
 		cur.LastDate = in.LastDate
 		cur.Root = buildTree(cur.msgs)
 	}
+	// Retained threads can change LastDate (snapshots are filtered by
+	// the view query), so restore the sorted invariant the next diff
+	// depends on.
+	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
+}
+
+// reconcileMsg copies snapshot fields from the fresh message onto the
+// retained one. Atts are never copied (the cache job owns them and
+// snapshots carry empty lists) and Paths are never copied (the
+// thread-fetch path returns none).
+func reconcileMsg(cur, fresh *Message) {
+	cur.Timestamp = fresh.Timestamp
+	cur.Author = fresh.Author
+	cur.Subject = fresh.Subject
+	cur.Tags = fresh.Tags
+	cur.References = fresh.References
+	cur.ThreadID = fresh.ThreadID
 }
 
 func findThread(threads []*Thread, id string) *Thread {
@@ -1250,29 +1443,53 @@ func findThread(threads []*Thread, id string) *Thread {
 }
 
 func (v *View) SetCursor(id string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.cursorID = id
 }
 
-// CursorRow returns the row the cursor points at, or the first row when
-// the id is gone; ok is false only when the view is empty.
+// CursorRow returns the row the cursor points at, or the row at the
+// previous index (clamped to the last row) when the id is gone; ok is
+// false only when the view is empty.
 func (v *View) CursorRow() (Row, bool) {
-	rows := v.Rows()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rows := v.rowsLocked()
 	if len(rows) == 0 {
 		return Row{}, false
 	}
 	if v.cursorID != "" {
-		for _, r := range rows {
-			if r.Msg.ID == v.cursorID {
+		for i, r := range rows {
+			if r.Msg != nil && r.Msg.ID == v.cursorID {
+				v.lastRow = i
 				return r, true
 			}
 		}
 	}
-	return rows[0], true
+	if v.lastRow >= len(rows) {
+		v.lastRow = len(rows) - 1
+	}
+	return rows[v.lastRow], true
 }
 
-// buildTree attaches each message under the first reference present in
-// the set; messages without a present parent become roots. Multiple
-// roots get a synthetic ghost root (mutt "[...]" row).
+// SetCollapsed toggles a thread's collapsed state under the view lock.
+// It errors on unknown thread ids; collapse toggles go through the view
+// from now on, never by writing Threads[i].Collapsed directly.
+func (v *View) SetCollapsed(id string, collapsed bool) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			t.Collapsed = collapsed
+			return nil
+		}
+	}
+	return fmt.Errorf("view: unknown thread %q", id)
+}
+
+// buildTree attaches each message under the nearest present reference;
+// messages without a present parent become roots. Multiple roots get a
+// synthetic ghost root (mutt "[...]" row).
 func buildTree(msgs []*Message) *Node {
 	nodes := make(map[string]*Node, len(msgs))
 	for _, m := range msgs {
@@ -1297,8 +1514,11 @@ func buildTree(msgs []*Message) *Node {
 	return &Node{Children: roots}
 }
 
+// parentOf scans references in reverse so the nearest present ancestor
+// wins over distant ones.
 func parentOf(m *Message, nodes map[string]*Node) *Node {
-	for _, ref := range m.References {
+	for i := len(m.References) - 1; i >= 0; i-- {
+		ref := m.References[i]
 		if ref == m.ID {
 			continue
 		}
@@ -1309,6 +1529,7 @@ func parentOf(m *Message, nodes map[string]*Node) *Node {
 	return nil
 }
 ```
+`
 
 - [ ] **Step 4: Run to verify they pass**
 
@@ -1323,7 +1544,7 @@ Expected: all core tests pass, including the diff property tests. `gofmt -l .` p
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/core
-git commit -m "Add thread-tree view model with diff-merge, cursor, collapse"
+git commit -m "Reconcile fields, nearest-ancestor tree, cursor clamp, ghost rows, view mutex"
 ```
 
 ## Task 7: MIME cache
@@ -2352,6 +2573,12 @@ git commit -m "Add worker action loop with lock budgets and bus events"
 **Files:**
 - Create: `src/app/refresh.go`, `src/app/refresh_test.go`, `src/app/doc.go`
 
+**Coordination note (T6 review)**: snapshots fed to `MergeThreads`
+must be FILTERED by the view query - messages that left the filter
+linger in the view forever otherwise (T6 C1). `MergeThreads` sorts
+defensively, so the `sortThreads` step below is redundant but
+harmless.
+
 - [ ] **Step 1: Write the failing tests**
 
 `src/app/doc.go`:
@@ -2626,6 +2853,10 @@ git commit -m "Add lastmod incremental refresh cycle with full-reload triggers"
 
 **Files:**
 - Create: `src/tui/model.go`, `src/tui/bridge.go`, `src/tui/hooks.go`, `src/tui/model_test.go`
+
+**Coordination note (T6 review)**: use the view's cursor clamping
+(`CursorRow`) and `SetCollapsed`; do not implement your own 0-fallback
+or write `Threads[i].Collapsed` directly.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3787,6 +4018,12 @@ git commit -m "Add soak and cursor-invariant tests; M1 acceptance"
 - **Spec coverage**: section 1 (acceptance) -> tasks 14-15; section 2 (layout) -> task 1; section 3 (config) -> task 5 + task 12 validation; section 4 (bus) -> task 4; section 5 (worker) -> tasks 8-9; section 6 (view model) -> tasks 2-3, 6; section 7 (refresh) -> task 10; section 8 (diff) -> task 3; section 9 (testing) -> tasks 3, 15; section 10 (MIME cache) -> task 7 + cachejob; section 11 (UI) -> task 11; section 13 (out of scope) -> not implemented, as designed.
 - **Known deferrals**: load-more batching past the first page (knob, spec section 12); tag glyph priority list from tag-groups (spec section 6 note); the worker never publishes `QueryBatch` (the cache job keys on `ViewDiff`; the event type stays defined per spec section 4); cgo Tag/New unimplemented (read-only handle, benchmark measures reads).
 - **Consistency**: one comparator pair (`ThreadLess`/`MsgLess`), one diff engine (`DiffSorted`/`Apply`), one cache key type. Type names used across tasks: `core.Message`, `core.Thread`, `core.Row`, `core.Op`, `notmuch.Action`, `notmuch.Reply`, `notmuch.TagOp`, `cache.Key`, `config.Config`, `tui.Model`, `tui.EventMsg`. The diff engine is exercised only through `DiffSorted`/`Apply`; `Apply` with a `Move` op is `removeAt` then `insertAtIdx`, which equals the original remove+insert pair - the property test is the gate. `Apply` mutates the caller's backing array in place and preserves old values for matched/moved keys (key-order equality): callers use the returned slice and reconcile element fields from the incoming snapshot. `collapseMoves` merges only ADJACENT remove-then-insert pairs (a sinking element); non-adjacent and rising moves stay as remove+insert churn (verified sound: the plan's original any-later matching panics on old=[k(10),x(8)] new=[y(9),x(8),k(5)]).
+
+- **T6 deviation (documented)**: spec section 8 says the "tree
+  structure is never rebuilt"; view.go rebuilds the derived tree from
+  the merged message list after each diff (Nodes are state-free, built
+  from reconciled References) - the message list is the diffed state,
+  the tree is derived.
 
 ## Execution
 

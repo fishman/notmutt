@@ -37,4 +37,5 @@ type Row struct {
 	Depth    int
 	Root     bool
 	Count    int
+	Ghost    bool // synthetic multi-root marker row; has no Msg
 }

@@ -1,12 +1,24 @@
 package core
 
-import "sort"
+import (
+	"fmt"
+	"sort"
+	"sync"
+)
 
+// View is a forest of thread trees ordered by last date. All state
+// access goes through the locked methods (Rows, MergeThreads,
+// SetCursor, CursorRow, SetCollapsed); touching Threads, message
+// fields, or Collapsed from another goroutine is a data race. The
+// cache job's Atts writes are T12 wiring and must also go through the
+// view under its lock.
 type View struct {
 	Name     string
 	Query    string
 	Threads  []*Thread // sorted by ThreadLess
+	mu       sync.Mutex
 	cursorID string
+	lastRow  int
 }
 
 func NewView(name, query string) *View {
@@ -51,6 +63,12 @@ func (t *Thread) Count() int {
 // Rows flattens the thread forest depth-first. Collapsed threads render
 // only their root row.
 func (v *View) Rows() []Row {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.rowsLocked()
+}
+
+func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
 		rows = append(rows, flattenThread(t, t.Collapsed)...)
@@ -67,8 +85,12 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 	var walk func(*Node, int)
 	walk = func(node *Node, depth int) {
 		if node.Msg == nil {
+			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Count: count})
+			if collapsed {
+				return
+			}
 			for _, c := range node.Children {
-				walk(c, depth)
+				walk(c, depth+1)
 			}
 			return
 		}
@@ -86,20 +108,61 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 
 // MergeThreads diffs the incoming threads into the view: thread-level
 // diff plus per-thread message diffs for threads present on both sides.
-// Input must be sorted by ThreadLess. The cursor survives by id.
+// Input is sorted defensively (the caller's slice is not modified).
+// Matched messages keep their identity; the snapshot reconciles their
+// fields (reconcile-then-replay is the ordering the optimistic layer
+// of T11/T12 builds on, per plan section 8). The cursor survives by
+// id.
 func (v *View) MergeThreads(threads []*Thread) {
-	ops := DiffSorted(v.Threads, threads, ThreadLess, func(t *Thread) string { return t.ID })
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	sorted := append([]*Thread(nil), threads...)
+	sort.Slice(sorted, func(i, j int) bool { return ThreadLess(sorted[i], sorted[j]) })
+	ops := DiffSorted(v.Threads, sorted, ThreadLess, func(t *Thread) string { return t.ID })
 	v.Threads = Apply(v.Threads, ops)
-	for _, in := range threads {
+	for _, in := range sorted {
 		cur := findThread(v.Threads, in.ID)
 		if cur == nil {
 			continue // pure insert: already carries its tree
 		}
 		mops := DiffSorted(cur.msgs, in.msgs, MsgLess, func(m *Message) string { return m.ID })
 		cur.msgs = Apply(cur.msgs, mops)
+		// Matched keys keep old elements, so snapshot fields must be
+		// reconciled onto them. Reconcile-then-replay is the ordering
+		// the optimistic layer (T11/T12) builds on: apply snapshot
+		// truth first, then replay pending local ops.
+		for i, j := 0, 0; i < len(cur.msgs) && j < len(in.msgs); {
+			c, f := cur.msgs[i], in.msgs[j]
+			if c.ID == f.ID {
+				reconcileMsg(c, f)
+				i++
+				j++
+			} else if MsgLess(c, f) {
+				i++
+			} else {
+				j++
+			}
+		}
 		cur.LastDate = in.LastDate
 		cur.Root = buildTree(cur.msgs)
 	}
+	// Retained threads can change LastDate (snapshots are filtered by
+	// the view query), so restore the sorted invariant the next diff
+	// depends on.
+	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
+}
+
+// reconcileMsg copies snapshot fields from the fresh message onto the
+// retained one. Atts are never copied (the cache job owns them and
+// snapshots carry empty lists) and Paths are never copied (the
+// thread-fetch path returns none).
+func reconcileMsg(cur, fresh *Message) {
+	cur.Timestamp = fresh.Timestamp
+	cur.Author = fresh.Author
+	cur.Subject = fresh.Subject
+	cur.Tags = fresh.Tags
+	cur.References = fresh.References
+	cur.ThreadID = fresh.ThreadID
 }
 
 func findThread(threads []*Thread, id string) *Thread {
@@ -112,29 +175,53 @@ func findThread(threads []*Thread, id string) *Thread {
 }
 
 func (v *View) SetCursor(id string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.cursorID = id
 }
 
-// CursorRow returns the row the cursor points at, or the first row when
-// the id is gone; ok is false only when the view is empty.
+// CursorRow returns the row the cursor points at, or the row at the
+// previous index (clamped to the last row) when the id is gone; ok is
+// false only when the view is empty.
 func (v *View) CursorRow() (Row, bool) {
-	rows := v.Rows()
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rows := v.rowsLocked()
 	if len(rows) == 0 {
 		return Row{}, false
 	}
 	if v.cursorID != "" {
-		for _, r := range rows {
-			if r.Msg.ID == v.cursorID {
+		for i, r := range rows {
+			if r.Msg != nil && r.Msg.ID == v.cursorID {
+				v.lastRow = i
 				return r, true
 			}
 		}
 	}
-	return rows[0], true
+	if v.lastRow >= len(rows) {
+		v.lastRow = len(rows) - 1
+	}
+	return rows[v.lastRow], true
 }
 
-// buildTree attaches each message under the first reference present in
-// the set; messages without a present parent become roots. Multiple
-// roots get a synthetic ghost root (mutt "[...]" row).
+// SetCollapsed toggles a thread's collapsed state under the view lock.
+// It errors on unknown thread ids; collapse toggles go through the view
+// from now on, never by writing Threads[i].Collapsed directly.
+func (v *View) SetCollapsed(id string, collapsed bool) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			t.Collapsed = collapsed
+			return nil
+		}
+	}
+	return fmt.Errorf("view: unknown thread %q", id)
+}
+
+// buildTree attaches each message under the nearest present reference;
+// messages without a present parent become roots. Multiple roots get a
+// synthetic ghost root (mutt "[...]" row).
 func buildTree(msgs []*Message) *Node {
 	nodes := make(map[string]*Node, len(msgs))
 	for _, m := range msgs {
@@ -159,8 +246,11 @@ func buildTree(msgs []*Message) *Node {
 	return &Node{Children: roots}
 }
 
+// parentOf scans references in reverse so the nearest present ancestor
+// wins over distant ones.
 func parentOf(m *Message, nodes map[string]*Node) *Node {
-	for _, ref := range m.References {
+	for i := len(m.References) - 1; i >= 0; i-- {
+		ref := m.References[i]
 		if ref == m.ID {
 			continue
 		}

@@ -297,6 +297,20 @@ tokio) are real; they lost on integration surface - mirroring
 aerc's proven stack beats best-in-class per part. Zig remains
 greenfield on every dimension.
 
+Mail library verification (2026-08-14, R6): the field was re-checked
+before M1. emersion/go-message v0.18.2 stays the choice - it is the
+only candidate with parse AND part-level compose in one library
+(ProtonMail/go-mime is parse-only; its composer lives inside
+proton-bridge, not importable), it is proven in the reference
+architecture (aerc's worker parses and composes with it), go-pgpmail
+builds on it for the R10 crypto transform stage, and its dependency
+tree is one package (golang.org/x/text). enmime's builder is
+content-oriented (text/HTML body in, message out) - the send-email
+use case, not a mail client's part-level construction. The known
+go-message issue report (#144) was traced to go-imap misuse, not the
+library. mailcap support is client-side logic over the library's
+part model in all cases; no library provides it natively.
+
 Supply-chain policy (the user's stated concern is real; treat it as a hard
 constraint):
 - Keep the dependency set minimal and deliberate. Every dependency must

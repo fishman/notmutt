@@ -2034,9 +2034,11 @@ import (
 	"testing"
 )
 
-const searchJSON = `[{"thread":"t1","timestamp":1700000000,"authors":"A B","subject":"S","tags":["inbox","unread"],"id":"m1","total":1,"matched":1}]`
+const searchJSON = `[{"thread":"t1","timestamp":1700000000,"date_relative":"1 hour ago","matched":1,"total":2,"authors":"Ann","subject":"hello","query":["thread:t1 and tag:inbox",null],"tags":["inbox","unread"]}]`
 
-const showJSON = `[[{"id":"m1","thread":"t1","timestamp":1700000000,"authors":"A B","subject":"S","tags":["inbox"],"references":["p1"]}]]`
+const showJSON = `[[[{"id":"m1","match":true,"excluded":false,"filename":["/m/Mail/x/1"],"timestamp":1700000000,"tags":["inbox"],"headers":{"Subject":"hello","From":"Ann <ann@x>"},"duplicate":0},[[{"id":"m2","match":true,"excluded":false,"filename":["/m/Mail/x/2"],"timestamp":1700000001,"tags":["inbox"],"headers":{"Subject":"re: hello","From":"Bob <bob@x>"},"duplicate":0},[]]]]]]`
+
+const nullJSON = `[[[null,[[{"id":"m2","match":true,"excluded":false,"filename":["/m/Mail/x/2"],"timestamp":1700000001,"tags":["inbox"],"headers":{"Subject":"re: hello","From":"Bob <bob@x>"},"duplicate":0},[]]]]]]`
 
 func fakeRun(b *CLIBackend, respond func(name string, args []string) ([]byte, error)) {
 	b.run = func(ctx context.Context, name string, args []string) ([]byte, error) {
@@ -2046,24 +2048,43 @@ func fakeRun(b *CLIBackend, respond func(name string, args []string) ([]byte, er
 
 func TestCLIQuery(t *testing.T) {
 	b := NewCLI()
+	var got []string
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
-		if strings.Contains(strings.Join(args, " "), "--output=files") {
-			return []byte("/m/Mail/x/1\n"), nil
-		}
+		got = args
 		return []byte(searchJSON), nil
 	})
 	msgs, err := b.Query(context.Background(), "tag:inbox", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].ID != "m1" || msgs[0].ThreadID != "t1" || msgs[0].Author != "A B" {
-		t.Fatalf("parse wrong: %+v", msgs)
+	if len(msgs) != 1 || msgs[0].ThreadID != "t1" || msgs[0].Timestamp != 1700000000 || msgs[0].Author != "Ann" || msgs[0].Subject != "hello" {
+		t.Fatalf("stub parse wrong: %+v", msgs)
 	}
-	if len(msgs[0].Paths) != 1 || msgs[0].Paths[0] != "/m/Mail/x/1" {
-		t.Fatalf("paths pairing wrong: %+v", msgs[0].Paths)
+	if msgs[0].ID != "" {
+		t.Fatalf("summary carries no message ids; ID must stay empty: %+v", msgs[0])
 	}
 	if msgs[0].Tags[0] != "inbox" {
 		t.Fatalf("tags wrong: %+v", msgs[0].Tags)
+	}
+	want := []string{"search", "--format=json", "--sort=newest-first", "--limit=10", "tag:inbox"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv wrong: %v", got)
+	}
+}
+
+func TestCLIQueryNoLimit(t *testing.T) {
+	b := NewCLI()
+	var got []string
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		got = args
+		return []byte(searchJSON), nil
+	})
+	if _, err := b.Query(context.Background(), "tag:inbox", 0); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"search", "--format=json", "--sort=newest-first", "tag:inbox"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("limit=0 must omit --limit: %v", got)
 	}
 }
 
@@ -2076,8 +2097,37 @@ func TestCLIThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 1 || msgs[0].References[0] != "p1" {
-		t.Fatalf("thread parse wrong: %+v", msgs)
+	if len(msgs) != 2 || msgs[0].ID != "m1" || msgs[1].ID != "m2" {
+		t.Fatalf("tree walk wrong: %+v", msgs)
+	}
+	if msgs[0].ThreadID != "t1" || msgs[1].ThreadID != "t1" {
+		t.Fatalf("ThreadID must come from the argument: %+v", msgs)
+	}
+	if len(msgs[1].References) != 1 || msgs[1].References[0] != "m1" {
+		t.Fatalf("references chain wrong: %+v", msgs[1].References)
+	}
+	if len(msgs[0].References) != 0 {
+		t.Fatalf("root must have empty references: %+v", msgs[0].References)
+	}
+	if msgs[1].Subject != "re: hello" || msgs[1].Author != "Bob <bob@x>" {
+		t.Fatalf("headers parse wrong: %+v", msgs[1])
+	}
+	if len(msgs[0].Paths) != 1 || msgs[0].Paths[0] != "/m/Mail/x/1" {
+		t.Fatalf("filenames wrong: %+v", msgs[0].Paths)
+	}
+}
+
+func TestCLIThreadSkipsNullRoot(t *testing.T) {
+	b := NewCLI()
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		return []byte(nullJSON), nil
+	})
+	msgs, err := b.Thread(context.Background(), "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(msgs) != 1 || msgs[0].ID != "m2" || msgs[0].ThreadID != "t1" {
+		t.Fatalf("null root walk wrong: %+v", msgs)
 	}
 }
 
@@ -2141,9 +2191,14 @@ package notmuch
 import (
 	"context"
 	"errors"
+
+	"notmutt/core"
 )
 
 var ErrLockTimeout = errors.New("notmuch lock timeout")
+
+// Message is the core type; the alias keeps the Backend interface text short.
+type Message = core.Message
 
 type TagOp struct {
 	Tag string
@@ -2176,7 +2231,6 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
-	"time"
 
 	"notmutt/core"
 )
@@ -2211,18 +2265,19 @@ type searchItem struct {
 	Authors   string   `json:"authors"`
 	Subject   string   `json:"subject"`
 	Tags      []string `json:"tags"`
-	ID        string   `json:"id"`
 }
 
-// Query runs one search run plus one files run, pairing paths by index
-// (maildir: one file per message; a count mismatch leaves Paths short).
+// Query returns one stub per matching thread. The search summary carries
+// thread ids and thread-level fields only; per-message data (ids,
+// filenames, headers) comes from Thread. The refresh cycle groups by
+// ThreadID and fetches full threads, so the stub's ID stays empty.
 func (b *CLIBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
 	args := []string{"search", "--format=json", "--sort=newest-first"}
 	if limit > 0 {
 		args = append(args, "--limit="+strconv.Itoa(limit))
 	}
 	args = append(args, query)
-	out, err := b.run(ctx, "notmuch", args...)
+	out, err := b.run(ctx, "notmuch", args)
 	if err != nil {
 		return nil, fmt.Errorf("notmuch search: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -2232,52 +2287,73 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit int) ([]core
 	}
 	msgs := make([]core.Message, len(items))
 	for i, it := range items {
-		msgs[i] = core.Message{ID: it.ID, ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags}
-	}
-	paths, err := b.run(ctx, "notmuch", "search", "--output=files", "--sort=newest-first", query)
-	if err == nil {
-		lines := strings.Split(strings.TrimSpace(string(paths)), "\n")
-		if lines[0] != "" {
-			for i := range msgs {
-				if i >= len(lines) {
-					break
-				}
-				msgs[i].Paths = append(msgs[i].Paths, lines[i])
-			}
-		}
+		msgs[i] = core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags}
 	}
 	return msgs, nil
 }
 
-type showItem struct {
-	ID         string   `json:"id"`
-	Thread     string   `json:"thread"`
-	Timestamp  int64    `json:"timestamp"`
-	Authors    string   `json:"authors"`
-	Subject    string   `json:"subject"`
-	Tags       []string `json:"tags"`
-	References []string `json:"references"`
+type showMsg struct {
+	ID        string            `json:"id"`
+	Timestamp int64             `json:"timestamp"`
+	Tags      []string          `json:"tags"`
+	Filename  []string          `json:"filename"`
+	Headers   map[string]string `json:"headers"`
 }
 
-// Thread fetches one thread's messages with references (show json is
-// grouped by thread: a list of lists).
+// showNode is one [message|null, [children]] pair of the show json tree.
+type showNode struct {
+	Msg      *showMsg
+	Children []showNode
+}
+
+func (n *showNode) UnmarshalJSON(b []byte) error {
+	var parts [2]json.RawMessage
+	if err := json.Unmarshal(b, &parts); err != nil {
+		return err
+	}
+	if string(parts[0]) != "null" {
+		var m showMsg
+		if err := json.Unmarshal(parts[0], &m); err != nil {
+			return err
+		}
+		n.Msg = &m
+	}
+	return json.Unmarshal(parts[1], &n.Children)
+}
+
+// Thread fetches one thread's messages. show json carries no thread ids
+// and no per-message reference lists: ThreadID comes from the query
+// argument, References from the tree nesting (root-first chain; the view
+// picks the nearest ancestor).
 func (b *CLIBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
-	out, err := b.run(ctx, "notmuch", "show", "--format=json", "--body=false", "thread:"+threadID)
+	out, err := b.run(ctx, "notmuch", []string{"show", "--format=json", "--body=false", "thread:" + threadID})
 	if err != nil {
 		return nil, fmt.Errorf("notmuch show: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	var groups [][]showItem
+	var groups [][]showNode
 	if err := json.Unmarshal(out, &groups); err != nil {
 		return nil, fmt.Errorf("notmuch show: parse: %w", err)
 	}
 	var msgs []core.Message
-	for _, g := range groups {
-		for _, it := range g {
+	var walk func(nodes []showNode, chain []string)
+	walk = func(nodes []showNode, chain []string) {
+		for _, n := range nodes {
+			if n.Msg == nil {
+				walk(n.Children, chain)
+				continue
+			}
+			refs := make([]string, len(chain))
+			copy(refs, chain)
 			msgs = append(msgs, core.Message{
-				ID: it.ID, ThreadID: it.Thread, Timestamp: it.Timestamp,
-				Author: it.Authors, Subject: it.Subject, Tags: it.Tags, References: it.References,
+				ID: n.Msg.ID, ThreadID: threadID, Timestamp: n.Msg.Timestamp,
+				Author: n.Msg.Headers["From"], Subject: n.Msg.Headers["Subject"],
+				Tags: n.Msg.Tags, Paths: n.Msg.Filename, References: refs,
 			})
+			walk(n.Children, append(refs, n.Msg.ID))
 		}
+	}
+	for _, g := range groups {
+		walk(g, nil)
 	}
 	return msgs, nil
 }
@@ -2292,7 +2368,7 @@ func (b *CLIBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
 		}
 	}
 	args = append(args, query)
-	out, err := b.run(ctx, "notmuch", args...)
+	out, err := b.run(ctx, "notmuch", args)
 	if err != nil {
 		return fmt.Errorf("notmuch tag: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -2301,7 +2377,7 @@ func (b *CLIBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
 
 // Revision parses "count\tuuid\trevision" from `notmuch count --lastmod`.
 func (b *CLIBackend) Revision(ctx context.Context) (string, uint64, error) {
-	out, err := b.run(ctx, "notmuch", "count", "--lastmod", "")
+	out, err := b.run(ctx, "notmuch", []string{"count", "--lastmod", ""})
 	if err != nil {
 		return "", 0, fmt.Errorf("notmuch count: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -2317,7 +2393,7 @@ func (b *CLIBackend) Revision(ctx context.Context) (string, uint64, error) {
 }
 
 func (b *CLIBackend) New(ctx context.Context) error {
-	out, err := b.run(ctx, "notmuch", "new")
+	out, err := b.run(ctx, "notmuch", []string{"new"})
 	if err != nil {
 		return fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
 	}
@@ -2331,13 +2407,18 @@ func (b *CLIBackend) New(ctx context.Context) error {
 go test ./notmuch/ -v
 ```
 
-Expected: all 5 tests pass. Also verify the parse shape against the real CLI (read-only, numbers only):
+Expected: all 7 tests pass. Also verify the parse shape against the real CLI (read-only, numbers only):
 
 ```bash
 notmuch count --lastmod ''
 ```
 
-Expected: one line, 3 tab-separated fields (count, uuid, revision).
+Expected: one line, 3 tab-separated fields (count, uuid, revision). The search/show fixtures mirror the real wire shapes (verified against notmuch 0.40): search summary keys are thread/timestamp/date_relative/matched/total/authors/subject/query/tags (no message id); show messages carry id/match/excluded/filename (list)/timestamp/tags/headers/crypto/duplicate nested as `[message|null, [children]]` trees.
+
+**Task 8 coordination notes (verified 2026-08-14 against live 0.40 + source):**
+- Query returns ONE STUB PER THREAD with ID empty by design: no notmuch output pairs message ids with thread ids (search summary is thread-level; `--output=messages`/`--output=files` are message-level and unpairable with it; show carries no thread id). The refresh cycle (task 10) groups Query results by ThreadID only. Per-message ids, filenames, headers come exclusively from Thread. The stub contract is load-bearing for the cache job (task 12: paths come from Thread, never Query) and for task 13's benchmark (CLI Query counts = threads, cgo Query counts = messages; report the asymmetry).
+- Thread synthesizes ThreadID from the query argument and References from the tree nesting (root-first chain; view parentOf reverses and takes the nearest ancestor). Author comes from headers["From"] (raw header) while Query's Author is the summary's parsed name list - the renderer (task 11) must not double-decode.
+- Task 15's soak test must NOT take its target id from Query results (stub ID is empty): fetch the thread via ActThread and use a real message id.
 
 - [ ] **Step 5: Commit**
 

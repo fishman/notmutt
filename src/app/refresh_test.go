@@ -114,6 +114,37 @@ func TestCycleUUIDFlipFullReload(t *testing.T) {
 	}
 }
 
+func TestCycleFullReloadRemoves(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u1", 5)
+	fw.setMsgs([]core.Message{{ID: "old", ThreadID: "t0"}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 5)
+	r.cycle() // uuid flip from "": full reload loads t0
+	if len(view.Threads) != 1 {
+		t.Fatalf("expected t0 loaded, got %d threads", len(view.Threads))
+	}
+	fw.setMsgs(nil)
+	fw.set("u2", 6)
+	ch := bus.Subscribe()
+	r.cycle() // uuid flip: full reload, empty result -> view empties
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected ViewDiff from emptying reload, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff after emptying reload")
+	}
+	if len(view.Threads) != 0 {
+		t.Fatalf("expected empty view after full reload, got %d threads", len(view.Threads))
+	}
+	if len(r.snapshot) != 0 {
+		t.Fatalf("snapshot not reset: %d threads", len(r.snapshot))
+	}
+}
+
 func TestCycleQuiet(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}

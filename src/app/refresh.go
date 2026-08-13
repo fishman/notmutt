@@ -74,8 +74,10 @@ func (r *refresher) cycle() {
 // merge carries unchanged threads over from the last snapshot: the
 // incremental feed names only changed threads, and MergeThreads replaces
 // the view's thread set with its input, so a partial feed would evict
-// every thread it does not mention. The snapshot is content-only; cursor
-// and collapse state live on the view's own thread objects.
+// every thread it does not mention. Full reloads bypass this path - they
+// replace the snapshot with the fresh query page, which is how removals
+// reconcile. The snapshot is content-only; cursor and collapse state
+// live on the view's own thread objects.
 func (r *refresher) merge(changed []*core.Thread) {
 	snapshot := make([]*core.Thread, 0, len(r.snapshot)+len(changed))
 	byID := make(map[string]bool, len(changed))
@@ -140,15 +142,21 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	return threads
 }
 
-// fullReload re-fetches the view query and merges; cursor survives via
-// the merge walk. Called for uuid changes, manual refresh, view config
-// changes, and first load.
+// fullReload re-fetches the view query and diffs the fresh page in as
+// the full state: the view becomes exactly the query result, so threads
+// that retagged out of the filter or were deleted are removed. Called
+// for uuid changes, manual refresh, view config changes, and first load.
+// The cursor survives via the merge walk.
 func (r *refresher) fullReload() {
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: r.page})
 	if err != nil || rpl.Err != nil {
 		return
 	}
-	r.merge(r.fetchThreads(rpl.Msgs))
+	threads := r.fetchThreads(rpl.Msgs)
+	sortThreads(threads)
+	r.snapshot = threads
+	r.view.MergeThreads(threads)
+	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 
 func sortThreads(threads []*core.Thread) {

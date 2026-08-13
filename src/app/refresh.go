@@ -17,14 +17,15 @@ type workerAPI interface {
 // triggers. R_prev is the revision queried through - a change landing
 // mid-cycle falls into the next one: one-cycle lag, deterministic.
 type refresher struct {
-	bus     *core.Bus
-	worker  workerAPI
-	view    *core.View
-	page    int
-	uuid    string
-	rPrev   uint64
-	running bool
-	mu      sync.Mutex
+	bus      *core.Bus
+	worker   workerAPI
+	view     *core.View
+	page     int
+	uuid     string
+	rPrev    uint64
+	snapshot []*core.Thread
+	running  bool
+	mu       sync.Mutex
 }
 
 func newRefresher(bus *core.Bus, w workerAPI, view *core.View, rPrev uint64) *refresher {
@@ -53,17 +54,44 @@ func (r *refresher) cycle() {
 	if rpl.Rev == r.rPrev {
 		return
 	}
+	// Drift is deliberate: messages retagged out of the view query still
+	// bump lastmod, so their threads re-merge and can linger with stale
+	// rows, while wholly deleted threads never appear in the changed set.
+	// The reconcile soak timer (periodic full reload, T12) is the net.
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
+		// Swallow is deliberate: a lock timeout already surfaced as
+		// WorkerLockTimeout on the bus; the view self-heals next cycle.
 		return
 	}
 	threads := r.fetchThreads(msgs)
 	if len(threads) > 0 {
-		sortThreads(threads)
-		r.view.MergeThreads(threads)
-		r.bus.Publish(core.ViewDiff{View: r.view.Name})
+		r.merge(threads)
 	}
 	r.rPrev = rpl.Rev
+}
+
+// merge carries unchanged threads over from the last snapshot: the
+// incremental feed names only changed threads, and MergeThreads replaces
+// the view's thread set with its input, so a partial feed would evict
+// every thread it does not mention. The snapshot is content-only; cursor
+// and collapse state live on the view's own thread objects.
+func (r *refresher) merge(changed []*core.Thread) {
+	snapshot := make([]*core.Thread, 0, len(r.snapshot)+len(changed))
+	byID := make(map[string]bool, len(changed))
+	for _, t := range changed {
+		byID[t.ID] = true
+	}
+	for _, t := range r.snapshot {
+		if !byID[t.ID] {
+			snapshot = append(snapshot, t)
+		}
+	}
+	snapshot = append(snapshot, changed...)
+	sortThreads(snapshot)
+	r.view.MergeThreads(snapshot)
+	r.snapshot = snapshot
+	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 
 func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
@@ -72,13 +100,14 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 		Query: fmt.Sprintf("lastmod:%d..%d", prev, cur),
 	})
 	if err != nil || rpl.Err != nil {
-		return nil, fmt.Errorf("changed query: %v %v", err, rpl.Err)
+		return nil, fmt.Errorf("changed query failed (err=%v, reply=%v)", err, rpl.Err)
 	}
 	return rpl.Msgs, nil
 }
 
 // fetchThreads maps changed messages to their threads and fetches each
-// thread's full state, budgeted to 3 concurrent calls.
+// thread's full state, budgeted to 3 concurrent calls. A failed thread
+// fetch is silently dropped so a dead thread cannot kill the cycle.
 func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	ids := map[string]bool{}
 	for _, m := range msgs {
@@ -119,10 +148,7 @@ func (r *refresher) fullReload() {
 	if err != nil || rpl.Err != nil {
 		return
 	}
-	threads := r.fetchThreads(rpl.Msgs)
-	sortThreads(threads)
-	r.view.MergeThreads(threads)
-	r.bus.Publish(core.ViewDiff{View: r.view.Name})
+	r.merge(r.fetchThreads(rpl.Msgs))
 }
 
 func sortThreads(threads []*core.Thread) {

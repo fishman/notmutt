@@ -1778,32 +1778,36 @@ func Open(path string) (*Bbolt, error) {
 
 func (b *Bbolt) Get(k Key) ([]core.Attachment, bool, error) {
 	var atts []core.Attachment
-	var found bool
+	var hit, valid bool
 	err := b.db.View(func(tx *bbolt.Tx) error {
 		v := tx.Bucket(bucket).Get([]byte(k.String()))
 		if v == nil {
 			return nil
 		}
-		atts = decode(v)
-		found = true
+		hit = true
+		atts, valid = decode(v)
 		return nil
 	})
 	if err != nil {
 		return nil, false, err
 	}
-	if found && atts == nil {
+	if !hit {
+		return nil, false, nil
+	}
+	if !valid {
 		b.Delete(k) // corrupt entry: discard
 		return nil, false, nil
 	}
-	return atts, found, nil
+	// A hit with nil atts means "no attachments", never a miss.
+	return atts, true, nil
 }
 
-func decode(v []byte) []core.Attachment {
+func decode(v []byte) ([]core.Attachment, bool) {
 	var atts []core.Attachment
 	if err := gob.NewDecoder(bytes.NewReader(v)).Decode(&atts); err != nil {
-		return nil
+		return nil, false
 	}
-	return atts
+	return atts, true
 }
 
 func (b *Bbolt) Put(k Key, atts []core.Attachment) error {
@@ -1834,12 +1838,12 @@ package cache
 
 import (
 	"io"
-	"mime"
 	"os"
 	"strconv"
 	"strings"
 
-	"github.com/emersion/go-message/mail"
+	"github.com/emersion/go-message"
+	_ "github.com/emersion/go-message/charset"
 
 	"notmutt/core"
 )
@@ -1852,8 +1856,8 @@ func ScanAttachments(path string) ([]core.Attachment, error) {
 		return nil, err
 	}
 	defer f.Close()
-	m, err := mail.ReadMessage(f)
-	if err != nil {
+	m, err := message.Read(f)
+	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 		return nil, err
 	}
 	var atts []core.Attachment
@@ -1861,7 +1865,7 @@ func ScanAttachments(path string) ([]core.Attachment, error) {
 	return atts, nil
 }
 
-func walk(m *mail.Message, atts *[]core.Attachment) {
+func walk(m *message.Entity, atts *[]core.Attachment) {
 	mt, _, err := m.Header.ContentType()
 	if err != nil || !strings.HasPrefix(mt, "multipart/") {
 		return
@@ -1874,6 +1878,9 @@ func walk(m *mail.Message, atts *[]core.Attachment) {
 		p, err := mr.NextPart()
 		if err == io.EOF {
 			return
+		}
+		if message.IsUnknownCharset(err) || message.IsUnknownEncoding(err) {
+			continue // bodies are never read, so these are spurious here
 		}
 		if err != nil {
 			return
@@ -1889,17 +1896,21 @@ func walk(m *mail.Message, atts *[]core.Attachment) {
 	}
 }
 
-func filename(p *mail.Message) string {
-	if cd, err := p.Header.ContentDisposition(); err == nil {
-		if _, params, err := mime.ParseMediaType(cd); err == nil {
-			return params["filename"]
-		}
+func filename(p *message.Entity) string {
+	_, params, err := p.Header.ContentDisposition()
+	if err == nil && params["filename"] != "" {
+		return params["filename"]
+	}
+	// Exchange-era mail and list archives identify attachments by the
+	// Content-Type name= param instead of Content-Disposition.
+	if _, params, err := p.Header.ContentType(); err == nil && params != nil {
+		return params["name"]
 	}
 	return ""
 }
 
-func isAttachment(p *mail.Message) bool {
-	cd, err := p.Header.ContentDisposition()
+func isAttachment(p *message.Entity) bool {
+	cd, _, err := p.Header.ContentDisposition()
 	if err != nil {
 		return false
 	}
@@ -1921,7 +1932,7 @@ func contentLength(s string) int64 {
 go test ./cache/ -v
 ```
 
-Expected: all 6 tests pass. `gofmt -l .` prints nothing.
+Expected: all 9 tests pass. `gofmt -l .` prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -1930,6 +1941,33 @@ cd /home/user/git/opencode/notmutt
 git add src/cache
 git commit -m "Add bbolt MIME cache and go-message attachment scan"
 ```
+
+### Review notes (applied fixes, T7)
+
+- Charset handling: `_ "github.com/emersion/go-message/charset"` registers
+  common charsets (iso-8859-*, windows-125x, ...) so a text part cannot
+  abort the attachment walk; the charset subpackage is part of the
+  already-pinned go-message v0.18.2 module and its golang.org/x/text v0.14.0
+  subpackage dependencies were added to vendor by `go mod vendor`
+  (go.mod/go.sum byte-identical). walk() treats IsUnknownCharset/
+  IsUnknownEncoding errors as continue, not stop - bodies are never read,
+  so these errors are spurious for scanning; ScanAttachments proceeds with
+  the entity message.Read returns alongside charset/encoding errors.
+- Empty-list semantics: a hit with nil or empty atts means "no attachments"
+  and must not trigger a rescan; corrupt detection is the gob decode error,
+  not nil-ness (gob encodes nil and empty slices identically).
+- T11 notes: Size is 0 when the Content-Length header is absent - render
+  blank, never "0". MimeType is stored as the raw Content-Type header
+  string; parameter parsing happens at render time.
+- T9 note: "do not Put empty lists" is now unnecessary - empty lists are
+  valid hits; cache empty results freely.
+- API note (verified against the module cache): go-message v0.18.2's mail
+  subpackage exists (absent from vendor only because nothing imported it)
+  but it has NO Message type or ReadMessage function - grep over the whole
+  module finds neither, and its Reader/CreateReader/NextPart API returns
+  *Part whose header interface lacks ContentType/ContentDisposition. The
+  root message package (message.Read -> *message.Entity) is the equivalent
+  API the scan uses; the substitution stands.
 
 ## Task 8: Notmuch CLI backend
 

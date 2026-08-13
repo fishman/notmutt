@@ -3247,6 +3247,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/mattn/go-runewidth"
 
 	"notmutt/core"
 )
@@ -3254,13 +3255,24 @@ import (
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}},
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
 	return New(view, nil)
 }
 
-func press(t *testing.T, m tea.Model, key string) tea.Model {
+// ghostModel builds a thread whose messages share no reference chain:
+// core emits a synthetic ghost root row (Msg == nil) at the thread start.
+func ghostModel() Model {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
+		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
+	})})
+	return New(view, nil)
+}
+
+func press(t *testing.T, m tea.Model, key string) Model {
 	t.Helper()
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
 	return next.(Model)
@@ -3311,10 +3323,94 @@ func TestQuit(t *testing.T) {
 func TestEventMsgRepaints(t *testing.T) {
 	m := model()
 	m.view.SetCursor("a")
-	next, _ := m.Update(EventMsg{Event: core.ViewDiff{View: "inbox"}})
+	next, nextCmd := m.Update(EventMsg{Event: core.ViewDiff{View: "inbox"}})
 	if next.(Model).CursorIndex() != 1 {
 		t.Fatalf("cursor by id after event = %d", next.(Model).CursorIndex())
 	}
+	if nextCmd == nil {
+		t.Fatal("EventMsg must re-arm the bridge")
+	}
+}
+
+func TestGhostRowRendersAndCursorSkips(t *testing.T) {
+	m := ghostModel()
+	m.width, m.height = 80, 24
+	out := m.View()
+	if !strings.Contains(out, "[...]") {
+		t.Fatalf("ghost row missing from render:\n%s", out)
+	}
+	if !strings.Contains(out, "hello") {
+		t.Fatalf("real rows missing from render:\n%s", out)
+	}
+	m = press(t, m, "j")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("cursor should sit on the first real row, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "k")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("k must not move the cursor onto the ghost row, got %d", m.CursorIndex())
+	}
+}
+
+func TestToggleRead(t *testing.T) {
+	m := model()
+	var gotID string
+	var gotAdd bool
+	calls := 0
+	SetTagOpHandler(func(id string, add bool) { calls++; gotID, gotAdd = id, add })
+	m = press(t, m, "t")
+	if calls != 1 || gotID != "b" || !gotAdd {
+		t.Fatalf("hook wrong: calls=%d id=%q add=%v", calls, gotID, gotAdd)
+	}
+	row, _ := m.view.CursorRow()
+	if !hasTag(row.Msg.Tags, "unread") {
+		t.Fatalf("unread not added to cursor message: %v", row.Msg.Tags)
+	}
+	m = press(t, m, "t")
+	if calls != 2 || gotAdd {
+		t.Fatalf("second toggle must remove: id=%q add=%v", gotID, gotAdd)
+	}
+	if hasTag(row.Msg.Tags, "unread") {
+		t.Fatalf("unread not removed: %v", row.Msg.Tags)
+	}
+}
+
+func TestPadCellsRightExactWidth(t *testing.T) {
+	// 2-cell rune at the boundary: truncation stops at 15 cells, padding
+	// must restore the slot to exactly 16
+	got := padCellsRight(strings.Repeat("你", 7)+"a"+"你", 16)
+	if runewidth.StringWidth(got) != 16 {
+		t.Fatalf("padCellsRight returned %d cells, want 16: %q", runewidth.StringWidth(got), got)
+	}
+	if runewidth.StringWidth(padCellsRight("short", 16)) != 16 {
+		t.Fatal("short pad must also be exactly 16 cells")
+	}
+}
+
+func TestRenderSanitizesControls(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
+	})})
+	m := New(view, nil)
+	m.width, m.height = 80, 24
+	out := m.View()
+	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;
+	// check the injected sequences specifically
+	for _, leak := range []string{"\x1b]", "\x07", "\x1b[31m", "\x1b[41m"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("control chars leaked into render:\n%q", out)
+		}
+	}
+}
+
+func hasTag(tags []string, tag string) bool {
+	for _, t := range tags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
 }
 ```
 
@@ -3397,26 +3493,43 @@ func (m *Model) moveCursor(delta int) {
 	if idx >= len(rows) {
 		idx = len(rows) - 1
 	}
+	if rows[idx].Msg == nil {
+		// ghost rows are pass-through: walk in the move direction to the
+		// nearest real message; at a boundary, do not move
+		for {
+			idx += delta
+			if idx < 0 || idx >= len(rows) {
+				return
+			}
+			if rows[idx].Msg != nil {
+				break
+			}
+		}
+	}
 	m.view.SetCursor(rows[idx].Msg.ID)
 }
 
 func (m *Model) toggleRead() {
 	row, ok := m.view.CursorRow()
-	if !ok {
+	if !ok || row.Msg == nil {
 		return
 	}
+	tags := append([]string(nil), row.Msg.Tags...)
 	has := false
-	for _, t := range row.Msg.Tags {
+	for _, t := range tags {
 		if t == "unread" {
 			has = true
 		}
 	}
-	// optimistic local flip; the refresh cycle converges from DB truth
+	// optimistic local flip on a fresh copy: removeTag compacts in place,
+	// and the view's message shares its backing array with the refresher's
+	// snapshot, so in-place compaction would corrupt the next merge
 	if has {
-		row.Msg.Tags = removeTag(row.Msg.Tags, "unread")
+		tags = removeTag(tags, "unread")
 	} else {
-		row.Msg.Tags = append(row.Msg.Tags, "unread")
+		tags = append(tags, "unread")
 	}
+	row.Msg.Tags = tags
 	onTagOp(row.Msg.ID, !has)
 }
 
@@ -3435,7 +3548,20 @@ func (m Model) CursorIndex() int {
 	if !ok {
 		return 0
 	}
+	if row.Msg == nil {
+		// cursor anchored on a ghost row (fresh view, empty cursor id):
+		// its position is the thread's first row
+		for i, r := range m.rows {
+			if r.Ghost && r.ThreadID == row.ThreadID {
+				return i
+			}
+		}
+		return 0
+	}
 	for i, r := range m.rows {
+		if r.Msg == nil {
+			continue
+		}
 		if r.Msg.ID == row.Msg.ID {
 			return i
 		}
@@ -3482,14 +3608,29 @@ func renderRow(n int, row core.Row) string {
 	var b strings.Builder
 	b.WriteString(padCellsRight(strconv.Itoa(n), 4))
 	b.WriteByte(' ')
+	if row.Msg == nil {
+		// ghost root: message-derived slots stay blank, "[...]" fills the
+		// subject slot so the template stays aligned
+		b.WriteString(padCellsRight("", 3))
+		b.WriteString(" ")
+		b.WriteByte(' ')
+		b.WriteString(padCellsRight("", 15))
+		b.WriteByte(' ')
+		b.WriteString(padCellsRight("", 16))
+		b.WriteByte(' ')
+		b.WriteString(truncCells("[...] "+strconv.Itoa(row.Count), 40))
+		return b.String()
+	}
 	b.WriteString(flags(row.Msg))
 	b.WriteString(attachIcon(row.Msg))
 	b.WriteByte(' ')
 	b.WriteString(padCellsRight(formatDate(row.Msg.Timestamp), 15))
 	b.WriteByte(' ')
-	b.WriteString(padCellsRight(truncCells(row.Msg.Author, 16), 16))
+	author := stripControls(row.Msg.Author)
+	b.WriteString(padCellsRight(truncCells(author, 16), 16))
 	b.WriteByte(' ')
-	b.WriteString(truncCells(row.Msg.Subject, 40))
+	subject := stripControls(row.Msg.Subject)
+	b.WriteString(truncCells(subject, 40))
 	b.WriteByte(' ')
 	b.WriteString(tagGlyphs(row.Msg))
 	return b.String()
@@ -3535,11 +3676,28 @@ func tagGlyphs(m *core.Message) string {
 		if n >= 2 {
 			break
 		}
-		b.WriteString(padCellsRight(truncCells(t, 4), 4))
+		b.WriteString(padCellsRight(truncCells(stripControls(t), 4), 4))
 		b.WriteByte(' ')
 		n++
 	}
 	return strings.TrimRight(b.String(), " ")
+}
+
+// stripControls drops C0/DEL/C1 control runes so mail content can never
+// inject terminal escapes (F1).
+func stripControls(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || (r >= 0x7F && r <= 0x9F) }) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // truncCells truncates s to at most w terminal cells; padCellsRight pads
@@ -3559,11 +3717,8 @@ func truncCells(s string, w int) string {
 }
 
 func padCellsRight(s string, w int) string {
-	cells := runewidth.StringWidth(s)
-	if cells >= w {
-		return truncCells(s, w)
-	}
-	return s + strings.Repeat(" ", w-cells)
+	t := truncCells(s, w)
+	return t + strings.Repeat(" ", w-runewidth.StringWidth(t))
 }
 ```
 
@@ -3610,7 +3765,7 @@ func SetTagOpHandler(fn func(msgID string, add bool)) {
 go test ./tui/ -v
 ```
 
-Expected: all 4 tests pass. `gofmt -l .` prints nothing.
+Expected: all 8 tests pass. `gofmt -l .` prints nothing.
 
 - [ ] **Step 5: Commit**
 
@@ -3619,6 +3774,32 @@ cd /home/user/git/opencode/notmutt
 git add src/tui
 git commit -m "Add BubbleTea index view with fixed-slot rows and bus bridge"
 ```
+
+**Coordination notes (post-implementation, Task 11)**: committed as 0614baa,
+fix round 07e9ee6 from the code-quality review. Plan defects found in
+review, reflected in the blocks above:
+(1) the original test data had no reference chain - two root messages made a
+ghost row at index 0 (TestCursorMoves clamped at 2; TestRenderShowsRows and
+TestEventMsgRepaints panicked on a nil message); "a" now references "b" and
+the model is ghost-safe: renderRow nil branch, moveCursor pass-through walk,
+CursorIndex ghost scan, toggleRead nil guard.
+(2) the original toggleRead mutated the tag slice in place - removeTag's
+`tags[:0]` compaction rewrites the backing array the refresher's snapshot
+aliases through reconcileMsg's slice-header copy (`cur.Tags = fresh.Tags`,
+core/view.go), so the snapshot saw a duplicated tag and the next carried-over
+merge reconciled it back; toggleRead now copies on write.
+(3) the original padCellsRight returned up to w-1 cells on the truncation
+path (a 2-cell rune at the boundary), shifting the tag/subject columns per
+row; it now truncates once, then pads to exactly w cells (R11 alignment).
+(4) raw ESC/C0 from mail content (subject, author, tags) reached the
+terminal - stripControls (C0/DEL/C1, `strings.ContainsFunc` fast path) runs
+at the render boundary before layout (SECURITY.md F1).
+Minor notes: tagGlyphs skips "unread" before stripping, so a hostile tag
+"un\x1bread" renders as "unread" (cosmetic, no leak - strip-before-compare
+if ever touched); the EventCmd goroutine can leak on quit but is
+exit-scoped (note for the library extraction, R5); CursorIndex scans stale
+rows between events (self-heals on the next render) - known glitch, no
+action.
 
 ## Task 12: App wiring
 

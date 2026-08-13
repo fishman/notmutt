@@ -1036,12 +1036,12 @@ func TestRowsFlattenThreadTree(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	t1 := NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})
 	t2 := NewThread("t2", []*Message{msg("other", 300)})
-	v.MergeThreads([]*Thread{t1, t2})
+	v.MergeThreads([]*Thread{t2, t1})
 	rows := v.Rows()
 	if len(rows) != 3 {
 		t.Fatalf("want 3 rows, got %d", len(rows))
 	}
-	if rows[0].Msg.ID != "other" || rows[0].Root {
+	if rows[0].Msg.ID != "other" || !rows[0].Root {
 		t.Fatalf("first row wrong: %+v", rows[0])
 	}
 	if rows[1].Msg.ID != "root" || !rows[1].Root {
@@ -1055,17 +1055,18 @@ func TestRowsFlattenThreadTree(t *testing.T) {
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})
-	// a reply arrives, sorts before its parent under reverse-date
+	// a reply arrives, sorts before its parent in the message list under
+	// reverse-date; the tree still renders the parent above the child
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100), msg("reply", 200, "root")})})
 	rows := v.Rows()
 	if len(rows) != 2 {
 		t.Fatalf("want 2 rows after insert, got %d", len(rows))
 	}
-	if rows[0].Msg.ID != "reply" || rows[0].Depth != 1 {
-		t.Fatalf("reply not inserted at date position: %+v", rows[0])
+	if rows[0].Msg.ID != "root" || !rows[0].Root {
+		t.Fatalf("root must stay first row: %+v", rows[0])
 	}
-	if rows[1].Msg.ID != "root" {
-		t.Fatalf("root lost: %+v", rows[1])
+	if rows[1].Msg.ID != "reply" || rows[1].Depth != 1 {
+		t.Fatalf("reply not inserted under parent: %+v", rows[1])
 	}
 }
 
@@ -1108,8 +1109,8 @@ func TestCursorSurvivesMerge(t *testing.T) {
 
 func TestCollapseHidesChildren(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
-	t := NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})
-	v.MergeThreads([]*Thread{t})
+	th := NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})
+	v.MergeThreads([]*Thread{th})
 	v.Threads[0].Collapsed = true
 	rows := v.Rows()
 	if len(rows) != 1 {

@@ -2825,7 +2825,7 @@ snapshots. Two consequences, both in the code below:
    untouched thread.
 2. `fullReload` resets the snapshot to the fresh query page, so
    removals (retagged/deleted threads) reconcile only on full
-   reloads - the drift the T12 soak timer is the net for. Deliberate;
+   reloads - the drift a periodic full reload (soak timer, future work) would be the net for. Deliberate;
    the incremental path never removes.
 `MergeThreads` sorts defensively, so the `sortThreads` steps are
 redundant but harmless.
@@ -3078,7 +3078,7 @@ func (r *refresher) cycle() {
 	// Drift is deliberate: messages retagged out of the view query still
 	// bump lastmod, so their threads re-merge and can linger with stale
 	// rows, while wholly deleted threads never appear in the changed set.
-	// The reconcile soak timer (periodic full reload, T12) is the net.
+	// The reconcile soak timer (periodic full reload, future work) is the net.
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
 		// Swallow is deliberate: a lock timeout already surfaced as
@@ -3842,7 +3842,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"notmutt/cache"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
@@ -3882,8 +3881,8 @@ func Run() error {
 	tui.SetTagOpHandler(func(msgID string, add bool) {
 		go func() {
 			worker.Call(notmuch.Action{
-				Kind:  notmuch.ActTag,
-				Query: "id:\"" + strings.ReplaceAll(msgID, `"`, `\"`) + `"`,
+				Kind:   notmuch.ActTag,
+				Query:  "id:\"" + strings.ReplaceAll(msgID, `"`, `""`) + `"`,
 				TagOps: []notmuch.TagOp{{Tag: "unread", Add: add}},
 			})
 		}()
@@ -3897,7 +3896,8 @@ func Run() error {
 		<-ctx.Done()
 		prog.Quit()
 	}()
-	return prog.Run()
+	_, err = prog.Run()
+	return err
 }
 
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, r *refresher) {
@@ -3970,14 +3970,13 @@ const scanPage = 40
 // concurrent scans. Results land in the row model; the TUI repaints on
 // any event.
 type cacheJob struct {
-	bus    *core.Bus
-	worker workerAPI
-	view   *core.View
-	cache  cache.Cache
+	bus   *core.Bus
+	view  *core.View
+	cache cache.Cache
 }
 
 func newCacheJob(bus *core.Bus, w workerAPI, view *core.View, dbPath string) *cacheJob {
-	cj := &cacheJob{bus: bus, worker: w, view: view}
+	cj := &cacheJob{bus: bus, view: view}
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0700); err != nil {
 		return cj
 	}
@@ -4033,7 +4032,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 				}
 				k := cache.Key{Path: p, Size: fi.Size(), Mtime: fi.ModTime().Unix()}
 				if atts, ok, err := c.cache.Get(k); err == nil && ok {
-					m.Atts = atts
+					c.view.SetAtts(m.ID, atts)
 					c.bus.Publish(core.CacheResult{MsgID: m.ID, Atts: atts})
 					return
 				}
@@ -4042,7 +4041,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 					continue
 				}
 				c.cache.Put(k, atts)
-				m.Atts = atts
+				c.view.SetAtts(m.ID, atts)
 				c.bus.Publish(core.CacheResult{MsgID: m.ID, Atts: atts})
 				return
 			}
@@ -4071,6 +4070,44 @@ cd /home/user/git/opencode/notmutt
 git add src/main.go src/app
 git commit -m "Wire app: config, worker, refresher, cache job, TUI"
 ```
+
+**Coordination notes (post-implementation, Task 12)**: committed as
+ed427aa with fix rounds cc5c7c7 and a72c0fc from review. Deviations from
+the blocks above, all required or review-forced:
+(1) `src/doc.go` changed package `notmutt` -> `main`: the module root
+cannot hold two packages once main.go exists; its blank-import vendoring
+purpose is unchanged (staged with ed427aa).
+(2) app.go does not import "notmutt/cache" - the block listed it but
+nothing in app.go uses it (all cache usage is in cachejob.go).
+(3) `_, err = prog.Run(); return err` - bubbletea v1.1.0's Run returns
+(Model, error) (src/vendor/github.com/charmbracelet/bubbletea/tea.go:462).
+(4) the cache job's Atts writes go through a new locked `View.SetAtts`
+(core/view.go, TestViewSetAtts): the block's direct `m.Atts = atts` write
+was a data race against the TUI's render reads, and the committed design
+note (core/view.go:12-14) mandates the locked path.
+(5) the smoke run needs `go build -o notmutt .` first: `go build ./...`
+discards binaries.
+(6) the tag-op query doubles quotes (`strings.ReplaceAll(msgID, `"`,
+`""`)`): notmuch's escape rule is doubling (`notmuch/doc/man7/notmuch-
+search-terms.rst`), and the block's backslash form silently matched zero
+messages for ids containing a quote, leaving the optimistic toggle wrong.
+(7) the dead `worker` field on cacheJob was dropped (the `w` parameter of
+newCacheJob is retained).
+(8) the refresh.go drift comment's "(periodic full reload, T12)" corrected
+to "future work": T12's runRefresher ships no soak timer (ticker does
+ActNew + cycle only); removals reconcile on uuid flip / config change /
+initial load only - the T10 coordination note above updated to match.
+(9) TestScanVisible (new src/app/cachejob_test.go): synthetic multipart
+message; pass 1 takes the scan path, pass 2 (reset via SetAtts("m1",
+nil)) the cache-hit path; both CacheResult publishes asserted, both
+branches line-cover verified.
+Minors: TestScanVisible would not catch a regression to direct unlocked
+Atts writes (the lock discipline is enforced by -race only under real
+concurrency); the test leaves the bbolt handle open (harmless, TempDir);
+firstView iterates a map - with more than one view the startup view is
+nondeterministic (docs/examples has one); scanVisible's wg.Wait stalls
+the event loop while draining (bounded at 40 rows x sem 2, acceptable; a
+network-backed maildir would stall rescans - future note).
 
 ## Task 13: cgo backend (benchmark path)
 

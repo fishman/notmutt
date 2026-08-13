@@ -2816,11 +2816,19 @@ git commit -m "Add worker action loop with lock budgets and bus events"
 **Files:**
 - Create: `src/app/refresh.go`, `src/app/refresh_test.go`, `src/app/doc.go`
 
-**Coordination note (T6 review)**: snapshots fed to `MergeThreads`
-must be FILTERED by the view query - messages that left the filter
-linger in the view forever otherwise (T6 C1). `MergeThreads` sorts
-defensively, so the `sortThreads` step below is redundant but
-harmless.
+**Coordination note (T6 review + post-implementation)**: `MergeThreads`
+is a FULL-STATE diff (T6): the view's thread set becomes exactly its
+input, and matched threads reconcile from the input's message
+snapshots. Two consequences, both in the code below:
+1. The incremental feed carries the previous snapshot forward
+   (`merge()`): feeding only changed threads would evict every
+   untouched thread.
+2. `fullReload` resets the snapshot to the fresh query page, so
+   removals (retagged/deleted threads) reconcile only on full
+   reloads - the drift the T12 soak timer is the net for. Deliberate;
+   the incremental path never removes.
+`MergeThreads` sorts defensively, so the `sortThreads` steps are
+redundant but harmless.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2836,7 +2844,6 @@ package app
 package app
 
 import (
-	"context"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2848,11 +2855,16 @@ import (
 type fakeWorker struct {
 	uuid atomic.Value
 	rev  atomic.Uint64
+	msgs atomic.Value
 }
 
 func (f *fakeWorker) set(uuid string, rev uint64) {
 	f.uuid.Store(uuid)
 	f.rev.Store(rev)
+}
+
+func (f *fakeWorker) setMsgs(msgs []core.Message) {
+	f.msgs.Store(msgs)
 }
 
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -2862,9 +2874,13 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.UUID, _ = f.uuid.Load().(string)
 		r.Rev = f.rev.Load()
 	case notmuch.ActQuery:
-		r.Msgs = []core.Message{{ID: "changed", ThreadID: "t1"}}
+		r.Msgs, _ = f.msgs.Load().([]core.Message)
 	case notmuch.ActThread:
-		r.Msgs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
+		stubs, _ := f.msgs.Load().([]core.Message)
+		if len(stubs) == 0 {
+			stubs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
+		}
+		r.Msgs = stubs
 	}
 	return r, nil
 }
@@ -2873,27 +2889,49 @@ func TestCycleIncremental(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
 	fw.set("u", 10)
+	fw.setMsgs([]core.Message{{ID: "old", ThreadID: "t0"}})
 	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{{ID: "changed", ThreadID: "t1"}})})
+	view.MergeThreads([]*core.Thread{core.NewThread("t0", []*core.Message{{ID: "old", ThreadID: "t0"}})})
 	r := newRefresher(bus, fw, view, 10)
+	// first cycle, no uuid: full reload path, t0 re-fetched and kept
 	r.cycle()
 	if r.rPrev != 10 || r.uuid != "u" {
-		t.Fatalf("state wrong: %v %v", r.uuid, r.rPrev)
+		t.Fatalf("state wrong after full reload: %v %v", r.uuid, r.rPrev)
 	}
-	// no change: cycle is a no-op
+	// no rev change: clean no-op
 	r.cycle()
 	if len(view.Threads) != 1 {
 		t.Fatalf("no-op cycle changed the view: %d threads", len(view.Threads))
 	}
-	// rev bump with no new ids: nothing to fetch
+	// rev bump with a changed message: thread fetched and merged
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2"}})
 	fw.set("u", 11)
 	r.cycle()
-	// rev bump with a changed message: merged
+	if len(view.Threads) != 2 {
+		t.Fatalf("expected 2 threads after merge, got %d", len(view.Threads))
+	}
+	if !hasThread(view.Threads, "t2") {
+		t.Fatal("thread t2 missing after merge")
+	}
+	// rev bump with an empty changed set: nothing fetched, nothing merged
+	fw.setMsgs(nil)
 	fw.set("u", 12)
 	r.cycle()
-	if len(view.Threads) != 1 {
-		t.Fatalf("expected 1 thread after merge, got %d", len(view.Threads))
+	if len(view.Threads) != 2 {
+		t.Fatalf("empty changed set merged something: %d threads", len(view.Threads))
 	}
+	if r.rPrev != 12 || r.uuid != "u" {
+		t.Fatalf("state not advanced: %v %v", r.uuid, r.rPrev)
+	}
+}
+
+func hasThread(threads []*core.Thread, id string) bool {
+	for _, t := range threads {
+		if t.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCycleUUIDFlipFullReload(t *testing.T) {
@@ -2919,14 +2957,46 @@ func TestCycleUUIDFlipFullReload(t *testing.T) {
 	}
 }
 
+func TestCycleFullReloadRemoves(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u1", 5)
+	fw.setMsgs([]core.Message{{ID: "old", ThreadID: "t0"}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 5)
+	r.cycle() // uuid flip from "": full reload loads t0
+	if len(view.Threads) != 1 {
+		t.Fatalf("expected t0 loaded, got %d threads", len(view.Threads))
+	}
+	fw.setMsgs(nil)
+	fw.set("u2", 6)
+	ch := bus.Subscribe()
+	r.cycle() // uuid flip: full reload, empty result -> view empties
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected ViewDiff from emptying reload, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff after emptying reload")
+	}
+	if len(view.Threads) != 0 {
+		t.Fatalf("expected empty view after full reload, got %d threads", len(view.Threads))
+	}
+	if len(r.snapshot) != 0 {
+		t.Fatalf("snapshot not reset: %d threads", len(r.snapshot))
+	}
+}
+
 func TestCycleQuiet(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
 	fw.set("u", 10)
 	view := core.NewView("inbox", "tag:inbox")
 	r := newRefresher(bus, fw, view, 10)
+	r.cycle() // seed uuid/rPrev (this is the initial full reload)
 	ch := bus.Subscribe()
-	r.cycle()
+	r.cycle() // no rev change: no events
 	select {
 	case <-ch:
 		t.Fatal("no events expected on a clean cycle")
@@ -2968,14 +3038,15 @@ type workerAPI interface {
 // triggers. R_prev is the revision queried through - a change landing
 // mid-cycle falls into the next one: one-cycle lag, deterministic.
 type refresher struct {
-	bus     *core.Bus
-	worker  workerAPI
-	view    *core.View
-	page    int
-	uuid    string
-	rPrev   uint64
-	running bool
-	mu      sync.Mutex
+	bus      *core.Bus
+	worker   workerAPI
+	view     *core.View
+	page     int
+	uuid     string
+	rPrev    uint64
+	snapshot []*core.Thread
+	running  bool
+	mu       sync.Mutex
 }
 
 func newRefresher(bus *core.Bus, w workerAPI, view *core.View, rPrev uint64) *refresher {
@@ -2989,6 +3060,7 @@ func (r *refresher) cycle() {
 		return
 	}
 	r.running = true
+	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
@@ -3003,17 +3075,46 @@ func (r *refresher) cycle() {
 	if rpl.Rev == r.rPrev {
 		return
 	}
+	// Drift is deliberate: messages retagged out of the view query still
+	// bump lastmod, so their threads re-merge and can linger with stale
+	// rows, while wholly deleted threads never appear in the changed set.
+	// The reconcile soak timer (periodic full reload, T12) is the net.
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
+		// Swallow is deliberate: a lock timeout already surfaced as
+		// WorkerLockTimeout on the bus; the view self-heals next cycle.
 		return
 	}
 	threads := r.fetchThreads(msgs)
 	if len(threads) > 0 {
-		sortThreads(threads)
-		r.view.MergeThreads(threads)
-		r.bus.Publish(core.ViewDiff{View: r.view.Name})
+		r.merge(threads)
 	}
 	r.rPrev = rpl.Rev
+}
+
+// merge carries unchanged threads over from the last snapshot: the
+// incremental feed names only changed threads, and MergeThreads replaces
+// the view's thread set with its input, so a partial feed would evict
+// every thread it does not mention. Full reloads bypass this path - they
+// replace the snapshot with the fresh query page, which is how removals
+// reconcile. The snapshot is content-only; cursor and collapse state
+// live on the view's own thread objects.
+func (r *refresher) merge(changed []*core.Thread) {
+	snapshot := make([]*core.Thread, 0, len(r.snapshot)+len(changed))
+	byID := make(map[string]bool, len(changed))
+	for _, t := range changed {
+		byID[t.ID] = true
+	}
+	for _, t := range r.snapshot {
+		if !byID[t.ID] {
+			snapshot = append(snapshot, t)
+		}
+	}
+	snapshot = append(snapshot, changed...)
+	sortThreads(snapshot)
+	r.view.MergeThreads(snapshot)
+	r.snapshot = snapshot
+	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 
 func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
@@ -3022,13 +3123,14 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 		Query: fmt.Sprintf("lastmod:%d..%d", prev, cur),
 	})
 	if err != nil || rpl.Err != nil {
-		return nil, fmt.Errorf("changed query: %v %v", err, rpl.Err)
+		return nil, fmt.Errorf("changed query failed (err=%v, reply=%v)", err, rpl.Err)
 	}
 	return rpl.Msgs, nil
 }
 
 // fetchThreads maps changed messages to their threads and fetches each
-// thread's full state, budgeted to 3 concurrent calls.
+// thread's full state, budgeted to 3 concurrent calls. A failed thread
+// fetch is silently dropped so a dead thread cannot kill the cycle.
 func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	ids := map[string]bool{}
 	for _, m := range msgs {
@@ -3048,8 +3150,12 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 			if err != nil || rpl.Err != nil {
 				return
 			}
+			ptrs := make([]*core.Message, len(rpl.Msgs))
+			for i := range rpl.Msgs {
+				ptrs[i] = &rpl.Msgs[i]
+			}
 			mu.Lock()
-			threads = append(threads, core.NewThread(id, rpl.Msgs))
+			threads = append(threads, core.NewThread(id, ptrs))
 			mu.Unlock()
 		}(id)
 	}
@@ -3057,9 +3163,11 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	return threads
 }
 
-// fullReload re-fetches the view query and merges; cursor survives via
-// the merge walk. Called for uuid changes, manual refresh, view config
-// changes, and first load.
+// fullReload re-fetches the view query and diffs the fresh page in as
+// the full state: the view becomes exactly the query result, so threads
+// that retagged out of the filter or were deleted are removed. Called
+// for uuid changes, manual refresh, view config changes, and first load.
+// The cursor survives via the merge walk.
 func (r *refresher) fullReload() {
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: r.page})
 	if err != nil || rpl.Err != nil {
@@ -3067,6 +3175,7 @@ func (r *refresher) fullReload() {
 	}
 	threads := r.fetchThreads(rpl.Msgs)
 	sortThreads(threads)
+	r.snapshot = threads
 	r.view.MergeThreads(threads)
 	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
@@ -3082,7 +3191,7 @@ func sortThreads(threads []*core.Thread) {
 go test ./app/ -v
 ```
 
-Expected: all 3 tests pass.
+Expected: all 4 tests pass.
 
 - [ ] **Step 5: Commit**
 
@@ -3091,6 +3200,31 @@ cd /home/user/git/opencode/notmutt
 git add src/app
 git commit -m "Add lastmod incremental refresh cycle with full-reload triggers"
 ```
+
+**Coordination notes (post-implementation)**: committed as ec3eadb
+(the plan's Step 5 message), then f52030b and 153f7e2 from review.
+Three plan defects fixed in review, reflected in the blocks above:
+(1) the original `cycle()` held the mutex across the deferred clear -
+self-deadlock, unlock moved before the body; (2) the original
+`fetchThreads` passed `[]core.Message` to `NewThread` (takes
+`[]*core.Message`) - pointer conversion added; (3) the original
+`TestCycleQuiet` subscribed before the first cycle, which is a full
+reload that publishes ViewDiff - it could never pass, and
+`TestCycleIncremental` was vacuous (the fake always returned the seed
+thread, so every merge was a no-op and the test could not fail). Both
+were reworked: the fake gained a settable `setMsgs`, and a new
+`TestCycleFullReloadRemoves` proves the removal path (empty page
+empties the view, snapshot resets). T12 wiring notes from the quality
+review: (a) a thread fetch that fails mid-cycle is dropped while rPrev
+still advances - that update is skipped until the next full reload; a
+dropped-fetch counter the soak timer could key on is future work;
+(b) `fullReload` failure still advances uuid/rPrev (deliberate, no
+retry storm) - the stale view persists until the next uuid flip or
+soak; (c) a partial fetch failure inside `fullReload` trims the view
+(failed threads disappear until the next reload) - defensible under
+"full reload = exactly the query result"; (d) `merge()` publishes
+ViewDiff even on byte-identical content - consumers repaint from
+state, so harmless.
 
 ## Task 11: TUI
 

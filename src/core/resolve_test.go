@@ -56,6 +56,14 @@ func TestResolveMovesAreSymmetric(t *testing.T) {
 	if !slices.Equal(got, []string{"archive"}) {
 		t.Fatalf("tags = %v", got)
 	}
+	// a then d staged together: the last member-ADD wins the group
+	got, ops := ResolveOps([]string{"inbox"}, []TagOp{{Tag: "archive", Add: true}, {Tag: "deleted", Add: true}}, []TagGroup{folderGroup})
+	if !slices.Equal(got, []string{"deleted"}) {
+		t.Fatalf("tags = %v", got)
+	}
+	if !slices.Equal(ops, []TagOp{{Tag: "deleted", Add: true}, {Tag: "inbox", Add: false}}) {
+		t.Fatalf("ops = %v", ops)
+	}
 }
 
 func TestResolveUntouchedGroupsStay(t *testing.T) {

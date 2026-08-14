@@ -471,6 +471,29 @@ instead of a reversible stage.
 M1's immediate toggle (tui toggleRead -> ActTag) is the placeholder this
 requirement supersedes.
 
+### R15. Async progress display
+
+Background work reports progress on the bus, and the TUI renders it as a
+bar in the bottom right corner, in the row above the status line, while
+the user keeps navigating the index or composing elsewhere.
+
+- Jobs emit Progress events (job kind, done/total, label) at batch
+  boundaries: the refresher's thread fetches (page budget), the cache
+  scan (visible rows), the filter job (message batches), the send and
+  crypto jobs (R4). The worker action loop is not a progress source -
+  jobs report their own totals.
+- The widget subscribes to the bus and repaints on Progress exactly like
+  the index repaints on ViewDiff (the same async channel, R3). It
+  renders the latest event: a bar (done/total cells) plus a
+  kind-derived label, right-aligned in a fixed-width region above the
+  status line (the R11 slot-reservation rule - the region never shifts
+  with content). A completion event clears the bar. The widget never
+  takes focus and never blocks; labels are job-kind derived, never mail
+  content (F6).
+- Theming: the `progress` style (R11 mutt surface - fg/bg/attrs through
+  the palette machinery, inherits the base style) plus the filled-cell
+  glyph as config data (default block, the tag-transforms rule).
+
 The reference repos (neomutt, aerc, afew, neovim, lazygit, muttrc) are
 advisory:
 they prove the mail concept, the config intent, and the failure modes -

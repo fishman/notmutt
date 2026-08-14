@@ -11,7 +11,7 @@ import (
 	"notmutt/core"
 )
 
-// CGOBackend wraps github.com/zenhack/go.notmuch (fishman fork of zenhack's
+// CGOBackend wraps github.com/fishman/go.notmuch (fishman fork of zenhack's
 // go.notmuch, vendored; the upstream contrib/go bindings lack Revision and
 // were dormant 2018-2026). It exists only for the benchmark; the CLI backend
 // stays the default unless cgo demonstrably wins (SECURITY.md F10).
@@ -40,10 +40,16 @@ func (b *CGOBackend) Close(ctx context.Context) error {
 }
 
 func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
+	if b.db == nil {
+		return "", 0, fmt.Errorf("notmuch revision: database not open")
+	}
 	return b.db.Revision()
 }
 
 func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
+	if b.db == nil {
+		return nil, fmt.Errorf("notmuch search: database not open")
+	}
 	q := b.db.NewQuery(query)
 	defer q.Close()
 	q.SetSortScheme(nm.SORT_NEWEST_FIRST)

@@ -140,6 +140,16 @@ func TestValidateTagGroup(t *testing.T) {
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank tag name must error")
 	}
+	cfg = Default()
+	cfg.TagGroups["other"] = core.TagGroup{Tags: []string{"inbox"}}
+	if err := validate(cfg); err == nil {
+		t.Fatal("a tag in multiple groups must error")
+	}
+	cfg = Default()
+	cfg.TagGroups["other"] = core.TagGroup{Tags: []string{"wip"}}
+	if err := validate(cfg); err != nil {
+		t.Fatalf("disjoint groups must pass: %v", err)
+	}
 }
 
 func TestDefaultBindings(t *testing.T) {

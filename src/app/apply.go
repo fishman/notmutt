@@ -50,6 +50,9 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI) erro
 			}
 			continue
 		}
+		// MsgTags was snapshotted at apply start; SetTags overwrites
+		// whatever a concurrent merge reconciled in between. The next
+		// refresh re-reconciles snapshot truth, so the window self-heals.
 		view.SetTags(msgID, newTags)
 		view.ClearStaged(msgID, gen)
 	}

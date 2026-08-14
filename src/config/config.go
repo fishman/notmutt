@@ -103,17 +103,17 @@ func validate(cfg Config) error {
 			return fmt.Errorf("view %q: query must not be empty", name)
 		}
 	}
+	seen := map[string]bool{}
 	for name, g := range cfg.TagGroups {
 		if len(g.Tags) == 0 {
 			return fmt.Errorf("tag-groups.%s: at least one tag required", name)
 		}
-		seen := map[string]bool{}
 		for _, t := range g.Tags {
 			if strings.TrimSpace(t) == "" {
 				return fmt.Errorf("tag-groups.%s: empty tag name", name)
 			}
 			if seen[t] {
-				return fmt.Errorf("tag-groups.%s: duplicate tag %q", name, t)
+				return fmt.Errorf("tag %q in multiple groups", t)
 			}
 			seen[t] = true
 		}

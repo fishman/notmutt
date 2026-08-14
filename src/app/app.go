@@ -64,7 +64,7 @@ func Run() error {
 		}()
 	})
 
-	go runRefresher(ctx, bus, worker, view, refresher, st)
+	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
 	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions), tea.WithAltScreen())
@@ -76,7 +76,7 @@ func Run() error {
 	return err
 }
 
-func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, r *refresher, st *config.Store) {
+func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {
 	ch := bus.Subscribe()
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -126,8 +126,10 @@ func firstView(cfg config.Config) string {
 
 // validateBindings checks the loaded bindings against the action
 // vocabulary: every value must be a builtin action or a declared tag
-// action, and no tag action may shadow a builtin name.
+// action, no tag action may shadow a builtin name, and every tag
+// action must be referenced by at least one binding.
 func validateBindings(cfg *config.Config) error {
+	used := map[string]bool{}
 	for key, action := range cfg.Bindings["index"] {
 		if tui.Actions[action] {
 			continue
@@ -135,10 +137,14 @@ func validateBindings(cfg *config.Config) error {
 		if _, ok := cfg.TagActions[action]; !ok {
 			return fmt.Errorf("binding %q: unknown action %q", key, action)
 		}
+		used[action] = true
 	}
 	for name := range cfg.TagActions {
 		if tui.Actions[name] {
 			return fmt.Errorf("tag action %q collides with a builtin action", name)
+		}
+		if !used[name] {
+			return fmt.Errorf("tag action %q is not bound", name)
 		}
 	}
 	return nil

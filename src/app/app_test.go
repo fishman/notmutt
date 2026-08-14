@@ -25,4 +25,9 @@ func TestValidateBindings(t *testing.T) {
 	if err := validateBindings(&cfg); err == nil {
 		t.Fatal("tag action colliding with a builtin must error")
 	}
+	cfg = config.Default()
+	cfg.TagActions["extra"] = "wip"
+	if err := validateBindings(&cfg); err == nil {
+		t.Fatal("unbound tag action must error")
+	}
 }

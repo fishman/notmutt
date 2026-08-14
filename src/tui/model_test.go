@@ -270,6 +270,32 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 	}
 }
 
+func TestStageToggleReadRemoves(t *testing.T) {
+	m := model()
+	m.view.SetCursor("a")
+	m = press(t, m, "r")
+	ops, _ := m.view.StagedOps()
+	got := ops["a"]
+	if len(got) != 1 || got[0] != (core.TagOp{Tag: "unread", Add: false}) {
+		t.Fatalf("r on the unread message must stage -unread: %v", got)
+	}
+}
+
+func TestTagActionFolderAddCustomName(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "b", Timestamp: 200, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"})
+	m = press(t, m, "y")
+	row, _ := m.view.CursorRow()
+	// archive is a folder tag: a custom action name still stages +archive
+	if !row.Staged || !slices.Equal(row.StagedTags, []string{"archive"}) {
+		t.Fatalf("y must stage +archive: staged=%v tags=%v", row.Staged, row.StagedTags)
+	}
+}
+
 func TestPadCellsRightExactWidth(t *testing.T) {
 	// 2-cell rune at the boundary: truncation stops at 15 cells, padding
 	// must restore the slot to exactly 16

@@ -48,14 +48,15 @@ type searchItem struct {
 	Tags      []string `json:"tags"`
 }
 
-// firstChunk is the initial fill chunk: 200 threads land fast so the
-// first paint shows up early, then the fill continues at steadyChunk.
-// The cadence is a backend contract - the refresh merges and paints
-// whatever chunk arrives (the render-batching requirement: a 1000-row
-// first chunk stalls the first paint).
+// firstChunk is the initial fill chunk: 100 threads land fast so the
+// first paint is near-instant, then the fill continues in steadyChunk
+// batches (big merges, few paints). The cadence is a backend contract -
+// the refresh merges and paints whatever chunk arrives (the
+// render-batching requirement: a full-result first chunk stalls the
+// first paint).
 const (
-	firstChunk  = 200
-	steadyChunk = 1000
+	firstChunk  = 100
+	steadyChunk = 5000
 )
 
 // Query walks the whole result in one call: one `notmuch search`

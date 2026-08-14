@@ -82,12 +82,13 @@ func searchItemsJSON(n int) string {
 }
 
 // TestCLIQueryChunks pins the chunk cadence: the whole result arrives in
-// one call (no offset paging) and is emitted as 200, then 1000s - the
-// render-batching contract: the first paint shows up after 200 threads.
+// one call (no offset paging) and is emitted as 100, then 5000s - the
+// render-batching contract: the first paint shows up after 100 threads,
+// the rest lands in big batches.
 func TestCLIQueryChunks(t *testing.T) {
 	b := NewCLI()
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
-		return []byte(searchItemsJSON(2250)), nil
+		return []byte(searchItemsJSON(5150)), nil
 	})
 	var sizes []int
 	if err := b.Query(context.Background(), "tag:inbox", 0, func(chunk []core.Message) bool {
@@ -96,7 +97,7 @@ func TestCLIQueryChunks(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	want := []int{200, 1000, 1000, 50}
+	want := []int{100, 5000, 50}
 	if len(sizes) != len(want) {
 		t.Fatalf("expected %d chunks, got %d (%v)", len(want), len(sizes), sizes)
 	}

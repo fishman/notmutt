@@ -111,6 +111,16 @@ Tabs: the model holds a stack of dialogue states
 (`[]*compose.State` + active index); composition is tabbed (R4), the
 index/pager stay behind, `[`/`]` switch tabs.
 
+Dialogue vs tab (2026-08-15 clarification): one mechanism, two
+presentations - the dialogue state IS the tab. R/gr/F/m open a
+dialogue ATTACHED: the compose surface takes the frame (the neomutt
+dlg_compose shape) and compose keys dispatch. `[`/`]` cycle the tab
+list - the mail surface (index/pager) and every open dialogue;
+stepping off a dialogue PARKS it (the composer stays open, its state
+intact - R4 pause/restart) while the index keeps working; stepping
+back re-attaches it. The mail surface's own state (view cursor, pager
+content, staged buffer) survives the trip.
+
 ## 5. Dialogue state and the compose tab
 
 ```go
@@ -279,9 +289,9 @@ default_signature = "gmail"
   (F4). Defaults as above.
 - `[accounts.<name>] from`: the account's sender address. Optional;
   sending without one is a clear error.
-- `[accounts.<name>] sent_folder`: the sent maildir name relative to
-  the account's mail root (the muttrc record reference). Optional;
-  missing skips fcc with a note.
+- `[accounts.<name>] sent_folder`: the sent maildir path (absolute or
+  ~-expanded, the muttrc `record` shape - the client knows no mail
+  root). Optional; missing skips fcc with a note.
 - `[accounts.<name>] default_signature`: the default signature file
   name in `~/.config/notmutt/signatures/<account>/`; missing = no
   signature.
@@ -294,9 +304,16 @@ default_signature = "gmail"
 New `compose` context in both schemes:
 
 - vim: j/k move the form cursor, e edit body, a attach (path prompt
-  dialogue), d detach, c account/signature (fuzzy picker), y send,
+  dialogue), d detach, c account / C signature (fuzzy picker), y send,
   q abort (two-press confirm), [ / ] tab switch.
 - emacs: same action letters, ctrl+n/ctrl+p move.
+
+`[`/`]` (tab-prev/tab-next) are bound in the index and pager contexts
+too: from the mail surface they re-attach an open dialogue; from a
+dialogue they park it. The dialogue-opening keys live in index/pager:
+m opens a blank compose, R replies, g r replies-all (the g-prefix
+chain: gr is two presses, gg stays top), F forwards - all on the
+cursor message (the open thread's first message in the pager).
 
 New `fuzzy` context (the selector dialogue - future selectors for
 keys/templates reuse it): type-to-filter, j/k or ctrl+n/ctrl+p move,

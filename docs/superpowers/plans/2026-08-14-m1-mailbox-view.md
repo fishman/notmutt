@@ -4112,7 +4112,7 @@ network-backed maildir would stall rescans - future note).
 ## Task 13: cgo backend (benchmark path)
 
 **Files:**
-- Create: `src/notmuch/cgo.go` (build tag `cgo`), `src/notmuch/cgo_test.go`
+- Create: `src/notmuch/cgo.go` (build tag `notmuchcgo`), `src/notmuch/cgo_test.go`
 
 - [ ] **Step 1: Check dev headers**
 
@@ -4140,7 +4140,7 @@ Ask the user which option they prefer before running anything that needs sudo. T
 `src/notmuch/cgo.go`:
 
 ```go
-//go:build cgo
+//go:build notmuchcgo
 
 package notmuch
 
@@ -4188,8 +4188,8 @@ func (b *CGOBackend) Close(ctx context.Context) error {
 }
 
 func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
-	rev := C.notmuch_database_get_revision(b.db)
-	uuid := C.notmuch_database_get_revision_uuid(b.db)
+	var uuid *C.char
+	rev := C.notmuch_database_get_revision(b.db, &uuid)
 	return C.GoString(uuid), uint64(rev), nil
 }
 
@@ -4209,6 +4209,9 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core
 	defer C.notmuch_messages_destroy(msgs)
 	var out []core.Message
 	for C.notmuch_messages_valid(msgs) != 0 {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
 		m := C.notmuch_messages_get(msgs)
 		header := func(name string) string {
 			c := C.CString(name)
@@ -4267,14 +4270,14 @@ func errStatus(st C.notmuch_status_t, op string) error {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-go build -tags cgo ./...
-go test -tags cgo ./notmuch/ -run TestCGOSmoke -v
+PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go build -tags notmuchcgo ./...
+PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestCGOSmoke -v
 ```
 
 `src/notmuch/cgo_test.go`:
 
 ```go
-//go:build cgo
+//go:build notmuchcgo
 
 package notmuch
 
@@ -4319,6 +4322,33 @@ git add src/notmuch
 git commit -m "Add cgo notmuch backend behind the Backend interface (build tag)"
 ```
 
+**Coordination notes (post-implementation, Task 13)**: committed as bb1e1af
+after review. Three plan defects found during implementation, reflected in
+the blocks above:
+(1) Revision API: notmuch 0.40 has no `notmuch_database_get_revision_uuid`;
+the real signature (notmuch.h:743) is
+`unsigned long notmuch_database_get_revision(db, const char **uuid)` with
+the uuid as an out parameter.
+(2) Build tag: `//go:build cgo` is a PREDEFINED constraint, satisfied
+whenever CGO_ENABLED=1 - the file compiled in DEFAULT builds and failed on
+the missing pkg-config path. The custom tag `notmuchcgo` makes the backend
+genuinely opt-in (R12's dbus tag precedent); ALL tagged commands in this
+plan now use `-tags notmuchcgo` and need
+`PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig` (a hand-written notmuch.pc
+resides outside the repo, since Arch's package ships no pc file; the user
+declined an install - runtime, header, and lib were already present). The
+plan's literal `-tags cgo` would silently exclude the file and report a
+false green.
+(3) Query limit: `notmuch_query_set_limit` does not exist in 0.40; the
+loop caps with `if limit > 0 && len(out) >= limit { break }`, mirroring
+the CLI backend's `--limit` semantics.
+Also noted for Task 14: `notmuch_database_open` is deprecated as of
+libnotmuch 5.4 (kept verbatim for the benchmark); the benchmark report
+must record that the cgo path is on a legacy API surface, and that the
+tagsOf/pathsOf iterators are never destroyed (per-message leak, verbatim
+from the spec block - harmless for a benchmark run, fix before any
+production adoption).
+
 ## Task 14: Benchmark and backend selection
 
 **Files:**
@@ -4338,7 +4368,7 @@ import (
 	"time"
 )
 
-// Run: NOTMUCH_BENCH=1 go test -tags cgo ./notmuch/ -run TestBench -v
+// Run: NOTMUCH_BENCH=1 PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestBench -v
 // Requires notmuch dev headers (task 13). Prints a comparison report.
 func TestBench(t *testing.T) {
 	if os.Getenv("NOTMUCH_BENCH") == "" {
@@ -4409,7 +4439,7 @@ func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-NOTMUCH_BENCH=1 go test -tags cgo ./notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
+NOTMUCH_BENCH=1 PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
 ```
 
 Expected: a timing table over 3 runs each. Lock-timeout behavior is already unit-tested (TestWorkerLockTimeout); record the configured CLI value in the report:

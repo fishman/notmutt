@@ -10,11 +10,13 @@ import (
 )
 
 // applyStaged flushes the staged buffer: one ActTag per staged message
-// carrying the resolved op set (R14). Success writes the resolved tags
-// as the applied baseline and clears the entry (generation-guarded, so
-// ops staged during an in-flight apply survive); failure keeps the
-// entry staged for retry or undo. Messages that left the view clear
-// their stale entry. Snapshot keys are sorted for a deterministic batch.
+// carrying the resolved op set (R14). Every entry is attempted; a failed
+// entry stays staged for retry or undo while the rest of the batch
+// proceeds, and the first failure surfaces as the returned error. Success
+// writes the resolved tags as the applied baseline and clears the entry
+// (generation-guarded, so ops staged during an in-flight apply survive).
+// Messages that left the view clear their stale entry. Snapshot keys are
+// sorted for a deterministic batch.
 func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI) error {
 	snapshot, gen := view.StagedOps()
 	if len(snapshot) == 0 {
@@ -25,6 +27,7 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI) erro
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	var applyErr error
 	for _, msgID := range ids {
 		tags := view.MsgTags(msgID)
 		if tags == nil {
@@ -42,10 +45,13 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI) erro
 			TagOps: resolved,
 		})
 		if err != nil || rpl.Err != nil {
-			return fmt.Errorf("apply %s: %v %v", msgID, err, rpl.Err)
+			if applyErr == nil {
+				applyErr = fmt.Errorf("apply %s: %v %v", msgID, err, rpl.Err)
+			}
+			continue
 		}
 		view.SetTags(msgID, newTags)
 		view.ClearStaged(msgID, gen)
 	}
-	return nil
+	return applyErr
 }

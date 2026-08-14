@@ -86,6 +86,59 @@ func TestApplyFailureKeepsEntry(t *testing.T) {
 	}
 }
 
+func TestApplyReplyErrKeepsEntry(t *testing.T) {
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setReplyErr(errors.New("lock timeout"))
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
+	})})
+	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
+	if err := applyStaged(view, applyGroups, fw); err == nil {
+		t.Fatal("apply must surface the worker reply error")
+	}
+	if !view.IsStaged("m1") {
+		t.Fatal("entry must stay staged on reply error")
+	}
+	if hasTag(view.MsgTags("m1"), "archive") {
+		t.Fatal("baseline must not be written on reply error")
+	}
+}
+
+func TestApplyContinuesPastFailure(t *testing.T) {
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setFailQuery("id:\"m1\"")
+	fw.setTagErr(errors.New("lock timeout"))
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
+		{ID: "m2", ThreadID: "t1", Tags: []string{"inbox"}},
+	})})
+	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
+	view.Stage("m2", core.TagOp{Tag: "deleted", Add: true})
+	if err := applyStaged(view, applyGroups, fw); err == nil {
+		t.Fatal("apply must surface the failed entry's error")
+	}
+	if !view.IsStaged("m1") {
+		t.Fatal("failed entry must stay staged")
+	}
+	if hasTag(view.MsgTags("m1"), "archive") {
+		t.Fatal("failed entry's baseline must not be written")
+	}
+	if view.IsStaged("m2") {
+		t.Fatal("succeeding entry must clear")
+	}
+	if tags := view.MsgTags("m2"); !slices.Equal(tags, []string{"deleted"}) {
+		t.Fatalf("succeeding entry baseline = %v", tags)
+	}
+	calls := fw.tagCallsSnapshot()
+	if len(calls) != 1 || calls[0].query != "id:\"m2\"" {
+		t.Fatalf("only m2 must reach the worker, got %+v", calls)
+	}
+}
+
 func TestApplyStaleMessageSkipped(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	view := core.NewView("inbox", "tag:inbox")

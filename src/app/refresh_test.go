@@ -52,11 +52,15 @@ type tagCall struct {
 
 type fakeTagWorker struct {
 	*fakeWorker
-	tagErr   atomic.Value // error
-	tagCalls atomic.Value // []tagCall
+	tagErr    atomic.Value // error
+	replyErr  atomic.Value // error
+	failQuery atomic.Value // string: only this query fails; "" fails all
+	tagCalls  atomic.Value // []tagCall
 }
 
-func (f *fakeTagWorker) setTagErr(err error) { f.tagErr.Store(err) }
+func (f *fakeTagWorker) setTagErr(err error)   { f.tagErr.Store(err) }
+func (f *fakeTagWorker) setReplyErr(err error) { f.replyErr.Store(err) }
+func (f *fakeTagWorker) setFailQuery(q string) { f.failQuery.Store(q) }
 
 func (f *fakeTagWorker) tagCallsSnapshot() []tagCall {
 	v, _ := f.tagCalls.Load().([]tagCall)
@@ -65,8 +69,13 @@ func (f *fakeTagWorker) tagCallsSnapshot() []tagCall {
 
 func (f *fakeTagWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	if a.Kind == notmuch.ActTag {
-		if err, _ := f.tagErr.Load().(error); err != nil {
-			return notmuch.Reply{ID: a.ID}, err
+		if q, _ := f.failQuery.Load().(string); q == "" || a.Query == q {
+			if err, _ := f.tagErr.Load().(error); err != nil {
+				return notmuch.Reply{ID: a.ID}, err
+			}
+			if err, _ := f.replyErr.Load().(error); err != nil {
+				return notmuch.Reply{ID: a.ID, Err: err}, nil
+			}
 		}
 		var calls []tagCall
 		if v, ok := f.tagCalls.Load().([]tagCall); ok {

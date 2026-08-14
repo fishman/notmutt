@@ -581,6 +581,11 @@ func (m Model) CursorIndex() int {
 	return idx
 }
 
+// View renders the full frame. The frame must NOT end with a newline: the
+// vendored renderer splits the frame on "\n" and a trailing empty element
+// makes the split longer than the window height, which drops the first row
+// and shifts every line - the diff then matches nothing and the whole page
+// repaints on every keypress.
 func (m Model) View() string {
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
@@ -589,7 +594,6 @@ func (m Model) View() string {
 		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
 		b.WriteString("\n")
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
-		b.WriteByte('\n')
 		return b.String()
 	}
 	if m.rows == nil {
@@ -620,7 +624,6 @@ func (m Model) View() string {
 		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
 		b.WriteByte('\n')
 		b.WriteString(m.statusLineWith(st, m.ui))
-		b.WriteByte('\n')
 		return b.String()
 	}
 	cur := m.CursorIndex()
@@ -670,7 +673,6 @@ func (m Model) View() string {
 	b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
-	b.WriteByte('\n')
 	return b.String()
 }
 

@@ -198,7 +198,14 @@ tag-action tables are their substrate, so nothing here forecloses them.
 - The widget repaints on the same event channel as the index; it never
   takes focus, never blocks. Labels are job-kind derived (R15/F6).
 - The initial-load case is the primary visible one: the M1 async start
-  shows "refresh n/m" as the first page streams in.
+  shows "refresh n/m" as each page of the query result streams in. Full
+  reloads PAGE the whole result (R3 progressive fill): the refresher
+  fetches the query page by page (`--limit`/`--offset`, page = the view
+  page budget), merges each page into the view with a ViewDiff before
+  fetching the next, and ends when a page returns fewer than the budget
+  (or an error). Each page is its own progress batch; the changed-set
+  cycle (lastmod diff) is unchanged and reconciles mail that lands
+  mid-fill (one-cycle lag).
 
 ## 9. Testing
 

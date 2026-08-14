@@ -133,6 +133,10 @@ func (b *CLIBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 	if err := json.Unmarshal(out, &groups); err != nil {
 		return nil, fmt.Errorf("notmuch show: parse: %w", err)
 	}
+	return walkGroups(groups, threadID), nil
+}
+
+func walkGroups(groups [][]showNode, threadID string) []core.Message {
 	var msgs []core.Message
 	var walk func(nodes []showNode, chain []string)
 	walk = func(nodes []showNode, chain []string) {
@@ -154,7 +158,7 @@ func (b *CLIBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 	for _, g := range groups {
 		walk(g, nil)
 	}
-	return msgs, nil
+	return msgs
 }
 
 func (b *CLIBackend) Tag(ctx context.Context, query string, ops []TagOp) error {

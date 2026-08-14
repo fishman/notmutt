@@ -17,6 +17,7 @@ type fakeWorker struct {
 	rev       atomic.Uint64
 	msgs      atomic.Value
 	stubs     atomic.Value
+	full      atomic.Value // map[string][]core.Message: per-thread full data for ActThread
 	lastQuery atomic.Value
 	queries   atomic.Int32
 	threadErr atomic.Value // error: fails every ActThread when set
@@ -37,6 +38,17 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 // and nothing after - the fill loop needs both to terminate).
 func (f *fakeWorker) setStubs(msgs []core.Message) {
 	f.stubs.Store(msgs)
+}
+
+// setThreadFull installs the step-two full data for one thread; ActThread
+// serves it before falling back to the stubs/msgs paths.
+func (f *fakeWorker) setThreadFull(id string, msgs []core.Message) {
+	full, _ := f.full.Load().(map[string][]core.Message)
+	if full == nil {
+		full = map[string][]core.Message{}
+	}
+	full[id] = msgs
+	f.full.Store(full)
 }
 
 func (f *fakeWorker) setThreadErr(err error) { f.threadErr.Store(err) }
@@ -79,6 +91,12 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	case notmuch.ActThread:
 		if err, _ := f.threadErr.Load().(error); err != nil {
 			return notmuch.Reply{ID: a.ID}, err
+		}
+		if full, ok := f.full.Load().(map[string][]core.Message); ok {
+			if msgs, ok := full[a.ThreadID]; ok {
+				r.Msgs = msgs
+				return r, nil
+			}
 		}
 		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
 			for _, m := range stubs {
@@ -308,7 +326,7 @@ func TestFetchThreadsPublishesProgress(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}})
 	view := core.NewView("inbox", "tag:inbox")
 	r := newRefresher(bus, fw, view, 0)
-	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}}, 0, 0)
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}}, 0, 0, true)
 	if len(threads) != 2 {
 		t.Fatalf("expected 2 threads, got %d", len(threads))
 	}
@@ -341,7 +359,7 @@ func TestFetchThreadsFailurePublishesProgress(t *testing.T) {
 	fw.setThreadErr(errors.New("boom"))
 	view := core.NewView("inbox", "tag:inbox")
 	r := newRefresher(bus, fw, view, 0)
-	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}}, 0, 0)
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}}, 0, 0, true)
 	if len(threads) != 0 {
 		t.Fatalf("failed fetch must drop the thread, got %d", len(threads))
 	}
@@ -381,7 +399,7 @@ func TestFullReloadPages(t *testing.T) {
 	r.fullReload()
 
 	if got := fw.queries.Load(); got != 4 {
-		t.Fatalf("expected 4 page fetches for 2500 stubs at 200/1000/1000/300, got %d", got)
+		t.Fatalf("expected 4 query page fetches for 2500 stubs at 200/1000/1000/300, got %d", got)
 	}
 	if len(view.Threads) != 2500 {
 		t.Fatalf("view must hold all 2500 threads after the fill, got %d", len(view.Threads))
@@ -426,6 +444,83 @@ func TestFullReloadCountFailure(t *testing.T) {
 	if p, ok := bus.LatestProgress("refresh", "inbox"); !ok || p.Done != 300 || p.Total != 300 {
 		t.Fatalf("count failure must fall back to batch totals, got %+v ok=%v", p, ok)
 	}
+}
+
+// TestFullReloadStubThreads pins the step-one fill: search summaries
+// (empty message ids - the index read, zero file opens) group into one
+// stub thread per thread id. No per-thread fallback exists in the
+// fill: ActQuery pages are the whole ingestion.
+func TestFullReloadStubThreads(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.setStubs([]core.Message{
+		{ThreadID: "t1", Timestamp: 100, Author: "A", Subject: "s1", Tags: []string{"inbox"}},
+		{ThreadID: "t2", Timestamp: 200, Author: "B", Subject: "s2"},
+	})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+
+	r.fullReload()
+
+	if got := fw.queries.Load(); got != 1 {
+		t.Fatalf("one query page must cover the whole fill, got %d", got)
+	}
+	if len(view.Threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(view.Threads))
+	}
+	t1 := findThread(view.Threads, "t1")
+	if t1 == nil || t1.Count() != 1 {
+		t.Fatalf("t1 must be a single stub row: %+v", t1)
+	}
+	if t1.Root == nil || t1.Root.Msg == nil || t1.Root.Msg.ID != "" || t1.Root.Msg.Subject != "s1" {
+		t.Fatalf("stub must carry the search summary with an empty id: %+v", t1.Root)
+	}
+}
+
+// TestFullReloadViewportHydrates pins step two: after the fill, the
+// visible window's stub rows are replaced by their full threads
+// (per-thread fetch - the only file opens in the load path), while
+// out-of-window stubs stay summaries. The fill itself never queries
+// per-thread.
+func TestFullReloadViewportHydrates(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.setStubs([]core.Message{
+		{ThreadID: "t1", Timestamp: 100, Author: "A", Subject: "s1"},
+		{ThreadID: "t2", Timestamp: 200, Author: "B", Subject: "s2"},
+	})
+	fw.setThreadFull("t1", []core.Message{
+		{ID: "m1", ThreadID: "t1", Timestamp: 100, Author: "A", Subject: "s1", Paths: []string{"/m/Mail/x/1"}},
+		{ID: "m2", ThreadID: "t1", Timestamp: 90, Author: "A", Subject: "s1", References: []string{"m1"}},
+	})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+
+	r.fullReload()
+
+	if got := fw.queries.Load(); got != 1 {
+		t.Fatalf("the hydrate must use per-thread fetches, not query pages: got %d ActQuery calls", got)
+	}
+	t1 := findThread(view.Threads, "t1")
+	if t1 == nil || t1.Root == nil || t1.Root.Msg == nil || t1.Root.Msg.ID != "m1" || t1.Count() != 2 {
+		t.Fatalf("viewport hydrate must replace the stub with the full thread: %+v", t1)
+	}
+	t2 := findThread(view.Threads, "t2")
+	if t2 == nil || t2.Root == nil || t2.Root.Msg == nil || t2.Root.Msg.ID != "" {
+		t.Fatalf("unhydrated stub must stay a summary: %+v", t2)
+	}
+	if len(view.Threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(view.Threads))
+	}
+}
+
+func findThread(threads []*core.Thread, id string) *core.Thread {
+	for _, t := range threads {
+		if t.ID == id {
+			return t
+		}
+	}
+	return nil
 }
 
 // TestFullReloadEmpty pins the loop termination: an empty result ends

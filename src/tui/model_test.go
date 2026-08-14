@@ -52,6 +52,42 @@ func press(t *testing.T, m tea.Model, key string) Model {
 	return next.(Model)
 }
 
+// stubModel builds the step-one fill state: search summaries (message id
+// empty) before the viewport hydrate replaces them with full threads.
+func stubModel() Model {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
+		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
+	})
+	return New(view, nil, testKeys, testTagActions, nil)
+}
+
+// TestStubCursorAndStageGuard pins the stub-row rules: the cursor
+// tracks summary rows by index (no message id to anchor by), and tag
+// actions on them are no-ops - the apply path needs real ids, and the
+// viewport hydrate replaces the stub within the load.
+func TestStubCursorAndStageGuard(t *testing.T) {
+	m := stubModel()
+	m = press(t, m, "j")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("cursor must track stub rows by index, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "a") // folder tag action on a stub
+	if m.view.HasStaged() {
+		t.Fatal("staging on a stub row must be a no-op")
+	}
+	m = press(t, m, "r") // soft tag toggle on a stub
+	if m.view.HasStaged() {
+		t.Fatal("toggling on a stub row must be a no-op")
+	}
+	m = press(t, m, "k")
+	if m.CursorIndex() != 0 {
+		t.Fatalf("cursor after k on stubs = %d", m.CursorIndex())
+	}
+}
+
 func TestCursorMoves(t *testing.T) {
 	m := model()
 	if m.CursorIndex() != 0 {

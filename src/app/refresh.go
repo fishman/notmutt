@@ -69,7 +69,7 @@ func (r *refresher) cycle() {
 		// WorkerLockTimeout on the bus; the view self-heals next cycle.
 		return
 	}
-	threads := r.fetchThreads(msgs, 0, 0)
+	threads := r.fetchThreads(msgs, 0, 0, true)
 	if len(threads) > 0 {
 		r.merge(threads)
 	}
@@ -129,15 +129,16 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 }
 
 // fetchThreads maps changed messages to their threads and fetches each
-// thread's full state, budgeted to 3 concurrent calls. A failed thread
-// fetch is silently dropped so a dead thread cannot kill the cycle.
-// Progress is scoped to the view and accumulates Done against total
-// (the fill's count query, section 8); total <= 0 falls back to the
-// per-batch total and resets the base, so a failed count degrades to
-// per-page bars (Done restarts each page, never exceeding the batch
-// total) instead of a wrong total. Failures count too, so the bar
-// always completes.
-func (r *refresher) fetchThreads(msgs []core.Message, base, total int) []*core.Thread {
+// thread's full state, budgeted to 3 concurrent calls. The INCREMENTAL
+// path (the lastmod changed set - small N) and the viewport hydrate
+// (step two for the visible window) both use it; the full reload never
+// does (search pages only). A failed thread fetch is silently dropped
+// so a dead thread cannot kill the cycle. Progress falls back to the
+// batch total when total <= 0 (this path has no count query). Failures
+// count too, so the bar always completes. report=false silences the
+// publishes: the viewport hydrate is bounded work that would otherwise
+// clobber the fill's count-total bar.
+func (r *refresher) fetchThreads(msgs []core.Message, base, total int, report bool) []*core.Thread {
 	ids := map[string]bool{}
 	for _, m := range msgs {
 		ids[m.ThreadID] = true
@@ -161,7 +162,9 @@ func (r *refresher) fetchThreads(msgs []core.Message, base, total int) []*core.T
 			mu.Lock()
 			defer mu.Unlock()
 			done++
-			r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: base + done, Total: total})
+			if report {
+				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: base + done, Total: total})
+			}
 			if err != nil || rpl.Err != nil {
 				return
 			}
@@ -177,11 +180,17 @@ func (r *refresher) fetchThreads(msgs []core.Message, base, total int) []*core.T
 }
 
 // fullReload re-fetches the view query page by page and merges each
-// page in as it lands (R3 progressive fill): the view fills
-// asynchronously, one ViewDiff per page, until a short page ends the
-// query. The bar's total comes from a count query up front, so Done
-// accumulates against the real result size instead of resetting per
-// page. Threads that retagged out of the filter or were deleted are
+// page in as it lands (R3 progressive fill): one ActQuery per page.
+// The search summary IS the index read - step one, DB-side thread
+// data (thread id, date, authors, subject, tags) with zero file
+// opens, so the whole list loads in seconds (per-thread round trips
+// were the load wall). Full message data (ids, references, paths) is
+// step two: fillViewport hydrates the visible window after the fill,
+// and the rest loads on open (R13). One ViewDiff per page; a short
+// page ends the query. The bar's total comes from a count query up
+// front, so Done (threads accumulated) tracks the real result size
+// instead of resetting per page; a count failure degrades to per-page
+// totals. Threads that retagged out of the filter or were deleted are
 // removed by the full snapshot replacement. Called for uuid changes,
 // manual refresh, view config changes, and first load. The cursor
 // survives via the merge walk.
@@ -198,19 +207,74 @@ func (r *refresher) fullReload() {
 		if err != nil || rpl.Err != nil {
 			return
 		}
-		page := r.fetchThreads(rpl.Msgs, done, total)
-		done += len(rpl.Msgs)
+		page := groupThreads(rpl.Msgs)
 		sortThreads(page)
 		snapshot = mergeSorted(snapshot, page)
 		r.snapshot = snapshot
+		done += len(page)
+		// progress first, then the diff: the page is reported as soon as
+		// it lands. An empty page publishes nothing: a count/catalog
+		// race that empties the result must not leave a stuck bar at
+		// Done 0.
+		if len(page) > 0 {
+			if total <= 0 {
+				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: len(page), Total: len(page)})
+			} else {
+				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
+			}
+		}
 		r.view.MergeThreads(snapshot)
 		r.bus.Publish(core.ViewDiff{View: r.view.Name})
 		offset += limit
 		if len(rpl.Msgs) < limit {
-			return
+			break
 		}
 		limit = r.page
 	}
+	r.fillViewport()
+}
+
+// fillViewport is the step-two hydrate: the visible window's stub
+// rows (search summaries carry no message ids) get their full
+// threads - ids, references, paths - through the budgeted per-thread
+// fetch. Already-hydrated rows are untouched (the merge reconciles by
+// id). The window mirrors the cache job's scanPage: the viewport at
+// the top of the list; deep-scroll rows stay summaries until the
+// viewport plumbing (cursor-following scans) lands.
+func (r *refresher) fillViewport() {
+	rows := r.view.Rows()
+	if len(rows) > scanPage {
+		rows = rows[:scanPage]
+	}
+	var stubs []core.Message
+	for _, row := range rows {
+		if row.Msg != nil && row.Msg.ID == "" {
+			stubs = append(stubs, core.Message{ThreadID: row.ThreadID})
+		}
+	}
+	if len(stubs) == 0 {
+		return
+	}
+	threads := r.fetchThreads(stubs, 0, 0, false)
+	if len(threads) > 0 {
+		r.merge(threads)
+	}
+}
+
+// groupThreads groups a page's search summaries into one stub thread
+// per thread id (the summary row the view renders until the viewport
+// hydrate replaces it with the full thread).
+func groupThreads(msgs []core.Message) []*core.Thread {
+	byID := map[string][]*core.Message{}
+	for i := range msgs {
+		id := msgs[i].ThreadID
+		byID[id] = append(byID[id], &msgs[i])
+	}
+	threads := make([]*core.Thread, 0, len(byID))
+	for id, m := range byID {
+		threads = append(threads, core.NewThread(id, m))
+	}
+	return threads
 }
 
 // mergeSorted merges two ThreadLess-sorted slices; the fill pages in

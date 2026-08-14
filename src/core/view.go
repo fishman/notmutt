@@ -208,6 +208,26 @@ func (v *View) SetCursor(id string) {
 	v.cursorID = id
 }
 
+// SetCursorIndex anchors the cursor by row index instead of message
+// id - the stub-row case: search summaries carry no message id, so
+// id-anchored tracking is impossible until the viewport hydrate
+// replaces the stub. A later SetCursor(id) re-anchors by id.
+func (v *View) SetCursorIndex(idx int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.cursorID = ""
+	v.lastRow = idx
+}
+
+// CursorRowIndex returns the last known cursor row index - the
+// fallback CursorRow/CursorIndex use when the cursor id is empty or
+// gone (stub rows and post-merge drift).
+func (v *View) CursorRowIndex() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.lastRow
+}
+
 // CursorRow returns the row the cursor points at, or the row at the
 // previous index (clamped to the last row) when the id is gone; ok is
 // false only when the view is empty.

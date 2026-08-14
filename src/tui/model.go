@@ -141,21 +141,31 @@ func (m *Model) moveCursor(delta int) {
 			}
 		}
 	}
-	m.view.SetCursor(rows[idx].Msg.ID)
+	if id := rows[idx].Msg.ID; id != "" {
+		m.view.SetCursor(id)
+	} else {
+		// stub row (search summary, no message id): anchor by index so
+		// the cursor tracks through it; the viewport hydrate replaces
+		// the stub with the real message and re-anchors by id
+		m.view.SetCursorIndex(idx)
+	}
 }
 
 // stage runs a tag action on the cursor message (R14). A tag in any
 // tag group is a folder tag and stages +tag - exclusive-group
 // resolution dedups at render/apply; a tag in no group is soft (unread
-// is canonical) and toggles from the applied state. Ghost rows are
-// guarded like the M1 cursor keys.
+// is canonical) and toggles from the applied state. Ghost and stub
+// rows (search summaries carry no message id) are guarded like the M1
+// cursor keys: stubs are transient - the viewport hydrate replaces
+// them with the real message within the load, and the apply path
+// needs a real id.
 func (m *Model) stage(action string) {
 	tag, ok := m.tagActions[action]
 	if !ok {
 		return
 	}
 	row, ok := m.view.CursorRow()
-	if !ok || row.Msg == nil {
+	if !ok || row.Msg == nil || row.Msg.ID == "" {
 		return
 	}
 	id := row.Msg.ID
@@ -177,10 +187,11 @@ func inGroup(tag string, groups []core.TagGroup) bool {
 }
 
 // undo discards the cursor message's staged ops (R14): pure buffer
-// drop, no DB traffic. Ghost rows are guarded like the M1 cursor keys.
+// drop, no DB traffic. Ghost and stub rows are guarded like the M1
+// cursor keys (stubs cannot be staged, so there is nothing to undo).
 func (m *Model) undo() {
 	row, ok := m.view.CursorRow()
-	if !ok || row.Msg == nil {
+	if !ok || row.Msg == nil || row.Msg.ID == "" {
 		return
 	}
 	m.view.Undo(row.Msg.ID)
@@ -202,15 +213,26 @@ func (m Model) CursorIndex() int {
 		}
 		return 0
 	}
-	for i, r := range m.rows {
-		if r.Msg == nil {
-			continue
-		}
-		if r.Msg.ID == row.Msg.ID {
-			return i
+	if row.Msg.ID != "" {
+		for i, r := range m.rows {
+			if r.Msg == nil {
+				continue
+			}
+			if r.Msg.ID == row.Msg.ID {
+				return i
+			}
 		}
 	}
-	return 0
+	// stub rows carry no message id: the view's last row index is the
+	// anchor (CursorRow's fallback)
+	idx := m.view.CursorRowIndex()
+	if idx >= len(m.rows) {
+		idx = len(m.rows) - 1
+	}
+	if idx < 0 {
+		return 0
+	}
+	return idx
 }
 
 func (m Model) View() string {

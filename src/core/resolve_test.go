@@ -29,6 +29,18 @@ func TestResolveMoveRemovesOthers(t *testing.T) {
 	}
 }
 
+func TestResolveCombinedStage(t *testing.T) {
+	// r then a staged together: -unread +archive on [inbox, unread]
+	// emits -unread -inbox +archive in one batch (spec section 4)
+	got, ops := ResolveOps([]string{"inbox", "unread"}, []TagOp{{Tag: "unread", Add: false}, {Tag: "archive", Add: true}}, []TagGroup{folderGroup})
+	if !slices.Equal(got, []string{"archive"}) {
+		t.Fatalf("tags = %v", got)
+	}
+	if !slices.Equal(ops, []TagOp{{Tag: "archive", Add: true}, {Tag: "inbox", Add: false}, {Tag: "unread", Add: false}}) {
+		t.Fatalf("ops = %v", ops)
+	}
+}
+
 func TestResolveMovesAreSymmetric(t *testing.T) {
 	// +inbox on [archive] moves back; +deleted on [archive] moves to
 	// trash; +archive on [spam] unspams - no priority, no sticky

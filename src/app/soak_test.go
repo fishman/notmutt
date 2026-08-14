@@ -80,12 +80,12 @@ func TestSoak(t *testing.T) {
 	if err != nil || rpl.Err != nil {
 		t.Fatalf("remove scratch tag: %v %v", err, rpl.Err)
 	}
-	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 50})
+	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch, Limit: 10})
 	if err != nil || rpl.Err != nil {
-		t.Fatalf("final query: %v %v", err, rpl.Err)
+		t.Fatalf("removal check: %v %v", err, rpl.Err)
 	}
-	if len(rpl.Msgs) != before {
-		t.Fatalf("inbox count changed: before %d after %d", before, len(rpl.Msgs))
+	if len(rpl.Msgs) != 0 {
+		t.Fatalf("scratch tag still present after removal: %d msgs", len(rpl.Msgs))
 	}
 	t.Logf("soak ok: %d inbox msgs, scratch tag applied and removed on %s", before, target)
 }

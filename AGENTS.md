@@ -32,15 +32,16 @@ Current classification pipeline (the reference flow):
 ### Hard-tag exclusivity (KNOWN PAIN - must be fixed)
 
 Folder tags are mutually exclusive: one message has exactly one home
-(archive > deleted > sent > draft > pending > spam). The current config
+(inbox, archive, deleted, sent, draft, pending, spam). The current config
 enforces this by hand: every new folder tag requires adding `-newtag` to
 every older rule and a cross-untag rule. This is unacceptable.
 
 The new client's filter engine MUST support declarative exclusive tag
-groups: `[tag-groups] hard = ["archive", "deleted", "sent", "draft",
-"pending", "spam"]`. Applying any tag in a group removes the others
-automatically. Adding a tag to a group must not require touching existing
-rules.
+groups: `[tag-groups.folder] tags = ["inbox", "archive", "deleted",
+"sent", "draft", "pending", "spam"]`. Applying any tag in a group
+removes the others automatically; soft tags (work, conference, ...)
+are simply not in any group - unlimited, coexisting, never moved.
+Adding a tag to a group must not require touching existing rules.
 
 ### Idempotency
 
@@ -103,12 +104,12 @@ Folder rules are DERIVED from the account + preset data: each hard
 tag's candidates become `folder:"<account>/<candidate>"` OR-queries
 with auto NOT-guards (muttrc/notmuch/tags proves the shape), account
 tags derive from the account folder prefix (`folder:/^gmail\//`).
-The hard-tag priority (archive > deleted > sent > draft > pending >
-spam) IS the exclusive group's list order - no cross-untag rules
-exist (the tags-file conflict chain is the pain this replaces).
-`-inbox` is the same machinery: any hard tag removes inbox. Header
-rules stay data (muttrc/notmuch/post-new): query + add, guards
-enforced by the engine. Conditional rules stay explicit:
+The exclusive group is pure mutual exclusion - no priority, no
+implied removals (the tags-file conflict chain and the `-inbox`
+folder rule are the pain this replaces): applying any member removes
+the other members present, and inbox is a member. Header rules stay
+data (muttrc/notmuch/post-new): query + add, guards enforced by the
+engine. Conditional rules stay explicit:
 delivery-gated untag-reversal, trash return-to-inbox. Read-only
 accounts (toptal) get folder tags but no moves. Side effects
 (address cache, notification) subscribe to the filter job's

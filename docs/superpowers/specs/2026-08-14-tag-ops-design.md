@@ -70,23 +70,42 @@ own it, per the M1 lock discipline).
 
 ## 4. Exclusive-group resolution
 
+Groups come from the config store: `[tag-groups.<name>]` with one field,
+`tags` - the member list. Membership IS the hard-tag declaration: a tag
+in a group is hard (exclusive, a physical folder mapped to a notmuch
+tag); any tag not in a group is soft (work, conference, ...) - unlimited,
+coexists with everything, applied by header rules (R2, filter-engine
+milestone), never touched by group resolution, never triggers a move.
+
+The default ships the reference folder set - inbox included, so the
+muttrc `-inbox` folder rule and the conflict chain are both obsolete:
+
+    [tag-groups.folder]
+    tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
+
 One resolver, two call sites (R14: stage-time rendering and apply-time
 op set) - a core function:
 
-`resolveOps(tags []string, ops []TagOp, groups [][]string) (newTags []string, resolved []TagOp)`
+`resolveOps(tags []string, ops []TagOp, groups []TagGroup) (newTags []string, resolved []TagOp)`
 
-- Applies ops, then for each exclusive group touched, keeps the op
-  applied LAST in group-priority order (R2 list order, archive >
-  deleted > sent > draft > pending > spam) and emits the removals for
-  the rest.
-- The hard-tag group is a core constant for this milestone
-  (`core.HardTags`, the R2 priority order verbatim); the `[tag-groups]`
-  config section lands with the filter-engine milestone and replaces
-  the constant. The resolver takes groups as data - nothing else knows
-  the group list.
-- Rendering uses the newTags arm; apply uses the resolved arm. Staging
-  archive therefore renders without inbox/unread, and `$` emits
-  `-inbox -unread +archive` in one batch.
+- Applies the ops, then per group: if the ops touch the group (any op
+  names a member), normalize to ONE member - the last member-ADD op
+  wins, so moving is symmetric (`+archive` on a spam message untags
+  spam, `+inbox` on an archived message moves it back); if no member
+  was added, the sole remaining member stays; legacy mail already
+  carrying two folder tags resolves to the first present in list
+  order (deterministic). Pure mutual exclusion - no priority, no
+  sticky, no implied removals.
+- Ops that do not touch a group leave it untouched: pending mail at
+  [pending, inbox, unread] keeps the inbox view until it is moved, and
+  soft tags are never removed by folder moves.
+- Rendering uses the newTags arm; apply uses the resolved arm - the
+  minimal op set turning the applied tags into the resolved ones
+  (symmetric difference), so staging r then a on [inbox, unread]
+  emits `-unread -inbox +archive` in one batch, and a net no-op
+  produces an empty batch and no ActTag.
+- The resolver takes groups as data; the config section is the only
+  producer - nothing else knows the member list.
 
 ## 5. Apply (`$`)
 
@@ -145,9 +164,10 @@ toggleRead's `row.Msg == nil`).
 
 ## 9. Testing
 
-- Unit (core): stage/cancel/undo; resolveOps (single group, last-wins,
-  removals emitted, untouched groups unaffected); display-tags
-  computation never mutates Msg.Tags.
+- Unit (core): stage/cancel/undo; resolveOps (single group, last
+  member-ADD wins, removals emitted, untouched groups unaffected,
+  legacy two-member tiebreak); display-tags computation never mutates
+  Msg.Tags.
 - Unit (app): apply snapshot -> exactly one ActTag per staged message
   with resolved ops (fakeWorker captures, the T14 pattern); apply
   writes the baseline and clears the buffer; failure keeps the entry.
@@ -160,8 +180,11 @@ toggleRead's `row.Msg == nil`).
 
 ## 10. Knobs (not this milestone)
 
-- `[tag-groups]` config section and account presets (filter-engine
-  milestone; the resolver already takes groups as data).
+- Account presets (tag -> folder maps) and the mover (filter-engine
+  milestone; the group list is already config data).
+- Soft-tag header rules (query + add, the muttrc/notmuch/post-new
+  shape) - filter-engine milestone. Soft tags need no client-side
+  support in M2: they are simply not in any group.
 - Persisted pending buffer across restarts (R14 future work).
 - Multi-selection staging (no selection model exists yet).
 - R9 binding map, R11 theme data: keys/styles stay hardcoded defaults

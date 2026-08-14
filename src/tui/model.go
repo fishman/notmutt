@@ -90,15 +90,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// refreshProgress re-reads the bus snapshot for the current job. The
-// snapshot write never drops, so a completion event dropped from the
-// channel still clears the bar on the next tick/event (the stuck-bar
-// failure mode: backpressure swallowed the tail of a burst).
+// refreshProgress re-reads the bus snapshot for the current job and
+// virtual folder - progress is scoped per view, so switching views
+// shows that view's bar (or none when it is idle). The snapshot write
+// never drops, so a completion event dropped from the channel still
+// clears the bar on the next tick/event (the stuck-bar failure mode:
+// backpressure swallowed the tail of a burst).
 func (m *Model) refreshProgress() {
 	if m.bus == nil {
 		return
 	}
-	if p, ok := m.bus.LatestProgress(m.job); ok {
+	if p, ok := m.bus.LatestProgress(m.job, m.view.Name); ok {
 		m.progress = p
 		m.progressOn = p.Done < p.Total
 	}

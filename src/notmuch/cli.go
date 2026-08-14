@@ -76,6 +76,21 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit, offset int)
 	return msgs, nil
 }
 
+// Count returns the number of threads matching the query - the fill's
+// progress total (the view query is a thread query). argv only (F4).
+func (b *CLIBackend) Count(ctx context.Context, query string) (int, error) {
+	args := []string{"count", "--output=threads", query}
+	out, err := b.run(ctx, "notmuch", args)
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: parse: %w", err)
+	}
+	return n, nil
+}
+
 type showMsg struct {
 	ID        string            `json:"id"`
 	Timestamp int64             `json:"timestamp"`

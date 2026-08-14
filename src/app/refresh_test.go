@@ -20,6 +20,7 @@ type fakeWorker struct {
 	lastQuery atomic.Value
 	queries   atomic.Int32
 	threadErr atomic.Value // error: fails every ActThread when set
+	countErr  atomic.Value // error: fails every ActCount when set
 }
 
 func (f *fakeWorker) set(uuid string, rev uint64) {
@@ -40,12 +41,23 @@ func (f *fakeWorker) setStubs(msgs []core.Message) {
 
 func (f *fakeWorker) setThreadErr(err error) { f.threadErr.Store(err) }
 
+func (f *fakeWorker) setCountErr(err error) { f.countErr.Store(err) }
+
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	r := notmuch.Reply{ID: a.ID}
 	switch a.Kind {
 	case notmuch.ActRevision:
 		r.UUID, _ = f.uuid.Load().(string)
 		r.Rev = f.rev.Load()
+	case notmuch.ActCount:
+		if err, _ := f.countErr.Load().(error); err != nil {
+			return notmuch.Reply{ID: a.ID}, err
+		}
+		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
+			r.Count = len(stubs)
+		} else if msgs, ok := f.msgs.Load().([]core.Message); ok {
+			r.Count = len(msgs)
+		}
 	case notmuch.ActQuery:
 		f.lastQuery.Store(a.Query)
 		f.queries.Add(1)
@@ -296,7 +308,7 @@ func TestFetchThreadsPublishesProgress(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}})
 	view := core.NewView("inbox", "tag:inbox")
 	r := newRefresher(bus, fw, view, 0)
-	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}})
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}}, 0, 0)
 	if len(threads) != 2 {
 		t.Fatalf("expected 2 threads, got %d", len(threads))
 	}
@@ -329,7 +341,7 @@ func TestFetchThreadsFailurePublishesProgress(t *testing.T) {
 	fw.setThreadErr(errors.New("boom"))
 	view := core.NewView("inbox", "tag:inbox")
 	r := newRefresher(bus, fw, view, 0)
-	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}}, 0, 0)
 	if len(threads) != 0 {
 		t.Fatalf("failed fetch must drop the thread, got %d", len(threads))
 	}
@@ -348,11 +360,13 @@ func TestFetchThreadsFailurePublishesProgress(t *testing.T) {
 }
 
 // TestFullReloadPages pins the progressive fill: 2500 stubs served in
-// three pages (1000/1000/500) - one ActQuery per page, and the view
-// ends with the complete merged set, still sorted. (ViewDiff events are
-// not counted from the channel: 2500 progress events flood the 64-slot
-// subscriber buffer and drops make that assertion flaky - the per-page
-// publish is code-guaranteed by the loop shape.)
+// four pages (200/1000/1000/300) - the first page is the fast 200 so
+// the first paint lands immediately, then the steady page of 1000 takes
+// over. One ActQuery per page, and the view ends with the complete
+// merged set, still sorted. (ViewDiff events are not counted from the
+// channel: 2500 progress events flood the 64-slot subscriber buffer and
+// drops make that assertion flaky - the per-page publish is
+// code-guaranteed by the loop shape.)
 func TestFullReloadPages(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -366,8 +380,8 @@ func TestFullReloadPages(t *testing.T) {
 
 	r.fullReload()
 
-	if got := fw.queries.Load(); got != 3 {
-		t.Fatalf("expected 3 page fetches for 2500 stubs at page 1000, got %d", got)
+	if got := fw.queries.Load(); got != 4 {
+		t.Fatalf("expected 4 page fetches for 2500 stubs at 200/1000/1000/300, got %d", got)
 	}
 	if len(view.Threads) != 2500 {
 		t.Fatalf("view must hold all 2500 threads after the fill, got %d", len(view.Threads))
@@ -380,6 +394,37 @@ func TestFullReloadPages(t *testing.T) {
 		if core.ThreadLess(r.snapshot[i], r.snapshot[i-1]) {
 			t.Fatalf("snapshot out of order at %d", i)
 		}
+	}
+	// the count query fixes the bar's total: Done accumulates against
+	// 2500, never a per-page reset
+	if p, ok := bus.LatestProgress("refresh", "inbox"); !ok || p.Done != 2500 || p.Total != 2500 {
+		t.Fatalf("bar must reflect the query total, got %+v ok=%v", p, ok)
+	}
+}
+
+// TestFullReloadCountFailure pins the fallback: when the count query
+// fails, progress degrades to per-batch totals instead of a wrong one.
+func TestFullReloadCountFailure(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	stubs := make([]core.Message, 2500)
+	for i := range stubs {
+		stubs[i] = core.Message{ID: "m" + strconv.Itoa(i), ThreadID: "t" + strconv.Itoa(i)}
+	}
+	fw.setStubs(stubs)
+	fw.setCountErr(errors.New("count failed"))
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+
+	r.fullReload()
+
+	if len(view.Threads) != 2500 {
+		t.Fatalf("fill must still complete when the count fails, got %d threads", len(view.Threads))
+	}
+	// last batch: 300 threads, per-batch total, base reset so the bar
+	// never exceeds its total
+	if p, ok := bus.LatestProgress("refresh", "inbox"); !ok || p.Done != 300 || p.Total != 300 {
+		t.Fatalf("count failure must fall back to batch totals, got %+v ok=%v", p, ok)
 	}
 }
 

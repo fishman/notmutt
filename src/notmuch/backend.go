@@ -21,6 +21,7 @@ type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error
 	Query(ctx context.Context, query string, limit, offset int) ([]Message, error)
+	Count(ctx context.Context, query string) (int, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Tag(ctx context.Context, query string, ops []TagOp) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)

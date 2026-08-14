@@ -14,6 +14,10 @@ type workerAPI interface {
 	Call(a notmuch.Action) (notmuch.Reply, error)
 }
 
+// firstPage is the initial fill page: 200 threads land fast so the first
+// paint shows up immediately, then the fill continues at the steady page.
+const firstPage = 200
+
 // refresher owns the lastmod incremental cycle and the full-reload
 // triggers. R_prev is the revision queried through - a change landing
 // mid-cycle falls into the next one: one-cycle lag, deterministic.
@@ -65,7 +69,7 @@ func (r *refresher) cycle() {
 		// WorkerLockTimeout on the bus; the view self-heals next cycle.
 		return
 	}
-	threads := r.fetchThreads(msgs)
+	threads := r.fetchThreads(msgs, 0, 0)
 	if len(threads) > 0 {
 		r.merge(threads)
 	}
@@ -127,12 +131,20 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 // fetchThreads maps changed messages to their threads and fetches each
 // thread's full state, budgeted to 3 concurrent calls. A failed thread
 // fetch is silently dropped so a dead thread cannot kill the cycle.
-// Each completed fetch publishes refresh progress; failures count too,
-// so the bar always completes.
-func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
+// Progress is scoped to the view and accumulates Done against total
+// (the fill's count query, section 8); total <= 0 falls back to the
+// per-batch total and resets the base, so a failed count degrades to
+// per-page bars (Done restarts each page, never exceeding the batch
+// total) instead of a wrong total. Failures count too, so the bar
+// always completes.
+func (r *refresher) fetchThreads(msgs []core.Message, base, total int) []*core.Thread {
 	ids := map[string]bool{}
 	for _, m := range msgs {
 		ids[m.ThreadID] = true
+	}
+	if total <= 0 {
+		total = len(ids)
+		base = 0
 	}
 	sem := make(chan struct{}, 3)
 	threads := make([]*core.Thread, 0, len(ids))
@@ -149,7 +161,7 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 			mu.Lock()
 			defer mu.Unlock()
 			done++
-			r.bus.Publish(core.Progress{Job: "refresh", Done: done, Total: len(ids)})
+			r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: base + done, Total: total})
 			if err != nil || rpl.Err != nil {
 				return
 			}
@@ -167,26 +179,37 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 // fullReload re-fetches the view query page by page and merges each
 // page in as it lands (R3 progressive fill): the view fills
 // asynchronously, one ViewDiff per page, until a short page ends the
-// query. Threads that retagged out of the filter or were deleted are
+// query. The bar's total comes from a count query up front, so Done
+// accumulates against the real result size instead of resetting per
+// page. Threads that retagged out of the filter or were deleted are
 // removed by the full snapshot replacement. Called for uuid changes,
 // manual refresh, view config changes, and first load. The cursor
 // survives via the merge walk.
 func (r *refresher) fullReload() {
+	total := 0
+	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query}); err == nil && rpl.Err == nil {
+		total = rpl.Count
+	}
 	var snapshot []*core.Thread
-	for offset := 0; ; offset += r.page {
-		rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: r.page, Offset: offset})
+	done := 0
+	limit := firstPage
+	for offset := 0; ; {
+		rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: limit, Offset: offset})
 		if err != nil || rpl.Err != nil {
 			return
 		}
-		page := r.fetchThreads(rpl.Msgs)
+		page := r.fetchThreads(rpl.Msgs, done, total)
+		done += len(rpl.Msgs)
 		sortThreads(page)
 		snapshot = mergeSorted(snapshot, page)
 		r.snapshot = snapshot
 		r.view.MergeThreads(snapshot)
 		r.bus.Publish(core.ViewDiff{View: r.view.Name})
-		if len(rpl.Msgs) < r.page {
+		offset += limit
+		if len(rpl.Msgs) < limit {
 			return
 		}
+		limit = r.page
 	}
 }
 

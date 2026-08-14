@@ -13,6 +13,7 @@ type ActionKind int
 const (
 	ActOpen ActionKind = iota
 	ActQuery
+	ActCount
 	ActThread
 	ActTag
 	ActRevision
@@ -35,6 +36,7 @@ type Reply struct {
 	ID    uint64
 	Err   error
 	Msgs  []core.Message
+	Count int
 	UUID  string
 	Rev   uint64
 	Paths []string
@@ -101,6 +103,8 @@ func (w *Worker) handle(a Action) {
 		err = w.backend.Open(ctx, a.Query)
 	case ActQuery:
 		r.Msgs, err = w.backend.Query(ctx, a.Query, a.Limit, a.Offset)
+	case ActCount:
+		r.Count, err = w.backend.Count(ctx, a.Query)
 	case ActThread:
 		r.Msgs, err = w.backend.Thread(ctx, a.ThreadID)
 	case ActTag:

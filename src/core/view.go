@@ -25,6 +25,8 @@ type View struct {
 	groups    []TagGroup
 	staged    map[string][]TagOp
 	stagedGen uint64
+	rows      []Row // memoized flatten; rebuilt only when dirty
+	dirty     bool
 }
 
 func NewView(name, query string) *View {
@@ -67,11 +69,20 @@ func (t *Thread) Count() int {
 }
 
 // Rows flattens the thread forest depth-first. Collapsed threads render
-// only their root row.
+// only their root row. The flatten is memoized: only structure or
+// staged-state changes (MergeThreads, Stage/Undo, SetTags, SetGroups,
+// SetCollapsed) mark it dirty - message CONTENT updates (SetAtts) are
+// visible through the shared Msg pointers, so a cache scan or a
+// progress tick never rebuilds the full row model (the 129k-row case).
 func (v *View) Rows() []Row {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	return v.rowsLocked()
+	if !v.dirty && v.rows != nil {
+		return v.rows
+	}
+	v.rows = v.rowsLocked()
+	v.dirty = false
+	return v.rows
 }
 
 func (v *View) rowsLocked() []Row {
@@ -166,6 +177,7 @@ func (v *View) MergeThreads(threads []*Thread) {
 	// the view query), so restore the sorted invariant the next diff
 	// depends on.
 	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
+	v.dirty = true
 }
 
 // reconcileMsg copies snapshot fields from the fresh message onto the
@@ -229,6 +241,7 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 	for _, t := range v.Threads {
 		if t.ID == id {
 			t.Collapsed = collapsed
+			v.dirty = true
 			return nil
 		}
 	}
@@ -254,6 +267,7 @@ func (v *View) SetTags(msgID string, tags []string) {
 	defer v.mu.Unlock()
 	if m := v.findMsgLocked(msgID); m != nil {
 		m.Tags = tags
+		v.dirty = true
 	}
 }
 
@@ -318,6 +332,7 @@ func (v *View) SetGroups(groups []TagGroup) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.groups = groups
+	v.dirty = true
 }
 
 // Groups returns a copy of the exclusive tag groups under the view lock;
@@ -350,11 +365,13 @@ func (v *View) Stage(msgID string, op TagOp) {
 				v.staged[msgID] = ops
 			}
 			v.stagedGen++
+			v.dirty = true
 			return
 		}
 	}
 	v.staged[msgID] = append(ops, op)
 	v.stagedGen++
+	v.dirty = true
 }
 
 // StagedOps snapshots the buffer for the apply path, with the buffer
@@ -381,6 +398,7 @@ func (v *View) Undo(msgID string) {
 	}
 	delete(v.staged, msgID)
 	v.stagedGen++
+	v.dirty = true
 }
 
 // ClearStaged removes the entry if the generation still matches, i.e.
@@ -396,6 +414,7 @@ func (v *View) ClearStaged(msgID string, gen uint64) {
 		return
 	}
 	delete(v.staged, msgID)
+	v.dirty = true
 }
 
 // HasStaged reports whether any message has pending staged ops.

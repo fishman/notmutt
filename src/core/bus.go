@@ -28,7 +28,7 @@ func (b *Bus) Publish(e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if p, ok := e.(Progress); ok {
-		b.progress[p.Job] = p
+		b.progress[p.Job+"\x00"+p.View] = p
 	}
 	for _, s := range b.subs {
 		select {
@@ -38,13 +38,14 @@ func (b *Bus) Publish(e Event) {
 	}
 }
 
-// LatestProgress returns the last published Progress for a job. The map
-// write never drops, so the completion event survives subscriber
-// backpressure - the TUI renders this snapshot, events only wake it.
-func (b *Bus) LatestProgress(job string) (Progress, bool) {
+// LatestProgress returns the last published Progress for a job and
+// virtual folder. The map write never drops, so the completion event
+// survives subscriber backpressure - the TUI renders this snapshot,
+// events only wake it.
+func (b *Bus) LatestProgress(job, view string) (Progress, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	p, ok := b.progress[job]
+	p, ok := b.progress[job+"\x00"+view]
 	return p, ok
 }
 
@@ -77,8 +78,12 @@ type JobError struct {
 
 // Progress reports a background job's batch progress (R15). Jobs report
 // their own totals; the worker action loop is not a progress source.
+// View names the virtual folder the job serves - progress is scoped per
+// view (inbox, unread, sent, drafts, per-account folders), and the TUI
+// shows only the current view's bar.
 type Progress struct {
 	Job   string
+	View  string
 	Done  int
 	Total int
 }

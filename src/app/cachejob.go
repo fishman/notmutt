@@ -87,7 +87,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 			defer func() {
 				mu.Lock()
 				done++
-				c.bus.Publish(core.Progress{Job: "cache", Done: done, Total: total})
+				c.bus.Publish(core.Progress{Job: "cache", View: c.view.Name, Done: done, Total: total})
 				mu.Unlock()
 			}()
 			sem <- struct{}{}

@@ -81,6 +81,19 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int)
 	return out, nil
 }
 
+func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {
+	if b.db == nil {
+		return 0, fmt.Errorf("notmuch count: database not open")
+	}
+	q := b.db.NewQuery(query)
+	defer q.Close()
+	n, err := q.CountThreads()
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: %w", err)
+	}
+	return int(n), nil
+}
+
 func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
 	return b.Query(ctx, "thread:"+threadID, 0, 0)
 }

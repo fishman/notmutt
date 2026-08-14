@@ -396,7 +396,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	m := New(view, ch, testKeys, testTagActions, bus)
 	m.width, m.height = 80, 24
 
-	bus.Publish(core.Progress{Job: "cache", Done: 33, Total: 37})
+	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
 	m = pump(t, m, ch)
 	if !m.progressOn {
 		t.Fatal("bar should be on mid-job")
@@ -406,7 +406,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		bus.Publish(core.ViewDiff{View: "inbox"})
 	}
-	bus.Publish(core.Progress{Job: "cache", Done: 37, Total: 37})
+	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 37, Total: 37})
 	for i := 0; i < 64; i++ {
 		m = pump(t, m, ch)
 	}
@@ -432,5 +432,38 @@ func pump(t *testing.T, m Model, ch <-chan core.Event) Model {
 	case <-time.After(2 * time.Second):
 		t.Fatal("no event on the bus channel")
 		return m
+	}
+}
+
+// TestProgressBarPerView pins the scoping: progress from another virtual
+// folder (account, unread, sent, drafts - every view has its own fill)
+// never turns on this view's bar; only the current view's snapshot does.
+func TestProgressBarPerView(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testKeys, testTagActions, bus)
+	m.width, m.height = 80, 24
+
+	// another view's fill publishes: the inbox bar stays off
+	bus.Publish(core.Progress{Job: "refresh", View: "unread", Done: 1, Total: 5})
+	m = pump(t, m, ch)
+	if m.progressOn {
+		t.Fatal("another view's progress must not turn on this bar")
+	}
+	// this view's fill turns it on
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 2, Total: 5})
+	m = pump(t, m, ch)
+	if !m.progressOn {
+		t.Fatal("this view's progress must turn on the bar")
+	}
+	if !strings.Contains(m.View(), "refresh 2/5") {
+		t.Fatalf("bar must show this view's progress:\n%s", m.View())
+	}
+	// completion clears only this view's bar
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 5, Total: 5})
+	m = pump(t, m, ch)
+	if m.progressOn {
+		t.Fatal("bar must clear on this view's completion")
 	}
 }

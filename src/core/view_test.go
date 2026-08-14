@@ -377,3 +377,44 @@ func TestStagedGhostRowsNeverStaged(t *testing.T) {
 		t.Fatal("a row missing")
 	}
 }
+
+// TestRowsMemoized pins the damage tracking: content-only updates (SetAtts)
+// return the cached row slice unchanged - the cache scan and progress ticks
+// never rebuild the flatten - while structure or staged-state changes
+// (MergeThreads, Stage, SetTags) rebuild it.
+func TestRowsMemoized(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("m1", 100)}), NewThread("t2", []*Message{msg("m2", 200)})})
+	r1 := v.Rows()
+	if len(r1) != 2 {
+		t.Fatalf("want 2 rows, got %d", len(r1))
+	}
+	// content-only: same backing array, no rebuild
+	v.SetAtts("m1", []Attachment{{Name: "f.pdf"}})
+	r2 := v.Rows()
+	if &r1[0] != &r2[0] {
+		t.Fatal("SetAtts must not rebuild the row model")
+	}
+	if len(r2[1].Msg.Atts) != 1 {
+		t.Fatalf("Atts must still be visible through the cached rows: %+v", r2[1])
+	}
+	// structure change: new backing array
+	v.SetTags("m1", []string{"unread"})
+	r3 := v.Rows()
+	if len(r3) != 2 || &r1[0] == &r3[0] {
+		t.Fatal("SetTags must rebuild the row model")
+	}
+	// staged change: rebuild
+	v.Stage("m1", TagOp{Tag: "archive", Add: true})
+	r4 := v.Rows()
+	if len(r4) != 2 || &r1[0] == &r4[0] {
+		t.Fatal("Stage must rebuild the row model")
+	}
+	if !r4[1].Staged {
+		t.Fatalf("staged flag must render after the rebuild: %+v", r4[1])
+	}
+	// clean reads stay cached
+	if &r4[0] != &v.Rows()[0] {
+		t.Fatal("clean reads must hit the cache")
+	}
+}

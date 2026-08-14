@@ -438,6 +438,40 @@ func TestProgressBarEmptyView(t *testing.T) {
 	}
 }
 
+// TestEmptyViewLooksFilled pins the load-time surface: an empty view
+// renders like a populated one - blank rows fill the list area (the
+// indicator sits on the first, cursor-style), and the keyhint bar and
+// status row always render, with or without a progress job. The
+// literal "empty" text never appears.
+func TestEmptyViewLooksFilled(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m.width, m.height = 80, 24
+	out := m.View()
+	if strings.Contains(out, "empty") {
+		t.Fatalf("the literal empty text must not render:\n%s", out)
+	}
+	strip := stripANSI(out)
+	if !strings.Contains(strip, "inbox|0") {
+		t.Fatalf("idle empty view must still render the status line:\n%s", strip)
+	}
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|0"); si < 0 || si > sh {
+		t.Fatalf("hint row must sit above the status line:\n%s", strip)
+	}
+	if !strings.Contains(out, "229;192;123") {
+		t.Fatalf("the first blank row must carry the indicator style:\n%s", out)
+	}
+	lines := strings.Split(strip, "\n")
+	if len(lines) < 24 || lines[0] != strings.Repeat(" ", 80) {
+		t.Fatalf("the list area must fill with blank rows:\n%s", strip)
+	}
+	// loading: the progress bar rides the same status line
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
+	if !strings.Contains(m.View(), "refresh 1/5") {
+		t.Fatalf("loading empty view must render the bar:\n%s", m.View())
+	}
+}
+
 // TestProgressBarEmptyViewHints pins the empty+progress render path:
 // the keyhint row renders above the status line exactly like the
 // populated index render (R9 slot reservation - the bar view never

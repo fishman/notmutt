@@ -484,10 +484,30 @@ func (m Model) View() string {
 	st := m.styles
 	rows := m.rows
 	if len(rows) == 0 {
-		if m.progressOn {
-			return "empty\n" + keyhintRow(m.bindings[m.mode], m.width) + "\n" + m.statusLineWith(st, m.ui) + "\n"
+		// an empty view renders like a filled one: blank rows fill the
+		// list area (the indicator sits on the first, cursor-style), and
+		// the keyhint bar and status row always render - "empty" is a
+		// data state, never a surface state
+		listHeight := m.height - 2
+		if listHeight < 1 {
+			listHeight = 1
 		}
-		return "empty\n"
+		var b strings.Builder
+		for i := 0; i < listHeight; i++ {
+			outer := st.Normal
+			if i == 0 {
+				outer = st.Indicator
+			}
+			if m.width > 0 {
+				b.WriteString(padRow("", m.width, outer))
+			}
+			b.WriteByte('\n')
+		}
+		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+		b.WriteByte('\n')
+		b.WriteString(m.statusLineWith(st, m.ui))
+		b.WriteByte('\n')
+		return b.String()
 	}
 	cur := m.CursorIndex()
 	// the bottom two rows are the keyhint bar (R9) and the status line

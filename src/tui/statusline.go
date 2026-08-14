@@ -1,8 +1,6 @@
 package tui
 
 import (
-	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -11,12 +9,6 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 )
-
-const progressWidth = 40
-
-// defaultStatusWidth is the width the width-less statusLine variant
-// renders at (tests and callers without a window size).
-const defaultStatusWidth = 80
 
 // statusSegment is one composable cell of the status line: content,
 // style, and a drop priority (powerline-go Segment, cut to notmutt).
@@ -35,6 +27,8 @@ type statusData struct {
 	visible int
 	prog    *core.Progress // nil = no job on
 	on      bool
+	legend  string // icon library: "icon name" pairs for the view's tags
+	account string // the cursor message's account tag (R2), empty on none
 }
 
 // statusLine renders the status row at the default width.
@@ -52,26 +46,27 @@ func statusLine(st Styles, ui config.UI, d statusData) string {
 // full width: the right group right-aligns, trailing gaps pad with
 // the status background (R11 slot reservation).
 func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
-	left := []statusSegment{
-		{content: d.view, priority: 10},
-		{content: strconv.Itoa(d.visible), priority: 5},
+	left := []statusSegment{viewSegment(d.view), countSegment(d.visible)}
+	if d.account != "" {
+		left = append(left, accountSegment(d.account))
 	}
 	var right []statusSegment
 	if d.on && d.prog != nil {
-		label := fmt.Sprintf("%s %d/%d", d.prog.Job, d.prog.Done, d.prog.Total)
-		fill := progressWidth - runewidth.StringWidth(label) - 1
-		if fill < 0 {
-			fill = 0
-		}
-		fillBar, emptyBar := progressBar(ui, *d.prog, fill)
-		bar := styleBar(fillBar, emptyBar, st)
-		right = append(right, statusSegment{
-			content:  label + " " + bar,
-			style:    st.Status,
-			priority: 0,
-		})
+		right = append(right, progressSegment(ui, *d.prog, st))
 	}
 	sep := ui.Glyphs.StatuslineSeparator
+	if d.legend != "" {
+		// The legend is pre-fitted to the row: whatever width the fixed
+		// segments (view, count) and the right group leave, truncated
+		// wcwidth-aware - the status row never shifts with its content
+		// (R11 slot reservation). The drop loop below stays as the
+		// backstop when a future segment overruns.
+		fixed := groupWidth(left, sep)
+		budget := width - fixed - groupWidth(right, sep) - runewidth.StringWidth(sep)
+		if budget > 0 {
+			left = append(left, legendSegment(d.legend, budget))
+		}
+	}
 	for {
 		w := groupWidth(left, sep) + groupWidth(right, sep)
 		if width <= 0 || w <= width {

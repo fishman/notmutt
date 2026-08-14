@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
 
 	"notmutt/config"
@@ -69,15 +69,15 @@ func ghostModel() Model {
 
 func press(t *testing.T, m tea.Model, key string) Model {
 	t.Helper()
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	next, _ := m.Update(tea.KeyPressMsg{Text: key, Code: []rune(key)[0]})
 	return next.(Model)
 }
 
-// pressType presses a non-rune key (arrows, ctrl+...): actionForKey
+// pressType presses a special key (arrows, ctrl+...): actionForKey
 // resolves the canonical name via msg.String() ("up", "down", "ctrl+d").
-func pressType(t *testing.T, m tea.Model, k tea.KeyType) Model {
+func pressType(t *testing.T, m tea.Model, k rune) Model {
 	t.Helper()
-	next, _ := m.Update(tea.KeyMsg{Type: k})
+	next, _ := m.Update(tea.KeyPressMsg{Code: k})
 	return next.(Model)
 }
 
@@ -113,7 +113,7 @@ func TestStubThreadStaging(t *testing.T) {
 		t.Fatalf("stub row must render the resolved thread state: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
 	m.width, m.height = 80, 24
-	if out := m.View(); !strings.Contains(out, "*") {
+	if out := m.View().Content; !strings.Contains(out, "*") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
 	m = press(t, m, "u") // undo clears the thread op
@@ -156,7 +156,7 @@ func TestCursorMoves(t *testing.T) {
 func TestRenderShowsRows(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	if out == "" {
 		t.Fatal("empty render")
 	}
@@ -170,7 +170,7 @@ func TestRenderShowsRows(t *testing.T) {
 
 func TestQuit(t *testing.T) {
 	m := model()
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q must return a quit command")
 	}
@@ -191,7 +191,7 @@ func TestEventMsgRepaints(t *testing.T) {
 func TestGhostRowRendersAndCursorSkips(t *testing.T) {
 	m := ghostModel()
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	if !strings.Contains(out, "[...]") {
 		t.Fatalf("ghost row missing from render:\n%s", out)
 	}
@@ -215,6 +215,12 @@ func TestStageToggleRead(t *testing.T) {
 		t.Fatalf("fixture: cursor message must be read, got %v", row.Msg.Tags)
 	}
 	m = press(t, m, "r")
+	// auto-advance: the cursor moved to the next row; the staged row is
+	// the one under the previous cursor
+	if m.CursorIndex() != 1 {
+		t.Fatalf("r must advance the cursor one row, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "k")
 	row, _ = m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "unread") {
 		t.Fatalf("r must stage +unread: staged=%v tags=%v", row.Staged, row.StagedTags)
@@ -223,10 +229,11 @@ func TestStageToggleRead(t *testing.T) {
 		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
 	}
 	m.width, m.height = 80, 24
-	if out := m.View(); !strings.Contains(out, "*U") {
+	if out := m.View().Content; !strings.Contains(out, "*N") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
 	m = press(t, m, "r")
+	m = press(t, m, "k")
 	row, _ = m.view.CursorRow()
 	if row.Staged {
 		t.Fatal("staging the same op twice must cancel")
@@ -236,6 +243,7 @@ func TestStageToggleRead(t *testing.T) {
 func TestStageArchiveResolves(t *testing.T) {
 	m := model()
 	m = press(t, m, "a")
+	m = press(t, m, "k") // back up after the auto-advance
 	row, _ := m.view.CursorRow()
 	if !row.Staged {
 		t.Fatal("a must stage the cursor message")
@@ -251,13 +259,16 @@ func TestStageArchiveResolves(t *testing.T) {
 
 func TestUndoStaged(t *testing.T) {
 	m := model()
-	m = press(t, m, "a")
-	m = press(t, m, "r")
+	m = press(t, m, "a") // stage +archive on row 0, auto-advance to row 1
+	m = press(t, m, "k") // back to the staged row
+	m = press(t, m, "r") // stage +unread on row 0, advance again
+	m = press(t, m, "k") // back to the staged row
 	row, _ := m.view.CursorRow()
 	if !row.Staged || len(row.StagedTags) != 2 {
 		t.Fatalf("two staged ops expected: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
-	m = press(t, m, "u")
+	m = press(t, m, "u") // undo clears the ops and auto-advances
+	m = press(t, m, "k") // back to the unstaged row
 	row, _ = m.view.CursorRow()
 	if row.Staged {
 		t.Fatal("u must clear the staged ops")
@@ -398,7 +409,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	// the model's own cursor highlight (indicator style SGR) is not a
 	// leak; check the injected sequences specifically
 	for _, leak := range []string{"\x1b]", "\x07", "\x1b[31m", "\x1b[41m"} {
@@ -411,11 +422,11 @@ func TestRenderSanitizesControls(t *testing.T) {
 func TestProgressBarRendersAndClears(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	if strings.Contains(m.View(), "refresh") {
+	if strings.Contains(m.View().Content, "refresh") {
 		t.Fatal("no bar before any progress event")
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 5, Total: 10})
-	out := m.View()
+	out := m.View().Content
 	if !strings.Contains(out, "refresh 5/10") {
 		t.Fatalf("bar missing:\n%s", out)
 	}
@@ -423,7 +434,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
-	if strings.Contains(m.View(), "refresh") {
+	if strings.Contains(m.View().Content, "refresh") {
 		t.Fatal("bar must clear on completion")
 	}
 }
@@ -433,8 +444,8 @@ func TestProgressBarEmptyView(t *testing.T) {
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	if !strings.Contains(m.View(), "refresh 1/5") {
-		t.Fatalf("empty view must still render the status line:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "refresh 1/5") {
+		t.Fatalf("empty view must still render the status line:\n%s", m.View().Content)
 	}
 }
 
@@ -447,7 +458,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
-	out := m.View()
+	out := m.View().Content
 	if strings.Contains(out, "empty") {
 		t.Fatalf("the literal empty text must not render:\n%s", out)
 	}
@@ -467,8 +478,8 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	}
 	// loading: the progress bar rides the same status line
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	if !strings.Contains(m.View(), "refresh 1/5") {
-		t.Fatalf("loading empty view must render the bar:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "refresh 1/5") {
+		t.Fatalf("loading empty view must render the bar:\n%s", m.View().Content)
 	}
 }
 
@@ -481,7 +492,7 @@ func TestProgressBarEmptyViewHints(t *testing.T) {
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 120, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	strip := stripANSI(m.View())
+	strip := stripANSI(m.View().Content)
 	if !strings.Contains(strip, "refresh 1/5") {
 		t.Fatalf("empty view must still render the status line:\n%s", strip)
 	}
@@ -530,14 +541,14 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
 	m.width, m.height = 80, 24
-	if out := m.View(); strings.Contains(out, "255;0;0") {
+	if out := m.View().Content; strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
 	}
 	if err := st.SetThemeVariant("red"); err != nil {
 		t.Fatal(err)
 	}
 	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
-	if out := m.View(); !strings.Contains(out, "255;0;0") {
+	if out := m.View().Content; !strings.Contains(out, "255;0;0") {
 		t.Fatalf("variant switch must re-render the status line in the new color:\n%s", out)
 	}
 }
@@ -568,14 +579,14 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
-	if out := m.View(); strings.Contains(out, "255;0;0") {
+	if out := m.View().Content; strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red pager header:\n%s", out)
 	}
 	if err := st.SetThemeVariant("red"); err != nil {
 		t.Fatal(err)
 	}
 	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
-	if out := m.View(); !strings.Contains(out, "255;0;0") {
+	if out := m.View().Content; !strings.Contains(out, "255;0;0") {
 		t.Fatalf("variant switch must re-style the open pager:\n%s", out)
 	}
 }
@@ -668,8 +679,8 @@ func TestProgressBarPerView(t *testing.T) {
 	if !m.progressOn {
 		t.Fatal("this view's progress must turn on the bar")
 	}
-	if !strings.Contains(m.View(), "refresh 2/5") {
-		t.Fatalf("bar must show this view's progress:\n%s", m.View())
+	if !strings.Contains(m.View().Content, "refresh 2/5") {
+		t.Fatalf("bar must show this view's progress:\n%s", m.View().Content)
 	}
 	// completion clears only this view's bar
 	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 5, Total: 5})
@@ -736,7 +747,7 @@ func TestOpenSwitchesToPager(t *testing.T) {
 	if m.pager == nil || len(m.pager.lines) == 0 {
 		t.Fatal("pager content missing")
 	}
-	out := stripANSI(m.View())
+	out := stripANSI(m.View().Content)
 	for _, want := range []string{"hello", "a@example.com", "body line"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("pager render missing %q:\n%s", want, out)
@@ -811,7 +822,7 @@ func TestKeyhintBar(t *testing.T) {
 func TestKeyhintRowInView(t *testing.T) {
 	m := model()
 	m.width, m.height = 120, 24
-	strip := stripANSI(m.View())
+	strip := stripANSI(m.View().Content)
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("index hint row missing:\n%s", strip)
 	}
@@ -819,7 +830,7 @@ func TestKeyhintRowInView(t *testing.T) {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
-	strip = stripANSI(m.View())
+	strip = stripANSI(m.View().Content)
 	if !strings.Contains(strip, "j scroll-down") {
 		t.Fatalf("pager hint row missing:\n%s", strip)
 	}
@@ -838,7 +849,7 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	// no-op (no quit, no back), in pager mode it returns to index
 	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "back"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
-	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	m = next.(Model)
 	if cmd != nil {
 		t.Fatal("q unbound in index mode must not quit")
@@ -868,7 +879,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "quit"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q bound to quit in pager mode must return a quit command")
 	}
@@ -880,12 +891,12 @@ func TestPagerPageKeys(t *testing.T) {
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	// real ctrl+d/ctrl+u keys: KeyMsg.String() resolves to "ctrl+d" and
 	// the dispatch finds the page-down/page-up bindings
-	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	m = next.(Model)
 	if m.pager.cursor != 4 || m.pager.vp.offset != 0 {
 		t.Fatalf("ctrl+d must move the read position half a window, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
-	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	m = next.(Model)
 	if m.pager.cursor != 0 || m.pager.vp.offset != 0 {
 		t.Fatalf("ctrl+u must move the read position back up, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
@@ -963,7 +974,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 func TestNumberColumnGrows(t *testing.T) {
 	m := rowsModel(12)
 	m.width, m.height = 80, 24
-	lines := strings.Split(stripANSI(m.View()), "\n")
+	lines := strings.Split(stripANSI(m.View().Content), "\n")
 	if !strings.HasPrefix(lines[0], "1  ") {
 		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[0])
 	}
@@ -1069,7 +1080,7 @@ func TestIndexPagesAtEdges(t *testing.T) {
 	if m.CursorIndex() != h || m.indexOffset != h {
 		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
 	}
-	lines := strings.Split(stripANSI(m.View()), "\n")
+	lines := strings.Split(stripANSI(m.View().Content), "\n")
 	if !strings.HasPrefix(lines[0], "23") {
 		t.Fatalf("the new page must render from its first row: %q", lines[0])
 	}
@@ -1126,7 +1137,7 @@ func TestPagerCursorIndicator(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, "line one\nline two\n"))
-	if out := m.View(); !strings.Contains(out, "229;192;123") {
+	if out := m.View().Content; !strings.Contains(out, "229;192;123") {
 		t.Fatalf("cursor line must render with the indicator style:\n%s", out)
 	}
 }
@@ -1149,7 +1160,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 	if m.mode != "pager" {
 		t.Fatalf("a parse failure must open the pager with an error line, mode=%q", m.mode)
 	}
-	out := stripANSI(m.View())
+	out := stripANSI(m.View().Content)
 	if !strings.Contains(out, "failed to parse message") {
 		t.Fatalf("error line missing:\n%s", out)
 	}

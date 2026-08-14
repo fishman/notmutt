@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -23,6 +23,7 @@ var Actions = map[string]map[string]bool{
 	"index": {
 		"cursor-down": true, "cursor-up": true,
 		"cursor-top": true, "cursor-bottom": true,
+		"page-down": true, "page-up": true,
 		"open": true, "quit": true, "undo": true, "apply": true,
 	},
 	"pager": {
@@ -55,6 +56,35 @@ type Model struct {
 	// still while the cursor moves within it; only when the cursor
 	// crosses a page edge does the window jump a full page.
 	indexOffset int
+	// cursorID mirrors the view's cursor id: the view's CursorRow
+	// flattens the whole thread tree per call (the page-key stall at
+	// 33k rows), so moves resolve against the cached row list instead.
+	cursorID string
+	// legend is the debounced status-line icon library (the current
+	// message's tag icons): every cursor move clears it and arms the
+	// debounce, so it only resolves after the cursor rests - never
+	// during movement or inside a render. Resolution itself is cheap
+	// (a scan over the cached rows, no view flatten); the debounce is
+	// what keeps the row still while the cursor walks. account resolves
+	// in the same settle: the account tag of the rested-on message
+	// (R2), shown as the status-bar account segment.
+	legend        string
+	account       string
+	legendPending bool
+	// legendTickOn gates the debounce to a single tick in flight: a
+	// keypress arms one only when none is scheduled, and the tick's
+	// own re-arm keeps the chain alive while the cursor keeps moving -
+	// holding a key never piles timers up.
+	legendTickOn bool
+	// legendMoves counts cursor moves: the tick carries the count from
+	// when it was armed and resolves only when it matches - a tick that
+	// finds newer moves re-arms, so the legend settles one debounce
+	// window after the last press (the keyup moment), never mid-hold.
+	legendMoves int
+	// accountTags is the account tag set (config.AccountTags): the row
+	// render skips these tags (the account lives in the status bar, not
+	// the mail title) and the account resolution scans against it.
+	accountTags map[string]bool
 	// vim-style prefixes (R9 data-first): digit keys accumulate into
 	// count (a bound digit wins), and "g" arms the gg chain - both
 	// engage only when the active context does NOT bind the key.
@@ -71,7 +101,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), mode: "index"}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), mode: "index"}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -90,7 +120,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// skips the re-render).
 			m.pager.setSize(m.width, m.height-2, m.styles)
 		}
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		km := m.bindings[m.mode]
 		if km == nil {
 			km = m.bindings["index"]
@@ -99,7 +129,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// with the next "g" (gg = top). A binding in the active context
 		// wins over the prefix (R9 data-first) - the prefix only engages
 		// on keys the context leaves unbound.
-		r := string(msg.Runes)
+		r := msg.Text
 		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' {
 			m.ggPending = false
 			m.count += r
@@ -137,7 +167,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "quit":
 			return m, tea.Quit
 		case "undo":
-			m.undo()
+			if m.undo() {
+				m.moveCursor(1)
+			}
 		case "apply":
 			onApply()
 		case "scroll-down":
@@ -151,10 +183,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "page-down":
 			if m.mode == "pager" && m.pager != nil {
 				m.pager.pageDown()
+			} else if m.mode == "index" {
+				m.moveCursor(m.pageRows())
 			}
 		case "page-up":
 			if m.mode == "pager" && m.pager != nil {
 				m.pager.pageUp()
+			} else if m.mode == "index" {
+				m.moveCursor(-m.pageRows())
 			}
 		case "scroll-top":
 			if m.mode == "pager" && m.pager != nil {
@@ -169,8 +205,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = "index"
 			}
 		default:
-			m.stage(action)
+			// staged tag ops (and undo) advance the cursor one row -
+			// the next keypress acts on the next message (mutt's
+			// auto-advance). A no-op action (ghost row, unknown action)
+			// does not move.
+			if m.stage(action) {
+				m.moveCursor(1)
+			}
 		}
+		if m.legendPending && !m.legendTickOn {
+			m.legendTickOn = true
+			return m, legendTickCmd(m.legendMoves)
+		}
+	case tea.KeyReleaseMsg:
+		// the real keyup (kitty keyboard protocol release reporting):
+		// the legend resolves at the release, no debounce needed.
+		// Terminals without release reporting never send this; the
+		// legendTick fallback settles those the same way.
+		if m.legendPending {
+			m.legend, m.account = m.resolveStatus()
+			m.legendPending = false
+			m.legendTickOn = false
+		}
+		return m, nil
+	case legendTick:
+		// fallback for terminals without release reporting: the tick
+		// carries the move count from when it was armed - newer moves
+		// re-arm the single in-flight tick, so the legend resolves one
+		// debounce window after the last press
+		if !m.legendPending {
+			// the release path already resolved: no re-arm, no
+			// duplicate work
+			m.legendTickOn = false
+			return m, nil
+		}
+		if m.legendMoves != msg.moves {
+			return m, legendTickCmd(m.legendMoves)
+		}
+		m.legend, m.account = m.resolveStatus()
+		m.legendPending = false
+		m.legendTickOn = false
+		return m, nil
 	case core.ConfigChanged:
 		m.onConfig(msg)
 	case EventMsg:
@@ -188,6 +263,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
+		if m.legendPending && !m.legendTickOn {
+			m.legendTickOn = true
+			return m, tea.Batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
+		}
 		if m.progressOn {
 			return m, tea.Batch(EventCmd(m.ch), progressTickCmd())
 		}
@@ -243,6 +322,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.pager.setSize(m.width, m.height-2, m.styles)
 	}
 	m.mode = "pager"
+	m.legendPending = true
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the
@@ -266,8 +346,8 @@ func (m *Model) openCursorThread() {
 // actionForKey resolves the pressed key: runes first (plain keys),
 // then BubbleTea's canonical name ("ctrl+n", "alt+v", ...) so control
 // keys are bindable.
-func actionForKey(msg tea.KeyMsg, km map[string]string) string {
-	if a, ok := km[string(msg.Runes)]; ok {
+func actionForKey(msg tea.KeyPressMsg, km map[string]string) string {
+	if a, ok := km[msg.Text]; ok {
 		return a
 	}
 	return km[msg.String()]
@@ -298,16 +378,71 @@ func (m *Model) refreshProgress() {
 
 type progressTick struct{}
 
-const progressTickInterval = 200 * time.Millisecond
-
 func progressTickCmd() tea.Cmd {
 	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg { return progressTick{} })
+}
+
+type legendTick struct{ moves int }
+
+func legendTickCmd(moves int) tea.Cmd {
+	return tea.Tick(legendDebounce, func(time.Time) tea.Msg { return legendTick{moves} })
+}
+
+// resolveStatus computes the status-line legend and account for the
+// cursor's message: the icon library over the row's tags, and the
+// account tag among them (R2). In pager mode both fall back to the open
+// thread's first real message.
+func (m Model) resolveStatus() (legend, account string) {
+	tags := m.cursorTags()
+	return iconLegend(tags, m.ui.Tags, m.accountTags), accountTag(tags, m.accountTags)
+}
+
+// cursorTags resolves the cursor message's tag list. Read-only over the
+// cached row list: the mirror id scan, or the view's stored cursor
+// index (O(1)) when the mirror is empty (stub cursor) or stale (the
+// view re-anchored after a merge) - never the view's CursorRow, which
+// flattens the whole thread tree. In pager mode the fallback is the
+// open thread's first real message.
+func (m Model) cursorTags() []string {
+	rows := m.rows
+	if len(rows) == 0 {
+		return nil
+	}
+	var tags []string
+	if m.cursorID != "" {
+		for _, r := range rows {
+			if r.Msg != nil && r.Msg.ID == m.cursorID {
+				tags = r.Msg.Tags
+				break
+			}
+		}
+	}
+	if tags == nil {
+		if idx := m.view.CursorRowIndex(); idx >= 0 && idx < len(rows) {
+			if msg := rows[idx].Msg; msg != nil {
+				tags = msg.Tags
+			}
+		}
+	}
+	if len(tags) == 0 && m.mode == "pager" && m.pager != nil {
+		for _, r := range rows {
+			if r.Msg != nil && r.ThreadID == m.pager.threadID {
+				tags = r.Msg.Tags
+				break
+			}
+		}
+	}
+	return tags
 }
 
 // moveCursor moves the index cursor n rows (a counted move loops
 // single steps so edge crossings page). The window holds still while
 // the cursor moves within the page; only at a page edge does it jump
-// a full page (cursorStep -> pageAtEdge).
+// a full page. All stepping is index-local against the cached row
+// list: the view's CursorRow flattens the whole thread tree per call
+// (the page-key stall at 33k rows), so the cursor id is mirrored on
+// the model and looked up by scanning m.rows - one scan per move, no
+// flatten.
 func (m *Model) moveCursor(delta int) {
 	rows := m.view.Rows()
 	m.rows = rows
@@ -315,6 +450,7 @@ func (m *Model) moveCursor(delta int) {
 		return
 	}
 	m.clampIndexOffset()
+	idx := m.CursorIndex()
 	n := delta
 	step := 1
 	if n < 0 {
@@ -322,16 +458,17 @@ func (m *Model) moveCursor(delta int) {
 		step = -1
 	}
 	for i := 0; i < n; i++ {
-		m.cursorStep(step)
+		idx = cursorStepAt(rows, idx, step)
+		m.setCursorAt(rows, idx)
+		idx = m.pageAtEdgeAt(rows, idx)
 	}
 }
 
-// cursorStep moves the cursor one row in dir. Ghost rows are
-// pass-through: a step onto a ghost walks in the move direction to the
-// nearest real message; at a boundary, the step does not move.
-func (m *Model) cursorStep(dir int) {
-	rows := m.rows
-	idx := m.CursorIndex()
+// cursorStepAt moves idx one row in dir. Ghost rows are pass-through:
+// a step onto a ghost walks in the move direction to the nearest real
+// message; at a boundary, the step does not move (returns start).
+func cursorStepAt(rows []core.Row, idx, dir int) int {
+	start := idx
 	idx += dir
 	if idx < 0 {
 		idx = 0
@@ -343,75 +480,81 @@ func (m *Model) cursorStep(dir int) {
 		for {
 			idx += dir
 			if idx < 0 || idx >= len(rows) {
-				return
+				return start
 			}
 			if rows[idx].Msg != nil {
 				break
 			}
 		}
 	}
-	if id := rows[idx].Msg.ID; id != "" {
-		m.view.SetCursor(id)
-	} else {
-		// stub row (search summary, no message id): anchor by index so
-		// the cursor tracks through it; the viewport hydrate replaces
-		// the stub with the real message and re-anchors by id
-		m.view.SetCursorIndex(idx)
-	}
-	m.pageAtEdge()
+	return idx
 }
 
-// pageAtEdge jumps the window a full page when the cursor crossed a
+// pageAtEdgeAt jumps the window a full page when the cursor crossed a
 // page edge (the read-position model shared with the pager): crossing
 // the bottom lands the cursor on the new page's first line, crossing
-// the top on its last line. A single step crosses exactly one edge.
-func (m *Model) pageAtEdge() {
-	rows := m.rows
+// the top on its last line. Returns the possibly re-anchored cursor
+// index. A single step crosses exactly one edge.
+func (m *Model) pageAtEdgeAt(rows []core.Row, idx int) int {
 	if len(rows) == 0 {
-		return
+		return idx
 	}
-	cur := m.CursorIndex()
-	if cur > m.indexOffset+m.listHeight()-1 {
-		m.indexOffset += m.listHeight()
-		if m.indexOffset > len(rows)-m.listHeight() {
-			m.indexOffset = len(rows) - m.listHeight()
+	h := m.listHeight()
+	if idx > m.indexOffset+h-1 {
+		m.indexOffset += h
+		if m.indexOffset > len(rows)-h {
+			m.indexOffset = len(rows) - h
 		}
-		m.cursorLand(m.indexOffset, 1)
-		return
+		return cursorLandAt(rows, m.indexOffset, 1)
 	}
-	if cur < m.indexOffset {
-		m.indexOffset -= m.listHeight()
+	if idx < m.indexOffset {
+		m.indexOffset -= h
 		if m.indexOffset < 0 {
 			m.indexOffset = 0
 		}
-		m.cursorLand(m.indexOffset+m.listHeight()-1, -1)
+		return cursorLandAt(rows, m.indexOffset+h-1, -1)
 	}
+	return idx
 }
 
-// cursorLand anchors the cursor on the nearest real row from idx,
-// walking dir first (a page landing can hit a ghost at a page
-// boundary; the cursor never rests on a ghost). Stubs anchor by index.
-func (m *Model) cursorLand(idx, dir int) {
-	rows := m.rows
+// cursorLandAt anchors on the nearest real row from idx, walking dir
+// first (a page landing can hit a ghost at a page boundary; the cursor
+// never rests on a ghost). Stubs anchor by index.
+func cursorLandAt(rows []core.Row, idx, dir int) int {
 	for i := idx; i >= 0 && i < len(rows); i += dir {
 		if rows[i].Msg != nil {
-			if id := rows[i].Msg.ID; id != "" {
-				m.view.SetCursor(id)
-			} else {
-				m.view.SetCursorIndex(i)
-			}
-			return
+			return i
 		}
 	}
 	for i := idx; i >= 0 && i < len(rows); i -= dir {
 		if rows[i].Msg != nil {
-			if id := rows[i].Msg.ID; id != "" {
-				m.view.SetCursor(id)
-			} else {
-				m.view.SetCursorIndex(i)
-			}
-			return
+			return i
 		}
+	}
+	return idx
+}
+
+// setCursorAt anchors the view cursor on row idx and mirrors the id:
+// stub rows (no message id) anchor by index - the viewport hydrate
+// replaces the stub with the real message and re-anchors by id. A
+// ghost row leaves the cursor untouched (cursorLandAt's all-ghost
+// fallback).
+func (m *Model) setCursorAt(rows []core.Row, idx int) {
+	// any move blanks the legend and account and arms the debounce -
+	// the status row only shows what the cursor rested on
+	m.legend = ""
+	m.account = ""
+	m.legendPending = true
+	m.legendMoves++
+	if rows[idx].Msg == nil {
+		return
+	}
+	if id := rows[idx].Msg.ID; id != "" {
+		m.view.SetCursor(id)
+		m.cursorID = id
+	} else {
+		m.view.SetCursorIndex(idx)
+		m.cursorID = ""
 	}
 }
 
@@ -423,6 +566,11 @@ func (m *Model) listHeight() int {
 		h = 1
 	}
 	return h
+}
+
+// pageRows is the page-down/up step size: one index window.
+func (m *Model) pageRows() int {
+	return m.listHeight()
 }
 
 // clampIndexOffset keeps the anchored window inside the current rows
@@ -480,33 +628,30 @@ func (m *Model) cursorEdge(dir int) {
 	}
 	for i >= 0 && i < len(rows) {
 		if rows[i].Msg != nil {
-			if id := rows[i].Msg.ID; id != "" {
-				m.view.SetCursor(id)
-			} else {
-				m.view.SetCursorIndex(i)
-			}
+			m.setCursorAt(rows, i)
 			return
 		}
 		i += dir
 	}
 }
 
-// stage runs a tag action on the cursor row (R14). A tag in any
-// tag group is a folder tag and stages +tag - exclusive-group
-// resolution dedups at render/apply; a tag in no group is soft (unread
-// is canonical) and toggles from the applied state. Ghost rows are
-// guarded like the M1 cursor keys. The staged identity is the row's
-// message id, or the thread identity for summary rows (search
-// summaries carry no message id): a tag op on a summary is a
+// stage runs a tag action on the cursor row (R14) and reports whether
+// it staged anything - the caller advances the cursor only on an
+// effect. A tag in any tag group is a folder tag and stages +tag -
+// exclusive-group resolution dedups at render/apply; a tag in no group
+// is soft (unread is canonical) and toggles from the applied state.
+// Ghost rows are guarded like the M1 cursor keys. The staged identity
+// is the row's message id, or the thread identity for summary rows
+// (search summaries carry no message id): a tag op on a summary is a
 // thread-level op - apply emits thread:<id>, notmuch's natural unit.
-func (m *Model) stage(action string) {
+func (m *Model) stage(action string) bool {
 	tag, ok := m.tagActions[action]
 	if !ok {
-		return
+		return false
 	}
 	row, ok := m.view.CursorRow()
 	if !ok || row.Msg == nil {
-		return
+		return false
 	}
 	identity := row.Msg.ID
 	if identity == "" {
@@ -518,6 +663,7 @@ func (m *Model) stage(action string) {
 	}
 	m.view.Stage(identity, core.TagOp{Tag: tag, Add: add})
 	m.rows = m.view.Rows()
+	return true
 }
 
 func inGroup(tag string, groups []core.TagGroup) bool {
@@ -530,21 +676,41 @@ func inGroup(tag string, groups []core.TagGroup) bool {
 }
 
 // undo discards the cursor row's staged ops (R14): pure buffer
-// drop, no DB traffic. Ghost rows are guarded like the M1 cursor keys.
-func (m *Model) undo() {
+// drop, no DB traffic. Reports whether anything was staged, so a
+// no-op undo does not advance the cursor. Ghost rows are guarded like
+// the M1 cursor keys.
+func (m *Model) undo() bool {
 	row, ok := m.view.CursorRow()
 	if !ok || row.Msg == nil {
-		return
+		return false
 	}
 	identity := row.Msg.ID
 	if identity == "" {
 		identity = "t:" + row.ThreadID
 	}
+	if !m.view.IsStaged(identity) {
+		return false
+	}
 	m.view.Undo(identity)
 	m.rows = m.view.Rows()
+	return true
 }
 
+// CursorIndex resolves the cursor's row index against the cached row
+// list - one scan, never a view flatten (CursorRow rebuilds the whole
+// row model; at 33k rows that is the movement stall). A stale mirror
+// (cursor set on the view directly) falls back to the view's own
+// resolution, which flattens once - the model-set cursor path never
+// does. Stub rows carry no message id: the view's last row index is
+// the anchor.
 func (m Model) CursorIndex() int {
+	if m.cursorID != "" {
+		for i, r := range m.rows {
+			if r.Msg != nil && r.Msg.ID == m.cursorID {
+				return i
+			}
+		}
+	}
 	row, ok := m.view.CursorRow()
 	if !ok {
 		return 0
@@ -569,24 +735,35 @@ func (m Model) CursorIndex() int {
 			}
 		}
 	}
-	// stub rows carry no message id: the view's last row index is the
-	// anchor (CursorRow's fallback)
 	idx := m.view.CursorRowIndex()
-	if idx >= len(m.rows) {
-		idx = len(m.rows) - 1
-	}
-	if idx < 0 {
+	if len(m.rows) == 0 {
 		return 0
+	}
+	if idx < 0 || idx >= len(m.rows) {
+		idx = len(m.rows) - 1
 	}
 	return idx
 }
 
-// View renders the full frame. The frame must NOT end with a newline: the
+// View wraps the rendered frame in the v2 view struct: the alt-screen
+// flag and the keyboard-enhancement request (kitty protocol release
+// reporting) are declarative View fields in v2 - no program options.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.render())
+	v.AltScreen = true
+	// ReportEventTypes asks the terminal to report key repeat and
+	// release events; when supported, the program receives
+	// KeyReleaseMsg and the legend resolves on the real keyup
+	v.KeyboardEnhancements.ReportEventTypes = true
+	return v
+}
+
+// render builds the full frame. The frame must NOT end with a newline: the
 // vendored renderer splits the frame on "\n" and a trailing empty element
 // makes the split longer than the window height, which drops the first row
 // and shifts every line - the diff then matches nothing and the whole page
 // repaints on every keypress.
-func (m Model) View() string {
+func (m Model) render() string {
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
 		b.WriteString(m.pager.render())
@@ -649,7 +826,7 @@ func (m Model) View() string {
 	numWidth := len(strconv.Itoa(len(rows)))
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st, m.ui, numWidth, i == cur)
+		line := renderRow(i+1, rows[i], st, m.ui, numWidth, i == cur, m.accountTags)
 		outer := st.Normal
 		if i == cur {
 			outer = st.Indicator
@@ -682,11 +859,20 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	return statusLineWidth(st, ui, m.statusData(), m.width)
 }
 
+// statusData builds the status row's input: the cursor row's tags feed
+// the icon library (in pager mode the open thread's first message -
+// the index cursor is hidden). The cursor resolution is the cached-row
+// scan, never a view flatten.
 func (m Model) statusData() statusData {
 	d := statusData{view: m.view.Name, visible: len(m.rows), on: m.progressOn}
 	if m.progressOn {
 		p := m.progress
 		d.prog = &p
 	}
+	// the legend and account are pre-resolved by the debounced
+	// legendTick - the render path never touches the view's cursor
+	// resolution (the flattening CursorRow at 33k rows)
+	d.legend = m.legend
+	d.account = m.account
 	return d
 }

@@ -20,8 +20,9 @@ import (
 // Optional slots reserve width; every slot renders through its style,
 // so the line carries per-slot SGR runs (the outer row style is applied
 // later by padRow). Glyphs and the tag-slot cap come from config data,
-// never hardcoded.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selected bool) string {
+// never hardcoded. Account tags never render here - the account lives
+// in the status bar (R2), not the mail title.
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selected bool, accountTags map[string]bool) string {
 	// the cursor row is monochrome (R11): one highlight background and one
 	// text color - the indicator style replaces every slot style
 	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := st.Index.Number, st.Index.Flags, st.Index.Date, st.Index.Author, st.Index.Subject
@@ -67,7 +68,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selec
 	if selected {
 		tagStyle = func(string) lipgloss.Style { return st.Indicator }
 	}
-	b.WriteString(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags))
+	b.WriteString(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags, accountTags))
 	return b.String()
 }
 
@@ -80,7 +81,7 @@ func flagChars(tags []string) string {
 	for _, t := range tags {
 		switch t {
 		case "unread":
-			f.WriteByte('U')
+			f.WriteByte('N')
 		case "replied":
 			f.WriteByte('R')
 		case "forwarded":
@@ -118,12 +119,13 @@ func formatDate(ts int64) string {
 // falling back to the default tag style. A tag with an icon entry in the
 // ui.tags.icons dict renders the icon instead of its name (muttrc
 // tag-transforms); the attachment marker tag is skipped - it owns the
-// attachment slot at the row start.
-func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t config.UITags) string {
+// attachment slot at the row start, and account tags are skipped too -
+// the account lives in the status bar (R2).
+func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t config.UITags, accountTags map[string]bool) string {
 	var b strings.Builder
 	n := 0
 	for _, tag := range tags {
-		if tag == "unread" || tag == t.Attach {
+		if tag == "unread" || tag == t.Attach || accountTags[tag] {
 			continue
 		}
 		if n >= max {

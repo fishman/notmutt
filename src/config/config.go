@@ -465,6 +465,18 @@ func (a Account) Tag(name string) string {
 	return name
 }
 
+// AccountTags derives the account tag set: one tag per account (the
+// folder prefix, R2). A message's account is the account tag it
+// carries; the row render skips these tags and the status bar resolves
+// against the set.
+func (c Config) AccountTags() map[string]bool {
+	set := make(map[string]bool, len(c.Accounts))
+	for name, a := range c.Accounts {
+		set[a.Tag(name)] = true
+	}
+	return set
+}
+
 // vimScheme is the R9 default key scheme: mutt-style movement, the
 // classic index keys, pager scroll keys. Declarative data, never code.
 var vimScheme = map[string]map[string]string{
@@ -472,10 +484,12 @@ var vimScheme = map[string]map[string]string{
 		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"pgdown": "page-down", "pgup": "page-up",
 	},
 	"pager": {
 		"j": "scroll-down", "k": "scroll-up",
 		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
 	},
@@ -488,10 +502,12 @@ var emacsScheme = map[string]map[string]string{
 		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up", "o": "open",
 		"q": "quit", "r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"pgdown": "page-down", "pgup": "page-up",
 	},
 	"pager": {
 		"ctrl+n": "scroll-down", "ctrl+p": "scroll-up",
 		"ctrl+v": "page-down", "alt+v": "page-up",
+		"pgdown": "page-down", "pgup": "page-up",
 		"ctrl+g": "back", "q": "quit",
 	},
 }

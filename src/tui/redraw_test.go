@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -51,7 +51,7 @@ func TestCursorMovePartialRepaint(t *testing.T) {
 	go func() { prog.Run(); close(done) }()
 	defer func() { prog.Quit(); <-done }()
 
-	j := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	j := tea.KeyPressMsg{Text: "j", Code: 'j'}
 	prog.Send(tea.WindowSizeMsg{Width: 80, Height: 24})
 	// 100ms between sends: one flush per message (the renderer ticks at
 	// 60fps, so back-to-back sends would collapse into a single flush).

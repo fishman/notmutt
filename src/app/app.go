@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -86,7 +86,7 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI))
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

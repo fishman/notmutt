@@ -24,7 +24,7 @@ func TestRowStyled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false)
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false, config.Default().AccountTags())
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -51,7 +51,7 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false)
+	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false, config.Default().AccountTags())
 }
 
 // TestRowSelectedMonochrome pins the cursor row look (R11): the indicator
@@ -62,7 +62,7 @@ func TestRowSelectedMonochrome(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, true)
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, true, config.Default().AccountTags())
 	if !strings.Contains(out, "48;2;229;192;123") { // indicator bg #e5c07b
 		t.Fatalf("indicator background missing from selected row: %q", out)
 	}
@@ -80,7 +80,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false, config.Default().AccountTags()))
 	if !strings.HasPrefix(out, "1    A ") {
 		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
 	}
@@ -101,7 +101,7 @@ func TestRowTagIcon(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false, config.Default().AccountTags()))
 	// number + blank flags slot precede the attachment slot; the icon must
 	// sit before the date column, not in the trailing tag slot
 	if !strings.HasPrefix(out, "1    x ") {
@@ -118,7 +118,7 @@ func TestRowTagIcon(t *testing.T) {
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
-	}}, DefaultStyles(), ui, 1, false))
+	}}, DefaultStyles(), ui, 1, false, config.Default().AccountTags()))
 	if strings.Index(out, "25/08/14") != strings.Index(plain, "25/08/14") {
 		t.Fatalf("attachment icon shifted the date column:\n%q\n%q", out, plain)
 	}

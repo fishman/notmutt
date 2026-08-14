@@ -158,6 +158,7 @@ func TestDefaultBindings(t *testing.T) {
 		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"pgdown": "page-down", "pgup": "page-up",
 	}
 	if !maps.Equal(cfg.Bindings["index"], want) {
 		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
@@ -165,6 +166,7 @@ func TestDefaultBindings(t *testing.T) {
 	wantPager := map[string]string{
 		"j": "scroll-down", "k": "scroll-up",
 		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
 	}

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,9 @@ var testKeys = map[string]string{
 	"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 	"r": "toggle-read", "a": "archive", "d": "delete",
 	"u": "undo", "$": "apply",
+	// the arrow and G keys come from the user config overlay (the
+	// defaults are untouched); the test table mirrors the live config
+	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
 }
 
 var testTagActions = map[string]string{
@@ -37,6 +41,7 @@ var testBindings = map[string]map[string]string{
 		"j": "scroll-down", "k": "scroll-up",
 		"ctrl+d": "page-down", "ctrl+u": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
+		"up": "scroll-up", "down": "scroll-down",
 		"q": "back",
 	},
 }
@@ -65,6 +70,14 @@ func ghostModel() Model {
 func press(t *testing.T, m tea.Model, key string) Model {
 	t.Helper()
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(key)})
+	return next.(Model)
+}
+
+// pressType presses a non-rune key (arrows, ctrl+...): actionForKey
+// resolves the canonical name via msg.String() ("up", "down", "ctrl+d").
+func pressType(t *testing.T, m tea.Model, k tea.KeyType) Model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyMsg{Type: k})
 	return next.(Model)
 }
 
@@ -646,6 +659,22 @@ func fixtureMsg(t *testing.T, body string) string {
 	return p
 }
 
+// rowsModel builds a view of n single-message threads (n rows) - the
+// count tests need more rows than the two-message model() fixture.
+func rowsModel(n int) Model {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	var threads []*core.Thread
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("t%d", i)
+		threads = append(threads, core.NewThread(id, []*core.Message{
+			{ID: fmt.Sprintf("m%d", i), Timestamp: int64(i), Author: "Ann", Subject: "s", Tags: []string{"inbox"}},
+		}))
+	}
+	view.MergeThreads(threads)
+	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+}
+
 // openPager presses "o" with an open handler that injects the loaded
 // thread as a bus event, mirroring the app's worker publish path. The
 // handler updates the model synchronously, so the returned model
@@ -703,19 +732,20 @@ func TestPagerKeyOnlyActiveInPager(t *testing.T) {
 	}
 	cur := m.CursorIndex()
 	m = press(t, m, "j")
-	if m.pager.vp.offset != 1 {
-		t.Fatalf("j in pager mode must scroll the viewport, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 1 || m.pager.vp.offset != 0 {
+		t.Fatalf("j in pager mode must move the read position within the page, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
 	if m.CursorIndex() != cur {
 		t.Fatalf("j in pager mode must not move the cursor")
 	}
 	m = press(t, m, "G")
-	if m.pager.vp.offset < 2 {
-		t.Fatalf("G must scroll to the bottom, offset=%d", m.pager.vp.offset)
+	want := len(m.pager.lines) - 1
+	if m.pager.cursor != want || m.pager.vp.offset != want-7 {
+		t.Fatalf("G must jump to the last line, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
 	m = press(t, m, "g")
-	if m.pager.vp.offset != 0 {
-		t.Fatalf("g must scroll to the top, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 0 || m.pager.vp.offset != 0 {
+		t.Fatalf("g must jump to the first line, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
 	m = press(t, m, "q")
 	if m.mode != "index" {
@@ -818,13 +848,13 @@ func TestPagerPageKeys(t *testing.T) {
 	// the dispatch finds the page-down/page-up bindings
 	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
 	m = next.(Model)
-	if m.pager.vp.offset != 4 {
-		t.Fatalf("ctrl+d must page down by half the window, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 4 || m.pager.vp.offset != 0 {
+		t.Fatalf("ctrl+d must move the read position half a window, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
 	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
 	m = next.(Model)
-	if m.pager.vp.offset != 0 {
-		t.Fatalf("ctrl+u must page up, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 0 || m.pager.vp.offset != 0 {
+		t.Fatalf("ctrl+u must move the read position back up, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
 	}
 }
 
@@ -844,8 +874,8 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
 	m = press(t, m, "j")
-	if m.pager.vp.offset != 1 {
-		t.Fatalf("j must scroll, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 1 {
+		t.Fatalf("j must move the read position, cursor=%d", m.pager.cursor)
 	}
 	m = press(t, m, "q")
 	if m.mode != "index" {
@@ -858,8 +888,8 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	if len(m.pager.lines) == 0 {
 		t.Fatal("pager content must survive re-open")
 	}
-	if m.pager.vp.offset != 1 {
-		t.Fatalf("scroll position must survive re-open, offset=%d", m.pager.vp.offset)
+	if m.pager.cursor != 1 {
+		t.Fatalf("read position must survive re-open, cursor=%d", m.pager.cursor)
 	}
 }
 
@@ -890,6 +920,133 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	}
 	if m.pager.vp.width != 40 {
 		t.Fatalf("re-open must render at the resized width, got %d", m.pager.vp.width)
+	}
+}
+
+// TestArrowKeysMoveCursor pins the config overlay: up/down are bound to
+// the cursor actions in the index context (the defaults are untouched,
+// the user's config file adds the keys).
+func TestArrowKeysMoveCursor(t *testing.T) {
+	m := rowsModel(3)
+	m = pressType(t, m, tea.KeyDown)
+	if m.CursorIndex() != 1 {
+		t.Fatalf("down must move the cursor down, got %d", m.CursorIndex())
+	}
+	m = pressType(t, m, tea.KeyUp)
+	if m.CursorIndex() != 0 {
+		t.Fatalf("up must move the cursor up, got %d", m.CursorIndex())
+	}
+}
+
+func TestArrowKeysScrollPager(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	m = pressType(t, m, tea.KeyDown)
+	if m.pager.cursor != 1 {
+		t.Fatalf("down in pager mode must move the read position, cursor=%d", m.pager.cursor)
+	}
+	m = pressType(t, m, tea.KeyUp)
+	if m.pager.cursor != 0 {
+		t.Fatalf("up in pager mode must move the read position back, cursor=%d", m.pager.cursor)
+	}
+}
+
+// TestGGTopGToBottom pins the chained command: g is unbound in the index
+// context, so the first g arms the chain and the second fires the top
+// jump (G bound to cursor-bottom jumps the other way). Any other key
+// clears the chain.
+func TestGGTopGToBottom(t *testing.T) {
+	m := rowsModel(3)
+	m = press(t, m, "G")
+	if m.CursorIndex() != 2 {
+		t.Fatalf("G must jump the cursor to the last row, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "g")
+	if m.CursorIndex() != 2 {
+		t.Fatalf("a single g must not move, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "g")
+	if m.CursorIndex() != 0 {
+		t.Fatalf("gg must jump the cursor to the first row, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "j")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("a move after the chain must clear it, got %d", m.CursorIndex())
+	}
+}
+
+// TestCountedMove pins the digit prefix: 3j moves 3 rows, 2k moves back,
+// 99j clamps at the last row.
+func TestCountedMove(t *testing.T) {
+	m := rowsModel(5)
+	m = press(t, m, "3")
+	m = press(t, m, "j")
+	if m.CursorIndex() != 3 {
+		t.Fatalf("3j must move 3 rows, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "2")
+	m = press(t, m, "k")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("2k must move 2 rows back, got %d", m.CursorIndex())
+	}
+	m = press(t, m, "9")
+	m = press(t, m, "9")
+	m = press(t, m, "j")
+	if m.CursorIndex() != 4 {
+		t.Fatalf("99j must clamp at the last row, got %d", m.CursorIndex())
+	}
+}
+
+func TestCountResetsOnOtherKey(t *testing.T) {
+	m := rowsModel(5)
+	m = press(t, m, "4")
+	m = press(t, m, "u") // undo: no staged ops, no-op - but clears the count
+	m = press(t, m, "j")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("a non-movement key must clear the count, got %d", m.CursorIndex())
+	}
+}
+
+// TestPagerEdgePages pins the read-position model: j moves within the
+// page with the window holding still; past the bottom edge the window
+// jumps a full page and the position lands on the new page's first
+// line; k at the top edge pages up and lands on the new page's last
+// line.
+func TestPagerEdgePages(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	h := m.pager.vp.height
+	for i := 0; i < h-1; i++ {
+		m = press(t, m, "j")
+	}
+	if m.pager.cursor != h-1 || m.pager.vp.offset != 0 {
+		t.Fatalf("j must hold the window until the page edge, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
+	}
+	m = press(t, m, "j")
+	if m.pager.cursor != h || m.pager.vp.offset != h {
+		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
+	}
+	m = press(t, m, "k")
+	if m.pager.cursor != h-1 || m.pager.vp.offset != 0 {
+		t.Fatalf("k at the top edge must page up, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
+	}
+	m = press(t, m, "k")
+	if m.pager.cursor != h-2 || m.pager.vp.offset != 0 {
+		t.Fatalf("k must move within the page, cursor=%d offset=%d", m.pager.cursor, m.pager.vp.offset)
+	}
+}
+
+// TestPagerCursorIndicator pins the read-position render: the line under
+// the position carries the indicator style (base0A bg = 229;192;123 in
+// the default palette) while the window stays unshifted.
+func TestPagerCursorIndicator(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, "line one\nline two\n"))
+	if out := m.View(); !strings.Contains(out, "229;192;123") {
+		t.Fatalf("cursor line must render with the indicator style:\n%s", out)
 	}
 }
 

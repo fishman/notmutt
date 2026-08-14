@@ -2,6 +2,7 @@ package tui
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -13,15 +14,16 @@ import (
 )
 
 // Actions is the BUILTIN action vocabulary per context (R9): the index
-// context carries navigation, open, and the buffer/apply ops; the pager
-// context the scroll and back/quit surface. Tag actions are NOT in here
-// - they come from the [tag-actions] config map; the app validates
-// every binding value against its context's map at startup (unknown
-// action = load error).
+// context carries navigation (including the gg/G edge jumps), open, and
+// the buffer/apply ops; the pager context the scroll and back/quit
+// surface. Tag actions are NOT in here - they come from the
+// [tag-actions] config map; the app validates every binding value
+// against its context's map at startup (unknown action = load error).
 var Actions = map[string]map[string]bool{
 	"index": {
-		"cursor-down": true, "cursor-up": true, "open": true,
-		"quit": true, "undo": true, "apply": true,
+		"cursor-down": true, "cursor-up": true,
+		"cursor-top": true, "cursor-bottom": true,
+		"open": true, "quit": true, "undo": true, "apply": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -48,6 +50,11 @@ type Model struct {
 	job        string
 	progress   core.Progress
 	progressOn bool
+	// vim-style prefixes (R9 data-first): digit keys accumulate into
+	// count (a bound digit wins), and "g" arms the gg chain - both
+	// engage only when the active context does NOT bind the key.
+	count     string
+	ggPending bool
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
@@ -83,11 +90,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if km == nil {
 			km = m.bindings["index"]
 		}
+		// vim-style prefixes: digits accumulate a count and "g" chains
+		// with the next "g" (gg = top). A binding in the active context
+		// wins over the prefix (R9 data-first) - the prefix only engages
+		// on keys the context leaves unbound.
+		r := string(msg.Runes)
+		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' {
+			m.ggPending = false
+			m.count += r
+			return m, nil
+		}
+		if km[r] == "" && r == "g" {
+			if m.ggPending {
+				m.ggPending = false
+				m.count = ""
+				m.goTop()
+				return m, nil
+			}
+			m.ggPending = true
+			return m, nil
+		}
+		n := 1
+		if m.count != "" {
+			n, _ = strconv.Atoi(m.count)
+			m.count = ""
+		}
+		m.ggPending = false
 		switch action := actionForKey(msg, km); action {
 		case "cursor-down":
-			m.moveCursor(1)
+			m.moveCursor(n)
 		case "cursor-up":
-			m.moveCursor(-1)
+			m.moveCursor(-n)
+		case "cursor-top":
+			m.cursorTop()
+		case "cursor-bottom":
+			m.cursorBottom()
 		case "open":
 			if m.mode == "index" {
 				m.openCursorThread()
@@ -100,27 +137,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			onApply()
 		case "scroll-down":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.LineDown(1)
+				m.pager.scrollDown(n)
 			}
 		case "scroll-up":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.LineUp(1)
+				m.pager.scrollUp(n)
 			}
 		case "page-down":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.HalfPageDown()
+				m.pager.pageDown()
 			}
 		case "page-up":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.HalfPageUp()
+				m.pager.pageUp()
 			}
 		case "scroll-top":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.GotoTop()
+				m.pager.scrollTop()
 			}
 		case "scroll-bottom":
 			if m.mode == "pager" && m.pager != nil {
-				m.pager.vp.GotoBottom()
+				m.pager.scrollBottom()
 			}
 		case "back":
 			if m.mode == "pager" {
@@ -296,6 +333,47 @@ func (m *Model) moveCursor(delta int) {
 		// the cursor tracks through it; the viewport hydrate replaces
 		// the stub with the real message and re-anchors by id
 		m.view.SetCursorIndex(idx)
+	}
+}
+
+// goTop jumps to the top of the current view (the gg chain): the index
+// cursor to the first message, the pager read position to the first
+// line.
+func (m *Model) goTop() {
+	if m.mode == "pager" && m.pager != nil {
+		m.pager.scrollTop()
+		return
+	}
+	m.cursorTop()
+}
+
+// cursorTop/cursorBottom jump the index cursor to the first/last real
+// row (gg / G). moveCursor's boundary walk cannot reach backward past
+// a leading ghost row, so the edge walk is direction-aware: ghosts and
+// stubs are skipped in the jump direction.
+func (m *Model) cursorTop()    { m.cursorEdge(1) }
+func (m *Model) cursorBottom() { m.cursorEdge(-1) }
+
+func (m *Model) cursorEdge(dir int) {
+	rows := m.view.Rows()
+	m.rows = rows
+	if len(rows) == 0 {
+		return
+	}
+	i := 0
+	if dir < 0 {
+		i = len(rows) - 1
+	}
+	for i >= 0 && i < len(rows) {
+		if rows[i].Msg != nil {
+			if id := rows[i].Msg.ID; id != "" {
+				m.view.SetCursor(id)
+			} else {
+				m.view.SetCursorIndex(i)
+			}
+			return
+		}
+		i += dir
 	}
 }
 

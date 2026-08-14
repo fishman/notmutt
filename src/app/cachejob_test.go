@@ -63,6 +63,51 @@ func TestScanVisible(t *testing.T) {
 	}
 }
 
+func TestScanVisibleGhost(t *testing.T) {
+	msg := "From: a@example.test\n" +
+		"To: b@example.test\n" +
+		"Subject: att\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=\"bb\"\n" +
+		"\n" +
+		"--bb\n" +
+		"Content-Type: text/plain\n" +
+		"\n" +
+		"body\n" +
+		"--bb\n" +
+		"Content-Type: application/octet-stream\n" +
+		"Content-Disposition: attachment; filename=\"f.bin\"\n" +
+		"\n" +
+		"DATA\n" +
+		"--bb--\n"
+	file := filepath.Join(t.TempDir(), "msg.eml")
+	if err := os.WriteFile(file, []byte(msg), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two unreferenced messages form two roots: buildTree emits a
+	// synthetic ghost root (nil Msg) above them. scanVisible must skip it,
+	// not deref nil (the 2026-08-14 segfault on a real mailbox).
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", Paths: []string{file}},
+		{ID: "m2"},
+	})})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	cj := newCacheJob(bus, &fakeWorker{}, view, filepath.Join(t.TempDir(), "cache.db"))
+
+	cj.scanVisible(make(chan struct{}, 2))
+	r := readResult(t, ch)
+	if r.MsgID != "m1" || len(r.Atts) != 1 || r.Atts[0].Name != "f.bin" {
+		t.Fatalf("ghost-row scan result wrong: %+v", r)
+	}
+	rows := view.Rows()
+	if len(rows) != 3 || !rows[0].Ghost || len(rows[1].Msg.Atts) != 1 {
+		t.Fatalf("view must keep ghost + scanned atts: %+v", rows)
+	}
+}
+
 func readResult(t *testing.T, ch <-chan core.Event) core.CacheResult {
 	t.Helper()
 	select {

@@ -63,7 +63,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 	var wg sync.WaitGroup
 	for _, r := range rows {
 		m := r.Msg
-		if len(m.Paths) == 0 || len(m.Atts) > 0 {
+		if m == nil || len(m.Paths) == 0 || len(m.Atts) > 0 {
 			continue
 		}
 		wg.Add(1)

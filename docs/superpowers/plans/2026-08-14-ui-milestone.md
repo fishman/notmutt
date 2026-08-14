@@ -651,11 +651,19 @@ func rawStyle(v interface{}) (Style, error) {
 		case "bg":
 			s.Bg, _ = val.(string)
 		case "attrs":
-			for _, a := range val.([]interface{}) {
-				s.Attrs = append(s.Attrs, a.(string))
+			arr, ok := val.([]interface{})
+			if !ok {
+				return Style{}, fmt.Errorf("attrs: expected an array")
+			}
+			for _, a := range arr {
+				str, ok := a.(string)
+				if !ok {
+					return Style{}, fmt.Errorf("attrs: expected strings")
+				}
+				s.Attrs = append(s.Attrs, str)
 			}
 		default:
-			return Style{}, fmt.Errorf("unknown style key %q", k)
+			return Style{}, fmt.Errorf("unknown key %q", k)
 		}
 	}
 	return s, nil
@@ -670,26 +678,30 @@ func rawStyleTable(v interface{}) (StyleTable, error) {
 	var t StyleTable
 	for k, val := range raw {
 		switch k {
-		case "normal":
-			t.Normal, _ = rawStyle(val)
-		case "indicator":
-			t.Indicator, _ = rawStyle(val)
-		case "status":
-			t.Status, _ = rawStyle(val)
-		case "progress":
-			t.Progress, _ = rawStyle(val)
-		case "error":
-			t.Error, _ = rawStyle(val)
+		case "normal", "indicator", "status", "progress", "error":
+			s, err := rawStyle(val)
+			if err != nil {
+				return StyleTable{}, err
+			}
+			switch k {
+			case "normal":
+				t.Normal = s
+			case "indicator":
+				t.Indicator = s
+			case "status":
+				t.Status = s
+			case "progress":
+				t.Progress = s
+			case "error":
+				t.Error = s
+			}
 		case "index":
 			im, ok := val.(map[string]interface{})
 			if !ok {
 				return StyleTable{}, fmt.Errorf("index: expected a table")
 			}
 			for ik, iv := range im {
-				switch ik {
-				case "number", "date", "author", "subject", "flags", "staged", "ghost":
-					setIndexStyle(&t.Index, ik, iv)
-				case "tag":
+				if ik == "tag" {
 					tm, ok := iv.(map[string]interface{})
 					if !ok {
 						return StyleTable{}, fmt.Errorf("index.tag: expected a table")
@@ -721,6 +733,27 @@ func rawStyleTable(v interface{}) (StyleTable, error) {
 						}
 						t.Index.Tag.Tags[tn] = style
 					}
+					continue
+				}
+				style, err := rawStyle(iv)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				switch ik {
+				case "number":
+					t.Index.Number = style
+				case "date":
+					t.Index.Date = style
+				case "author":
+					t.Index.Author = style
+				case "subject":
+					t.Index.Subject = style
+				case "flags":
+					t.Index.Flags = style
+				case "staged":
+					t.Index.Staged = style
+				case "ghost":
+					t.Index.Ghost = style
 				default:
 					return StyleTable{}, fmt.Errorf("index: unknown key %q", ik)
 				}
@@ -751,7 +784,7 @@ func rawStyleTable(v interface{}) (StyleTable, error) {
 				}
 			}
 		default:
-			return StyleTable{}, fmt.Errorf("unknown style %q", k)
+			return StyleTable{}, fmt.Errorf("unknown key %q", k)
 		}
 	}
 	return t, nil
@@ -904,7 +937,7 @@ func (s *Store) SetThemeVariant(name string) error {
 ```go
 st.Subscribe("theme", func() { bus.Publish(core.ConfigChanged{Section: "theme"}) })
 ...
-prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, cfg.Theme, cfg.Palette), tea.WithAltScreen())
+prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, cfg.Theme, cfg.Palette, cfg.UI), tea.WithAltScreen())
 ```
 
 `src/tui/styles.go` - the config-to-lipgloss converter (replaces the
@@ -980,13 +1013,21 @@ IndexStyles.Tag becomes a func (per-tag styles, R11) - update
 index.go's tagGlyphs to take `st.Index.Tag` and call it per tag:
 
 ```go
-func tagGlyphs(tags []string, tagStyle func(string) lipgloss.Style) string
+func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style) string
 ```
 
+The existing model_test.go call sites of tui.New must be updated to
+the new signature (mechanical; assertions stay unchanged).
+
 `src/tui/model.go` - Model gains `theme config.Theme, palette
-config.Palette` and a `styles Styles` field; New computes
-`styles: ResolveStyles(theme, palette)`; View() and statusLine use
-`m.styles` instead of DefaultStyles(); the Update loop adds:
+config.Palette, ui config.UI` and a `styles Styles` field; New
+computes `styles: ResolveStyles(theme, palette)`; View() and
+statusLine use `m.styles` instead of DefaultStyles(); renderRow and
+statusLine gain `ui config.UI` and consume the config-data glyphs
+(the staged glyph from ui.Glyphs.Staged in the staged flags slot, the
+tag slot max from ui.Tags.Max in tagGlyphs, the progress fill/empty
+from ui.Glyphs in progressBar - R11: never hardcoded); the Update
+loop adds:
 
 ```go
 case core.ConfigChanged:

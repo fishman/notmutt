@@ -649,7 +649,7 @@ func (m Model) View() string {
 	numWidth := len(strconv.Itoa(len(rows)))
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st, m.ui, numWidth)
+		line := renderRow(i+1, rows[i], st, m.ui, numWidth, i == cur)
 		outer := st.Normal
 		if i == cur {
 			outer = st.Indicator

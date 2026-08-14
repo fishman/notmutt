@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,9 +21,15 @@ import (
 // so the line carries per-slot SGR runs (the outer row style is applied
 // later by padRow). Glyphs and the tag-slot cap come from config data,
 // never hardcoded.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int) string {
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selected bool) string {
+	// the cursor row is monochrome (R11): one highlight background and one
+	// text color - the indicator style replaces every slot style
+	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := st.Index.Number, st.Index.Flags, st.Index.Date, st.Index.Author, st.Index.Subject
+	if selected {
+		numStyle, flagStyle, dateStyle, authorStyle, subjectStyle = st.Indicator, st.Indicator, st.Indicator, st.Indicator, st.Indicator
+	}
 	var b strings.Builder
-	b.WriteString(st.Index.Number.Render(padCellsRight(strconv.Itoa(n), numWidth)))
+	b.WriteString(numStyle.Render(padCellsRight(strconv.Itoa(n), numWidth)))
 	b.WriteByte(' ')
 	if row.Msg == nil {
 		// ghost root: message-derived slots stay blank, "[...]" fills the
@@ -38,7 +45,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int) strin
 		return b.String()
 	}
 	tags := row.Msg.Tags
-	flagStr := st.Index.Flags.Render(flags(tags))
+	flagStr := flagStyle.Render(flags(tags))
 	if row.Staged {
 		// staged rows render the resolved display tags with the staged
 		// glyph (config data, R11 tag-transforms). The slot keeps its
@@ -47,17 +54,20 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int) strin
 		flagStr = st.Index.Staged.Render(padCellsRight(ui.Glyphs.Staged+flagChars(tags), 3))
 	}
 	b.WriteString(flagStr)
-	b.WriteString(attachIcon(row.Msg))
-	b.WriteByte(' ')
-	b.WriteString(st.Index.Date.Render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
+	b.WriteString(padCellsRight(attachIcon(row.Msg, ui.Tags), 2))
+	b.WriteString(dateStyle.Render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
 	author := core.SanitizeControls(row.Msg.Author)
-	b.WriteString(st.Index.Author.Render(padCellsRight(truncCells(author, 16), 16)))
+	b.WriteString(authorStyle.Render(padCellsRight(truncCells(author, 16), 16)))
 	b.WriteByte(' ')
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(st.Index.Subject.Render(truncCells(subject, 40)))
+	b.WriteString(subjectStyle.Render(truncCells(subject, 40)))
 	b.WriteByte(' ')
-	b.WriteString(tagGlyphs(tags, ui.Tags.Max, st.Index.Tag))
+	tagStyle := st.Index.Tag
+	if selected {
+		tagStyle = func(string) lipgloss.Style { return st.Indicator }
+	}
+	b.WriteString(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags))
 	return b.String()
 }
 
@@ -82,8 +92,17 @@ func flagChars(tags []string) string {
 	return f.String()
 }
 
-func attachIcon(m *core.Message) string {
-	if len(m.Atts) > 0 {
+// attachIcon renders the attachment slot at the row start: the marker
+// tag's icon (config data, ui.tags.attach + icons) when the message
+// carries the marker tag or the cache found attachments. The marker tag
+// never repeats in the tag slot (tagGlyphs skips it). The caller pads the
+// slot to 2 cells - double-width glyphs (the paperclip emoji) fit without
+// shifting the following columns (R11 slot reservation).
+func attachIcon(m *core.Message, t config.UITags) string {
+	if (t.Attach != "" && slices.Contains(m.Tags, t.Attach)) || len(m.Atts) > 0 {
+		if t.ShowIcons && t.Icons[t.Attach] != "" {
+			return t.Icons[t.Attach]
+		}
 		return "A"
 	}
 	return " "
@@ -96,18 +115,25 @@ func formatDate(ts int64) string {
 // tagGlyphs renders up to max tags as styled glyphs, first of the
 // display order; the tag-groups priority list supplies the order later
 // (spec section 6). Each glyph renders through its per-tag style (R11),
-// falling back to the default tag style.
-func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style) string {
+// falling back to the default tag style. A tag with an icon entry in the
+// ui.tags.icons dict renders the icon instead of its name (muttrc
+// tag-transforms); the attachment marker tag is skipped - it owns the
+// attachment slot at the row start.
+func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t config.UITags) string {
 	var b strings.Builder
 	n := 0
-	for _, t := range tags {
-		if t == "unread" {
+	for _, tag := range tags {
+		if tag == "unread" || tag == t.Attach {
 			continue
 		}
 		if n >= max {
 			break
 		}
-		b.WriteString(tagStyle(t).Render(padCellsRight(truncCells(core.SanitizeControls(t), 4), 4)))
+		label := tag
+		if t.ShowIcons && t.Icons[tag] != "" {
+			label = t.Icons[tag]
+		}
+		b.WriteString(tagStyle(tag).Render(padCellsRight(truncCells(core.SanitizeControls(label), 4), 4)))
 		b.WriteByte(' ')
 		n++
 	}

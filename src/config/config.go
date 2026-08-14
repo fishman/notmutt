@@ -30,7 +30,10 @@ type UI struct {
 }
 
 type UITags struct {
-	Max int `toml:"max"`
+	Max       int               `toml:"max"`
+	Attach    string            `toml:"attach"` // the tag that marks attachments (renders in the row's attachment slot)
+	ShowIcons bool              `toml:"show-icons"` // false renders tag names instead of icons (R11)
+	Icons     map[string]string `toml:"icons"`  // tag name -> display icon (muttrc tag-transforms, R11)
 }
 
 // Glyphs are the config-data display glyphs (R11 tag-transforms rule);
@@ -544,7 +547,20 @@ func Default() Config {
 	return Config{
 		UI: UI{
 			Keymap: "vim",
-			Tags:   UITags{Max: 2},
+			Tags: UITags{
+				Max:       2,
+				Attach:    "attachment",
+				ShowIcons: true,
+				Icons: map[string]string{
+					"attachment": "📎", "archive": "📦", "deleted": "🗑",
+					"spam": "🚫", "pending": "⏰", "inbox": "📥",
+					"unread": "✉", "xolo": "💼", "work": "🏢",
+					"receipt": "🧾", "important": "⭐", "todo": "✅",
+					"later": "⏳", "personal": "👤", "cfp": "🎤",
+					"conference": "🎫", "exhibition": "🏛", "meeting": "📅",
+					"newsletter": "📰",
+				},
+			},
 			Glyphs: Glyphs{
 				Staged: "*", ProgressFill: "#", ProgressEmpty: "-",
 				StatuslineSeparator: "|",

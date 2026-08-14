@@ -24,7 +24,7 @@ func TestRowStyled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1)
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false)
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -51,7 +51,77 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1)
+	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, false)
+}
+
+// TestRowSelectedMonochrome pins the cursor row look (R11): the indicator
+// style replaces every slot style, so the highlighted row carries one
+// highlight background and one text color - no per-slot colors survive.
+func TestRowSelectedMonochrome(t *testing.T) {
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
+	}}
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, true)
+	if !strings.Contains(out, "48;2;229;192;123") { // indicator bg #e5c07b
+		t.Fatalf("indicator background missing from selected row: %q", out)
+	}
+	if strings.Contains(out, "38;2;97;175;239") { // author blue #61afef
+		t.Fatalf("slot color survived on the selected row: %q", out)
+	}
+}
+
+// TestRowTagIconDisabled pins show-icons = false: mapped tags render their
+// names, and the attachment marker falls back to the plain text marker.
+func TestRowTagIconDisabled(t *testing.T) {
+	ui := config.Default().UI
+	ui.Tags.ShowIcons = false
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
+	}}
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false))
+	if !strings.HasPrefix(out, "1    A ") {
+		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
+	}
+	// tag names render, not the icon; "inbox" is cut to "inbo" by the
+	// 4-cell glyph slot (truncation, not the tag's name)
+	if !strings.Contains(out, "inbo") || strings.Contains(out, "📥") {
+		t.Fatalf("tag names must render when icons are off: %q", out)
+	}
+}
+
+// TestRowTagIcon pins the icons dict (ui.tags.icons): a mapped tag renders
+// its icon instead of its name, and the attachment marker tag renders only
+// in the row-start attachment slot - never repeated in the tag slot.
+func TestRowTagIcon(t *testing.T) {
+	ui := config.Default().UI
+	ui.Tags.Icons = map[string]string{"attachment": "x", "inbox": "y"}
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
+	}}
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, false))
+	// number + blank flags slot precede the attachment slot; the icon must
+	// sit before the date column, not in the trailing tag slot
+	if !strings.HasPrefix(out, "1    x ") {
+		t.Fatalf("attachment icon must open the row (row-start slot): %q", out)
+	}
+	if strings.Contains(out, "attachment") {
+		t.Fatalf("attachment tag must not repeat in the tag slot: %q", out)
+	}
+	if !strings.Contains(out, "y") {
+		t.Fatalf("mapped tag icon missing from the tag slot: %q", out)
+	}
+	// the attachment slot reserves 2 cells: a double-width icon (the
+	// paperclip) must not shift the date column vs a row without one
+	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
+		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
+	}}, DefaultStyles(), ui, 1, false))
+	if strings.Index(out, "25/08/14") != strings.Index(plain, "25/08/14") {
+		t.Fatalf("attachment icon shifted the date column:\n%q\n%q", out, plain)
+	}
 }
 
 // TestPadRowTruncates pins the common production path: rows render wider

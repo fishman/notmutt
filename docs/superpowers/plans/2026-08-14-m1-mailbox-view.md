@@ -4116,8 +4116,12 @@ network-backed maildir would stall rescans - future note).
 
 - [ ] **Step 1: Check dev headers**
 
+The binding links plain `-lnotmuch` with no pkg-config: notmuch ships one
+unversioned header and one lib, either installed or not, so the tagged
+build needs only the dev package present on the default paths.
+
 ```bash
-pkg-config --exists notmuch && echo "headers present" || echo "headers MISSING"
+test -f /usr/include/notmuch.h && echo "headers present" || echo "headers MISSING"
 ```
 
 Expected (current machine): `headers MISSING`. Install one of:
@@ -4130,7 +4134,6 @@ sudo pacman -S notmuch
 cd /home/user/git/opencode/notmutt/notmuch
 cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-export PKG_CONFIG_PATH=$PWD/build/pkgconfig
 ```
 
 Ask the user which option they prefer before running anything that needs sudo. The cgo backend must not compile if headers are missing - that is the point of the build tag.
@@ -4245,8 +4248,8 @@ func pathsOf(m *nm.Message) []string {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go build -tags notmuchcgo ./...
-PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestCGOSmoke -v
+go build -tags notmuchcgo ./...
+go test -tags notmuchcgo ./notmuch/ -run TestCGOSmoke -v
 ```
 
 `src/notmuch/cgo_test.go`:
@@ -4309,15 +4312,14 @@ the uuid as an out parameter. The binding lacked this API entirely, so
 `DB.Revision()` was added to the vendored fork (binding db.go, covered by
 TestSmokeRevision).
 (2) Build tag: `//go:build cgo` is a PREDEFINED constraint, satisfied
-whenever CGO_ENABLED=1 - the file compiled in DEFAULT builds and failed on
-the missing pkg-config path. The custom tag `notmuchcgo` makes the backend
-genuinely opt-in (R12's dbus tag precedent); ALL tagged commands in this
-plan now use `-tags notmuchcgo` and need
-`PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig` (a hand-written notmuch.pc
-resides outside the repo, since Arch's package ships no pc file; the user
-declined an install - runtime, header, and lib were already present). The
-plan's literal `-tags cgo` would silently exclude the file and report a
-false green.
+whenever CGO_ENABLED=1 - the file compiled in DEFAULT builds. The custom
+tag `notmuchcgo` makes the backend genuinely opt-in (R12's dbus tag
+precedent); ALL tagged commands in this plan now use `-tags notmuchcgo`
+with no env vars. The binding links plain `-lnotmuch` and uses no
+pkg-config: notmuch ships one unversioned header and one lib, either
+installed or not (runtime, header, and lib were already present on this
+machine; the user declined an install). The plan's literal `-tags cgo`
+would silently exclude the file and report a false green.
 (3) Query limit: `notmuch_query_set_limit` does not exist in 0.40; the
 loop caps with `if limit > 0 && len(out) >= limit { break }`, mirroring
 the CLI backend's `--limit` semantics.
@@ -4347,7 +4349,9 @@ import (
 	"time"
 )
 
-// Run: NOTMUCH_BENCH=1 PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestBench -v
+// Run: NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v
+// Requires notmuch dev headers on the default include/link paths (task 13;
+// the binding links plain -lnotmuch, no pkg-config). Prints a comparison report.
 // Requires notmuch dev headers (task 13). Prints a comparison report.
 func TestBench(t *testing.T) {
 	if os.Getenv("NOTMUCH_BENCH") == "" {
@@ -4418,7 +4422,7 @@ func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-NOTMUCH_BENCH=1 PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
+NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
 ```
 
 Expected: a timing table over 3 runs each. Lock-timeout behavior is already unit-tested (TestWorkerLockTimeout); record the configured CLI value in the report:

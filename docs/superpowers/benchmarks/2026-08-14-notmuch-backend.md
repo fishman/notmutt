@@ -8,8 +8,9 @@ read, printed, or recorded. All rows are latency + result count.
 ## Setup
 
 - DB: /home/user/Mail (database.path, effective config)
-- notmuch CLI and libnotmuch 0.40 (hand-written notmuch.pc at
-  $HOME/.local/lib/pkgconfig, Version: 0.40, prefix /usr)
+- notmuch CLI and libnotmuch 0.40 (installed system-wide; the binding
+  links plain `-lnotmuch` - notmuch ships one unversioned header and one
+  lib, installed or not, so no pkg-config is involved)
 - cgo backend wraps `github.com/fishman/go.notmuch` (fishman fork,
   notmuch/bindings/go.notmuch in this workspace), vendored and pinned
   via `replace` in src/go.mod. The vendored copy carries one binding
@@ -21,7 +22,7 @@ read, printed, or recorded. All rows are latency + result count.
 Command (3 runs):
 
 ```
-NOTMUCH_BENCH=1 PKG_CONFIG_PATH=$HOME/.local/lib/pkgconfig go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3
+NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3
 ```
 
 ## Timings (binding-backed cgo)
@@ -103,9 +104,9 @@ default is NOT flipped in `app/app.go`. Reasons:
   unsupported errors. As default it would break the entire
   classification pipeline (R2 tag ops, `notmuch new`), not just lag.
 - It is gated behind the `notmuchcgo` build tag. Flipping the default
-  would force notmuch dev headers and PKG_CONFIG_PATH onto every default
-  build, breaking the no-tag green requirement; un-gating is a separate
-  structural change, not a one-line default flip.
+  would force notmuch dev headers onto every default build, breaking the
+  no-tag green requirement; un-gating is a separate structural change,
+  not a one-line default flip.
 
 The latency win is real but does not translate into a production default
 change for M1. CLI remains the default; revisit with a writable,

@@ -17,6 +17,21 @@ type TagOp = core.TagOp
 
 // Backend is the notmuch access boundary. M1 ships the CLI backend; the
 // cgo backend implements the same interface for the benchmark (task 13).
+//
+// Query is THE ingestion interface - the batch unit: the refresh loop
+// fetches the whole view one page per call, and a page counts THREADS
+// (limit/offset are thread positions, matching Count). Both backends
+// serve it content-free - the index is DB-only, no mail file is ever
+// opened in the load path:
+//
+//   - CLI: one `notmuch search` subprocess per page, one summary per
+//     thread (DB-side thread fields; the CLI has no content-free
+//     per-message dump - show opens files, so it exists only for the
+//     open path);
+//   - cgo: the native batch - the in-process threads iterator,
+//     skip/limit on thread positions, messages mapped directly into
+//     core.Message from the DB header cache (ids, references, from,
+//     subject, date, tags).
 type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error

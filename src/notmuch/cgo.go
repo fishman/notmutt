@@ -5,6 +5,7 @@ package notmuch
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	nm "github.com/fishman/go.notmuch"
 
@@ -46,6 +47,13 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.db.Revision()
 }
 
+// Query serves one page as the native batch: the in-process threads
+// iterator, skip/limit on thread positions (a page counts THREADS,
+// matching Count and the CLI's thread-summary pages), each thread's
+// messages mapped directly into core.Message from the DB header cache
+// (ids, references, from, subject, date, tags - zero subprocesses, zero
+// file opens). The thread is fetched whole: a thread never straddles a
+// page, so the refresh merge sees every thread at most once.
 func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int) ([]core.Message, error) {
 	if b.db == nil {
 		return nil, fmt.Errorf("notmuch search: database not open")
@@ -53,32 +61,60 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int)
 	q := b.db.NewQuery(query)
 	defer q.Close()
 	q.SetSortScheme(nm.SORT_NEWEST_FIRST)
-	msgs, err := q.Messages()
+	threads, err := q.Threads()
 	if err != nil {
 		return nil, fmt.Errorf("notmuch search: %w", err)
 	}
-	defer msgs.Close()
+	defer threads.Close()
 	var out []core.Message
 	skip := offset
-	for m := range msgs.All() {
+	nthreads := 0
+	for t := range threads.All() {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		if skip > 0 {
 			skip--
 			continue
 		}
-		if limit > 0 && len(out) >= limit {
+		if limit > 0 && nthreads >= limit {
 			break
 		}
-		out = append(out, core.Message{
-			ID:        m.ID(),
-			ThreadID:  m.ThreadID(),
-			Timestamp: m.Date().Unix(),
-			Author:    m.Header("from"),
-			Subject:   m.Header("subject"),
-			Tags:      tagsOf(m),
-			Paths:     pathsOf(m),
-		})
+		nthreads++
+		msgs := t.Messages()
+		for m := range msgs.All() {
+			out = append(out, core.Message{
+				ID:         m.ID(),
+				ThreadID:   m.ThreadID(),
+				Timestamp:  m.Date().Unix(),
+				Author:     m.Header("from"),
+				Subject:    m.Header("subject"),
+				Tags:       tagsOf(m),
+				Paths:      pathsOf(m),
+				References: refsOf(m),
+			})
+		}
+		if err := msgs.Err(); err != nil {
+			return nil, fmt.Errorf("notmuch search: %w", err)
+		}
+		msgs.Close()
 	}
 	return out, nil
+}
+
+// refsOf parses the message's reference chain out of the DB header
+// cache (content-free: references and in-reply-to are Xapian header
+// values, no file opens). Both headers are folded per RFC 5322, so the
+// raw value is split on whitespace and each token trimmed of its angle
+// brackets.
+func refsOf(m *nm.Message) []string {
+	var refs []string
+	for _, h := range []string{"references", "in-reply-to"} {
+		for _, f := range strings.Fields(m.Header(h)) {
+			refs = append(refs, strings.Trim(f, "<>"))
+		}
+	}
+	return refs
 }
 
 func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {

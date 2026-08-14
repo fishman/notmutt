@@ -151,29 +151,32 @@ func (m *Model) moveCursor(delta int) {
 	}
 }
 
-// stage runs a tag action on the cursor message (R14). A tag in any
+// stage runs a tag action on the cursor row (R14). A tag in any
 // tag group is a folder tag and stages +tag - exclusive-group
 // resolution dedups at render/apply; a tag in no group is soft (unread
-// is canonical) and toggles from the applied state. Ghost and stub
-// rows (search summaries carry no message id) are guarded like the M1
-// cursor keys: stubs are transient - the viewport hydrate replaces
-// them with the real message within the load, and the apply path
-// needs a real id.
+// is canonical) and toggles from the applied state. Ghost rows are
+// guarded like the M1 cursor keys. The staged identity is the row's
+// message id, or the thread identity for summary rows (search
+// summaries carry no message id): a tag op on a summary is a
+// thread-level op - apply emits thread:<id>, notmuch's natural unit.
 func (m *Model) stage(action string) {
 	tag, ok := m.tagActions[action]
 	if !ok {
 		return
 	}
 	row, ok := m.view.CursorRow()
-	if !ok || row.Msg == nil || row.Msg.ID == "" {
+	if !ok || row.Msg == nil {
 		return
 	}
-	id := row.Msg.ID
+	identity := row.Msg.ID
+	if identity == "" {
+		identity = "t:" + row.ThreadID
+	}
 	add := true
 	if !inGroup(tag, m.view.Groups()) {
-		add = !slices.Contains(m.view.MsgTags(id), tag)
+		add = !slices.Contains(m.view.Tags(identity), tag)
 	}
-	m.view.Stage(id, core.TagOp{Tag: tag, Add: add})
+	m.view.Stage(identity, core.TagOp{Tag: tag, Add: add})
 	m.rows = m.view.Rows()
 }
 
@@ -186,15 +189,18 @@ func inGroup(tag string, groups []core.TagGroup) bool {
 	return false
 }
 
-// undo discards the cursor message's staged ops (R14): pure buffer
-// drop, no DB traffic. Ghost and stub rows are guarded like the M1
-// cursor keys (stubs cannot be staged, so there is nothing to undo).
+// undo discards the cursor row's staged ops (R14): pure buffer
+// drop, no DB traffic. Ghost rows are guarded like the M1 cursor keys.
 func (m *Model) undo() {
 	row, ok := m.view.CursorRow()
-	if !ok || row.Msg == nil || row.Msg.ID == "" {
+	if !ok || row.Msg == nil {
 		return
 	}
-	m.view.Undo(row.Msg.ID)
+	identity := row.Msg.ID
+	if identity == "" {
+		identity = "t:" + row.ThreadID
+	}
+	m.view.Undo(identity)
 	m.rows = m.view.Rows()
 }
 

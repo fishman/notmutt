@@ -4,12 +4,13 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 )
 
 // View is a forest of thread trees ordered by last date. All state
 // access goes through the locked methods (Rows, MergeThreads,
-// SetCursor, CursorRow, SetCollapsed, SetAtts, SetTags, MsgTags,
+// SetCursor, CursorRow, SetCollapsed, SetAtts, SetTags, Tags,
 // SetGroups, Stage, StagedOps, Undo, ClearStaged, HasStaged,
 // IsStaged); touching Threads, message fields, or Collapsed from
 // another goroutine is a data race. The cache job's Atts writes are
@@ -95,7 +96,14 @@ func (v *View) rowsLocked() []Row {
 		if msg == nil {
 			continue
 		}
-		if ops, ok := v.staged[msg.ID]; ok {
+		// the staged key is the row's identity: the message id, or the
+		// thread identity for summary rows (no message id - the index
+		// is search data)
+		identity := msg.ID
+		if identity == "" {
+			identity = "t:" + rows[i].ThreadID
+		}
+		if ops, ok := v.staged[identity]; ok {
 			rows[i].Staged = true
 			rows[i].StagedTags, _ = ResolveOps(msg.Tags, ops, v.groups)
 		}
@@ -291,16 +299,58 @@ func (v *View) SetTags(msgID string, tags []string) {
 	}
 }
 
-// MsgTags returns a message's tags under the view lock; the slice is
-// shared, so callers copy before mutating it (SetTags is the write
-// path). Unknown ids return nil.
-func (v *View) MsgTags(msgID string) []string {
+// Tags returns an identity's applied tags under the view lock; the
+// slice is shared, so callers copy before mutating it (SetTags /
+// SetThreadTags are the write paths). A message identity resolves its
+// message; a thread identity (t:threadID) resolves the thread's
+// summary stub, or the first message once the stub is gone (hydrated
+// rows). Unknown identities return nil.
+func (v *View) Tags(identity string) []string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if m := v.findMsgLocked(msgID); m != nil {
+	if strings.HasPrefix(identity, "t:") {
+		if t := findThread(v.Threads, identity[2:]); t != nil {
+			for _, m := range t.msgs {
+				if m.ID == "" {
+					return m.Tags
+				}
+			}
+			if len(t.msgs) > 0 {
+				return t.msgs[0].Tags
+			}
+		}
+		return nil
+	}
+	if m := v.findMsgLocked(identity); m != nil {
 		return m.Tags
 	}
 	return nil
+}
+
+// identityExistsLocked reports whether the identity names something in
+// the view: a message id, or a thread for thread identities.
+func (v *View) identityExistsLocked(identity string) bool {
+	if strings.HasPrefix(identity, "t:") {
+		return findThread(v.Threads, identity[2:]) != nil
+	}
+	return v.findMsgLocked(identity) != nil
+}
+
+// SetThreadTags replaces a thread summary's tags under the view lock -
+// the apply-path baseline write for thread identities (the stub's tags
+// are the thread's; a hydrated thread self-heals on the next refresh).
+func (v *View) SetThreadTags(threadID string, tags []string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if t := findThread(v.Threads, threadID); t != nil {
+		for _, m := range t.msgs {
+			if m.ID == "" {
+				m.Tags = tags
+				v.dirty = true
+				return
+			}
+		}
+	}
 }
 
 // buildTree attaches each message under the nearest present reference;
@@ -363,33 +413,37 @@ func (v *View) Groups() []TagGroup {
 	return slices.Clone(v.groups)
 }
 
-// Stage appends a pending tag op for a message. Staging an op identical
-// to one already staged cancels it (toggle semantics: r twice is a
-// no-op, r then a keeps both). Unknown ids are a no-op: the message
-// left the view. Staging bumps the generation: an in-flight apply
-// snapshot taken before it can no longer clear the entry (ClearStaged
-// is generation-guarded).
-func (v *View) Stage(msgID string, op TagOp) {
+// Stage appends a pending tag op for an identity - a message id, or a
+// thread identity ("t:" + threadID) for summary rows: the index is
+// search data without message ids, and a tag op on a summary row is a
+// thread-level op (the apply path emits thread:<id>, notmuch's natural
+// unit - moving a thread moves all its messages). Staging an op
+// identical to one already staged cancels it (toggle semantics: r
+// twice is a no-op, r then a keeps both). Unknown identities are a
+// no-op: the message left the view. Staging bumps the generation: an
+// in-flight apply snapshot taken before it can no longer clear the
+// entry (ClearStaged is generation-guarded).
+func (v *View) Stage(identity string, op TagOp) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.findMsgLocked(msgID) == nil {
+	if !v.identityExistsLocked(identity) {
 		return
 	}
-	ops := v.staged[msgID]
+	ops := v.staged[identity]
 	for i, o := range ops {
 		if o == op {
 			ops = append(ops[:i], ops[i+1:]...)
 			if len(ops) == 0 {
-				delete(v.staged, msgID)
+				delete(v.staged, identity)
 			} else {
-				v.staged[msgID] = ops
+				v.staged[identity] = ops
 			}
 			v.stagedGen++
 			v.dirty = true
 			return
 		}
 	}
-	v.staged[msgID] = append(ops, op)
+	v.staged[identity] = append(ops, op)
 	v.stagedGen++
 	v.dirty = true
 }

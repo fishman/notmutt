@@ -39,7 +39,7 @@ func TestApplyStaged(t *testing.T) {
 		t.Fatalf("m2 call wrong: %+v", calls[1])
 	}
 	// baseline written, buffer cleared
-	if tags := view.MsgTags("m1"); !slices.Equal(tags, []string{"archive"}) {
+	if tags := view.Tags("m1"); !slices.Equal(tags, []string{"archive"}) {
 		t.Fatalf("m1 baseline = %v", tags)
 	}
 	if view.IsStaged("m1") || view.IsStaged("m2") {
@@ -81,7 +81,7 @@ func TestApplyFailureKeepsEntry(t *testing.T) {
 	if !view.IsStaged("m1") {
 		t.Fatal("entry must stay staged on failure")
 	}
-	if hasTag(view.MsgTags("m1"), "archive") {
+	if hasTag(view.Tags("m1"), "archive") {
 		t.Fatal("baseline must not be written on failure")
 	}
 }
@@ -101,7 +101,7 @@ func TestApplyReplyErrKeepsEntry(t *testing.T) {
 	if !view.IsStaged("m1") {
 		t.Fatal("entry must stay staged on reply error")
 	}
-	if hasTag(view.MsgTags("m1"), "archive") {
+	if hasTag(view.Tags("m1"), "archive") {
 		t.Fatal("baseline must not be written on reply error")
 	}
 }
@@ -124,18 +124,72 @@ func TestApplyContinuesPastFailure(t *testing.T) {
 	if !view.IsStaged("m1") {
 		t.Fatal("failed entry must stay staged")
 	}
-	if hasTag(view.MsgTags("m1"), "archive") {
+	if hasTag(view.Tags("m1"), "archive") {
 		t.Fatal("failed entry's baseline must not be written")
 	}
 	if view.IsStaged("m2") {
 		t.Fatal("succeeding entry must clear")
 	}
-	if tags := view.MsgTags("m2"); !slices.Equal(tags, []string{"deleted"}) {
+	if tags := view.Tags("m2"); !slices.Equal(tags, []string{"deleted"}) {
 		t.Fatalf("succeeding entry baseline = %v", tags)
 	}
 	calls := fw.tagCallsSnapshot()
 	if len(calls) != 1 || calls[0].query != "id:\"m2\"" {
 		t.Fatalf("only m2 must reach the worker, got %+v", calls)
+	}
+}
+
+// TestApplyThreadIdentity pins the summary-row apply: a thread identity
+// (t:<id>) resolves against the stub's tags and emits thread:<id> - the
+// whole thread, notmuch's natural unit. The baseline write goes to the
+// thread (SetThreadTags), so the render flips without waiting for a
+// refresh.
+func TestApplyThreadIdentity(t *testing.T) {
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ThreadID: "t1", Tags: []string{"inbox"}},
+	})})
+	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
+	if err := applyStaged(view, applyGroups, fw); err != nil {
+		t.Fatal(err)
+	}
+	calls := fw.tagCallsSnapshot()
+	if len(calls) != 1 || calls[0].query != "thread:t1" {
+		t.Fatalf("thread identity must apply via thread:<id>, got %+v", calls)
+	}
+	if !slices.Equal(calls[0].tagOps,
+		[]core.TagOp{{Tag: "archive", Add: true}, {Tag: "inbox", Add: false}}) {
+		t.Fatalf("resolved ops wrong: %+v", calls[0].tagOps)
+	}
+	if tags := view.Tags("t:t1"); !slices.Equal(tags, []string{"archive"}) {
+		t.Fatalf("thread baseline = %v", tags)
+	}
+	if view.IsStaged("t:t1") {
+		t.Fatal("buffer must clear after apply")
+	}
+}
+
+// TestApplyStaleThreadClears pins the thread-identity stale path: a
+// thread that left the view clears its entry without an ActTag.
+func TestApplyStaleThreadClears(t *testing.T) {
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ThreadID: "t1", Tags: []string{"inbox"}},
+	})})
+	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
+	view.MergeThreads(nil) // the thread left the view
+	if err := applyStaged(view, applyGroups, fw); err != nil {
+		t.Fatal(err)
+	}
+	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
+		t.Fatalf("no ActTag for a stale thread, got %d", len(calls))
+	}
+	if view.IsStaged("t:t1") {
+		t.Fatal("stale entry must clear")
 	}
 }
 

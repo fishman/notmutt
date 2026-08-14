@@ -69,9 +69,14 @@ func (r *refresher) cycle() {
 		// WorkerLockTimeout on the bus; the view self-heals next cycle.
 		return
 	}
-	threads := r.fetchThreads(msgs, 0, 0, true)
-	if len(threads) > 0 {
-		r.merge(threads)
+	// The changed set IS the merge input: search summaries (thread-level
+	// index data) need no further fetch, and per-message rows (cgo) build
+	// real trees from references. No show in the refresh path - content
+	// loads only on open (R13).
+	page := groupThreads(msgs)
+	sortThreads(page)
+	if len(page) > 0 {
+		r.merge(page)
 	}
 	r.rPrev = rpl.Rev
 }
@@ -128,72 +133,20 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 	return rpl.Msgs, nil
 }
 
-// fetchThreads maps changed messages to their threads and fetches each
-// thread's full state, budgeted to 3 concurrent calls. The INCREMENTAL
-// path (the lastmod changed set - small N) and the viewport hydrate
-// (step two for the visible window) both use it; the full reload never
-// does (search pages only). A failed thread fetch is silently dropped
-// so a dead thread cannot kill the cycle. Progress falls back to the
-// batch total when total <= 0 (this path has no count query). Failures
-// count too, so the bar always completes. report=false silences the
-// publishes: the viewport hydrate is bounded work that would otherwise
-// clobber the fill's count-total bar.
-func (r *refresher) fetchThreads(msgs []core.Message, base, total int, report bool) []*core.Thread {
-	ids := map[string]bool{}
-	for _, m := range msgs {
-		ids[m.ThreadID] = true
-	}
-	if total <= 0 {
-		total = len(ids)
-		base = 0
-	}
-	sem := make(chan struct{}, 3)
-	threads := make([]*core.Thread, 0, len(ids))
-	var mu sync.Mutex
-	done := 0
-	var wg sync.WaitGroup
-	for id := range ids {
-		wg.Add(1)
-		go func(id string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: id})
-			mu.Lock()
-			defer mu.Unlock()
-			done++
-			if report {
-				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: base + done, Total: total})
-			}
-			if err != nil || rpl.Err != nil {
-				return
-			}
-			ptrs := make([]*core.Message, len(rpl.Msgs))
-			for i := range rpl.Msgs {
-				ptrs[i] = &rpl.Msgs[i]
-			}
-			threads = append(threads, core.NewThread(id, ptrs))
-		}(id)
-	}
-	wg.Wait()
-	return threads
-}
-
 // fullReload re-fetches the view query page by page and merges each
-// page in as it lands (R3 progressive fill): one ActQuery per page.
-// The search summary IS the index read - step one, DB-side thread
-// data (thread id, date, authors, subject, tags) with zero file
-// opens, so the whole list loads in seconds (per-thread round trips
-// were the load wall). Full message data (ids, references, paths) is
-// step two: fillViewport hydrates the visible window after the fill,
-// and the rest loads on open (R13). One ViewDiff per page; a short
-// page ends the query. The bar's total comes from a count query up
-// front, so Done (threads accumulated) tracks the real result size
-// instead of resetting per page; a count failure degrades to per-page
-// totals. Threads that retagged out of the filter or were deleted are
-// removed by the full snapshot replacement. Called for uuid changes,
-// manual refresh, view config changes, and first load. The cursor
-// survives via the merge walk.
+// page in as it lands (R3 progressive fill): one page call per page -
+// the batch unit (Backend.Query, the interface contract). The page IS
+// the index read: content-free, DB-side data (thread summaries on the
+// CLI, per-message DB-header rows on cgo), zero file opens - the whole
+// list loads in seconds (per-thread show round trips were the load
+// wall). Message content is step two, on open only (R13). One ViewDiff
+// per page; a short page ends the query. The bar's total comes from a
+// count query up front, so Done (threads accumulated) tracks the real
+// result size instead of resetting per page; a count failure degrades
+// to per-page totals. Threads that retagged out of the filter or were
+// deleted are removed by the full snapshot replacement. Called for uuid
+// changes, manual refresh, view config changes, and first load. The
+// cursor survives via the merge walk.
 func (r *refresher) fullReload() {
 	total := 0
 	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query}); err == nil && rpl.Err == nil {
@@ -231,39 +184,12 @@ func (r *refresher) fullReload() {
 		}
 		limit = r.page
 	}
-	r.fillViewport()
 }
 
-// fillViewport is the step-two hydrate: the visible window's stub
-// rows (search summaries carry no message ids) get their full
-// threads - ids, references, paths - through the budgeted per-thread
-// fetch. Already-hydrated rows are untouched (the merge reconciles by
-// id). The window mirrors the cache job's scanPage: the viewport at
-// the top of the list; deep-scroll rows stay summaries until the
-// viewport plumbing (cursor-following scans) lands.
-func (r *refresher) fillViewport() {
-	rows := r.view.Rows()
-	if len(rows) > scanPage {
-		rows = rows[:scanPage]
-	}
-	var stubs []core.Message
-	for _, row := range rows {
-		if row.Msg != nil && row.Msg.ID == "" {
-			stubs = append(stubs, core.Message{ThreadID: row.ThreadID})
-		}
-	}
-	if len(stubs) == 0 {
-		return
-	}
-	threads := r.fetchThreads(stubs, 0, 0, false)
-	if len(threads) > 0 {
-		r.merge(threads)
-	}
-}
-
-// groupThreads groups a page's search summaries into one stub thread
-// per thread id (the summary row the view renders until the viewport
-// hydrate replaces it with the full thread).
+// groupThreads groups a page into one thread per thread id: the CLI
+// page's search summaries become stub threads (one summary row each -
+// the index row), the cgo page's per-message rows become real threads
+// (the tree builds from references).
 func groupThreads(msgs []core.Message) []*core.Thread {
 	byID := map[string][]*core.Message{}
 	for i := range msgs {

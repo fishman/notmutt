@@ -64,27 +64,44 @@ func stubModel() Model {
 	return New(view, nil, testKeys, testTagActions, nil)
 }
 
-// TestStubCursorAndStageGuard pins the stub-row rules: the cursor
-// tracks summary rows by index (no message id to anchor by), and tag
-// actions on them are no-ops - the apply path needs real ids, and the
-// viewport hydrate replaces the stub within the load.
-func TestStubCursorAndStageGuard(t *testing.T) {
+// TestStubThreadStaging pins the stub-row rules: the cursor tracks
+// summary rows by index (no message id to anchor by), and tag actions
+// on a stub stage a THREAD-level op - the summary stands for the whole
+// thread, and apply emits thread:<id>. A soft tag toggle resolves
+// against the thread's applied tags.
+func TestStubThreadStaging(t *testing.T) {
 	m := stubModel()
 	m = press(t, m, "j")
 	if m.CursorIndex() != 1 {
 		t.Fatalf("cursor must track stub rows by index, got %d", m.CursorIndex())
 	}
-	m = press(t, m, "a") // folder tag action on a stub
-	if m.view.HasStaged() {
-		t.Fatal("staging on a stub row must be a no-op")
+	m = press(t, m, "a") // folder tag action on a stub: thread-level stage
+	if !m.view.IsStaged("t:t2") {
+		t.Fatal("a on a stub must stage the thread identity t:t2")
 	}
-	m = press(t, m, "r") // soft tag toggle on a stub
+	row, _ := m.view.CursorRow()
+	if !row.Staged || !slices.Equal(row.StagedTags, []string{"archive"}) {
+		t.Fatalf("stub row must render the resolved thread state: staged=%v tags=%v", row.Staged, row.StagedTags)
+	}
+	m.width, m.height = 80, 24
+	if out := m.View(); !strings.Contains(out, "*") {
+		t.Fatalf("staged glyph missing:\n%s", out)
+	}
+	m = press(t, m, "u") // undo clears the thread op
 	if m.view.HasStaged() {
-		t.Fatal("toggling on a stub row must be a no-op")
+		t.Fatal("u on a stub must clear the staged thread op")
 	}
 	m = press(t, m, "k")
 	if m.CursorIndex() != 0 {
 		t.Fatalf("cursor after k on stubs = %d", m.CursorIndex())
+	}
+	m = press(t, m, "r") // soft toggle resolves against the thread's tags
+	if !m.view.IsStaged("t:t1") {
+		t.Fatal("r on the unread stub must stage t:t1")
+	}
+	ops, _ := m.view.StagedOps()
+	if got := ops["t:t1"]; len(got) != 1 || got[0] != (core.TagOp{Tag: "unread", Add: false}) {
+		t.Fatalf("r on the unread stub must stage -unread for the thread: %v", got)
 	}
 }
 

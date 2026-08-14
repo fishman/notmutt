@@ -3,14 +3,18 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/BurntSushi/toml"
+
+	"notmutt/core"
 )
 
 type Config struct {
-	UI    UI              `toml:"ui"`
-	Views map[string]View `toml:"view"`
+	UI        UI                       `toml:"ui"`
+	Views     map[string]View          `toml:"view"`
+	TagGroups map[string]core.TagGroup `toml:"tag-groups"`
 }
 
 type UI struct {
@@ -28,7 +32,25 @@ func Default() Config {
 		Views: map[string]View{
 			"inbox": {Query: "tag:inbox", Threads: true},
 		},
+		TagGroups: map[string]core.TagGroup{
+			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
+		},
 	}
+}
+
+// TagGroupList returns the groups sorted by name - the deterministic
+// order the resolver consumes (map iteration is not).
+func (c Config) TagGroupList() []core.TagGroup {
+	names := make([]string, 0, len(c.TagGroups))
+	for n := range c.TagGroups {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	out := make([]core.TagGroup, 0, len(names))
+	for _, n := range names {
+		out = append(out, c.TagGroups[n])
+	}
+	return out
 }
 
 // Load merges file values over defaults. Unknown keys are load errors
@@ -65,6 +87,21 @@ func validate(cfg Config) error {
 	for name, v := range cfg.Views {
 		if strings.TrimSpace(v.Query) == "" {
 			return fmt.Errorf("view %q: query must not be empty", name)
+		}
+	}
+	for name, g := range cfg.TagGroups {
+		if len(g.Tags) == 0 {
+			return fmt.Errorf("tag-groups.%s: at least one tag required", name)
+		}
+		seen := map[string]bool{}
+		for _, t := range g.Tags {
+			if strings.TrimSpace(t) == "" {
+				return fmt.Errorf("tag-groups.%s: empty tag name", name)
+			}
+			if seen[t] {
+				return fmt.Errorf("tag-groups.%s: duplicate tag %q", name, t)
+			}
+			seen[t] = true
 		}
 	}
 	return nil

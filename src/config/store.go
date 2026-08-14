@@ -5,6 +5,8 @@ import (
 	"maps"
 	"strings"
 	"sync"
+
+	"notmutt/core"
 )
 
 // Store is the single write path for runtime config mutations. Setters
@@ -25,6 +27,11 @@ func (s *Store) Config() Config {
 	defer s.mu.Unlock()
 	c := s.cfg
 	c.Views = maps.Clone(s.cfg.Views)
+	c.TagGroups = make(map[string]core.TagGroup, len(s.cfg.TagGroups))
+	for n, g := range s.cfg.TagGroups {
+		g.Tags = append([]string(nil), g.Tags...)
+		c.TagGroups[n] = g
+	}
 	return c
 }
 

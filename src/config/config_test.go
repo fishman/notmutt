@@ -3,8 +3,11 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+
+	"notmutt/core"
 )
 
 func write(t *testing.T, content string) string {
@@ -84,5 +87,56 @@ threads = false
 	}
 	if cfg.Views["inbox"].Threads {
 		t.Fatal("threads = false must override the default true")
+	}
+}
+
+func TestDefaultTagGroups(t *testing.T) {
+	cfg := Default()
+	g, ok := cfg.TagGroups["folder"]
+	if !ok {
+		t.Fatal("folder group missing from default")
+	}
+	if !slices.Equal(g.Tags, []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}) {
+		t.Fatalf("folder group = %v", g.Tags)
+	}
+}
+
+func TestTagGroupListSorted(t *testing.T) {
+	cfg := Default()
+	cfg.TagGroups = map[string]core.TagGroup{
+		"z": {Tags: []string{"x"}},
+		"a": {Tags: []string{"y"}},
+	}
+	got := cfg.TagGroupList()
+	if got[0].Tags[0] != "y" || got[1].Tags[0] != "x" {
+		t.Fatalf("TagGroupList not sorted: %v", got)
+	}
+}
+
+func TestLoadUnknownTagGroupKey(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.toml")
+	if err := os.WriteFile(p, []byte("[tag-groups.folder]\ntags = [\"inbox\"]\nbogus = 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "bogus") {
+		t.Fatalf("unknown key must error, got %v", err)
+	}
+}
+
+func TestValidateTagGroup(t *testing.T) {
+	cfg := Default()
+	cfg.TagGroups["empty"] = core.TagGroup{}
+	if err := validate(cfg); err == nil {
+		t.Fatal("empty group must error")
+	}
+	cfg.TagGroups["empty"] = core.TagGroup{Tags: []string{"a", "a"}}
+	if err := validate(cfg); err == nil {
+		t.Fatal("duplicate member must error")
+	}
+	cfg.TagGroups["empty"] = core.TagGroup{Tags: []string{" "}}
+	if err := validate(cfg); err == nil {
+		t.Fatal("blank tag name must error")
 	}
 }

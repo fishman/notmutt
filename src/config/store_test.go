@@ -89,3 +89,12 @@ func TestStoreConcurrentConfigAndSet(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestConfigClonesTagGroups(t *testing.T) {
+	st := NewStore(Default())
+	got := st.Config().TagGroupList()
+	got[0].Tags[0] = "mutated"
+	if st.Config().TagGroups["folder"].Tags[0] != "inbox" {
+		t.Fatal("Config() must deep-clone TagGroups")
+	}
+}

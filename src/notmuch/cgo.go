@@ -46,7 +46,7 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.db.Revision()
 }
 
-func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
+func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int) ([]core.Message, error) {
 	if b.db == nil {
 		return nil, fmt.Errorf("notmuch search: database not open")
 	}
@@ -59,7 +59,12 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core
 	}
 	defer msgs.Close()
 	var out []core.Message
+	skip := offset
 	for m := range msgs.All() {
+		if skip > 0 {
+			skip--
+			continue
+		}
 		if limit > 0 && len(out) >= limit {
 			break
 		}
@@ -77,7 +82,7 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core
 }
 
 func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
-	return b.Query(ctx, "thread:"+threadID, 0)
+	return b.Query(ctx, "thread:"+threadID, 0, 0)
 }
 
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {

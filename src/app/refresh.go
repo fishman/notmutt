@@ -30,7 +30,7 @@ type refresher struct {
 }
 
 func newRefresher(bus *core.Bus, w workerAPI, view *core.View, rPrev uint64) *refresher {
-	return &refresher{bus: bus, worker: w, view: view, page: 200, rPrev: rPrev}
+	return &refresher{bus: bus, worker: w, view: view, page: 1000, rPrev: rPrev}
 }
 
 func (r *refresher) cycle() {
@@ -164,21 +164,50 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	return threads
 }
 
-// fullReload re-fetches the view query and diffs the fresh page in as
-// the full state: the view becomes exactly the query result, so threads
-// that retagged out of the filter or were deleted are removed. Called
-// for uuid changes, manual refresh, view config changes, and first load.
-// The cursor survives via the merge walk.
+// fullReload re-fetches the view query page by page and merges each
+// page in as it lands (R3 progressive fill): the view fills
+// asynchronously, one ViewDiff per page, until a short page ends the
+// query. Threads that retagged out of the filter or were deleted are
+// removed by the full snapshot replacement. Called for uuid changes,
+// manual refresh, view config changes, and first load. The cursor
+// survives via the merge walk.
 func (r *refresher) fullReload() {
-	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: r.page})
-	if err != nil || rpl.Err != nil {
-		return
+	var snapshot []*core.Thread
+	for offset := 0; ; offset += r.page {
+		rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: r.page, Offset: offset})
+		if err != nil || rpl.Err != nil {
+			return
+		}
+		page := r.fetchThreads(rpl.Msgs)
+		sortThreads(page)
+		snapshot = mergeSorted(snapshot, page)
+		r.snapshot = snapshot
+		r.view.MergeThreads(snapshot)
+		r.bus.Publish(core.ViewDiff{View: r.view.Name})
+		if len(rpl.Msgs) < r.page {
+			return
+		}
 	}
-	threads := r.fetchThreads(rpl.Msgs)
-	sortThreads(threads)
-	r.snapshot = threads
-	r.view.MergeThreads(threads)
-	r.bus.Publish(core.ViewDiff{View: r.view.Name})
+}
+
+// mergeSorted merges two ThreadLess-sorted slices; the fill pages in
+// sorted pages, and re-sorting the whole snapshot per page is quadratic
+// in the result size.
+func mergeSorted(a, b []*core.Thread) []*core.Thread {
+	out := make([]*core.Thread, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if core.ThreadLess(b[j], a[i]) {
+			out = append(out, b[j])
+			j++
+		} else {
+			out = append(out, a[i])
+			i++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	return out
 }
 
 func sortThreads(threads []*core.Thread) {

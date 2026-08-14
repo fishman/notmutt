@@ -2,6 +2,7 @@ package app
 
 import (
 	"errors"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,7 +16,9 @@ type fakeWorker struct {
 	uuid      atomic.Value
 	rev       atomic.Uint64
 	msgs      atomic.Value
+	stubs     atomic.Value
 	lastQuery atomic.Value
+	queries   atomic.Int32
 	threadErr atomic.Value // error: fails every ActThread when set
 }
 
@@ -28,6 +31,13 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 	f.msgs.Store(msgs)
 }
 
+// setStubs installs a paged query result; ActQuery serves it sliced by
+// Limit/Offset (the legacy setMsgs path serves the whole set at offset 0
+// and nothing after - the fill loop needs both to terminate).
+func (f *fakeWorker) setStubs(msgs []core.Message) {
+	f.stubs.Store(msgs)
+}
+
 func (f *fakeWorker) setThreadErr(err error) { f.threadErr.Store(err) }
 
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -38,16 +48,39 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.Rev = f.rev.Load()
 	case notmuch.ActQuery:
 		f.lastQuery.Store(a.Query)
-		r.Msgs, _ = f.msgs.Load().([]core.Message)
+		f.queries.Add(1)
+		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
+			lo := a.Offset
+			if lo > len(stubs) {
+				lo = len(stubs)
+			}
+			hi := lo + a.Limit
+			if hi > len(stubs) {
+				hi = len(stubs)
+			}
+			r.Msgs = stubs[lo:hi]
+			break
+		}
+		if a.Offset == 0 {
+			r.Msgs, _ = f.msgs.Load().([]core.Message)
+		}
 	case notmuch.ActThread:
 		if err, _ := f.threadErr.Load().(error); err != nil {
 			return notmuch.Reply{ID: a.ID}, err
 		}
-		stubs, _ := f.msgs.Load().([]core.Message)
-		if len(stubs) == 0 {
-			stubs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
+		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
+			for _, m := range stubs {
+				if m.ThreadID == a.ThreadID {
+					r.Msgs = []core.Message{m}
+					return r, nil
+				}
+			}
 		}
-		r.Msgs = stubs
+		msgs, _ := f.msgs.Load().([]core.Message)
+		if len(msgs) == 0 {
+			msgs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
+		}
+		r.Msgs = msgs
 	}
 	return r, nil
 }
@@ -311,5 +344,64 @@ func TestFetchThreadsFailurePublishesProgress(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("missing progress event on failed fetch")
+	}
+}
+
+// TestFullReloadPages pins the progressive fill: 2500 stubs served in
+// three pages (1000/1000/500) - one ActQuery per page, and the view
+// ends with the complete merged set, still sorted. (ViewDiff events are
+// not counted from the channel: 2500 progress events flood the 64-slot
+// subscriber buffer and drops make that assertion flaky - the per-page
+// publish is code-guaranteed by the loop shape.)
+func TestFullReloadPages(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	stubs := make([]core.Message, 2500)
+	for i := range stubs {
+		stubs[i] = core.Message{ID: "m" + strconv.Itoa(i), ThreadID: "t" + strconv.Itoa(i)}
+	}
+	fw.setStubs(stubs)
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+
+	r.fullReload()
+
+	if got := fw.queries.Load(); got != 3 {
+		t.Fatalf("expected 3 page fetches for 2500 stubs at page 1000, got %d", got)
+	}
+	if len(view.Threads) != 2500 {
+		t.Fatalf("view must hold all 2500 threads after the fill, got %d", len(view.Threads))
+	}
+	if len(r.snapshot) != 2500 {
+		t.Fatalf("snapshot must hold all 2500 threads, got %d", len(r.snapshot))
+	}
+	// every page merged before the next fetch: snapshot stays sorted
+	for i := 1; i < len(r.snapshot); i++ {
+		if core.ThreadLess(r.snapshot[i], r.snapshot[i-1]) {
+			t.Fatalf("snapshot out of order at %d", i)
+		}
+	}
+}
+
+// TestFullReloadEmpty pins the loop termination: an empty result ends
+// the fill after one empty merge.
+func TestFullReloadEmpty(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.setStubs(nil)
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	ch := bus.Subscribe()
+	r.fullReload()
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected one ViewDiff from the empty reload, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff from empty reload")
+	}
+	if len(view.Threads) != 0 {
+		t.Fatalf("empty reload left %d threads", len(view.Threads))
 	}
 }

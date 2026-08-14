@@ -25,7 +25,7 @@ func TestCGOSmoke(t *testing.T) {
 	if uuid == "" || rev == 0 {
 		t.Fatalf("revision: %q %d", uuid, rev)
 	}
-	msgs, err := b.Query(context.Background(), "tag:inbox", 10)
+	msgs, err := b.Query(context.Background(), "tag:inbox", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

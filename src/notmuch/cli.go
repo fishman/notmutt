@@ -52,10 +52,13 @@ type searchItem struct {
 // thread ids and thread-level fields only; per-message data (ids,
 // filenames, headers) comes from Thread. The refresh cycle groups by
 // ThreadID and fetches full threads, so the stub's ID stays empty.
-func (b *CLIBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
+func (b *CLIBackend) Query(ctx context.Context, query string, limit, offset int) ([]core.Message, error) {
 	args := []string{"search", "--format=json", "--sort=newest-first"}
 	if limit > 0 {
 		args = append(args, "--limit="+strconv.Itoa(limit))
+	}
+	if offset > 0 {
+		args = append(args, "--offset="+strconv.Itoa(offset))
 	}
 	args = append(args, query)
 	out, err := b.run(ctx, "notmuch", args)

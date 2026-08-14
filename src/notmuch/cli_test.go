@@ -26,7 +26,7 @@ func TestCLIQuery(t *testing.T) {
 		got = args
 		return []byte(searchJSON), nil
 	})
-	msgs, err := b.Query(context.Background(), "tag:inbox", 10)
+	msgs, err := b.Query(context.Background(), "tag:inbox", 10, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestCLIQueryNoLimit(t *testing.T) {
 		got = args
 		return []byte(searchJSON), nil
 	})
-	if _, err := b.Query(context.Background(), "tag:inbox", 0); err != nil {
+	if _, err := b.Query(context.Background(), "tag:inbox", 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"search", "--format=json", "--sort=newest-first", "tag:inbox"}
@@ -139,7 +139,7 @@ func TestCLIQueryError(t *testing.T) {
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
 		return []byte("notmuch error: something"), errors.New("exit status 1")
 	})
-	if _, err := b.Query(context.Background(), "tag:inbox", 10); err == nil {
+	if _, err := b.Query(context.Background(), "tag:inbox", 10, 0); err == nil {
 		t.Fatal("expected error")
 	}
 }

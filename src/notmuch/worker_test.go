@@ -15,7 +15,7 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Open(ctx context.Context, p string) error { return f.err }
 func (f *fakeBackend) Close(ctx context.Context) error          { return f.err }
-func (f *fakeBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
+func (f *fakeBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
 	return []core.Message{{ID: "m1", ThreadID: "t1"}}, f.err
 }
 func (f *fakeBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
@@ -68,7 +68,7 @@ type blockingBackend struct {
 
 func (b *blockingBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
 func (b *blockingBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
-func (b *blockingBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
+func (b *blockingBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
@@ -109,7 +109,7 @@ type killBackend struct {
 
 func (b *killBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
 func (b *killBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
-func (b *killBackend) Query(ctx context.Context, q string, l int) ([]core.Message, error) {
+func (b *killBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
 	<-ctx.Done()
 	return nil, errors.New("signal: killed")
 }

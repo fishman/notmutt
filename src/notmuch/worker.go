@@ -26,6 +26,7 @@ type Action struct {
 	Query    string
 	ThreadID string
 	Limit    int
+	Offset   int
 	TagOps   []TagOp
 	replyCh  chan Reply
 }
@@ -99,7 +100,7 @@ func (w *Worker) handle(a Action) {
 	case ActOpen:
 		err = w.backend.Open(ctx, a.Query)
 	case ActQuery:
-		r.Msgs, err = w.backend.Query(ctx, a.Query, a.Limit)
+		r.Msgs, err = w.backend.Query(ctx, a.Query, a.Limit, a.Offset)
 	case ActThread:
 		r.Msgs, err = w.backend.Thread(ctx, a.ThreadID)
 	case ActTag:

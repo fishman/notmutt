@@ -20,7 +20,7 @@ type TagOp = core.TagOp
 type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error
-	Query(ctx context.Context, query string, limit int) ([]Message, error)
+	Query(ctx context.Context, query string, limit, offset int) ([]Message, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
 	Tag(ctx context.Context, query string, ops []TagOp) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)

@@ -42,19 +42,19 @@ func TestBench(t *testing.T) {
 	}
 
 	report("cli first-page (50)", func() (int, error) {
-		msgs, err := cli.Query(ctx, "tag:inbox", 50)
+		msgs, err := cli.Query(ctx, "tag:inbox", 50, 0)
 		return len(msgs), err
 	})
 	report("cgo first-page (50)", func() (int, error) {
-		msgs, err := cgoB.Query(ctx, "tag:inbox", 50)
+		msgs, err := cgoB.Query(ctx, "tag:inbox", 50, 0)
 		return len(msgs), err
 	})
 	report("cli full inbox", func() (int, error) {
-		msgs, err := cli.Query(ctx, "tag:inbox", 0)
+		msgs, err := cli.Query(ctx, "tag:inbox", 0, 0)
 		return len(msgs), err
 	})
 	report("cgo full inbox", func() (int, error) {
-		msgs, err := cgoB.Query(ctx, "tag:inbox", 0)
+		msgs, err := cgoB.Query(ctx, "tag:inbox", 0, 0)
 		return len(msgs), err
 	})
 	report("cli thread fetch", func() (int, error) {
@@ -69,7 +69,7 @@ func TestBench(t *testing.T) {
 
 func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 	t.Helper()
-	msgs, err := b.Query(ctx, "tag:inbox", 1)
+	msgs, err := b.Query(ctx, "tag:inbox", 1, 0)
 	if err != nil || len(msgs) == 0 {
 		t.Fatalf("seed query: %v %d", err, len(msgs))
 	}

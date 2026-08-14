@@ -425,6 +425,27 @@ func TestProgressBarEmptyView(t *testing.T) {
 	}
 }
 
+// TestProgressBarEmptyViewHints pins the empty+progress render path:
+// the keyhint row renders above the status line exactly like the
+// populated index render (R9 slot reservation - the bar view never
+// drops the hint row).
+func TestProgressBarEmptyViewHints(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m.width, m.height = 120, 24
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
+	strip := stripANSI(m.View())
+	if !strings.Contains(strip, "refresh 1/5") {
+		t.Fatalf("empty view must still render the status line:\n%s", strip)
+	}
+	if !strings.Contains(strip, "j cursor-down") {
+		t.Fatalf("empty view must render the keyhint row:\n%s", strip)
+	}
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|0"); si < 0 || si > sh {
+		t.Fatalf("hint row must sit above the status line:\n%s", strip)
+	}
+}
+
 func TestProgressBarSegments(t *testing.T) {
 	ui := config.Default().UI
 	// Done=5/Total=10 in 20 cells: half filled
@@ -714,6 +735,9 @@ func TestKeyhintBar(t *testing.T) {
 	}
 	if runewidth.StringWidth(hint) > 30 {
 		t.Fatalf("hint exceeds width: %q", hint)
+	}
+	if w := runewidth.StringWidth(keyhintRow(km, 10)); w > 10 {
+		t.Fatalf("narrow hint must truncate to the width, got %d cells: %q", w, keyhintRow(km, 10))
 	}
 }
 

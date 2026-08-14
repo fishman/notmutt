@@ -71,11 +71,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.pager != nil {
-			// the status row and the keyhint placeholder row sit below
-			// the pager window (Task 4 fills the placeholder). Re-size
-			// and re-style even in index mode: a resize between close
-			// and re-open must not leave the window at the old width
-			// (the re-open guard skips the re-render).
+			// the keyhint bar (R9) and the status row sit below the
+			// pager window (height-2). Re-size and re-style even in
+			// index mode: a resize between close and re-open must not
+			// leave the window at the old width (the re-open guard
+			// skips the re-render).
 			m.pager.setSize(m.width, m.height-2, m.styles)
 		}
 	case tea.KeyMsg:

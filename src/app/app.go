@@ -149,14 +149,16 @@ func firstView(cfg config.Config) string {
 // action must be referenced by at least one binding.
 func validateBindings(cfg *config.Config) error {
 	used := map[string]bool{}
-	for key, action := range cfg.Bindings["index"] {
-		if tui.Actions[action] {
-			continue
+	for context, km := range cfg.Bindings {
+		for key, action := range km {
+			if tui.Actions[action] {
+				continue
+			}
+			if _, ok := cfg.TagActions[action]; !ok {
+				return fmt.Errorf("bindings.%s: key %q: unknown action %q", context, key, action)
+			}
+			used[action] = true
 		}
-		if _, ok := cfg.TagActions[action]; !ok {
-			return fmt.Errorf("binding %q: unknown action %q", key, action)
-		}
-		used[action] = true
 	}
 	for name := range cfg.TagActions {
 		if tui.Actions[name] {

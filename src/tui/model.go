@@ -13,12 +13,16 @@ import (
 )
 
 // Actions is the BUILTIN action vocabulary (R9): cursor movement, quit,
-// open, and the buffer/apply ops. Tag actions are NOT in here - they
-// come from the [tag-actions] config map; the app validates every
-// binding value against both at startup (unknown action = load error).
+// open, pager scrolling, and the buffer/apply ops. Tag actions are NOT
+// in here - they come from the [tag-actions] config map; the app
+// validates every binding value against both, across ALL contexts, at
+// startup (unknown action = load error).
 var Actions = map[string]bool{
 	"cursor-down": true, "cursor-up": true, "quit": true,
 	"undo": true, "apply": true, "open": true,
+	"scroll-down": true, "scroll-up": true, "page-down": true,
+	"page-up": true, "scroll-top": true, "scroll-bottom": true,
+	"back": true,
 }
 
 type Model struct {
@@ -60,10 +64,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		if m.mode == "pager" && m.pager != nil {
+		if m.pager != nil {
 			// the status row and the keyhint placeholder row sit below
-			// the pager window (Task 4 fills the placeholder)
-			m.pager.setSize(m.width, m.height-2)
+			// the pager window (Task 4 fills the placeholder). Re-size
+			// and re-style even in index mode: a resize between close
+			// and re-open must not leave the window at the old width
+			// (the re-open guard skips the re-render).
+			m.pager.setSize(m.width, m.height-2, m.styles)
 		}
 	case tea.KeyMsg:
 		km := m.bindings[m.mode]
@@ -177,13 +184,9 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 			return
 		}
 		m.pager = newPager(e.ThreadID, lines)
-		if m.width > 0 {
-			m.pager.setSize(m.width, m.height-2)
-		}
-		// populate the scroll window now - render is lazy in View, and
-		// a scroll key before the first repaint must not clamp to an
-		// empty window
-		m.pager.render(m.styles)
+		// style once at load - width 0 (no WindowSizeMsg yet) pads
+		// nothing, the first resize re-styles at the real width
+		m.pager.setSize(m.width, m.height-2, m.styles)
 	}
 	m.mode = "pager"
 }
@@ -377,7 +380,7 @@ func (m Model) CursorIndex() int {
 func (m Model) View() string {
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
-		b.WriteString(m.pager.render(m.styles))
+		b.WriteString(m.pager.render())
 		b.WriteString("\n") // keyhint placeholder row (Task 4 fills it)
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
 		b.WriteByte('\n')

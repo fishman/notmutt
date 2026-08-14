@@ -21,6 +21,20 @@ func TestValidateBindings(t *testing.T) {
 		t.Fatalf("error must name the key, got: %v", err)
 	}
 	cfg = config.Default()
+	cfg.Bindings["pager"]["x"] = "frobnicate"
+	err = validateBindings(&cfg)
+	if err == nil {
+		t.Fatal("unknown action in a non-index context must error")
+	}
+	if !strings.Contains(err.Error(), "pager") {
+		t.Fatalf("error must name the context, got: %v", err)
+	}
+	cfg = config.Default()
+	cfg.Bindings["pager"]["ctrl+f"] = "page-down"
+	if err := validateBindings(&cfg); err != nil {
+		t.Fatalf("a valid pager binding must load: %v", err)
+	}
+	cfg = config.Default()
 	cfg.TagActions["quit"] = "x"
 	if err := validateBindings(&cfg); err == nil {
 		t.Fatal("tag action colliding with a builtin must error")

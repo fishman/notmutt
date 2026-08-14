@@ -10,10 +10,20 @@ import (
 	"os"
 	"strings"
 
+	"github.com/emersion/go-message"
+	_ "github.com/emersion/go-message/charset" // register the common charsets with the decoder
+
 	"github.com/emersion/go-message/mail"
 
 	"notmutt/core"
 )
+
+// maxPartBytes bounds one part's read (body content or attachment
+// size count): the trust boundary gets a ceiling, never an unbounded
+// buffered read (F4). The body content beyond the ceiling is dropped
+// and marked; an attachment beyond it reports the capped size and a
+// truncated marker. 8 MiB covers any realistic single part.
+const maxPartBytes = 8 << 20
 
 // LineKind identifies the render line's style class (the pager maps
 // kinds to the theme styles).
@@ -25,6 +35,7 @@ const (
 	LineBody
 	LineSignature
 	LineAttachment
+	LineError
 )
 
 // Line is one pager render line: the text plus the style kind. All
@@ -39,18 +50,27 @@ type Line struct {
 // RenderThread parses each message's file and produces the pager's
 // render lines: per message a header block (subject, from/date), then
 // the body with quoted levels and signature, then attachment lines.
+// A per-message failure (no path, unreadable file, unparseable mail)
+// becomes an error line so the rest of the thread stays readable -
+// mutt-style partial content. RenderThread errors only when the input
+// is empty: then there is nothing to show at all.
 func RenderThread(msgs []core.Message) ([]Line, error) {
+	if len(msgs) == 0 {
+		return nil, fmt.Errorf("no messages in thread")
+	}
 	var lines []Line
 	for i, m := range msgs {
 		if i > 0 {
 			lines = append(lines, Line{})
 		}
 		if len(m.Paths) == 0 {
-			return nil, fmt.Errorf("message %s: no path", m.ID)
+			lines = append(lines, Line{Text: fmt.Sprintf("message %s: no path", m.ID), Kind: LineError})
+			continue
 		}
 		parsed, err := ParseMessage(m.Paths[0])
 		if err != nil {
-			return nil, err
+			lines = append(lines, Line{Text: fmt.Sprintf("failed to parse message: %v", err), Kind: LineError})
+			continue
 		}
 		lines = append(lines, renderMessage(parsed)...)
 	}
@@ -72,14 +92,20 @@ type Part struct {
 }
 
 type Attachment struct {
-	Name string
-	Size int64
+	Name      string
+	Size      int64
+	Truncated bool // size count hit maxPartBytes; the listed size is the cap
 }
 
 // ParseMessage opens one mail file and reads its structure with
 // go-message: the text/plain inline parts become body parts (quoted
 // depth + signature split), other inline parts are skipped, and
 // attachment parts are listed with their sizes.
+//
+// Unknown charsets/encodings are tolerated, not fatal: go-message
+// returns the part with the body reader still raw (undecoded) when it
+// cannot map the charset, so the part renders as-is instead of killing
+// the whole thread. Only structural errors abort the parse.
 func ParseMessage(path string) (*Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -87,9 +113,10 @@ func ParseMessage(path string) (*Message, error) {
 	}
 	defer f.Close()
 	mr, err := mail.CreateReader(f)
-	if err != nil {
+	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	defer mr.Close()
 	hdr := mr.Header
 	m := &Message{}
 	if addrs, err := hdr.AddressList("From"); err == nil && len(addrs) > 0 {
@@ -102,28 +129,32 @@ func ParseMessage(path string) (*Message, error) {
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
+		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			return nil, fmt.Errorf("%s: %w", path, err)
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
 			if ct, _, _ := h.ContentType(); ct == "text/plain" {
-				data, err := io.ReadAll(p.Body)
+				data, err := io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 				if err != nil {
-					return nil, err
+					return nil, fmt.Errorf("%s: %w", path, err)
 				}
-				m.Parts = append(m.Parts, splitBody(string(data))...)
+				parts := splitBody(string(data))
+				if len(data) > maxPartBytes {
+					parts = append(parts, Part{Body: "[content truncated]"})
+				}
+				m.Parts = append(m.Parts, parts...)
 			}
 		case *mail.AttachmentHeader:
 			name, _ := h.Filename()
 			if name == "" {
 				name = "attachment"
 			}
-			size, err := io.Copy(io.Discard, p.Body)
+			size, err := io.Copy(io.Discard, io.LimitReader(p.Body, maxPartBytes+1))
 			if err != nil {
-				return nil, err
+				return nil, fmt.Errorf("%s: %w", path, err)
 			}
-			m.Attachments = append(m.Attachments, Attachment{Name: name, Size: size})
+			m.Attachments = append(m.Attachments, Attachment{Name: name, Size: size, Truncated: size > maxPartBytes})
 		}
 	}
 	return m, nil
@@ -160,27 +191,10 @@ func splitBody(text string) []Part {
 	return parts
 }
 
-// stripControls drops C0/DEL/C1 runes (F1; the same policy as the
-// TUI's index renderer, enforced here at the mail boundary).
-func stripControls(s string) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || (r >= 0x7F && r <= 0x9F) }) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
 func renderMessage(m *Message) []Line {
 	var lines []Line
 	add := func(text string, kind LineKind, quoted int) {
-		lines = append(lines, Line{Text: stripControls(text), Kind: kind, Quoted: quoted})
+		lines = append(lines, Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
 	add(m.Subject, LineSubject, 0)
 	add(m.From+"  "+m.Date, LineHeader, 0)
@@ -192,7 +206,11 @@ func renderMessage(m *Message) []Line {
 		add(p.Body, kind, p.Quoted)
 	}
 	for _, a := range m.Attachments {
-		add(fmt.Sprintf("attachment: %s (%d bytes)", a.Name, a.Size), LineAttachment, 0)
+		line := fmt.Sprintf("attachment: %s (%d bytes)", a.Name, a.Size)
+		if a.Truncated {
+			line = fmt.Sprintf("attachment: %s (truncated, >%d bytes)", a.Name, maxPartBytes)
+		}
+		add(line, LineAttachment, 0)
 	}
 	return lines
 }

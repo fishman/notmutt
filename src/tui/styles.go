@@ -24,6 +24,7 @@ type Styles struct {
 	Indicator lipgloss.Style
 	Status    lipgloss.Style
 	Progress  lipgloss.Style
+	Error     lipgloss.Style
 	Index     IndexStyles
 	Pager     PagerStyles
 }
@@ -54,6 +55,7 @@ func DefaultStyles() Styles {
 		Indicator: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#e5c07b")),
 		Status:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
 		Progress:  lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
+		Error:     lipgloss.NewStyle().Foreground(c("#e06c75")),
 		Index: IndexStyles{
 			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),
@@ -123,6 +125,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		Indicator: to("indicator", normal),
 		Status:    to("status", normal),
 		Progress:  to("progress", normal),
+		Error:     to("error", normal),
 		Index: IndexStyles{
 			Number: to("index.number", normal), Date: to("index.date", normal),
 			Author: to("index.author", normal), Subject: to("index.subject", normal),

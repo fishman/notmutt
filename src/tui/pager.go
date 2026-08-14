@@ -11,6 +11,11 @@ import (
 // pager holds the open thread's render lines and the scroll window.
 // The content is bounded (one thread), so the window owns the scroll
 // state (the index stays windowed - 129k rows must never flatten).
+// Lines are styled once per open/resize (style), never on the repaint
+// path - the TUI repaints on every event, so per-frame re-styling
+// would throw away the work 5+ times per second. Long lines are
+// truncated to the window width, never wrapped (R11 alignment; the
+// truncation is a pinned limitation, wrapping is future work).
 type pager struct {
 	threadID string
 	lines    []mail.Line
@@ -22,17 +27,19 @@ func newPager(threadID string, lines []mail.Line) *pager {
 	return &pager{threadID: threadID, lines: lines}
 }
 
-func (p *pager) setSize(w, h int) {
+func (p *pager) setSize(w, h int, st Styles) {
 	p.width = w
 	p.vp.setSize(w, h)
+	p.style(st)
 }
 
-// render maps the structured lines to styled text and hands it to the
-// window: subject -> header, from/date -> hdrdefault, body -> quotedN
-// by depth, signature -> signature, attachment -> attachment. Every
-// line pads to the window width with its own style (the R11
-// slot-reservation rule - alignment never shifts per line).
-func (p *pager) render(st Styles) string {
+// style maps the structured lines to styled text once per load (open
+// or resize) and hands it to the window: subject -> header, from/date
+// -> hdrdefault, body -> quotedN by depth, signature -> signature,
+// attachment -> attachment, error -> error. Every line pads to the
+// window width with its own style (the R11 slot-reservation rule -
+// alignment never shifts per line).
+func (p *pager) style(st Styles) {
 	var b strings.Builder
 	for _, l := range p.lines {
 		var s lipgloss.Style
@@ -47,6 +54,8 @@ func (p *pager) render(st Styles) string {
 			s = st.Pager.Signature
 		case mail.LineAttachment:
 			s = st.Pager.Attachment
+		case mail.LineError:
+			s = st.Error
 		default:
 			s = st.Normal
 		}
@@ -58,6 +67,10 @@ func (p *pager) render(st Styles) string {
 		b.WriteByte('\n')
 	}
 	p.vp.SetContent(b.String())
+}
+
+// render returns the styled window; the repaint path never re-styles.
+func (p *pager) render() string {
 	return p.vp.View()
 }
 

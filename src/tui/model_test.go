@@ -668,6 +668,126 @@ func TestPagerKeyOnlyActiveInPager(t *testing.T) {
 	}
 }
 
+func TestPagerPageKeys(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	// real ctrl+d/ctrl+u keys: KeyMsg.String() resolves to "ctrl+d" and
+	// the dispatch finds the page-down/page-up bindings
+	next, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	m = next.(Model)
+	if m.pager.vp.offset != 4 {
+		t.Fatalf("ctrl+d must page down by half the window, offset=%d", m.pager.vp.offset)
+	}
+	next, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = next.(Model)
+	if m.pager.vp.offset != 0 {
+		t.Fatalf("ctrl+u must page up, offset=%d", m.pager.vp.offset)
+	}
+}
+
+func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	path := fixtureMsg(t, strings.Repeat("line\n", 30))
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+		}})
+		m = next.(Model)
+	})
+	press(t, m, "o") // the handler rebinds m with the loaded pager
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	m = press(t, m, "j")
+	if m.pager.vp.offset != 1 {
+		t.Fatalf("j must scroll, offset=%d", m.pager.vp.offset)
+	}
+	m = press(t, m, "q")
+	if m.mode != "index" {
+		t.Fatalf("back must return to index, mode=%q", m.mode)
+	}
+	press(t, m, "o") // re-open the same thread - the guard skips re-render
+	if m.mode != "pager" {
+		t.Fatalf("re-open must switch to pager, mode=%q", m.mode)
+	}
+	if len(m.pager.lines) == 0 {
+		t.Fatal("pager content must survive re-open")
+	}
+	if m.pager.vp.offset != 1 {
+		t.Fatalf("scroll position must survive re-open, offset=%d", m.pager.vp.offset)
+	}
+}
+
+func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	path := fixtureMsg(t, strings.Repeat("line\n", 30))
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+		}})
+		m = next.(Model)
+	})
+	press(t, m, "o")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	press(t, m, "q") // back to index, pager kept alive
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
+	m = next.(Model)
+	if m.pager.vp.width != 40 || m.pager.vp.height != 8 {
+		t.Fatalf("resize in index mode must re-size the pager window: %dx%d", m.pager.vp.width, m.pager.vp.height)
+	}
+	press(t, m, "o") // re-open the same thread - render happens at the new width
+	if m.mode != "pager" {
+		t.Fatalf("re-open must switch to pager, mode=%q", m.mode)
+	}
+	if m.pager.vp.width != 40 {
+		t.Fatalf("re-open must render at the resized width, got %d", m.pager.vp.width)
+	}
+}
+
+func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "bad")
+	if err := os.WriteFile(bad, []byte("this is not a mail message at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := model()
+	m.width, m.height = 80, 24
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}},
+		}})
+		m = next.(Model)
+	})
+	press(t, m, "o")
+	if m.mode != "pager" {
+		t.Fatalf("a parse failure must open the pager with an error line, mode=%q", m.mode)
+	}
+	out := stripANSI(m.View())
+	if !strings.Contains(out, "failed to parse message") {
+		t.Fatalf("error line missing:\n%s", out)
+	}
+}
+
+func TestThreadLoadedEmptyFallsBackToIndex(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID}})
+		m = next.(Model)
+	})
+	press(t, m, "o")
+	if m.mode != "index" || m.pager != nil {
+		t.Fatalf("an empty thread reply must stay in index, mode=%q pager=%v", m.mode, m.pager != nil)
+	}
+}
+
 func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24

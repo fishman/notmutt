@@ -48,10 +48,10 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI) string {
 	b.WriteByte(' ')
 	b.WriteString(st.Index.Date.Render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
-	author := stripControls(row.Msg.Author)
+	author := core.SanitizeControls(row.Msg.Author)
 	b.WriteString(st.Index.Author.Render(padCellsRight(truncCells(author, 16), 16)))
 	b.WriteByte(' ')
-	subject := stripControls(row.Msg.Subject)
+	subject := core.SanitizeControls(row.Msg.Subject)
 	b.WriteString(st.Index.Subject.Render(truncCells(subject, 40)))
 	b.WriteByte(' ')
 	b.WriteString(tagGlyphs(tags, ui.Tags.Max, st.Index.Tag))
@@ -104,28 +104,11 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style) str
 		if n >= max {
 			break
 		}
-		b.WriteString(tagStyle(t).Render(padCellsRight(truncCells(stripControls(t), 4), 4)))
+		b.WriteString(tagStyle(t).Render(padCellsRight(truncCells(core.SanitizeControls(t), 4), 4)))
 		b.WriteByte(' ')
 		n++
 	}
 	return strings.TrimRight(b.String(), " ")
-}
-
-// stripControls drops C0/DEL/C1 control runes so mail content can never
-// inject terminal escapes (F1).
-func stripControls(s string) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || (r >= 0x7F && r <= 0x9F) }) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
 }
 
 // truncCells truncates s to at most w terminal cells; padCellsRight pads

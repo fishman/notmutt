@@ -87,8 +87,112 @@ func TestRenderThreadAttachment(t *testing.T) {
 
 func TestRenderThreadMissingFile(t *testing.T) {
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{"/nonexistent"}}}
-	if _, err := RenderThread(msgs); err == nil {
-		t.Fatal("missing file must error")
+	lines, err := RenderThread(msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "failed to parse message") {
+		t.Fatalf("missing file must render an error line:\n%s", joined)
+	}
+}
+
+func TestRenderThreadNoPath(t *testing.T) {
+	lines, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "no path") {
+		t.Fatalf("missing path must render an error line:\n%s", joined)
+	}
+}
+
+func TestRenderThreadEmpty(t *testing.T) {
+	if _, err := RenderThread(nil); err == nil {
+		t.Fatal("an empty thread must error - nothing to show")
+	}
+}
+
+func TestRenderThreadPartialOnBadMessage(t *testing.T) {
+	good := fixture(t, "good body\n")
+	bad := filepath.Join(t.TempDir(), "bad")
+	if err := os.WriteFile(bad, []byte("this is not a mail message at all"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msgs := []core.Message{
+		{ID: "m1", ThreadID: "t1", Paths: []string{bad}},
+		{ID: "m2", ThreadID: "t1", Paths: []string{good}},
+	}
+	lines, err := RenderThread(msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "good body") || !strings.Contains(joined, "failed to parse message") {
+		t.Fatalf("a bad message must not kill the thread's content:\n%s", joined)
+	}
+}
+
+func TestRenderThreadUnknownCharset(t *testing.T) {
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: mixed\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=x-mystery\n\nraw bytes\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nvalid part\n" +
+		"--x--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "raw bytes") {
+		t.Fatalf("the unknown-charset part must render raw, not abort:\n%s", joined)
+	}
+	if !strings.Contains(joined, "valid part") {
+		t.Fatalf("the valid part must still render:\n%s", joined)
+	}
+}
+
+func TestRenderThreadBodyTruncated(t *testing.T) {
+	big := strings.Repeat("x", maxPartBytes+1024)
+	lines, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, big)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "[content truncated]") {
+		t.Fatalf("an oversized body must be marked truncated:\n%s", joined)
+	}
+	if len(joined) > maxPartBytes+4096 {
+		t.Fatalf("an oversized body must not reach the renderer whole")
+	}
+}
+
+func TestRenderThreadAttachmentTruncated(t *testing.T) {
+	big := strings.Repeat("x", maxPartBytes+1024)
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: big\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nbody\n" +
+		"--x\nContent-Type: application/octet-stream\n" +
+		"Content-Disposition: attachment; filename=\"big.bin\"\n\n" + big + "\n" +
+		"--x--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := joinText(lines)
+	if !strings.Contains(joined, "big.bin") || !strings.Contains(joined, "truncated") {
+		t.Fatalf("an oversized attachment must be marked truncated:\n%s", joined)
 	}
 }
 
@@ -96,5 +200,24 @@ func TestSplitBodyQuotedAndSignature(t *testing.T) {
 	parts := splitBody("plain\n> q1\n> > q2\n-- \nsig\n")
 	if len(parts) != 5 || parts[1].Quoted != 1 || parts[2].Quoted != 2 || !parts[4].Signature {
 		t.Fatalf("splitBody: %+v", parts)
+	}
+}
+
+func TestSplitBodyQuotedDepthCap(t *testing.T) {
+	parts := splitBody("> > > > > > deep\n")
+	if parts[0].Quoted != 5 || parts[0].Body != "> deep" {
+		t.Fatalf("depth must cap at 5: %+v", parts[0])
+	}
+}
+
+func TestSplitBodyCRLF(t *testing.T) {
+	parts := splitBody("a\r\nb\r\n")
+	if len(parts) != 2 || parts[0].Body != "a" || parts[1].Body != "b" {
+		t.Fatalf("CRLF must be stripped: %+v", parts)
+	}
+	for _, p := range parts {
+		if strings.ContainsRune(p.Body, '\r') {
+			t.Fatalf("CR left in body: %+v", parts)
+		}
 	}
 }

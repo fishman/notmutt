@@ -11,16 +11,26 @@ import (
 	"notmutt/core"
 )
 
+// Actions is the index-context action vocabulary (R9): every binding
+// value must be one of these; the app validates the loaded bindings
+// against it at startup (unknown action = load error).
+var Actions = map[string]bool{
+	"cursor-down": true, "cursor-up": true, "quit": true,
+	"toggle-read": true, "archive": true, "delete": true,
+	"undo": true, "apply": true,
+}
+
 type Model struct {
 	view   *core.View
 	ch     <-chan core.Event
+	keys   map[string]string
 	rows   []core.Row
 	width  int
 	height int
 }
 
-func New(view *core.View, ch <-chan core.Event) Model {
-	return Model{view: view, ch: ch}
+func New(view *core.View, ch <-chan core.Event, keys map[string]string) Model {
+	return Model{view: view, ch: ch, keys: keys}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -32,16 +42,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 	case tea.KeyMsg:
-		switch string(msg.Runes) {
-		case "j":
+		switch m.keys[string(msg.Runes)] {
+		case "cursor-down":
 			m.moveCursor(1)
-		case "k":
+		case "cursor-up":
 			m.moveCursor(-1)
-		case "q":
+		case "quit":
 			return m, tea.Quit
-		case "r", "a", "d", "u":
-			m.stageKey(string(msg.Runes))
-		case "$":
+		case "toggle-read", "archive", "delete", "undo":
+			m.stage(m.keys[string(msg.Runes)])
+		case "apply":
 			onApply()
 		}
 	case EventMsg:
@@ -81,18 +91,17 @@ func (m *Model) moveCursor(delta int) {
 	m.view.SetCursor(rows[idx].Msg.ID)
 }
 
-// stageKey routes the staging keys (R14, hardcoded defaults until the
-// R9 binding map): r toggles read from the applied state, a stages
-// +archive, d stages +deleted, u undoes. Ghost rows are guarded like
-// the M1 cursor keys.
-func (m *Model) stageKey(key string) {
+// stage routes the staging actions (R14): toggle-read flips from the
+// applied state, archive/delete stage +tag, undo discards. Ghost rows
+// are guarded like the M1 cursor keys.
+func (m *Model) stage(action string) {
 	row, ok := m.view.CursorRow()
 	if !ok || row.Msg == nil {
 		return
 	}
 	id := row.Msg.ID
-	switch key {
-	case "r":
+	switch action {
+	case "toggle-read":
 		has := false
 		for _, t := range m.view.MsgTags(id) {
 			if t == "unread" {
@@ -100,11 +109,11 @@ func (m *Model) stageKey(key string) {
 			}
 		}
 		m.view.Stage(id, core.TagOp{Tag: "unread", Add: !has})
-	case "a":
+	case "archive":
 		m.view.Stage(id, core.TagOp{Tag: "archive", Add: true})
-	case "d":
+	case "delete":
 		m.view.Stage(id, core.TagOp{Tag: "deleted", Add: true})
-	case "u":
+	case "undo":
 		m.view.Undo(id)
 	}
 	m.rows = m.view.Rows()

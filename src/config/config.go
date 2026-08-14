@@ -12,9 +12,10 @@ import (
 )
 
 type Config struct {
-	UI        UI                       `toml:"ui"`
-	Views     map[string]View          `toml:"view"`
-	TagGroups map[string]core.TagGroup `toml:"tag-groups"`
+	UI        UI                           `toml:"ui"`
+	Views     map[string]View              `toml:"view"`
+	TagGroups map[string]core.TagGroup     `toml:"tag-groups"`
+	Bindings  map[string]map[string]string `toml:"bindings"`
 }
 
 type UI struct {
@@ -34,6 +35,13 @@ func Default() Config {
 		},
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
+		},
+		Bindings: map[string]map[string]string{
+			"index": {
+				"j": "cursor-down", "k": "cursor-up", "q": "quit",
+				"r": "toggle-read", "a": "archive", "d": "delete",
+				"u": "undo", "$": "apply",
+			},
 		},
 	}
 }
@@ -102,6 +110,19 @@ func validate(cfg Config) error {
 				return fmt.Errorf("tag-groups.%s: duplicate tag %q", name, t)
 			}
 			seen[t] = true
+		}
+	}
+	for name, km := range cfg.Bindings {
+		if len(km) == 0 {
+			return fmt.Errorf("bindings.%s: at least one binding required", name)
+		}
+		for k, v := range km {
+			if strings.TrimSpace(k) == "" {
+				return fmt.Errorf("bindings.%s: empty key", name)
+			}
+			if strings.TrimSpace(v) == "" {
+				return fmt.Errorf("bindings.%s: empty action for key %q", name, k)
+			}
 		}
 	}
 	return nil

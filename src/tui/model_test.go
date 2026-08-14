@@ -12,6 +12,12 @@ import (
 	"notmutt/core"
 )
 
+var testKeys = map[string]string{
+	"j": "cursor-down", "k": "cursor-up", "q": "quit",
+	"r": "toggle-read", "a": "archive", "d": "delete",
+	"u": "undo", "$": "apply",
+}
+
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
@@ -19,7 +25,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil)
+	return New(view, nil, testKeys)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -30,7 +36,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil)
+	return New(view, nil, testKeys)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -200,7 +206,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil)
+	m := New(view, nil, testKeys)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -214,12 +220,32 @@ func TestStageUndoConcurrent(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			m.stageKey("r")
-			m.stageKey("a")
-			m.stageKey("u")
+			m.stage("toggle-read")
+			m.stage("archive")
+			m.stage("undo")
 		}
 	}()
 	wg.Wait()
+}
+
+func TestRebinding(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
+	})})
+	m := New(view, nil, map[string]string{"x": "archive"})
+	m = press(t, m, "x")
+	row, _ := m.view.CursorRow()
+	if !row.Staged || !hasTag(row.StagedTags, "archive") {
+		t.Fatalf("x must stage +archive: staged=%v tags=%v", row.Staged, row.StagedTags)
+	}
+	before := append([]string(nil), row.StagedTags...)
+	m = press(t, m, "a")
+	row, _ = m.view.CursorRow()
+	if !slices.Equal(row.StagedTags, before) {
+		t.Fatalf("unbound a must not change the staged state: %v -> %v", before, row.StagedTags)
+	}
 }
 
 func TestPadCellsRightExactWidth(t *testing.T) {
@@ -239,7 +265,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil)
+	m := New(view, nil, testKeys)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;

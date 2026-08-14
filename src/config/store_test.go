@@ -98,3 +98,16 @@ func TestConfigClonesTagGroups(t *testing.T) {
 		t.Fatal("Config() must deep-clone TagGroups")
 	}
 }
+
+func TestConfigClonesBindings(t *testing.T) {
+	st := NewStore(Default())
+	got := st.Config().Bindings["index"]
+	got["r"] = "mutated"
+	got["x"] = "archive"
+	if st.Config().Bindings["index"]["r"] != "toggle-read" {
+		t.Fatal("Config() must deep-clone the inner Bindings map")
+	}
+	if _, ok := st.Config().Bindings["index"]["x"]; ok {
+		t.Fatal("Config() must not leak new keys into the store")
+	}
+}

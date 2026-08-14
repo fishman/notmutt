@@ -32,6 +32,10 @@ func (s *Store) Config() Config {
 		g.Tags = append([]string(nil), g.Tags...)
 		c.TagGroups[n] = g
 	}
+	c.Bindings = maps.Clone(s.cfg.Bindings)
+	for ctx, km := range c.Bindings {
+		c.Bindings[ctx] = maps.Clone(km)
+	}
 	return c
 }
 

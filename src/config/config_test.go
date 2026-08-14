@@ -1,6 +1,7 @@
 package config
 
 import (
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -138,5 +139,45 @@ func TestValidateTagGroup(t *testing.T) {
 	cfg.TagGroups["empty"] = core.TagGroup{Tags: []string{" "}}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank tag name must error")
+	}
+}
+
+func TestDefaultBindings(t *testing.T) {
+	cfg := Default()
+	want := map[string]string{
+		"j": "cursor-down", "k": "cursor-up", "q": "quit",
+		"r": "toggle-read", "a": "archive", "d": "delete",
+		"u": "undo", "$": "apply",
+	}
+	if !maps.Equal(cfg.Bindings["index"], want) {
+		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
+	}
+}
+
+func TestLoadUnknownBindingKey(t *testing.T) {
+	// binding keys inside a map field are arbitrary by design (rebinding),
+	// so strict load catches typo'd table names at the section level
+	_, err := Load(write(t, "\n[binding.index]\nq = \"quit\"\n"))
+	if err == nil {
+		t.Fatal("expected error for unknown key")
+	}
+	if !strings.Contains(err.Error(), "binding") {
+		t.Fatalf("error must name the key, got: %v", err)
+	}
+}
+
+func TestValidateBindings(t *testing.T) {
+	cfg := Default()
+	cfg.Bindings["empty"] = map[string]string{}
+	if err := validate(cfg); err == nil {
+		t.Fatal("empty context must error")
+	}
+	cfg.Bindings["empty"] = map[string]string{"": "archive"}
+	if err := validate(cfg); err == nil {
+		t.Fatal("blank key must error")
+	}
+	cfg.Bindings["empty"] = map[string]string{"x": " "}
+	if err := validate(cfg); err == nil {
+		t.Fatal("blank action must error")
 	}
 }

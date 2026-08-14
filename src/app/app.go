@@ -22,6 +22,13 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	// the action vocabulary lives in tui, so the app is the boundary that
+	// checks the config data against it (strict load, spec section 7)
+	for key, action := range cfg.Bindings["index"] {
+		if !tui.Actions[action] {
+			return fmt.Errorf("bindings.index: unknown action %q for key %q", action, key)
+		}
+	}
 	bus := core.NewBus()
 	st := config.NewStore(cfg)
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
@@ -64,7 +71,7 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, view, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"]), tea.WithAltScreen())
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

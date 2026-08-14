@@ -34,8 +34,9 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 }
 
 // setStubs installs a query result; ActQuery serves it to Emit in
-// chunks mirroring the backend cadence (200, then 1000 - the contract
-// refresh_test pins). The setMsgs path serves the changed-set cycle.
+// chunks mirroring the backend cadence (100, then 5000 - the contract
+// refresh_test pins), honoring a.Limit for the fast pre-query. The
+// setMsgs path serves the changed-set cycle.
 func (f *fakeWorker) setStubs(msgs []core.Message) {
 	f.stubs.Store(msgs)
 }
@@ -69,11 +70,14 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		} else if all, ok := f.msgs.Load().([]core.Message); ok {
 			msgs = all
 		}
+		if a.Limit > 0 && len(msgs) > a.Limit {
+			msgs = msgs[:a.Limit]
+		}
 		for i := 0; i < len(msgs); {
 			f.emits.Add(1)
-			size := 200
+			size := 100
 			if i > 0 {
-				size = 1000
+				size = 5000
 			}
 			hi := min(i+size, len(msgs))
 			if !a.Emit(msgs[i:hi]) {
@@ -296,12 +300,12 @@ func TestCycleQuiet(t *testing.T) {
 	}
 }
 
-// TestFullReloadPages pins the progressive fill: 2500 stubs arrive in
-// ONE call, emitted as four chunks (200/1000/1000/300) - the first
-// chunk is the fast 200 so the first paint lands immediately, then the
-// steady chunk of 1000 takes over. One ActQuery per reload (no offset
-// paging - each paged call re-walks the notmuch mset), and the view
-// ends with the complete merged set, still sorted. (ViewDiff events
+// TestFullReloadPages pins the two-phase progressive fill: the fast
+// pre-query (limit 100 - the first paint) then the full walk in ONE
+// call, emitted as 100 then a 2400 steady chunk (no offset paging -
+// each paged call re-walks the notmuch mset). The walk replaces the
+// pre-query head (the snapshot restarts empty), so the view ends with
+// exactly 2500 threads, no duplicates, still sorted. (ViewDiff events
 // are not counted from the channel: 2500 progress events flood the
 // 64-slot subscriber buffer and drops make that assertion flaky - the
 // per-chunk publish is code-guaranteed by the emit shape.)
@@ -318,11 +322,11 @@ func TestFullReloadPages(t *testing.T) {
 
 	r.fullReload()
 
-	if got := fw.queries.Load(); got != 1 {
-		t.Fatalf("expected 1 query call for the whole reload, got %d", got)
+	if got := fw.queries.Load(); got != 2 {
+		t.Fatalf("expected 2 query calls (pre-query + walk), got %d", got)
 	}
-	if got := fw.emits.Load(); got != 4 {
-		t.Fatalf("expected 4 emit chunks for 2500 stubs at 200/1000/1000/300, got %d", got)
+	if got := fw.emits.Load(); got != 3 {
+		t.Fatalf("expected 3 emit chunks (100 pre-query + 100/2400 walk), got %d", got)
 	}
 	if len(view.Threads) != 2500 {
 		t.Fatalf("view must hold all 2500 threads after the fill, got %d", len(view.Threads))
@@ -362,10 +366,10 @@ func TestFullReloadCountFailure(t *testing.T) {
 	if len(view.Threads) != 2500 {
 		t.Fatalf("fill must still complete when the count fails, got %d threads", len(view.Threads))
 	}
-	// last batch: 300 threads, per-batch total, base reset so the bar
-	// never exceeds its total
-	if p, ok := bus.LatestProgress("refresh", "inbox"); !ok || p.Done != 300 || p.Total != 300 {
-		t.Fatalf("count failure must fall back to batch totals, got %+v ok=%v", p, ok)
+	// no count query: cumulative done against itself - the bar grows
+	// monotonically and never exceeds its total
+	if p, ok := bus.LatestProgress("refresh", "inbox"); !ok || p.Done != 2500 || p.Total != 2500 {
+		t.Fatalf("count failure must fall back to cumulative totals, got %+v ok=%v", p, ok)
 	}
 }
 
@@ -385,8 +389,8 @@ func TestFullReloadStubThreads(t *testing.T) {
 
 	r.fullReload()
 
-	if got := fw.queries.Load(); got != 1 {
-		t.Fatalf("one query page must cover the whole fill, got %d", got)
+	if got := fw.queries.Load(); got != 2 {
+		t.Fatalf("expected the pre-query and the walk, got %d", got)
 	}
 	if len(view.Threads) != 2 {
 		t.Fatalf("expected 2 threads, got %d", len(view.Threads))
@@ -420,8 +424,8 @@ func TestLoadPathHasNoThreadFetch(t *testing.T) {
 	if got := fw.threads.Load(); got != 0 {
 		t.Fatalf("full reload must not fetch threads (show opens files), got %d ActThread calls", got)
 	}
-	if got := fw.queries.Load(); got != 1 {
-		t.Fatalf("one page must cover the whole fill, got %d", got)
+	if got := fw.queries.Load(); got != 2 {
+		t.Fatalf("expected the pre-query and the walk, got %d", got)
 	}
 	// changed-set cycle: the lastmod summary merges directly, no show
 	fw.set("u", 11)

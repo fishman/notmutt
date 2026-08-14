@@ -133,24 +133,37 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 	return msgs, nil
 }
 
-// fullReload re-fetches the whole view query in ONE call (Backend.Query
-// walks the result and emits chunks - no offset paging: every paged
-// offset call re-walks the notmuch mset, measured ~40s for 33 pages of
-// a 33k-thread inbox against ~5s for one call). The chunk IS the index
+// firstLoadRows is the fast pre-query size: enough threads for a
+// meaningful first paint. The CLI writes the whole JSON write-at-end
+// (measured 1.4s for a 33k-thread inbox), so chunk slicing alone cannot
+// make the first paint early - every chunk still waits for the
+// subprocess. A limit query lands in ~20ms.
+const firstLoadRows = 100
+
+// fullReload re-fetches the whole view query in TWO calls. Phase 1 is
+// the fast pre-query (limit=firstLoadRows): the first 100 threads paint
+// in milliseconds, so the UI shows content before the full walk
+// finishes. Phase 2 is the full walk in ONE call (Backend.Query walks
+// the result and emits chunks - no offset paging: every paged offset
+// call re-walks the notmuch mset, measured ~40s for 33 pages of a
+// 33k-thread inbox against ~5s for one call). The chunk IS the index
 // read: content-free, DB-side data (thread summaries on the CLI,
 // per-message DB-header rows on cgo), zero file opens - the whole list
 // loads in seconds (per-thread show round trips were the load wall).
 // Message content is step two, on open only (R13). Each chunk merges
 // in as it lands (R3 progressive fill): progress then ViewDiff, so the
-// paint tracks the walk (the backend emits the first 200 fast, then
-// 1000s - the render-batching requirement). The bar's total comes from
-// a count query up front, so Done (threads accumulated) tracks the
-// real result size instead of resetting per chunk; a count failure
-// degrades to per-chunk totals. A chunkless result still merges once
-// (empty query = empty view - removals reconcile via the full snapshot
-// replacement). The emit closure runs on the worker goroutine inside
-// the Call, which cycle() is blocked on, so the refresher state it
-// touches is race-free. The cursor survives via the merge walk.
+// paint tracks the walk (the backend emits the first 100 fast, then
+// 5000s - the render-batching requirement). The walk's snapshot starts
+// empty, so the re-walked head replaces the pre-query instead of
+// duplicating it; the view then holds exactly the full result. The
+// bar's total comes from a count query up front, so Done (threads
+// accumulated) tracks the real result size instead of resetting per
+// chunk; a count failure degrades to per-chunk totals. A chunkless
+// result still merges once (empty query = empty view - removals
+// reconcile via the full snapshot replacement). The emit closure runs
+// on the worker goroutine inside the Call, which cycle() is blocked on,
+// so the refresher state it touches is race-free. The cursor survives
+// via the merge walk.
 func (r *refresher) fullReload() {
 	total := 0
 	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query}); err == nil && rpl.Err == nil {
@@ -158,6 +171,24 @@ func (r *refresher) fullReload() {
 	}
 	var snapshot []*core.Thread
 	done := 0
+	// phase 1: the fast pre-query paints the first rows immediately.
+	// Failure degrades to the walk alone - the first paint just stays
+	// empty for another second.
+	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: firstLoadRows, Emit: func(msgs []core.Message) bool {
+		snapshot = groupThreads(msgs)
+		sortThreads(snapshot)
+		if len(snapshot) > 0 {
+			r.snapshot = snapshot
+			r.paint(total, len(snapshot))
+		}
+		return true
+	}}); err != nil || rpl.Err != nil {
+		snapshot = nil
+	}
+	// phase 2: the full walk, from an empty snapshot - the pre-query's
+	// threads are re-emitted at the head of the walk and replace it.
+	snapshot = nil
+	done = 0
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Emit: func(msgs []core.Message) bool {
 		page := groupThreads(msgs)
 		sortThreads(page)
@@ -169,14 +200,8 @@ func (r *refresher) fullReload() {
 		// race that empties the result must not leave a stuck bar at
 		// Done 0.
 		if len(page) > 0 {
-			if total <= 0 {
-				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: len(page), Total: len(page)})
-			} else {
-				r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
-			}
+			r.paint(total, done)
 		}
-		r.view.MergeThreads(snapshot)
-		r.bus.Publish(core.ViewDiff{View: r.view.Name})
 		return true
 	}})
 	if err != nil || rpl.Err != nil {
@@ -187,6 +212,18 @@ func (r *refresher) fullReload() {
 		r.view.MergeThreads(nil)
 		r.bus.Publish(core.ViewDiff{View: r.view.Name})
 	}
+}
+
+// paint publishes the fill progress and the diff after a merge; the
+// bar's total comes from the count query (or the batch when it failed).
+func (r *refresher) paint(total, done int) {
+	if total <= 0 {
+		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: done})
+	} else {
+		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
+	}
+	r.view.MergeThreads(r.snapshot)
+	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 
 // groupThreads groups a page into one thread per thread id: the CLI

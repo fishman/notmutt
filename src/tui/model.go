@@ -1,14 +1,11 @@
 package tui
 
 import (
-	"fmt"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/mattn/go-runewidth"
 
 	"notmutt/core"
 )
@@ -245,10 +242,11 @@ func (m Model) View() string {
 	if m.rows == nil {
 		m.rows = m.view.Rows()
 	}
+	st := DefaultStyles()
 	rows := m.rows
 	if len(rows) == 0 {
 		if m.progressOn {
-			return "empty\n" + m.statusLine() + "\n"
+			return "empty\n" + m.statusLine(st) + "\n"
 		}
 		return "empty\n"
 	}
@@ -273,185 +271,24 @@ func (m Model) View() string {
 	}
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i])
-		if rows[i].Staged {
-			line = "\x1b[1m" + line + "\x1b[0m" // [index.staged] default: bold
-		}
+		line := renderRow(i+1, rows[i], st)
+		outer := st.Normal
 		if i == cur {
-			line = "\x1b[7m" + line + "\x1b[0m"
+			outer = st.Indicator
+		} else if rows[i].Ghost {
+			outer = st.Index.Ghost
 		}
+		if rows[i].Staged {
+			// staged rows keep the row style and gain the staged look
+			// ([index.staged] default: bold + muted fg); the slot styles
+			// only override fg, so bold carries through the whole line
+			outer = st.Index.Staged.Inherit(outer)
+		}
+		line = padRow(line, m.width, outer)
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	b.WriteString(m.statusLine())
+	b.WriteString(m.statusLine(st))
 	b.WriteByte('\n')
 	return b.String()
-}
-
-const progressWidth = 40
-
-// statusLine is the bottom row: view name + visible count on the left,
-// the async progress bar right-aligned in a fixed-width region (R15).
-// Completion (Done == Total) clears the bar; labels are job-kind
-// derived, never mail content (F6). The `progress` style identifier and
-// the filled-cell glyph (default "#") are hardcoded defaults until the
-// theming milestone.
-func (m Model) statusLine() string {
-	left := fmt.Sprintf("%s %d", m.view.Name, len(m.rows))
-	if !m.progressOn {
-		return left
-	}
-	label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
-	fill := progressWidth - runewidth.StringWidth(label) - 1
-	if fill < 0 {
-		fill = 0
-	}
-	right := label + " " + progressBar(m.progress, fill)
-	if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
-		return left + strings.Repeat(" ", pad) + right
-	}
-	return left
-}
-
-func progressBar(p core.Progress, cells int) string {
-	if cells < 0 {
-		return ""
-	}
-	fill := 0
-	if p.Total > 0 && p.Done < p.Total {
-		fill = int(float64(p.Done) * float64(cells) / float64(p.Total))
-	}
-	return strings.Repeat("#", fill) + strings.Repeat("-", cells-fill)
-}
-
-// renderRow renders the fixed-slot template (R11): number, flags,
-// attachment, date, author, subject, tags. Optional slots reserve width.
-func renderRow(n int, row core.Row) string {
-	var b strings.Builder
-	b.WriteString(padCellsRight(strconv.Itoa(n), 4))
-	b.WriteByte(' ')
-	if row.Msg == nil {
-		// ghost root: message-derived slots stay blank, "[...]" fills the
-		// subject slot so the template stays aligned
-		b.WriteString(padCellsRight("", 3))
-		b.WriteString(" ")
-		b.WriteByte(' ')
-		b.WriteString(padCellsRight("", 15))
-		b.WriteByte(' ')
-		b.WriteString(padCellsRight("", 16))
-		b.WriteByte(' ')
-		b.WriteString(truncCells("[...] "+strconv.Itoa(row.Count), 40))
-		return b.String()
-	}
-	tags := row.Msg.Tags
-	flagStr := flags(tags)
-	if row.Staged {
-		// staged rows render the resolved display tags with the staged
-		// glyph (default "*", config data per R11 tag-transforms; the
-		// hardcoded default holds until the theming milestone)
-		tags = row.StagedTags
-		flagStr = padCellsRight("*"+flagChars(tags), 3)
-	}
-	b.WriteString(flagStr)
-	b.WriteString(attachIcon(row.Msg))
-	b.WriteByte(' ')
-	b.WriteString(padCellsRight(formatDate(row.Msg.Timestamp), 15))
-	b.WriteByte(' ')
-	author := stripControls(row.Msg.Author)
-	b.WriteString(padCellsRight(truncCells(author, 16), 16))
-	b.WriteByte(' ')
-	subject := stripControls(row.Msg.Subject)
-	b.WriteString(truncCells(subject, 40))
-	b.WriteByte(' ')
-	b.WriteString(tagGlyphs(tags))
-	return b.String()
-}
-
-func flags(tags []string) string {
-	return padCellsRight(flagChars(tags), 3)
-}
-
-func flagChars(tags []string) string {
-	var f strings.Builder
-	for _, t := range tags {
-		switch t {
-		case "unread":
-			f.WriteByte('U')
-		case "replied":
-			f.WriteByte('R')
-		case "forwarded":
-			f.WriteByte('F')
-		case "deleted":
-			f.WriteByte('D')
-		}
-	}
-	return f.String()
-}
-
-func attachIcon(m *core.Message) string {
-	if len(m.Atts) > 0 {
-		return "A"
-	}
-	return " "
-}
-
-func formatDate(ts int64) string {
-	return time.Unix(ts, 0).Format("06/01/02 15:04")
-}
-
-func tagGlyphs(tags []string) string {
-	// max 2 tags, first two of the display order; the tag-groups
-	// priority list supplies the order later (spec section 6)
-	var b strings.Builder
-	n := 0
-	for _, t := range tags {
-		if t == "unread" {
-			continue
-		}
-		if n >= 2 {
-			break
-		}
-		b.WriteString(padCellsRight(truncCells(stripControls(t), 4), 4))
-		b.WriteByte(' ')
-		n++
-	}
-	return strings.TrimRight(b.String(), " ")
-}
-
-// stripControls drops C0/DEL/C1 control runes so mail content can never
-// inject terminal escapes (F1).
-func stripControls(s string) string {
-	if !strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || (r >= 0x7F && r <= 0x9F) }) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if r < 0x20 || (r >= 0x7F && r <= 0x9F) {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return b.String()
-}
-
-// truncCells truncates s to at most w terminal cells; padCellsRight pads
-// it to exactly w cells (wcwidth, not runes).
-func truncCells(s string, w int) string {
-	var b strings.Builder
-	cells := 0
-	for _, r := range s {
-		cw := runewidth.RuneWidth(r)
-		if cells+cw > w {
-			break
-		}
-		b.WriteRune(r)
-		cells += cw
-	}
-	return b.String()
-}
-
-func padCellsRight(s string, w int) string {
-	t := truncCells(s, w)
-	return t + strings.Repeat(" ", w-runewidth.StringWidth(t))
 }

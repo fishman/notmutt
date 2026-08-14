@@ -127,6 +127,8 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 // fetchThreads maps changed messages to their threads and fetches each
 // thread's full state, budgeted to 3 concurrent calls. A failed thread
 // fetch is silently dropped so a dead thread cannot kill the cycle.
+// Each completed fetch publishes refresh progress; failures count too,
+// so the bar always completes.
 func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	ids := map[string]bool{}
 	for _, m := range msgs {
@@ -135,6 +137,7 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 	sem := make(chan struct{}, 3)
 	threads := make([]*core.Thread, 0, len(ids))
 	var mu sync.Mutex
+	done := 0
 	var wg sync.WaitGroup
 	for id := range ids {
 		wg.Add(1)
@@ -143,6 +146,10 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: id})
+			mu.Lock()
+			defer mu.Unlock()
+			done++
+			r.bus.Publish(core.Progress{Job: "refresh", Done: done, Total: len(ids)})
 			if err != nil || rpl.Err != nil {
 				return
 			}
@@ -150,9 +157,7 @@ func (r *refresher) fetchThreads(msgs []core.Message) []*core.Thread {
 			for i := range rpl.Msgs {
 				ptrs[i] = &rpl.Msgs[i]
 			}
-			mu.Lock()
 			threads = append(threads, core.NewThread(id, ptrs))
-			mu.Unlock()
 		}(id)
 	}
 	wg.Wait()

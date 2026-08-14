@@ -58,3 +58,11 @@ type JobError struct {
 	Job string
 	Err error
 }
+
+// Progress reports a background job's batch progress (R15). Jobs report
+// their own totals; the worker action loop is not a progress source.
+type Progress struct {
+	Job   string
+	Done  int
+	Total int
+}

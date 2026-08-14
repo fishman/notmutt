@@ -209,6 +209,7 @@ func TestOnConfig(t *testing.T) {
 	if q, _ := fw.lastQuery.Load().(string); q != "tag:changed" {
 		t.Fatalf("reload must query with the new query, got %q", q)
 	}
+	readProgress(t, ch) // the reload's thread fetches report progress first
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ViewDiff); !ok {
@@ -221,6 +222,7 @@ func TestOnConfig(t *testing.T) {
 	if r.view.Query != "tag:changed" {
 		t.Fatalf("ui section must not change the query: %q", r.view.Query)
 	}
+	readProgress(t, ch)
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ViewDiff); !ok {
@@ -244,5 +246,37 @@ func TestCycleQuiet(t *testing.T) {
 	case <-ch:
 		t.Fatal("no events expected on a clean cycle")
 	case <-time.After(50 * time.Millisecond):
+	}
+}
+
+func TestFetchThreadsPublishesProgress(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}, {ID: "m2", ThreadID: "t2"}})
+	if len(threads) != 2 {
+		t.Fatalf("expected 2 threads, got %d", len(threads))
+	}
+	seen := map[int]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case e := <-ch:
+			p, ok := e.(core.Progress)
+			if !ok {
+				t.Fatalf("expected Progress, got %T", e)
+			}
+			if p.Job != "refresh" || p.Total != 2 || p.Done < 1 || p.Done > 2 {
+				t.Fatalf("bad progress: %+v", p)
+			}
+			seen[p.Done] = true
+		case <-time.After(time.Second):
+			t.Fatal("missing progress event")
+		}
+	}
+	if !seen[1] || !seen[2] {
+		t.Fatalf("progress must cover both fetches: %v", seen)
 	}
 }

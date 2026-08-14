@@ -61,13 +61,25 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 		rows = rows[:scanPage]
 	}
 	var wg sync.WaitGroup
+	var mu sync.Mutex
+	total := len(rows)
+	done := total
 	for _, r := range rows {
 		m := r.Msg
 		if m == nil || len(m.Paths) == 0 || len(m.Atts) > 0 {
 			continue
 		}
+		mu.Lock()
+		done--
+		mu.Unlock()
 		wg.Add(1)
 		go func() {
+			defer func() {
+				mu.Lock()
+				done++
+				c.bus.Publish(core.Progress{Job: "cache", Done: done, Total: total})
+				mu.Unlock()
+			}()
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()

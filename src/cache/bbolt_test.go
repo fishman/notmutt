@@ -1,6 +1,7 @@
 package cache
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -70,6 +71,28 @@ func TestBboltCorruptPayloadDiscarded(t *testing.T) {
 	}
 	if _, ok, _ := c2.Get(k); ok {
 		t.Fatal("corrupt entry must be deleted")
+	}
+}
+
+func TestBboltPutBatch(t *testing.T) {
+	c, err := Open(filepath.Join(t.TempDir(), "cache.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	ks := []Key{{Path: "/m/Mail/b1", Size: 1, Mtime: 1}, {Path: "/m/Mail/b2", Size: 2, Mtime: 2}}
+	var entries []Entry
+	for i, k := range ks {
+		entries = append(entries, Entry{Key: k, Atts: []core.Attachment{{Name: fmt.Sprintf("f%d.bin", i), Size: int64(i)}}})
+	}
+	if err := c.PutBatch(entries); err != nil {
+		t.Fatal(err)
+	}
+	for i, k := range ks {
+		got, ok, err := c.Get(k)
+		if err != nil || !ok || len(got) != 1 || got[0].Name != fmt.Sprintf("f%d.bin", i) {
+			t.Fatalf("get %v: %v ok=%v err=%v", k, got, ok, err)
+		}
 	}
 }
 

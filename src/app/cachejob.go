@@ -67,6 +67,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	var puts []cache.Entry
 	total := 0
 	for _, r := range rows {
 		if scanWorthy(r) {
@@ -107,7 +108,11 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 				if err != nil {
 					continue
 				}
-				c.cache.Put(k, atts)
+				// one PutBatch per scan run: per-message transactions
+				// fsync each write
+				mu.Lock()
+				puts = append(puts, cache.Entry{Key: k, Atts: atts})
+				mu.Unlock()
 				c.view.SetAtts(m.ID, atts)
 				c.bus.Publish(core.CacheResult{MsgID: m.ID, Atts: atts})
 				return
@@ -115,4 +120,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 		}()
 	}
 	wg.Wait()
+	if len(puts) > 0 {
+		c.cache.PutBatch(puts)
+	}
 }

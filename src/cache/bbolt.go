@@ -68,13 +68,32 @@ func decode(v []byte) ([]core.Attachment, bool) {
 }
 
 func (b *Bbolt) Put(k Key, atts []core.Attachment) error {
+	return b.PutBatch([]Entry{{Key: k, Atts: atts}})
+}
+
+// PutBatch commits all entries in ONE transaction: per-message commits
+// would fsync each write (default NoSync=false), ~1k/s on SSD.
+func (b *Bbolt) PutBatch(entries []Entry) error {
+	return b.db.Update(func(tx *bbolt.Tx) error {
+		for _, e := range entries {
+			v, err := encode(e.Atts)
+			if err != nil {
+				return err
+			}
+			if err := tx.Bucket(bucket).Put([]byte(e.Key.String()), v); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func encode(atts []core.Attachment) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(atts); err != nil {
-		return err
+		return nil, err
 	}
-	return b.db.Update(func(tx *bbolt.Tx) error {
-		return tx.Bucket(bucket).Put([]byte(k.String()), buf.Bytes())
-	})
+	return buf.Bytes(), nil
 }
 
 func (b *Bbolt) Delete(k Key) error {

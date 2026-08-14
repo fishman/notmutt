@@ -155,8 +155,14 @@ func (v *View) MergeThreads(threads []*Thread) {
 	sort.Slice(sorted, func(i, j int) bool { return ThreadLess(sorted[i], sorted[j]) })
 	ops := DiffSorted(v.Threads, sorted, ThreadLess, func(t *Thread) string { return t.ID })
 	v.Threads = Apply(v.Threads, ops)
+	// per-thread findThread scans are quadratic in the snapshot size (the
+	// refresher re-merges the whole snapshot per chunk)
+	byID := make(map[string]*Thread, len(v.Threads))
+	for _, t := range v.Threads {
+		byID[t.ID] = t
+	}
 	for _, in := range sorted {
-		cur := findThread(v.Threads, in.ID)
+		cur := byID[in.ID]
 		if cur == nil {
 			continue // pure insert: already carries its tree
 		}

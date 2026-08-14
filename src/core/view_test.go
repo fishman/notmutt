@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"slices"
 	"testing"
 )
@@ -382,6 +383,47 @@ func TestStagedGhostRowsNeverStaged(t *testing.T) {
 // return the cached row slice unchanged - the cache scan and progress ticks
 // never rebuild the flatten - while structure or staged-state changes
 // (MergeThreads, Stage, SetTags) rebuild it.
+func TestMergeManyThreadsInBatches(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	// the refresher's full-snapshot merge: every chunk re-merges the
+	// whole accumulated snapshot (MergeThreads is replace semantics)
+	var snapshot []*Thread
+	want := 0
+	for b := 1; b <= 3; b++ {
+		batch := make([]*Thread, 0, 3000)
+		for i := 1; i <= 3000; i++ {
+			id := fmt.Sprintf("t%d", b*3000+i)
+			batch = append(batch, NewThread(id, []*Message{msg("m"+id, int64(b*3000+i))}))
+		}
+		snapshot = append(snapshot, batch...)
+		want += len(batch)
+		v.MergeThreads(snapshot)
+		if got := len(v.Threads); got != want {
+			t.Fatalf("batch %d: want %d threads, got %d", b, want, got)
+		}
+	}
+	if len(v.Rows()) != want {
+		t.Fatalf("rows: want %d, got %d", want, len(v.Rows()))
+	}
+	sorted := slices.IsSortedFunc(v.Threads, func(a, b *Thread) int {
+		switch {
+		case ThreadLess(a, b):
+			return -1
+		case ThreadLess(b, a):
+			return 1
+		}
+		return 0
+	})
+	if !sorted {
+		t.Fatal("threads must stay sorted after batched merges")
+	}
+	// a full-snapshot re-merge must be a no-op, not a duplication
+	v.MergeThreads(v.Threads)
+	if len(v.Threads) != want {
+		t.Fatalf("re-merge duplicated threads: %d", len(v.Threads))
+	}
+}
+
 func TestRowsMemoized(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("m1", 100)}), NewThread("t2", []*Message{msg("m2", 200)})})

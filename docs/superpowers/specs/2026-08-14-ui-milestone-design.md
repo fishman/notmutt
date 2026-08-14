@@ -245,3 +245,58 @@ derived surface for now.
 - Commands (`:theme`, `:help`), keymap macros, help view.
 - MIME cache for the pager (R13; parse-on-open for now).
 - HTML part rendering via mailcap (R6), attachments save/open.
+
+## 8. Delivered shapes (2026-08-14)
+
+The milestone shipped. Deviations from this spec, pinned:
+
+- Pager viewport: hand-rolled `pagerViewport` (clamp, GotoTop/
+  GotoBottom, HalfPage*, LineDown/Up) instead of bubbletea's viewport
+  component - vendored bubbletea v1.1.0 has no viewport package (it
+  lives in the separate bubbles module; adding it would break the R7
+  no-new-dependency rule). Scrollbar and mouse wheel are future
+  surface, not lost features.
+- Thread rendering: `mail.RenderThread` returns []Line{Text, Kind,
+  Quoted} with LineKind subject/header/body/signature/attachment/
+  error. Per-message error lines instead of whole-thread abort (an
+  error only when every message failed); unknown charsets/encodings
+  are tolerated (the part reads raw) via the blank
+  `_ "github.com/emersion/go-message/charset"` import. Body reads are
+  capped at 8 MiB per part with a "[content truncated]" marker.
+- Scheme mechanism: `vimScheme`/`emacsScheme` package vars +
+  `scheme(keymap)`; `Default()` returns the vim scheme (cloned);
+  `Load()` nils the Bindings field BEFORE decode so the file's
+  `[bindings.*]` tables overlay the selected scheme only (the plan's
+  draft shape would have leaked vim defaults into the emacs scheme).
+  `[bindings.*]` is the section name - the plan's early `[binding.*]`
+  was a typo, and the singular form is a pinned strict-load error.
+- Strict load extended to binding contexts: a file context outside
+  the scheme (e.g. `[bindings.indicx]`) is a Load error
+  ("bindings.%s: unknown context %q"). R8 has no silent typos at the
+  context level either - the section-level undecoded-key check cannot
+  see inside the map, so validate() carries the check.
+- Per-context action vocabulary: `tui.Actions` is
+  map[context]map[action]bool; app.validateBindings rejects
+  non-index contexts that bind non-builtin actions (tag actions are
+  index-only); the tag-action collision check is index-scoped.
+- Keyhint bar: one row above the status line in ALL three render
+  paths (index list, pager, empty+progress); the index list height is
+  height-2 (the pager viewport was already height-2 with the row
+  reserved). Labels are the action names from the active context's
+  binding map - no key or label hardcoded.
+
+Acceptance status:
+
+1. Variant switch via SetThemeVariant + ConfigChanged re-renders -
+   scripted (TestThemeVariantSwitchLive).
+2. Strict-load errors (palette/attr/key/variant/account/binding) -
+   scripted.
+3. Per-slot + per-tag index styles inheriting normal - scripted.
+4. o opens the pager, q/back returns with the cursor intact -
+   scripted.
+5. F1-clean pager content, quoted 0-5 + signature styles - scripted.
+6. emacs swap + per-key overlay + keyhint bar from the binding map -
+   scripted.
+7. Live-mailbox walk (open a real thread, scroll, return; switch the
+   theme variant; the bar and hints never shift) - MANUAL, pending
+   the user's walk.

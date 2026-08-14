@@ -1749,22 +1749,28 @@ keyhint bar derived from the active context's binding map.
 ```go
 func TestKeymapSchemes(t *testing.T) {
 	cfg := Default()
-	cfg.UI.Keymap = "emacs"
+	if cfg.Bindings["index"]["j"] != "cursor-down" {
+		t.Fatalf("vim defaults missing: %v", cfg.Bindings["index"])
+	}
+	cfg, err := Load(write(t, "\n[ui]\nkeymap = \"emacs\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if cfg.Bindings["index"]["ctrl+n"] != "cursor-down" {
 		t.Fatalf("emacs index defaults missing: %v", cfg.Bindings["index"])
 	}
 	if cfg.Bindings["index"]["j"] != "" {
 		t.Fatalf("emacs scheme must not carry vim keys: %v", cfg.Bindings["index"])
 	}
-	cfg = Default()
-	if cfg.Bindings["index"]["j"] != "cursor-down" {
-		t.Fatalf("vim defaults missing: %v", cfg.Bindings["index"])
-	}
 }
 ```
 
-(Scheme defaults live in Default() selected by the keymap field -
-move the vim tables there and select in Default().)
+(CORRECTED on delivery: the scheme swap is a LOAD-time selection, not
+a Default() mutation - Default() returns the vim scheme; Load() nils
+the Bindings field BEFORE decode so the file's `[bindings.*]` tables
+overlay the selected scheme only. The earlier draft mutated
+cfg.UI.Keymap after Default(), impossible with value semantics, and
+would have leaked vim defaults into the emacs scheme.)
 
 `src/tui/model_test.go`:
 
@@ -1986,6 +1992,20 @@ Run: `go test ./...`; `go test -race ./tui/ ./app/ ./core/` clean.
 git commit -m "feat(tui): R9 per-context keymaps with emacs scheme and keyhints"
 ```
 
+DELIVERED (2026-08-14, commits 24eb1222 + b7563e54 + 1be1d979):
+- `[bindings.*]` is the section name (the draft's `[binding.*]` was a
+  typo; the singular form is a pinned strict-load error).
+- Delivered in addition to the tests above: TestKeymapFileOverlay
+  (per-key overlay on the scheme, no replacement, no vim leakage),
+  TestLoadUnknownBindingContext/TestValidateUnknownBindingContext
+  (unknown binding contexts are Load errors - R8 strict load
+  extended to the context level, since the section-level
+  undecoded-key check cannot see inside the map), TestPagerQuitKeyExits
+  (emacs pager q = quit exits; vim pager q = back returns), plus
+  app-level per-context validation cases.
+- The keyhint row renders in ALL three render paths (index list,
+  pager, empty+progress); index list height is height-2; labels are
+  the action names from the active context's binding map.
 ## Task 5: docs pin + soak
 
 - [ ] **Step 1: Pin the milestone**

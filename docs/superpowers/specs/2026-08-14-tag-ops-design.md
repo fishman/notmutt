@@ -183,9 +183,11 @@ tag-action tables are their substrate, so nothing here forecloses them.
 
 ## 8. Progress display (R15)
 
-- `core.Progress{Job string; Done, Total int}` on the bus, published at
-  batch boundaries by the jobs that know their totals:
-  - refresher.fetchThreads: total = thread ids, done = fetched;
+- `core.Progress{Job, View string; Done, Total int}` on the bus,
+  published at batch boundaries by the jobs that know their totals:
+  - refresher.fullReload: one publish per page; total = the fill's
+    count query result (threads), done = threads accumulated across
+    pages;
   - cache scanVisible: total = rows in the page, done = scanned;
   - the send/crypto jobs when R4 lands.
   The worker action loop is not a progress source (R15).
@@ -197,15 +199,47 @@ tag-action tables are their substrate, so nothing here forecloses them.
   (Done == Total) clears the bar.
 - The widget repaints on the same event channel as the index; it never
   takes focus, never blocks. Labels are job-kind derived (R15/F6).
+- Progress is scoped per VIEW: the bus keeps the latest Progress as a
+  snapshot keyed (job, view) - a write that never drops under subscriber
+  backpressure - and the bar renders the CURRENT view's snapshot (ticked
+  on a 200ms cadence while a job is on). Accounts and virtual folders
+  (inbox, unread, sent, drafts) each track their own fill; switching
+  views swaps the bar.
 - The initial-load case is the primary visible one: the M1 async start
   shows "refresh n/m" as each page of the query result streams in. Full
-  reloads PAGE the whole result (R3 progressive fill): the refresher
-  fetches the query page by page (`--limit`/`--offset`, page = the view
-  page budget), merges each page into the view with a ViewDiff before
-  fetching the next, and ends when a page returns fewer than the budget
-  (or an error). Each page is its own progress batch; the changed-set
-  cycle (lastmod diff) is unchanged and reconciles mail that lands
-  mid-fill (one-cycle lag).
+  reloads PAGE the whole result (R3 progressive fill): a `notmuch count`
+  up front fixes the bar's total (the user requirement: the bar reflects
+  the total even as it updates periodically), then the refresher fetches
+  the query page by page (`--limit`/`--offset`), merges each page into
+  the view with a ViewDiff before fetching the next, and ends when a
+  page returns fewer than the requested budget (or an error). The first
+  page is 200 (fast first paint), then the steady page of 1000. Count
+  failure degrades to per-page totals with the base reset, so the bar
+  never exceeds its total. The changed-set cycle (lastmod diff) is
+  unchanged and reconciles mail that lands mid-fill (one-cycle lag).
+- Ingestion is TWO-STEP (the user directive, 2026-08-14: "step one
+  read the message and then step two read the headers or content. no
+  need to batch all at once"): the fill reads the INDEX - one
+  `notmuch search` page per fetch (thread summaries: thread id, date,
+  authors, subject, tags - DB-side data, zero file opens), so the
+  whole list loads in seconds. Per-thread round trips were the load
+  wall: 129k threads meant 129k backend calls; the fill no longer
+  fetches threads at all.
+- Step two is the per-message data (message ids, references, paths):
+  the visible window hydrates its stub rows right after the fill
+  (per-thread `notmuch show`, budgeted, the only file opens in the
+  load path - ~40 threads, one process each), and everything else
+  loads on open (R13). The incremental changed-set cycle keeps the
+  same per-thread fetch (small N). No Batch action exists - the
+  paged search query IS the high-speed ingestion interface.
+- The index rows ARE search summaries: a stub message (empty id)
+  renders author/subject/tags directly and is cursorable (anchored
+  by row index - no id to track). The hydrate merge replaces it in
+  place: the message diff removes the stub and inserts the real
+  messages, and the cursor lands on the thread root (the same
+  logical message). Stub rows cannot be staged - the apply path
+  needs a real message id, and the stub is transient (one guard in
+  the TUI, same shape as the ghost-row guard).
 
 ## 9. Testing
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 )
@@ -317,6 +318,14 @@ func (v *View) SetGroups(groups []TagGroup) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.groups = groups
+}
+
+// Groups returns a copy of the exclusive tag groups under the view lock;
+// callers may not mutate the view's slice.
+func (v *View) Groups() []TagGroup {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return slices.Clone(v.groups)
 }
 
 // Stage appends a pending tag op for a message. Staging an op identical

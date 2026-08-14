@@ -22,12 +22,8 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	// the action vocabulary lives in tui, so the app is the boundary that
-	// checks the config data against it (strict load, spec section 7)
-	for key, action := range cfg.Bindings["index"] {
-		if !tui.Actions[action] {
-			return fmt.Errorf("bindings.index: unknown action %q for key %q", action, key)
-		}
+	if err := validateBindings(&cfg); err != nil {
+		return err
 	}
 	bus := core.NewBus()
 	st := config.NewStore(cfg)
@@ -71,7 +67,7 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, view, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"]), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions), tea.WithAltScreen())
 	go func() {
 		<-ctx.Done()
 		prog.Quit()
@@ -126,4 +122,24 @@ func firstView(cfg config.Config) string {
 		return name
 	}
 	return ""
+}
+
+// validateBindings checks the loaded bindings against the action
+// vocabulary: every value must be a builtin action or a declared tag
+// action, and no tag action may shadow a builtin name.
+func validateBindings(cfg *config.Config) error {
+	for key, action := range cfg.Bindings["index"] {
+		if tui.Actions[action] {
+			continue
+		}
+		if _, ok := cfg.TagActions[action]; !ok {
+			return fmt.Errorf("binding %q: unknown action %q", key, action)
+		}
+	}
+	for name := range cfg.TagActions {
+		if tui.Actions[name] {
+			return fmt.Errorf("tag action %q collides with a builtin action", name)
+		}
+	}
+	return nil
 }

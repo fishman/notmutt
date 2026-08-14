@@ -18,6 +18,12 @@ var testKeys = map[string]string{
 	"u": "undo", "$": "apply",
 }
 
+var testTagActions = map[string]string{
+	"toggle-read": "unread",
+	"archive":     "archive",
+	"delete":      "deleted",
+}
+
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
@@ -25,7 +31,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testKeys)
+	return New(view, nil, testKeys, testTagActions)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -36,7 +42,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testKeys)
+	return New(view, nil, testKeys, testTagActions)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -206,7 +212,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testKeys)
+	m := New(view, nil, testKeys, testTagActions)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -222,7 +228,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		for i := 0; i < 200; i++ {
 			m.stage("toggle-read")
 			m.stage("archive")
-			m.stage("undo")
+			m.undo()
 		}
 	}()
 	wg.Wait()
@@ -234,7 +240,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "archive"})
+	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -245,6 +251,22 @@ func TestRebinding(t *testing.T) {
 	row, _ = m.view.CursorRow()
 	if !slices.Equal(row.StagedTags, before) {
 		t.Fatalf("unbound a must not change the staged state: %v -> %v", before, row.StagedTags)
+	}
+}
+
+func TestTagActionMapsToConfigTag(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"})
+	m = press(t, m, "x")
+	row, _ := m.view.CursorRow()
+	// wip is in no group, so it is soft: it toggles from the applied
+	// state; the cursor message is read, so +wip
+	if !row.Staged || !hasTag(row.StagedTags, "wip") {
+		t.Fatalf("x must stage +wip: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
 }
 
@@ -265,7 +287,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testKeys)
+	m := New(view, nil, testKeys, testTagActions)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,26 +12,27 @@ import (
 	"notmutt/core"
 )
 
-// Actions is the index-context action vocabulary (R9): every binding
-// value must be one of these; the app validates the loaded bindings
-// against it at startup (unknown action = load error).
+// Actions is the BUILTIN action vocabulary (R9): cursor movement, quit,
+// and the buffer/apply ops. Tag actions are NOT in here - they come
+// from the [tag-actions] config map; the app validates every binding
+// value against both at startup (unknown action = load error).
 var Actions = map[string]bool{
 	"cursor-down": true, "cursor-up": true, "quit": true,
-	"toggle-read": true, "archive": true, "delete": true,
 	"undo": true, "apply": true,
 }
 
 type Model struct {
-	view   *core.View
-	ch     <-chan core.Event
-	keys   map[string]string
-	rows   []core.Row
-	width  int
-	height int
+	view       *core.View
+	ch         <-chan core.Event
+	keys       map[string]string
+	tagActions map[string]string
+	rows       []core.Row
+	width      int
+	height     int
 }
 
-func New(view *core.View, ch <-chan core.Event, keys map[string]string) Model {
-	return Model{view: view, ch: ch, keys: keys}
+func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string) Model {
+	return Model{view: view, ch: ch, keys: keys, tagActions: tagActions}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -49,10 +51,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveCursor(-1)
 		case "quit":
 			return m, tea.Quit
-		case "toggle-read", "archive", "delete", "undo":
-			m.stage(m.keys[string(msg.Runes)])
+		case "undo":
+			m.undo()
 		case "apply":
 			onApply()
+		default:
+			m.stage(m.keys[string(msg.Runes)])
 		}
 	case EventMsg:
 		m.rows = m.view.Rows()
@@ -91,31 +95,46 @@ func (m *Model) moveCursor(delta int) {
 	m.view.SetCursor(rows[idx].Msg.ID)
 }
 
-// stage routes the staging actions (R14): toggle-read flips from the
-// applied state, archive/delete stage +tag, undo discards. Ghost rows
-// are guarded like the M1 cursor keys.
+// stage runs a tag action on the cursor message (R14). A tag in any
+// tag group is a folder tag and stages +tag - exclusive-group
+// resolution dedups at render/apply; a tag in no group is soft (unread
+// is canonical) and toggles from the applied state. Ghost rows are
+// guarded like the M1 cursor keys.
 func (m *Model) stage(action string) {
+	tag, ok := m.tagActions[action]
+	if !ok {
+		return
+	}
 	row, ok := m.view.CursorRow()
 	if !ok || row.Msg == nil {
 		return
 	}
 	id := row.Msg.ID
-	switch action {
-	case "toggle-read":
-		has := false
-		for _, t := range m.view.MsgTags(id) {
-			if t == "unread" {
-				has = true
-			}
-		}
-		m.view.Stage(id, core.TagOp{Tag: "unread", Add: !has})
-	case "archive":
-		m.view.Stage(id, core.TagOp{Tag: "archive", Add: true})
-	case "delete":
-		m.view.Stage(id, core.TagOp{Tag: "deleted", Add: true})
-	case "undo":
-		m.view.Undo(id)
+	add := true
+	if !inGroup(tag, m.view.Groups()) {
+		add = !slices.Contains(m.view.MsgTags(id), tag)
 	}
+	m.view.Stage(id, core.TagOp{Tag: tag, Add: add})
+	m.rows = m.view.Rows()
+}
+
+func inGroup(tag string, groups []core.TagGroup) bool {
+	for _, g := range groups {
+		if slices.Contains(g.Tags, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+// undo discards the cursor message's staged ops (R14): pure buffer
+// drop, no DB traffic. Ghost rows are guarded like the M1 cursor keys.
+func (m *Model) undo() {
+	row, ok := m.view.CursorRow()
+	if !ok || row.Msg == nil {
+		return
+	}
+	m.view.Undo(row.Msg.ID)
 	m.rows = m.view.Rows()
 }
 

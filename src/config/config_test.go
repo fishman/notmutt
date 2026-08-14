@@ -181,3 +181,28 @@ func TestValidateBindings(t *testing.T) {
 		t.Fatal("blank action must error")
 	}
 }
+
+func TestDefaultTagActions(t *testing.T) {
+	cfg := Default()
+	want := map[string]string{
+		"toggle-read": "unread",
+		"archive":     "archive",
+		"delete":      "deleted",
+	}
+	if !maps.Equal(cfg.TagActions, want) {
+		t.Fatalf("default tag actions = %v, want %v", cfg.TagActions, want)
+	}
+}
+
+func TestValidateTagAction(t *testing.T) {
+	cfg := Default()
+	cfg.TagActions[""] = "x"
+	if err := validate(cfg); err == nil {
+		t.Fatal("blank action name must error")
+	}
+	cfg = Default()
+	cfg.TagActions["x"] = " "
+	if err := validate(cfg); err == nil {
+		t.Fatal("blank tag value must error")
+	}
+}

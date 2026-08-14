@@ -111,3 +111,16 @@ func TestConfigClonesBindings(t *testing.T) {
 		t.Fatal("Config() must not leak new keys into the store")
 	}
 }
+
+func TestConfigClonesTagActions(t *testing.T) {
+	st := NewStore(Default())
+	got := st.Config().TagActions
+	got["archive"] = "mutated"
+	got["x"] = "y"
+	if st.Config().TagActions["archive"] != "archive" {
+		t.Fatal("Config() must clone TagActions")
+	}
+	if _, ok := st.Config().TagActions["x"]; ok {
+		t.Fatal("Config() must not leak new keys into the store")
+	}
+}

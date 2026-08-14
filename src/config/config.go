@@ -12,10 +12,11 @@ import (
 )
 
 type Config struct {
-	UI        UI                           `toml:"ui"`
-	Views     map[string]View              `toml:"view"`
-	TagGroups map[string]core.TagGroup     `toml:"tag-groups"`
-	Bindings  map[string]map[string]string `toml:"bindings"`
+	UI         UI                           `toml:"ui"`
+	Views      map[string]View              `toml:"view"`
+	TagGroups  map[string]core.TagGroup     `toml:"tag-groups"`
+	Bindings   map[string]map[string]string `toml:"bindings"`
+	TagActions map[string]string            `toml:"tag-actions"`
 }
 
 type UI struct {
@@ -42,6 +43,11 @@ func Default() Config {
 				"r": "toggle-read", "a": "archive", "d": "delete",
 				"u": "undo", "$": "apply",
 			},
+		},
+		TagActions: map[string]string{
+			"toggle-read": "unread",
+			"archive":     "archive",
+			"delete":      "deleted",
 		},
 	}
 }
@@ -123,6 +129,14 @@ func validate(cfg Config) error {
 			if strings.TrimSpace(v) == "" {
 				return fmt.Errorf("bindings.%s: empty action for key %q", name, k)
 			}
+		}
+	}
+	for name, tag := range cfg.TagActions {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("tag-actions: empty action name")
+		}
+		if strings.TrimSpace(tag) == "" {
+			return fmt.Errorf("tag-actions.%s: empty tag value", name)
 		}
 	}
 	return nil

@@ -36,6 +36,7 @@ func (s *Store) Config() Config {
 	for ctx, km := range c.Bindings {
 		c.Bindings[ctx] = maps.Clone(km)
 	}
+	c.TagActions = maps.Clone(s.cfg.TagActions)
 	return c
 }
 

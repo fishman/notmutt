@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ type fakeWorker struct {
 	rev       atomic.Uint64
 	msgs      atomic.Value
 	lastQuery atomic.Value
+	threadErr atomic.Value // error: fails every ActThread when set
 }
 
 func (f *fakeWorker) set(uuid string, rev uint64) {
@@ -26,6 +28,8 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 	f.msgs.Store(msgs)
 }
 
+func (f *fakeWorker) setThreadErr(err error) { f.threadErr.Store(err) }
+
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	r := notmuch.Reply{ID: a.ID}
 	switch a.Kind {
@@ -36,6 +40,9 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		f.lastQuery.Store(a.Query)
 		r.Msgs, _ = f.msgs.Load().([]core.Message)
 	case notmuch.ActThread:
+		if err, _ := f.threadErr.Load().(error); err != nil {
+			return notmuch.Reply{ID: a.ID}, err
+		}
 		stubs, _ := f.msgs.Load().([]core.Message)
 		if len(stubs) == 0 {
 			stubs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
@@ -278,5 +285,31 @@ func TestFetchThreadsPublishesProgress(t *testing.T) {
 	}
 	if !seen[1] || !seen[2] {
 		t.Fatalf("progress must cover both fetches: %v", seen)
+	}
+}
+
+func TestFetchThreadsFailurePublishesProgress(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	fw.setThreadErr(errors.New("boom"))
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	threads := r.fetchThreads([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	if len(threads) != 0 {
+		t.Fatalf("failed fetch must drop the thread, got %d", len(threads))
+	}
+	select {
+	case e := <-ch:
+		p, ok := e.(core.Progress)
+		if !ok {
+			t.Fatalf("expected Progress, got %T", e)
+		}
+		if p.Job != "refresh" || p.Done != 1 || p.Total != 1 {
+			t.Fatalf("failed fetch must still complete progress: %+v", p)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("missing progress event on failed fetch")
 	}
 }

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -166,15 +167,78 @@ func TestScanVisiblePublishesProgress(t *testing.T) {
 
 func readProgress(t *testing.T, ch <-chan core.Event) core.Progress {
 	t.Helper()
-	select {
-	case e := <-ch:
-		p, ok := e.(core.Progress)
-		if !ok {
-			t.Fatalf("expected Progress, got %T", e)
+	for {
+		select {
+		case e := <-ch:
+			if p, ok := e.(core.Progress); ok {
+				return p
+			}
+			// skip other events: multi-row scans interleave CacheResults
+			// between Progress events
+		case <-time.After(2 * time.Second):
+			t.Fatal("no Progress within timeout")
+			return core.Progress{}
 		}
-		return p
-	case <-time.After(2 * time.Second):
-		t.Fatal("no Progress within timeout")
-		return core.Progress{}
+	}
+}
+
+func TestScanVisibleProgressMonotonic(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	var threads []*core.Thread
+	for i := 1; i <= 3; i++ {
+		msg := fmt.Sprintf("From: a@example.test\n"+
+			"To: b@example.test\n"+
+			"Subject: att%d\n"+
+			"MIME-Version: 1.0\n"+
+			"Content-Type: multipart/mixed; boundary=\"bb\"\n"+
+			"\n"+
+			"--bb\n"+
+			"Content-Type: text/plain\n"+
+			"\n"+
+			"body\n"+
+			"--bb\n"+
+			"Content-Type: application/octet-stream\n"+
+			"Content-Disposition: attachment; filename=\"f%d.bin\"\n"+
+			"\n"+
+			"DATA\n"+
+			"--bb--\n", i, i)
+		file := filepath.Join(t.TempDir(), fmt.Sprintf("m%d.eml", i))
+		if err := os.WriteFile(file, []byte(msg), 0600); err != nil {
+			t.Fatal(err)
+		}
+		threads = append(threads, core.NewThread(fmt.Sprintf("t%d", i),
+			[]*core.Message{{ID: fmt.Sprintf("m%d", i), Paths: []string{file}}}))
+	}
+	// Filler rows (no paths) are skipped by the scan: the bar totals
+	// eligible rows, not page rows. One merge: MergeThreads replaces the
+	// view's thread set with its input.
+	var filler []*core.Thread
+	for i := 4; i <= 12; i++ {
+		filler = append(filler, core.NewThread(fmt.Sprintf("t%d", i),
+			[]*core.Message{{ID: fmt.Sprintf("f%d", i)}}))
+	}
+	view.MergeThreads(append(threads, filler...))
+	cj := newCacheJob(bus, &fakeWorker{}, view, filepath.Join(t.TempDir(), "cache.db"))
+
+	cj.scanVisible(make(chan struct{}, 2))
+	// done increments once per completed scan: the sequence must be
+	// strictly 1,2,3 - never a regression or an early 100%.
+	seen := map[int]bool{}
+	var prev int
+	for i := 0; i < 3; i++ {
+		p := readProgress(t, ch)
+		if p.Job != "cache" || p.Total != 3 {
+			t.Fatalf("bad progress: %+v", p)
+		}
+		if p.Done <= prev {
+			t.Fatalf("progress must be strictly increasing: %d after %d", p.Done, prev)
+		}
+		prev = p.Done
+		seen[p.Done] = true
+	}
+	if prev != 3 || len(seen) != 3 {
+		t.Fatalf("progress must cover 1..3 and end at 3/3: %v", seen)
 	}
 }

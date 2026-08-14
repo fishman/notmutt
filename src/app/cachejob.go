@@ -55,6 +55,11 @@ func (c *cacheJob) Run(ctx context.Context) {
 	}
 }
 
+func scanWorthy(r core.Row) bool {
+	m := r.Msg
+	return m != nil && len(m.Paths) > 0 && len(m.Atts) == 0
+}
+
 func (c *cacheJob) scanVisible(sem chan struct{}) {
 	rows := c.view.Rows()
 	if len(rows) > scanPage {
@@ -62,25 +67,29 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	total := len(rows)
-	done := total
+	total := 0
 	for _, r := range rows {
-		m := r.Msg
-		if m == nil || len(m.Paths) == 0 || len(m.Atts) > 0 {
+		if scanWorthy(r) {
+			total++
+		}
+	}
+	done := 0
+	for _, r := range rows {
+		if !scanWorthy(r) {
 			continue
 		}
-		mu.Lock()
-		done--
-		mu.Unlock()
+		m := r.Msg
 		wg.Add(1)
 		go func() {
+			defer wg.Done()
+			// registered after wg.Done: LIFO runs the publish first, so
+			// wg.Wait() is a publish barrier
 			defer func() {
 				mu.Lock()
 				done++
 				c.bus.Publish(core.Progress{Job: "cache", Done: done, Total: total})
 				mu.Unlock()
 			}()
-			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			for _, p := range m.Paths {

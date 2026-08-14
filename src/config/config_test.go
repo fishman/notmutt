@@ -165,7 +165,7 @@ func TestDefaultBindings(t *testing.T) {
 	}
 	wantPager := map[string]string{
 		"j": "scroll-down", "k": "scroll-up",
-		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",

@@ -29,6 +29,7 @@ var Actions = map[string]map[string]bool{
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
 		"page-down": true, "page-up": true,
+		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true,
 	},
@@ -52,7 +53,7 @@ type Model struct {
 	progress   core.Progress
 	progressOn bool
 	// indexOffset is the index window's anchored top row (the
-	// read-position model shared with the pager): the window holds
+	// read-position model): the window holds
 	// still while the cursor moves within it; only when the cursor
 	// crosses a page edge does the window jump a full page.
 	indexOffset int
@@ -202,6 +203,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pager.pageUp()
 			} else if m.mode == "index" {
 				m.moveCursor(-m.pageRows())
+			}
+		case "half-page-down":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.halfPageDown()
+			}
+		case "half-page-up":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.halfPageUp()
 			}
 		case "scroll-top":
 			if m.mode == "pager" && m.pager != nil {
@@ -502,7 +511,7 @@ func cursorStepAt(rows []core.Row, idx, dir int) int {
 }
 
 // pageAtEdgeAt jumps the window a full page when the cursor crossed a
-// page edge (the read-position model shared with the pager): crossing
+// page edge (the read-position model): crossing
 // the bottom lands the cursor on the new page's first line, crossing
 // the top on its last line. Returns the possibly re-anchored cursor
 // index. A single step crosses exactly one edge.
@@ -601,8 +610,7 @@ func (m *Model) clampIndexOffset() {
 }
 
 // goTop jumps to the top of the current view (the gg chain): the index
-// cursor to the first message, the pager read position to the first
-// line.
+// cursor to the first message, the pager window to the first line.
 func (m *Model) goTop() {
 	if m.mode == "pager" && m.pager != nil {
 		m.pager.scrollTop()
@@ -822,8 +830,8 @@ func (m Model) render() string {
 		return b.String()
 	}
 	cur := m.CursorIndex()
-	// the window is ANCHORED at indexOffset (the read-position model,
-	// shared with the pager): the cursor moves within the window, and
+	// the window is ANCHORED at indexOffset (the read-position model):
+	// the cursor moves within the window, and
 	// only a page-edge crossing moves it. The clamp handles resizes and
 	// refreshes that shrank the rows; the write-back keeps the movement
 	// math in sync. The bottom two rows are the keyhint bar (R9) and

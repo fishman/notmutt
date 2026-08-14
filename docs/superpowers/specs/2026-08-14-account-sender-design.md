@@ -3,7 +3,8 @@
 DRAFT - design input captured 2026-08-14, not yet brainstormed or
 approved. Milestone: R4 (async send + dialogue state machine) with the
 R2 account data model. Normative text is AGENTS.md; this file records
-requirements so they are not lost.
+requirements so they are not lost. Send-transport resolution and the
+S/MIME deferral pinned 2026-08-15 (sections 6-7).
 
 ## 1. Problem
 
@@ -86,12 +87,47 @@ that is data, not hook code.
 - Failure reopen: does the failed send job's captured output feed the
   reopened dialog (the neomutt bg_dialog pattern: output kept for
   review)?
-- Per-account msmtp invocation: one config file with account sections
-  (msmtp -a <name>), or per-account argv? Which maps to the R10
-  Provider boundary?
+- RESOLVED (2026-08-15, user): NO per-account msmtp invocation. The
+  send transport is ONE configurable command, default
+  `msmtp --read-envelope-from` (section 6): msmtp reads the envelope
+  sender from the message's own From header and selects its account
+  by `from` matching - the account table lives in ~/.msmtprc, the
+  client never sees it. The per-account argv question is dead: there
+  is one command for every account, and the From address never
+  interpolates into argv (F4 - the envelope comes from the message,
+  not the command line).
 
 ## 5. Non-goals for this draft
 
 No SMTP client implementation (transport stays external tools per the
 non-goals). This milestone is the send JOB + dialogue state machine
 (R4), not the transport.
+
+## 6. Send transport (pinned 2026-08-15, user)
+
+- The transport is config data, not code: `[send] command` + `args`
+  (the R8 typed-config shape), default `command = "msmtp"`,
+  `args = ["--read-envelope-from"]`. The argv is tokenized at config
+  load and passed to exec as argv (SECURITY.md F4) - never a shell
+  string, never interpolated with mail content.
+- `--read-envelope-from` semantics (the user's requirement): msmtp
+  reads the envelope sender (MAIL FROM) from the message's From
+  header and selects its account by `from` matching against
+  ~/.msmtprc. The client needs NO per-account argv - account
+  selection lives entirely in msmtp's config, which also makes the
+  R10 Provider boundary trivial: the send job is one argv exec, the
+  captured output feeds the failure-reopen dialogue (R4).
+- The client still assembles the message (go-message, R7) with the
+  From chosen by the account-selection model (section 3) - that
+  header is what msmtp reads the envelope from.
+
+## 7. Deferred (user, 2026-08-15): S/MIME rendering
+
+"Render smime when done with all the other features" - the user
+receives signed mail (detached smime.p7s parts, e.g. Cathay Bank
+billing). Deferred requirement: detect S/MIME signature parts in the
+pager's part model, verify via the R10 system-tool boundary
+(`openssl smime -verify` on the p7s + content), and surface the
+verdict (valid/invalid, signer, cert) in the view model like the R10
+decrypt/verify path. Not in this milestone; the part model and the
+R10 Provider interface are the seams it plugs into.

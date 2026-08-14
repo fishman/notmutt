@@ -17,6 +17,7 @@ type Config struct {
 	TagGroups  map[string]core.TagGroup     `toml:"tag-groups"`
 	Bindings   map[string]map[string]string `toml:"bindings"`
 	TagActions map[string]string            `toml:"tag-actions"`
+	Accounts   map[string]Account           `toml:"accounts"`
 	Palette    Palette                      `toml:"palette"`
 	Theme      Theme                        `toml:"theme"`
 }
@@ -441,6 +442,24 @@ type View struct {
 	Threads bool   `toml:"threads"`
 }
 
+// Account is one mail account: the section key is the account name, the
+// folder prefix is its folder space in the maildir (R2). The account
+// tag in notmuch is the folder prefix - the muttrc folder:/^<folder>\//
+// pattern as data. Folder defaults to the account name (the common
+// case: [accounts.dynamia] maps to the "dynamia" tag directly); the
+// pointer distinguishes unset from an explicitly empty value, which is
+// a load error.
+type Account struct {
+	Folder *string `toml:"folder"`
+}
+
+func (a Account) Tag(name string) string {
+	if a.Folder != nil {
+		return *a.Folder
+	}
+	return name
+}
+
 func Default() Config {
 	return Config{
 		UI: UI{
@@ -468,6 +487,11 @@ func Default() Config {
 			"toggle-read": "unread",
 			"archive":     "archive",
 			"delete":      "deleted",
+		},
+		// the reference mail setup (muttrc): one account per maildir
+		// root, each mapping to its folder tag by name
+		Accounts: map[string]Account{
+			"gmail": {}, "jelveh": {}, "toptal": {}, "dynamia": {},
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
@@ -647,6 +671,11 @@ func validate(cfg Config) error {
 	g := cfg.UI.Glyphs
 	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" || g.StatuslineSeparator == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
+	}
+	for name, a := range cfg.Accounts {
+		if a.Folder != nil && strings.TrimSpace(*a.Folder) == "" {
+			return fmt.Errorf("accounts.%s: folder must not be blank", name)
+		}
 	}
 	return nil
 }

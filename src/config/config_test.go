@@ -302,3 +302,52 @@ func TestSetThemeVariant(t *testing.T) {
 		t.Fatal("unknown variant must error")
 	}
 }
+
+func TestAccounts(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, `
+[accounts.dynamia]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Accounts["dynamia"].Tag("dynamia") != "dynamia" {
+		t.Fatalf("account tag defaults to the name: %+v", cfg.Accounts["dynamia"])
+	}
+	// a file adding one account merges over the reference defaults (R8)
+	if cfg.Accounts["gmail"].Tag("gmail") != "gmail" {
+		t.Fatalf("default accounts survive merge: %+v", cfg.Accounts)
+	}
+}
+
+func TestAccountFolderOverride(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, `
+[accounts.main]
+folder = "gmail"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Accounts["main"].Tag("main"); got != "gmail" {
+		t.Fatalf("folder overrides the account tag: want gmail, got %q", got)
+	}
+}
+
+func TestAccountStrictLoad(t *testing.T) {
+	_, err := Load(writeThemeFile(t, `
+[accounts.dynamia]
+nonesuch = "x"
+`))
+	if err == nil || !strings.Contains(err.Error(), "nonesuch") {
+		t.Fatalf("want unknown key error, got %v", err)
+	}
+}
+
+func TestAccountBlankFolder(t *testing.T) {
+	_, err := Load(writeThemeFile(t, `
+[accounts.dynamia]
+folder = ""
+`))
+	if err == nil || !strings.Contains(err.Error(), "folder") {
+		t.Fatalf("want blank folder error, got %v", err)
+	}
+}

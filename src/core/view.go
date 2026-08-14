@@ -13,16 +13,19 @@ import (
 // cache job's Atts writes are T12 wiring and must also go through the
 // view under its lock; UI tag toggles go through SetTags the same way.
 type View struct {
-	Name     string
-	Query    string
-	Threads  []*Thread // sorted by ThreadLess
-	mu       sync.Mutex
-	cursorID string
-	lastRow  int
+	Name      string
+	Query     string
+	Threads   []*Thread // sorted by ThreadLess
+	mu        sync.Mutex
+	cursorID  string
+	lastRow   int
+	groups    []TagGroup
+	staged    map[string][]TagOp
+	stagedGen uint64
 }
 
 func NewView(name, query string) *View {
-	return &View{Name: name, Query: query}
+	return &View{Name: name, Query: query, staged: map[string][]TagOp{}}
 }
 
 // NewThread builds a thread with a reference tree. msgs are sorted by
@@ -307,4 +310,103 @@ func parentOf(m *Message, nodes map[string]*Node) *Node {
 		}
 	}
 	return nil
+}
+
+// SetGroups sets the exclusive tag groups the staged render resolves
+// against (R14). The app supplies them from the config store; the view
+// never knows the member list itself.
+func (v *View) SetGroups(groups []TagGroup) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.groups = groups
+}
+
+// Stage appends a pending tag op for a message. Staging an op identical
+// to one already staged cancels it (toggle semantics: r twice is a
+// no-op, r then a keeps both). Unknown ids are a no-op: the message
+// left the view. Staging bumps the generation: an in-flight apply
+// snapshot taken before it can no longer clear the entry (ClearStaged
+// is generation-guarded).
+func (v *View) Stage(msgID string, op TagOp) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if !v.hasMsgLocked(msgID) {
+		return
+	}
+	ops := v.staged[msgID]
+	for i, o := range ops {
+		if o == op {
+			ops = append(ops[:i], ops[i+1:]...)
+			if len(ops) == 0 {
+				delete(v.staged, msgID)
+			} else {
+				v.staged[msgID] = ops
+			}
+			v.stagedGen++
+			return
+		}
+	}
+	v.staged[msgID] = append(ops, op)
+	v.stagedGen++
+}
+
+// StagedOps snapshots the buffer for the apply path, with the buffer
+// generation at snapshot time; ClearStaged(msgID, gen) no-ops unless
+// gen is still current, so ops staged during an in-flight apply cannot
+// be cleared by it.
+func (v *View) StagedOps() (map[string][]TagOp, uint64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	out := make(map[string][]TagOp, len(v.staged))
+	for id, ops := range v.staged {
+		out[id] = append([]TagOp(nil), ops...)
+	}
+	return out, v.stagedGen
+}
+
+// Undo discards all staged ops for a message (pure buffer drop, no DB
+// traffic). Unknown ids are a no-op.
+func (v *View) Undo(msgID string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if _, ok := v.staged[msgID]; !ok {
+		return
+	}
+	delete(v.staged, msgID)
+	v.stagedGen++
+}
+
+// ClearStaged removes the entry if the generation still matches, i.e.
+// nothing was staged or undone since the caller's snapshot.
+func (v *View) ClearStaged(msgID string, gen uint64) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.stagedGen != gen {
+		return
+	}
+	delete(v.staged, msgID)
+}
+
+func (v *View) HasStaged() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return len(v.staged) > 0
+}
+
+func (v *View) IsStaged(msgID string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	_, ok := v.staged[msgID]
+	return ok
+}
+
+func (v *View) hasMsgLocked(msgID string) bool {
+	for _, t := range v.Threads {
+		for _, m := range t.msgs {
+			if m.ID == msgID {
+				return true
+			}
+		}
+	}
+	return false
 }

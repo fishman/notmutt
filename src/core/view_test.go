@@ -245,3 +245,73 @@ func TestViewSetAtts(t *testing.T) {
 		t.Fatalf("empty view must stay empty: %d rows", len(rows))
 	}
 }
+
+func hasTag(tags []string, tag string) bool {
+	for _, t := range tags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+func stagedView(t *testing.T) *View {
+	t.Helper()
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("m1", 100)})})
+	return v
+}
+
+func TestStageCancelUndo(t *testing.T) {
+	v := stagedView(t)
+	v.Stage("m1", TagOp{Tag: "unread", Add: false})
+	if !v.IsStaged("m1") || !v.HasStaged() {
+		t.Fatal("not staged after Stage")
+	}
+	v.Stage("m1", TagOp{Tag: "unread", Add: false}) // identical: cancels
+	if v.IsStaged("m1") || v.HasStaged() {
+		t.Fatal("identical op must cancel")
+	}
+	v.Stage("m1", TagOp{Tag: "unread", Add: false})
+	v.Stage("m1", TagOp{Tag: "archive", Add: true})
+	v.Undo("m1")
+	if v.HasStaged() {
+		t.Fatal("Undo must clear the entry")
+	}
+}
+
+func TestStageUnknownIDNoop(t *testing.T) {
+	v := stagedView(t)
+	v.Stage("ghost", TagOp{Tag: "archive", Add: true})
+	if v.HasStaged() {
+		t.Fatal("unknown id must not stage")
+	}
+	v.Undo("ghost") // must not panic
+}
+
+func TestStagedOpsSnapshotCopies(t *testing.T) {
+	v := stagedView(t)
+	v.Stage("m1", TagOp{Tag: "archive", Add: true})
+	snap, _ := v.StagedOps()
+	snap["m1"][0].Tag = "mutated"
+	ops, _ := v.StagedOps()
+	if ops["m1"][0].Tag != "archive" {
+		t.Fatal("snapshot must be a copy")
+	}
+}
+
+func TestClearStagedGeneration(t *testing.T) {
+	v := stagedView(t)
+	v.Stage("m1", TagOp{Tag: "archive", Add: true})
+	_, gen := v.StagedOps()
+	v.Stage("m1", TagOp{Tag: "deleted", Add: true}) // bumps gen
+	v.ClearStaged("m1", gen)                        // stale: must no-op
+	if !v.IsStaged("m1") {
+		t.Fatal("stale clear must no-op")
+	}
+	_, gen2 := v.StagedOps()
+	v.ClearStaged("m1", gen2)
+	if v.IsStaged("m1") {
+		t.Fatal("current clear must remove")
+	}
+}

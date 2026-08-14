@@ -8,10 +8,12 @@ import (
 
 // View is a forest of thread trees ordered by last date. All state
 // access goes through the locked methods (Rows, MergeThreads,
-// SetCursor, CursorRow, SetCollapsed); touching Threads, message
-// fields, or Collapsed from another goroutine is a data race. The
-// cache job's Atts writes are T12 wiring and must also go through the
-// view under its lock; UI tag toggles go through SetTags the same way.
+// SetCursor, CursorRow, SetCollapsed, SetAtts, SetTags, MsgTags,
+// SetGroups, Stage, StagedOps, Undo, ClearStaged, HasStaged,
+// IsStaged); touching Threads, message fields, or Collapsed from
+// another goroutine is a data race. The cache job's Atts writes are
+// T12 wiring and must also go through the view under its lock; UI tag
+// toggles go through SetTags the same way.
 type View struct {
 	Name      string
 	Query     string
@@ -228,13 +230,8 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 func (v *View) SetAtts(msgID string, atts []Attachment) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for _, t := range v.Threads {
-		for _, m := range t.msgs {
-			if m.ID == msgID {
-				m.Atts = atts
-				return
-			}
-		}
+	if m := v.findMsgLocked(msgID); m != nil {
+		m.Atts = atts
 	}
 }
 
@@ -244,13 +241,8 @@ func (v *View) SetAtts(msgID string, atts []Attachment) {
 func (v *View) SetTags(msgID string, tags []string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for _, t := range v.Threads {
-		for _, m := range t.msgs {
-			if m.ID == msgID {
-				m.Tags = tags
-				return
-			}
-		}
+	if m := v.findMsgLocked(msgID); m != nil {
+		m.Tags = tags
 	}
 }
 
@@ -260,12 +252,8 @@ func (v *View) SetTags(msgID string, tags []string) {
 func (v *View) MsgTags(msgID string) []string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	for _, t := range v.Threads {
-		for _, m := range t.msgs {
-			if m.ID == msgID {
-				return m.Tags
-			}
-		}
+	if m := v.findMsgLocked(msgID); m != nil {
+		return m.Tags
 	}
 	return nil
 }
@@ -330,7 +318,7 @@ func (v *View) SetGroups(groups []TagGroup) {
 func (v *View) Stage(msgID string, op TagOp) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if !v.hasMsgLocked(msgID) {
+	if v.findMsgLocked(msgID) == nil {
 		return
 	}
 	ops := v.staged[msgID]
@@ -377,7 +365,11 @@ func (v *View) Undo(msgID string) {
 }
 
 // ClearStaged removes the entry if the generation still matches, i.e.
-// nothing was staged or undone since the caller's snapshot.
+// nothing was staged or undone since the caller's snapshot. The guard
+// over-blocks: it no-ops when ANY message staged or undid since the
+// snapshot, not just this entry, leaving an already-applied entry
+// staged until the next apply or undo. Benign: notmuch tag ops are
+// idempotent.
 func (v *View) ClearStaged(msgID string, gen uint64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -387,12 +379,14 @@ func (v *View) ClearStaged(msgID string, gen uint64) {
 	delete(v.staged, msgID)
 }
 
+// HasStaged reports whether any message has pending staged ops.
 func (v *View) HasStaged() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	return len(v.staged) > 0
 }
 
+// IsStaged reports whether the message has pending staged ops.
 func (v *View) IsStaged(msgID string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -400,13 +394,15 @@ func (v *View) IsStaged(msgID string) bool {
 	return ok
 }
 
-func (v *View) hasMsgLocked(msgID string) bool {
+// findMsgLocked returns the message with the given id, or nil when it
+// left the view.
+func (v *View) findMsgLocked(msgID string) *Message {
 	for _, t := range v.Threads {
 		for _, m := range t.msgs {
 			if m.ID == msgID {
-				return true
+				return m
 			}
 		}
 	}
-	return false
+	return nil
 }

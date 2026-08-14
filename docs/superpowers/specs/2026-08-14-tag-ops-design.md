@@ -37,14 +37,20 @@ The buffer lives in core.View under its lock - the view is the single
 mutable mailbox state (R1 front-end), and the buffer must move with
 merge reconciles.
 
-- `view.Stage(msgID string, op TagOp)` - appends the op; staging an op
-  identical to one already staged for that message CANCELS it (toggle
-  semantics: r twice is a no-op, r then a keeps both). Unknown msgID:
-  no-op (the message left the view).
+- `view.Stage(identity string, op TagOp)` - appends the op; staging an
+  op identical to one already staged for that identity CANCELS it
+  (toggle semantics: r twice is a no-op, r then a keeps both). Unknown
+  identities: no-op (the message/thread left the view).
 - `view.StagedOps() map[string][]TagOp` - snapshot for the apply path.
-- `view.Undo(msgID)` - discards all staged ops for the message.
-- `view.HasStaged() bool`, `view.IsStaged(msgID) bool`.
-- Entries are keyed by message identity (R14), never position.
+- `view.Undo(identity)` - discards all staged ops for the identity.
+- `view.HasStaged() bool`, `view.IsStaged(identity) bool`.
+- Entries are keyed by identity (R14), never position. An identity is
+  a message id, or a thread identity (`t:` + threadID) for summary
+  rows - the index is search data without message ids, and a tag op on
+  a summary is a thread-level op. `view.Tags(identity)` resolves the
+  applied baseline for either kind; `SetThreadTags(threadID, tags)` is
+  the apply-path baseline write for threads (SetTags stays the message
+  write).
 
 TagOp is `{Tag string; Add bool}` - the same shape the worker's ActTag
 takes; intent is recorded verbatim, resolution is a separate step
@@ -113,9 +119,10 @@ op set) - a core function:
 ## 5. Apply (`$`)
 
 1. `view.StagedOps()` snapshot; nothing staged -> no-op.
-2. For each message: resolve ops against the CURRENT applied tags.
-3. One ActTag per message (id:"..." query + resolved ops) on the
-   worker's lock-budgeted action path (R2 lock handling).
+2. For each identity: resolve ops against the CURRENT applied tags.
+3. One ActTag per identity on the worker's lock-budgeted action path
+   (R2 lock handling): message ids as id:"..." queries, thread
+   identities as thread:<id> (the whole thread).
 4. On success: write the resolved tags as the new applied baseline via
    the existing locked setter, clear the buffer entry - no flash-back
    to the pre-staged render while the refresh lags. The next refresh
@@ -127,9 +134,10 @@ Apply does not wait for the refresh; WorkerDone -> cycle is unchanged.
 
 ## 6. Undo (`u`)
 
-`view.Undo(cursorMsgID)` + repaint. Pure local operation, no DB
-traffic, before or after apply (after a partial apply, undo clears
-whatever is still staged; applied state stays applied).
+`view.Undo(cursorIdentity)` + repaint (identity per section 2). Pure
+local operation, no DB traffic, before or after apply (after a partial
+apply, undo clears whatever is still staged; applied state stays
+applied).
 
 ## 7. Keybindings
 
@@ -141,7 +149,8 @@ key never touches code.
 
 Actions come in two kinds. BUILT-IN actions (cursor-down, cursor-up,
 quit, undo, apply) are the fixed TUI vocabulary. TAG actions stage a
-tag on the cursor message; their name-to-tag mapping is config data
+tag on the cursor row (its identity per section 2 - a summary row
+stages the thread); their name-to-tag mapping is config data
 (`[tag-actions]`), and the handler kind DERIVES from the tag's group
 membership - there are no per-tag cases anywhere in the TUI: a tag in
 any tag group is a FOLDER tag and stages `+tag` (exclusive-group
@@ -166,7 +175,7 @@ Defaults (the R9 binding map must keep these):
     r = "toggle-read"   # tag action: unread (soft -> toggles)
     a = "archive"       # tag action: archive (folder -> +archive)
     d = "delete"        # tag action: deleted (folder -> +deleted)
-    u = "undo"          # undo staged (cursor message)
+    u = "undo"          # undo staged (cursor row)
     "$" = "apply"       # apply all (quoted TOML key)
 
     [tag-actions]
@@ -219,27 +228,36 @@ tag-action tables are their substrate, so nothing here forecloses them.
   unchanged and reconciles mail that lands mid-fill (one-cycle lag).
 - Ingestion is TWO-STEP (the user directive, 2026-08-14: "step one
   read the message and then step two read the headers or content. no
-  need to batch all at once"): the fill reads the INDEX - one
-  `notmuch search` page per fetch (thread summaries: thread id, date,
-  authors, subject, tags - DB-side data, zero file opens), so the
-  whole list loads in seconds. Per-thread round trips were the load
-  wall: 129k threads meant 129k backend calls; the fill no longer
-  fetches threads at all.
-- Step two is the per-message data (message ids, references, paths):
-  the visible window hydrates its stub rows right after the fill
-  (per-thread `notmuch show`, budgeted, the only file opens in the
-  load path - ~40 threads, one process each), and everything else
-  loads on open (R13). The incremental changed-set cycle keeps the
-  same per-thread fetch (small N). No Batch action exists - the
-  paged search query IS the high-speed ingestion interface.
-- The index rows ARE search summaries: a stub message (empty id)
+  need to batch all at once"): step one is the INDEX - the fill reads
+  content-free, DB-side data only, so the whole list loads in seconds.
+  Step two is the per-message content, on open only (R13). The load
+  path never runs `notmuch show` - show opens mail files, which was
+  the load wall (per-thread round trips: 129k threads meant 129k
+  subprocess spawns).
+- The page IS the batch: one `Backend.Query(limit, offset)` call per
+  page - the fundamental ingestion interface, a page counts THREADS
+  (matching Count). The backend serves it with whatever is fastest
+  for that interface (2026-08-14: "it's odd to use batch with the
+  cli rather than with the native interface" - the CLI has no batch
+  concept, it has one subprocess per page):
+  - CLI: one `notmuch search` page per fetch (thread summaries:
+    thread id, date, authors, subject, tags - DB-side, zero file
+    opens; the CLI has no content-free per-message dump);
+  - cgo: the native batch - the in-process threads iterator,
+    skip/limit on thread positions, each thread's messages mapped
+    directly into core.Message from the DB header cache (ids,
+    references, from, subject, date, tags; references and in-reply-to
+    are Xapian values, no file opens), zero subprocesses.
+- The index rows ARE thread summaries: a stub message (empty id)
   renders author/subject/tags directly and is cursorable (anchored
-  by row index - no id to track). The hydrate merge replaces it in
-  place: the message diff removes the stub and inserts the real
-  messages, and the cursor lands on the thread root (the same
-  logical message). Stub rows cannot be staged - the apply path
-  needs a real message id, and the stub is transient (one guard in
-  the TUI, same shape as the ghost-row guard).
+  by row index - no id to track). A tag op on a summary row is a
+  THREAD-level op: the staged identity is "t:"+threadID (entries are
+  identity-keyed, R14 - message id or thread identity), the staged
+  render resolves against the stub's tags like any row, and apply
+  emits `thread:<id>` - the whole thread, notmuch's natural unit.
+  The incremental changed-set cycle merges the lastmod summaries
+  directly (no per-thread fetch; the cgo path builds real trees from
+  references). Ghost rows stay unstaged.
 
 ## 9. Testing
 

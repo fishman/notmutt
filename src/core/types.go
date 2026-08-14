@@ -39,3 +39,20 @@ type Row struct {
 	Count    int
 	Ghost    bool // synthetic multi-root marker row; has no Msg
 }
+
+// TagOp is a pending tag change: add or remove Tag. The same shape the
+// worker's ActTag takes (notmuch aliases it); intent is recorded
+// verbatim, group resolution is a separate step.
+type TagOp struct {
+	Tag string
+	Add bool
+}
+
+// TagGroup is an exclusive tag group: at most one member applies.
+// Membership IS the hard-tag declaration - a member is a physical
+// folder mapped to a notmuch tag. Tags not in any group are soft
+// (work, conference, ...): unlimited, coexisting, applied by header
+// rules, never touched by group resolution.
+type TagGroup struct {
+	Tags []string
+}

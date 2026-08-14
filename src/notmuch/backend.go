@@ -12,10 +12,8 @@ var ErrLockTimeout = errors.New("notmuch lock timeout")
 // Message is the core type; the alias keeps the Backend interface text short.
 type Message = core.Message
 
-type TagOp struct {
-	Tag string
-	Add bool
-}
+// TagOp is the core type; the alias keeps the Backend interface text short.
+type TagOp = core.TagOp
 
 // Backend is the notmuch access boundary. M1 ships the CLI backend; the
 // cgo backend implements the same interface for the benchmark (task 13).

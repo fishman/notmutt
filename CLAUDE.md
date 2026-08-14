@@ -19,5 +19,7 @@ Pi and other tools). Read it first; it is normative.
 ## Commit trailer
 
 Commits follow the Conventional Commits style: `type(scope): subject`, brief
-lowercase imperative subject. If AI generated any part of a change, add
-`AI-assisted: <tool name>` to the commit message.
+lowercase imperative subject. Spec/doc commits carry an
+`AI-assisted: deepseek` trailer (the session model is deepseek); code
+commits carry no AI-assisted trailer - the human bears responsibility for
+code.

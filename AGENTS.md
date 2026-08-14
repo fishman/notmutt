@@ -502,8 +502,10 @@ the spec must say why it serves notmutt, not cite it as authority.
   checksum (sha256 or faster) when correlating or verifying message
   identity.
 - Commits: Conventional Commits style (`type(scope): subject`), brief
-  lowercase imperative subject; if AI generated any part of a change, add
-  an `AI-assisted: <tool name>` trailer to the commit message.
+  lowercase imperative subject. Spec/doc commits carry an
+  `AI-assisted: deepseek` trailer (the session model is deepseek);
+  code commits carry no AI-assisted trailer - the human bears
+  responsibility for code.
 - Testing: treat AI-generated output like firmware - assume it fails in
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks

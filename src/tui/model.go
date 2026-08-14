@@ -12,17 +12,23 @@ import (
 	"notmutt/mail"
 )
 
-// Actions is the BUILTIN action vocabulary (R9): cursor movement, quit,
-// open, pager scrolling, and the buffer/apply ops. Tag actions are NOT
-// in here - they come from the [tag-actions] config map; the app
-// validates every binding value against both, across ALL contexts, at
-// startup (unknown action = load error).
-var Actions = map[string]bool{
-	"cursor-down": true, "cursor-up": true, "quit": true,
-	"undo": true, "apply": true, "open": true,
-	"scroll-down": true, "scroll-up": true, "page-down": true,
-	"page-up": true, "scroll-top": true, "scroll-bottom": true,
-	"back": true,
+// Actions is the BUILTIN action vocabulary per context (R9): the index
+// context carries navigation, open, and the buffer/apply ops; the pager
+// context the scroll and back/quit surface. Tag actions are NOT in here
+// - they come from the [tag-actions] config map; the app validates
+// every binding value against its context's map at startup (unknown
+// action = load error).
+var Actions = map[string]map[string]bool{
+	"index": {
+		"cursor-down": true, "cursor-up": true, "open": true,
+		"quit": true, "undo": true, "apply": true,
+	},
+	"pager": {
+		"scroll-down": true, "scroll-up": true,
+		"page-down": true, "page-up": true,
+		"scroll-top": true, "scroll-bottom": true,
+		"back": true, "quit": true,
+	},
 }
 
 type Model struct {
@@ -387,7 +393,9 @@ func (m Model) View() string {
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
 		b.WriteString(m.pager.render())
-		b.WriteString("\n") // keyhint placeholder row (Task 4 fills it)
+		b.WriteString("\n")
+		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+		b.WriteString("\n")
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
 		b.WriteByte('\n')
 		return b.String()
@@ -399,14 +407,14 @@ func (m Model) View() string {
 	rows := m.rows
 	if len(rows) == 0 {
 		if m.progressOn {
-			return "empty\n" + m.statusLineWith(st, m.ui) + "\n"
+			return "empty\n" + keyhintRow(m.bindings[m.mode], m.width) + "\n" + m.statusLineWith(st, m.ui) + "\n"
 		}
 		return "empty\n"
 	}
 	cur := m.CursorIndex()
-	// the bottom row is the status line (R15); the list window is
-	// height-1, the R11 slot-reservation rule
-	listHeight := m.height - 1
+	// the bottom two rows are the keyhint bar (R9) and the status line
+	// (R15); the list window is height-2, the R11 slot-reservation rule
+	listHeight := m.height - 2
 	if listHeight < 1 {
 		listHeight = 1
 	}
@@ -445,6 +453,8 @@ func (m Model) View() string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
+	b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
 	b.WriteByte('\n')
 	return b.String()

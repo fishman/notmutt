@@ -173,6 +173,49 @@ func TestDefaultBindings(t *testing.T) {
 	}
 }
 
+func TestKeymapSchemes(t *testing.T) {
+	cfg := Default()
+	if cfg.Bindings["index"]["j"] != "cursor-down" {
+		t.Fatalf("vim defaults missing: %v", cfg.Bindings["index"])
+	}
+	cfg, err := Load(write(t, "\n[ui]\nkeymap = \"emacs\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bindings["index"]["ctrl+n"] != "cursor-down" {
+		t.Fatalf("emacs index defaults missing: %v", cfg.Bindings["index"])
+	}
+	if cfg.Bindings["index"]["j"] != "" {
+		t.Fatalf("emacs scheme must not carry vim keys: %v", cfg.Bindings["index"])
+	}
+}
+
+func TestKeymapFileOverlay(t *testing.T) {
+	cfg, err := Load(write(t, `
+[ui]
+keymap = "emacs"
+[bindings.index]
+q = "open"
+[bindings.pager]
+q = "back"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the file overrides per key on top of the scheme; untouched keys
+	// and contexts keep the scheme defaults
+	if cfg.Bindings["index"]["q"] != "open" || cfg.Bindings["index"]["ctrl+n"] != "cursor-down" {
+		t.Fatalf("index overlay wrong: %v", cfg.Bindings["index"])
+	}
+	if cfg.Bindings["pager"]["q"] != "back" || cfg.Bindings["pager"]["ctrl+g"] != "back" {
+		t.Fatalf("pager overlay wrong: %v", cfg.Bindings["pager"])
+	}
+	// scheme defaults still present, no vim leakage
+	if cfg.Bindings["index"]["j"] != "" {
+		t.Fatalf("emacs scheme must not carry vim keys after overlay: %v", cfg.Bindings["index"])
+	}
+}
+
 func TestLoadUnknownBindingKey(t *testing.T) {
 	// binding keys inside a map field are arbitrary by design (rebinding),
 	// so strict load catches typo'd table names at the section level

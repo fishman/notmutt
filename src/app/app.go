@@ -143,16 +143,20 @@ func firstView(cfg config.Config) string {
 	return ""
 }
 
-// validateBindings checks the loaded bindings against the action
-// vocabulary: every value must be a builtin action or a declared tag
-// action, no tag action may shadow a builtin name, and every tag
-// action must be referenced by at least one binding.
+// validateBindings checks the loaded bindings against the per-context
+// action vocabulary (R9): every value must be a builtin action of its
+// context or a declared tag action (index context only), no tag action
+// may shadow an index builtin name, and every tag action must be
+// referenced by at least one binding.
 func validateBindings(cfg *config.Config) error {
 	used := map[string]bool{}
 	for context, km := range cfg.Bindings {
 		for key, action := range km {
-			if tui.Actions[action] {
+			if tui.Actions[context][action] {
 				continue
+			}
+			if context != "index" {
+				return fmt.Errorf("bindings.%s: key %q: unknown action %q", context, key, action)
 			}
 			if _, ok := cfg.TagActions[action]; !ok {
 				return fmt.Errorf("bindings.%s: key %q: unknown action %q", context, key, action)
@@ -161,7 +165,7 @@ func validateBindings(cfg *config.Config) error {
 		}
 	}
 	for name := range cfg.TagActions {
-		if tui.Actions[name] {
+		if tui.Actions["index"][name] {
 			return fmt.Errorf("tag action %q collides with a builtin action", name)
 		}
 		if !used[name] {

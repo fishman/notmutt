@@ -44,4 +44,10 @@ func TestValidateBindings(t *testing.T) {
 	if err := validateBindings(&cfg); err == nil {
 		t.Fatal("unbound tag action must error")
 	}
+	cfg = config.Default()
+	cfg.Bindings["index"]["x"] = "scroll-down"
+	cfg.TagActions["scroll-down"] = "wip"
+	if err := validateBindings(&cfg); err != nil {
+		t.Fatalf("a pager-only action name must not collide with a tag action: %v", err)
+	}
 }

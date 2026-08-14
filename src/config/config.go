@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"sort"
 	"strings"
@@ -461,6 +462,76 @@ func (a Account) Tag(name string) string {
 	return name
 }
 
+// vimScheme is the R9 default key scheme: mutt-style movement, the
+// classic index keys, pager scroll keys. Declarative data, never code.
+var vimScheme = map[string]map[string]string{
+	"index": {
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+		"r": "toggle-read", "a": "archive", "d": "delete",
+		"u": "undo", "$": "apply",
+	},
+	"pager": {
+		"j": "scroll-down", "k": "scroll-up",
+		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"g": "scroll-top", "G": "scroll-bottom",
+		"q": "back",
+	},
+}
+
+// emacsScheme is the R9 alternative scheme: emacs movement keys, the
+// rest scheme-neutral (open, tag actions, undo, apply, quit).
+var emacsScheme = map[string]map[string]string{
+	"index": {
+		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up", "o": "open",
+		"q": "quit", "r": "toggle-read", "a": "archive", "d": "delete",
+		"u": "undo", "$": "apply",
+	},
+	"pager": {
+		"ctrl+n": "scroll-down", "ctrl+p": "scroll-up",
+		"ctrl+v": "page-down", "alt+v": "page-up",
+		"ctrl+g": "back", "q": "quit",
+	},
+}
+
+// scheme returns the default binding tables for a keymap (R9): vim or
+// emacs. The schemes are the R9 "default scheme" data - declarative,
+// never code.
+func scheme(keymap string) map[string]map[string]string {
+	if keymap == "emacs" {
+		return emacsScheme
+	}
+	return vimScheme
+}
+
+// mergeBindings overlays the file's per-key bindings on the scheme
+// defaults; a context table missing from the file is the whole scheme
+// table. Callers pass ONLY the file's tables (Load nils the Default
+// tables before decode, so scheme defaults never leak cross-keymap).
+func mergeBindings(file map[string]map[string]string, keymap string) map[string]map[string]string {
+	out := map[string]map[string]string{}
+	for ctx, km := range scheme(keymap) {
+		merged := map[string]string{}
+		for k, v := range km {
+			merged[k] = v
+		}
+		for k, v := range file[ctx] {
+			merged[k] = v
+		}
+		out[ctx] = merged
+	}
+	return out
+}
+
+// cloneBindings deep-copies a binding table set: Default hands out a
+// fresh map so a caller's rebind never touches the scheme package vars.
+func cloneBindings(b map[string]map[string]string) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(b))
+	for ctx, km := range b {
+		out[ctx] = maps.Clone(km)
+	}
+	return out
+}
+
 func Default() Config {
 	return Config{
 		UI: UI{
@@ -477,19 +548,7 @@ func Default() Config {
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
 		},
-		Bindings: map[string]map[string]string{
-			"index": {
-				"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
-				"r": "toggle-read", "a": "archive", "d": "delete",
-				"u": "undo", "$": "apply",
-			},
-			"pager": {
-				"j": "scroll-down", "k": "scroll-up",
-				"ctrl+d": "page-down", "ctrl+u": "page-up",
-				"g": "scroll-top", "G": "scroll-bottom",
-				"q": "back",
-			},
-		},
+		Bindings: cloneBindings(scheme("vim")),
 		TagActions: map[string]string{
 			"toggle-read": "unread",
 			"archive":     "archive",
@@ -578,11 +637,17 @@ func (c Config) TagGroupList() []core.TagGroup {
 // naming the key (strict load, R8). A missing file means defaults.
 func Load(path string) (Config, error) {
 	cfg := Default()
+	// R9: the file's binding tables replace the scheme defaults (they
+	// would otherwise overlay the vim scheme); the scheme merge happens
+	// after decode, keyed by the selected keymap.
+	cfg.Bindings = nil
 	md, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
 		if os.IsNotExist(err) {
+			cfg.Bindings = mergeBindings(nil, cfg.UI.Keymap)
 			return cfg, nil
 		}
+		cfg.Bindings = mergeBindings(cfg.Bindings, cfg.UI.Keymap)
 		return cfg, err
 	}
 	if und := md.Undecoded(); len(und) > 0 {
@@ -601,6 +666,7 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("%s: unknown key(s): %s", path, strings.Join(keys, ", "))
 		}
 	}
+	cfg.Bindings = mergeBindings(cfg.Bindings, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {
 		return cfg, err
 	}

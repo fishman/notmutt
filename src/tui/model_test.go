@@ -706,6 +706,68 @@ func TestPagerKeyOnlyActiveInPager(t *testing.T) {
 	}
 }
 
+func TestKeyhintBar(t *testing.T) {
+	km := map[string]string{"j": "cursor-down", "q": "quit"}
+	hint := keyhintRow(km, 30)
+	if !strings.Contains(hint, "j cursor-down") || !strings.Contains(hint, "q quit") {
+		t.Fatalf("hint must derive from the binding map: %q", hint)
+	}
+	if runewidth.StringWidth(hint) > 30 {
+		t.Fatalf("hint exceeds width: %q", hint)
+	}
+}
+
+// TestKeyhintRowInView pins the hint row in the render: the active
+// context's binding map renders above the status line in index mode,
+// and the pager context's table replaces it in pager mode.
+func TestKeyhintRowInView(t *testing.T) {
+	m := model()
+	m.width, m.height = 120, 24
+	strip := stripANSI(m.View())
+	if !strings.Contains(strip, "j cursor-down") {
+		t.Fatalf("index hint row missing:\n%s", strip)
+	}
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|2"); si < 0 || si > sh {
+		t.Fatalf("hint row must sit above the status line:\n%s", strip)
+	}
+	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	strip = stripANSI(m.View())
+	if !strings.Contains(strip, "j scroll-down") {
+		t.Fatalf("pager hint row missing:\n%s", strip)
+	}
+	if strings.Contains(strip, "j cursor-down") {
+		t.Fatalf("pager must not show index bindings:\n%s", strip)
+	}
+}
+
+func TestPagerKeysOnlyInPager(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox"}},
+	})})
+	// q is bound only in the pager context: in index mode it must be a
+	// no-op (no quit, no back), in pager mode it returns to index
+	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "back"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m.width, m.height = 40, 10
+	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("q unbound in index mode must not quit")
+	}
+	if m.mode != "index" {
+		t.Fatalf("q unbound in index mode must not change mode, mode=%q", m.mode)
+	}
+	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	if m.mode != "pager" {
+		t.Fatalf("o must open the pager, mode=%q", m.mode)
+	}
+	m = press(t, m, "q")
+	if m.mode != "index" {
+		t.Fatalf("q in pager mode must return to index, mode=%q", m.mode)
+	}
+}
+
 func TestPagerPageKeys(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10

@@ -432,6 +432,39 @@ structure, sizes - those need a file open and parse.
   sanitize/render/mailcap paths as fresh data - never trusted by
   virtue of being cached.
 
+### R14. Staged tag operations (apply and undo)
+
+UI tag operations (read/unread, archive, delete, flag, ...) never write to
+notmuch at keypress time. They stage into a per-session buffer; notmuch sees
+them only when the user applies. The buffer is the undo mechanism - the thing
+immediate tag writes can never provide: in neomutt every tag application is
+final, a mis-tap is permanent, and exclusive-group conflicts land as DB state
+instead of a reversible stage.
+
+- A tag action on the cursor message STAGES a pending op: the view re-renders
+  the staged state immediately (applied tags plus pending ops, with the R2
+  exclusive-group resolution applied, so staging archive drops inbox/unread
+  from the render); notmuch is untouched.
+- APPLY (default `$`, mutt's sync semantics) flushes the buffer: one ActTag
+  batch per message carrying the fully resolved op set (pending ops plus
+  exclusive-group removals), on the worker's lock-budgeted action path. A
+  failed message's ops stay staged - retry or undo.
+- UNDO (`u`) discards the cursor message's staged ops and re-renders its
+  last-applied state. Before apply it is a pure buffer drop, free of DB
+  traffic.
+- The refresh cycle never clobbers the buffer: merges apply snapshot truth
+  first, then replay pending ops on top (reconcile-then-replay, the view
+  ordering T11/T12 built). Staged ops survive view switches and refreshes;
+  they are session-local and lost on exit (persistence is future work).
+  Filter-engine writes (R2 pipeline) bypass the buffer; where a filter
+  retags a staged message, the replay ordering lets the user's pending ops
+  win the render, and apply recomputes the op set against the current state.
+- Buffer entries are keyed by message identity, never position, so merges
+  and cursor movement cannot mis-attribute a staged op.
+
+M1's immediate toggle (tui toggleRead -> ActTag) is the placeholder this
+requirement supersedes.
+
 The reference repos (neomutt, aerc, afew, neovim, lazygit, muttrc) are
 advisory:
 they prove the mail concept, the config intent, and the failure modes -

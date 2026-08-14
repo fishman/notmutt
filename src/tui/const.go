@@ -14,7 +14,7 @@ const (
 	// resolve only when no move happened since it was armed - a
 	// too-young tick re-arms itself. The legend shows what the cursor
 	// rested on, never what it flashed past.
-	legendDebounce = 50 * time.Millisecond
+	legendDebounce = 20 * time.Millisecond
 	// progressTickInterval is the progress bar's repaint cadence while
 	// a job is on (R15).
 	progressTickInterval = 200 * time.Millisecond

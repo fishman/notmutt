@@ -11,11 +11,11 @@ import (
 func TestStatusLineSegments(t *testing.T) {
 	ui := config.Default().UI
 	row := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
-	if !strings.Contains(row, "inbox") || !strings.Contains(row, "5") {
-		t.Fatalf("segments must render: %q", row)
+	if !strings.Contains(row, " inbox ") || !strings.Contains(row, " 5 ") {
+		t.Fatalf("segments must render as padded pills: %q", row)
 	}
-	if !strings.Contains(row, ui.Glyphs.StatuslineSeparator) {
-		t.Fatalf("segments must join with the separator: %q", row)
+	if !strings.Contains(row, "152;195;121") || !strings.Contains(row, "229;192;123") {
+		t.Fatalf("view and count must carry their own pill colors: %q", row)
 	}
 }
 
@@ -54,14 +54,26 @@ func TestStatusLineLegend(t *testing.T) {
 }
 
 // TestStatusLineAccount pins the account segment: the cursor message's
-// account tag renders in the status row and in no other segment - the
-// account surface is the status bar, not the mail title.
+// account tag renders in the status row as its own colored pill, set
+// apart from the count by whitespace - never connected. The account
+// surface is the status bar, not the mail title.
 func TestStatusLineAccount(t *testing.T) {
 	ui := config.Default().UI
 	d := statusData{view: "inbox", visible: 2, account: "gmail"}
 	row := statusLine(DefaultStyles(), ui, d)
-	if !strings.Contains(row, "gmail") {
-		t.Fatalf("account must render in the status row: %q", row)
+	strip := stripANSI(row)
+	if !strings.Contains(row, " gmail ") {
+		t.Fatalf("account must render as a padded pill: %q", row)
+	}
+	if !strings.Contains(row, "97;175;239") {
+		t.Fatalf("the account pill must carry its own background: %q", row)
+	}
+	ci, gi := strings.Index(strip, "2"), strings.Index(strip, "gmail")
+	if ci < 0 || ci > gi {
+		t.Fatalf("count must sit before the account: %q", strip)
+	}
+	if strings.Trim(strip[ci+1:gi], " ") != "" {
+		t.Fatalf("the pills must be separated by whitespace only: %q", strip)
 	}
 	if accountTag([]string{"inbox", "gmail", "work"}, config.Default().AccountTags()) != "gmail" {
 		t.Fatal("accountTag must find the account tag in the tag list")
@@ -72,27 +84,6 @@ func TestStatusLineAccount(t *testing.T) {
 	empty := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 2})
 	if strings.Contains(empty, "gmail") {
 		t.Fatalf("no account, no segment: %q", empty)
-	}
-}
-
-// TestStatusLinePowerlineGlyphs pins the powerline model (tmux2k
-// onedark reference): the left-group chevron is the default seam, the
-// right group has its own mirrored glyph, and replacing the separator
-// in config turns the powerline look off.
-func TestStatusLinePowerlineGlyphs(t *testing.T) {
-	ui := config.Default().UI
-	if ui.Glyphs.StatuslineSeparator != "" || ui.Glyphs.StatuslineSeparatorR != "" {
-		t.Fatalf("powerline chevrons must be the defaults: %q %q",
-			ui.Glyphs.StatuslineSeparator, ui.Glyphs.StatuslineSeparatorR)
-	}
-	row := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
-	if !strings.Contains(row, "") {
-		t.Fatalf("the left-group chevron must join segments: %q", row)
-	}
-	ui.Glyphs.StatuslineSeparator = " "
-	plain := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
-	if strings.Contains(plain, "") {
-		t.Fatalf("the separator config must replace the chevron: %q", plain)
 	}
 }
 

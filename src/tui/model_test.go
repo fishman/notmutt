@@ -27,6 +27,12 @@ var testKeys = map[string]string{
 	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
 }
 
+// statusMarker is the unstyled view+count boundary on the status row:
+// the view pill, the bar gap, and the count pill.
+func statusMarker(count string) string {
+	return "inbox" + strings.Repeat(pillGap, 3) + count
+}
+
 var testTagActions = map[string]string{
 	"toggle-read": "unread",
 	"archive":     "archive",
@@ -456,7 +462,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 	if !strings.Contains(out, "refresh 5/10") {
 		t.Fatalf("bar missing:\n%s", out)
 	}
-	if !strings.Contains(stripANSI(out), "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"2") {
+	if !strings.Contains(stripANSI(out), statusMarker("2")) {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
@@ -489,10 +495,10 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 		t.Fatalf("the literal empty text must not render:\n%s", out)
 	}
 	strip := stripANSI(out)
-	if !strings.Contains(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0") {
+	if !strings.Contains(strip, statusMarker("0")) {
 		t.Fatalf("idle empty view must still render the status line:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0"); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	if !strings.Contains(out, "229;192;123") {
@@ -525,7 +531,7 @@ func TestProgressBarEmptyViewHints(t *testing.T) {
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("empty view must render the keyhint row:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0"); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 }
@@ -852,7 +858,7 @@ func TestKeyhintRowInView(t *testing.T) {
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("index hint row missing:\n%s", strip)
 	}
-	status := "inbox" + config.Default().UI.Glyphs.StatuslineSeparator + "2"
+	status := statusMarker("2")
 	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, status); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}

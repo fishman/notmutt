@@ -23,6 +23,9 @@ type Styles struct {
 	Normal    lipgloss.Style
 	Indicator lipgloss.Style
 	Status    lipgloss.Style
+	View      lipgloss.Style // statusline view pill
+	Count     lipgloss.Style // statusline count pill
+	Account   lipgloss.Style // statusline account pill (R2)
 	Progress  lipgloss.Style
 	Error     lipgloss.Style
 	Index     IndexStyles
@@ -54,6 +57,9 @@ func DefaultStyles() Styles {
 		Normal:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#21252b")),
 		Indicator: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#e5c07b")),
 		Status:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
+		View:      lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#98c379")),
+		Count:     lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#e5c07b")),
+		Account:   lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Progress:  lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Error:     lipgloss.NewStyle().Foreground(c("#e06c75")),
 		Index: IndexStyles{
@@ -124,6 +130,9 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		Normal:    normal,
 		Indicator: to("indicator", normal),
 		Status:    to("status", normal),
+		View:      to("status.view", normal),
+		Count:     to("status.count", normal),
+		Account:   to("status.account", normal),
 		Progress:  to("progress", normal),
 		Error:     to("error", normal),
 		Index: IndexStyles{

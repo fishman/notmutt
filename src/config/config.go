@@ -31,19 +31,17 @@ type UI struct {
 
 type UITags struct {
 	Max       int               `toml:"max"`
-	Attach    string            `toml:"attach"` // the tag that marks attachments (renders in the row's attachment slot)
+	Attach    string            `toml:"attach"`     // the tag that marks attachments (renders in the row's attachment slot)
 	ShowIcons bool              `toml:"show-icons"` // false renders tag names instead of icons (R11)
-	Icons     map[string]string `toml:"icons"`  // tag name -> display icon (muttrc tag-transforms, R11)
+	Icons     map[string]string `toml:"icons"`      // tag name -> display icon (muttrc tag-transforms, R11)
 }
 
 // Glyphs are the config-data display glyphs (R11 tag-transforms rule);
 // the raw strings never hardcode in code.
 type Glyphs struct {
-	Staged              string `toml:"staged"`
-	ProgressFill        string `toml:"progress_fill"`
-	ProgressEmpty       string `toml:"progress_empty"`
-	StatuslineSeparator  string `toml:"statusline_separator"`   // seam in the left group (powerline chevron, E0B0)
-	StatuslineSeparatorR string `toml:"statusline_separator_right"` // seam in the right group (mirrored, E0B2)
+	Staged        string `toml:"staged"`
+	ProgressFill  string `toml:"progress_fill"`
+	ProgressEmpty string `toml:"progress_empty"`
 }
 
 // Style is one theme style: palette names or raw hex for fg/bg, a
@@ -139,6 +137,9 @@ type StyleTable struct {
 	Normal    Style
 	Indicator Style
 	Status    Style
+	View      Style // statusline view pill
+	Count     Style // statusline count pill
+	Account   Style // statusline account pill (R2)
 	Progress  Style
 	Error     Style
 	Index     IndexStyleTable
@@ -419,6 +420,9 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 	out["normal"] = normal
 	out["indicator"] = apply("indicator", table.Indicator)
 	out["status"] = apply("status", table.Status)
+	out["status.view"] = apply("status.view", table.View)
+	out["status.count"] = apply("status.count", table.Count)
+	out["status.account"] = apply("status.account", table.Account)
 	out["progress"] = apply("progress", table.Progress)
 	out["error"] = apply("error", table.Error)
 	for id, s := range map[string]Style{
@@ -580,8 +584,6 @@ func Default() Config {
 			},
 			Glyphs: Glyphs{
 				Staged: "*", ProgressFill: "#", ProgressEmpty: "-",
-				StatuslineSeparator:  "", // powerline on by default (tmux2k onedark look)
-				StatuslineSeparatorR: "",
 			},
 		},
 		Views: map[string]View{
@@ -630,13 +632,14 @@ func defaultTheme() Theme {
 		Default: "dark",
 		Variants: map[string]StyleTable{
 			"dark": {
-				// Status and background colors follow the tmux2k onedark
-				// theme (the user's reference): bar bg = the theme black
-				// #2d3139, text = #f8f8f8; the app background takes the
-				// same black so the bar blends like tmux2k's.
+				// the onedark port: bar and app background share the theme
+				// black; each statusline pill carries its own color
 				Normal:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
 				Indicator: Style{Fg: "#2d3139", Bg: "base0A"},
 				Status:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
+				View:      Style{Fg: "#2d3139", Bg: "base0B"},
+				Count:     Style{Fg: "#2d3139", Bg: "base0A"},
+				Account:   Style{Fg: "#2d3139", Bg: "base0D"},
 				Progress:  Style{Fg: "#2d3139", Bg: "base0D"},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
@@ -794,7 +797,7 @@ func validate(cfg Config) error {
 		return fmt.Errorf("theme.default: no variant %q", cfg.Theme.Default)
 	}
 	g := cfg.UI.Glyphs
-	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" || g.StatuslineSeparator == "" || g.StatuslineSeparatorR == "" {
+	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
 	}
 	for name, a := range cfg.Accounts {

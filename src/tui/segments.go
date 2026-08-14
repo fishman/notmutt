@@ -19,21 +19,22 @@ import (
 
 // viewSegment is the view name - priority 10, the one segment that
 // always survives the width fit.
-func viewSegment(name string) statusSegment {
-	return statusSegment{content: name, priority: 10}
+func viewSegment(name string, st Styles) statusSegment {
+	return statusSegment{content: name, style: st.View, priority: 10}
 }
 
 // countSegment is the visible thread count.
-func countSegment(visible int) statusSegment {
-	return statusSegment{content: strconv.Itoa(visible), priority: 5}
+func countSegment(visible int, st Styles) statusSegment {
+	return statusSegment{content: strconv.Itoa(visible), style: st.Count, priority: 5}
 }
 
 // accountSegment is the cursor message's account (R2): the account tag
-// the message carries. Priority 6 - it survives the count's drop but
-// never outlives the view name. Empty when the message has no account
-// tag; the segment simply does not compose then.
-func accountSegment(name string) statusSegment {
-	return statusSegment{content: name, priority: 6}
+// the message carries, rendered as its own colored pill. Priority 6 -
+// it survives the count's drop but never outlives the view name. Empty
+// when the message has no account tag; the segment simply does not
+// compose then.
+func accountSegment(name string, st Styles) statusSegment {
+	return statusSegment{content: name, style: st.Account, priority: 6}
 }
 
 // legendSegment is the icon library: the pre-fitted "icon name" pairs

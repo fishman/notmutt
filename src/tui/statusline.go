@@ -46,30 +46,27 @@ func statusLine(st Styles, ui config.UI, d statusData) string {
 // full width: the right group right-aligns, trailing gaps pad with
 // the status background (R11 slot reservation).
 func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
-	left := []statusSegment{viewSegment(d.view), countSegment(d.visible)}
+	left := []statusSegment{viewSegment(d.view, st), countSegment(d.visible, st)}
 	if d.account != "" {
-		left = append(left, accountSegment(d.account))
+		left = append(left, accountSegment(d.account, st))
 	}
 	var right []statusSegment
 	if d.on && d.prog != nil {
 		right = append(right, progressSegment(ui, *d.prog, st))
 	}
-	sep := ui.Glyphs.StatuslineSeparator
-	sepR := ui.Glyphs.StatuslineSeparatorR
 	if d.legend != "" {
-		// The legend is pre-fitted to the row: whatever width the fixed
-		// segments (view, count) and the right group leave, truncated
-		// wcwidth-aware - the status row never shifts with its content
-		// (R11 slot reservation). The drop loop below stays as the
-		// backstop when a future segment overruns.
-		fixed := groupWidth(left, sep)
-		budget := width - fixed - groupWidth(right, sepR) - runewidth.StringWidth(sep)
+		// The legend is pre-fitted to the leftover width, truncated
+		// wcwidth-aware (R11 slot reservation); the drop loop stays as
+		// the backstop when a future segment overruns. Its footprint is
+		// content + two inner gaps + the bar gap before it.
+		fixed := groupWidth(left)
+		budget := width - fixed - groupWidth(right) - 3*runewidth.StringWidth(pillGap)
 		if budget > 0 {
 			left = append(left, legendSegment(d.legend, budget))
 		}
 	}
 	for {
-		w := groupWidth(left, sep) + groupWidth(right, sepR)
+		w := groupWidth(left) + groupWidth(right)
 		if width <= 0 || w <= width {
 			break
 		}
@@ -83,9 +80,9 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 			right = append(right[:dropIdx], right[dropIdx+1:]...)
 		}
 	}
-	row, rowWidth := composeGroup(left, sep, st)
-	if rightWidth := groupWidth(right, sepR); rightWidth > 0 {
-		rr, _ := composeGroup(right, sepR, st)
+	row, rowWidth := composeGroup(left, st)
+	if rightWidth := groupWidth(right); rightWidth > 0 {
+		rr, _ := composeGroup(right, st)
 		if pad := width - rowWidth - rightWidth; pad > 0 {
 			row += st.Status.Render(strings.Repeat(" ", pad))
 		}
@@ -119,31 +116,35 @@ func pickLowest(left, right []statusSegment) (from, idx int) {
 	return from, idx
 }
 
-// groupWidth is the visible width of a joined segment run.
-func groupWidth(segs []statusSegment, sep string) int {
+// groupWidth is a pill run's visible width: each segment's content
+// plus its two inner gaps, and a bar gap between pills.
+func groupWidth(segs []statusSegment) int {
 	if len(segs) == 0 {
 		return 0
 	}
 	w := 0
 	for _, s := range segs {
-		w += runewidth.StringWidth(stripANSI(s.content))
+		w += runewidth.StringWidth(stripANSI(s.content)) + 2*runewidth.StringWidth(pillGap)
 	}
-	return w + (len(segs)-1)*runewidth.StringWidth(sep)
+	return w + (len(segs)-1)*runewidth.StringWidth(pillGap)
 }
 
-// composeGroup renders a run of segments joined by separator seams.
-func composeGroup(segs []statusSegment, sep string, st Styles) (string, int) {
+const pillGap = " "
+
+// composeGroup renders a run of segments as pills: each segment is a
+// colored block with a gap of padding inside, separated from the next
+// by a whitespace on the bar - never connected.
+func composeGroup(segs []statusSegment, st Styles) (string, int) {
 	if len(segs) == 0 {
 		return "", 0
 	}
 	var b strings.Builder
-	prev := segmentStyle(segs[0], st)
-	b.WriteString(prev.Render(segs[0].content))
-	for _, s := range segs[1:] {
+	for i, s := range segs {
+		if i > 0 {
+			b.WriteString(st.Status.Render(pillGap))
+		}
 		cur := segmentStyle(s, st)
-		b.WriteString(seam(prev, cur, sep))
-		b.WriteString(cur.Render(s.content))
-		prev = cur
+		b.WriteString(cur.Render(pillGap + s.content + pillGap))
 	}
 	return b.String(), runewidth.StringWidth(stripANSI(b.String()))
 }
@@ -154,20 +155,6 @@ func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
 		return st.Status
 	}
 	return s.style
-}
-
-// seam renders the separator between two adjacent segments: fg = the
-// previous segment's bg on the next segment's bg (the powerline
-// chevron); equal bgs render the separator in the previous segment's
-// fg instead - a plain separator on the shared status background.
-func seam(prev, next lipgloss.Style, sep string) string {
-	s := next
-	if prev.GetBackground() != next.GetBackground() {
-		s = s.Foreground(prev.GetBackground())
-	} else if fg := prev.GetForeground(); fg != (lipgloss.NoColor{}) {
-		s = s.Foreground(fg)
-	}
-	return s.Render(sep)
 }
 
 // progressBar builds the fill and empty glyph runs for the job's

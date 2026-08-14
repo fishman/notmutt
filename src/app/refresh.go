@@ -5,6 +5,7 @@ import (
 	"sort"
 	"sync"
 
+	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
 )
@@ -69,6 +70,18 @@ func (r *refresher) cycle() {
 		r.merge(threads)
 	}
 	r.rPrev = rpl.Rev
+}
+
+// onConfig applies a runtime config change: a view-section change takes
+// the query from the store (the single write path, R8), then a full
+// reload re-fetches. Called from runRefresher's event loop only.
+func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
+	if e.Section == "view" {
+		if v, ok := st.Config().Views[r.view.Name]; ok && v.Query != r.view.Query {
+			r.view.Query = v.Query
+		}
+	}
+	r.fullReload()
 }
 
 // merge carries unchanged threads over from the last snapshot: the

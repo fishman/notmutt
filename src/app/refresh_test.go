@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
 )
@@ -142,6 +143,44 @@ func TestCycleFullReloadRemoves(t *testing.T) {
 	}
 	if len(r.snapshot) != 0 {
 		t.Fatalf("snapshot not reset: %d threads", len(r.snapshot))
+	}
+}
+
+func TestOnConfig(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeWorker{}
+	fw.set("u", 1)
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	st := config.NewStore(config.Default())
+	if err := st.SetViewQuery("inbox", "tag:changed"); err != nil {
+		t.Fatal(err)
+	}
+	r.onConfig(st, core.ConfigChanged{Section: "view"})
+	if r.view.Query != "tag:changed" {
+		t.Fatalf("view query not taken from the store: %q", r.view.Query)
+	}
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected ViewDiff after config reload, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff after view-section config change")
+	}
+	r.onConfig(st, core.ConfigChanged{Section: "ui"})
+	if r.view.Query != "tag:changed" {
+		t.Fatalf("ui section must not change the query: %q", r.view.Query)
+	}
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected ViewDiff from ui-section reload, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff after ui-section config change")
 	}
 }
 

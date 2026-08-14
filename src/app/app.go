@@ -24,6 +24,9 @@ func Run() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	bus := core.NewBus()
+	st := config.NewStore(cfg)
+	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
+	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
 	worker := notmuch.NewWorker(bus, notmuch.NewCLI(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -56,7 +59,7 @@ func Run() error {
 		}()
 	})
 
-	go runRefresher(ctx, bus, worker, view, refresher)
+	go runRefresher(ctx, bus, worker, view, refresher, st)
 
 	busCh := bus.Subscribe()
 	prog := tea.NewProgram(tui.New(view, busCh), tea.WithAltScreen())
@@ -68,7 +71,7 @@ func Run() error {
 	return err
 }
 
-func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, r *refresher) {
+func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, r *refresher, st *config.Store) {
 	ch := bus.Subscribe()
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -80,11 +83,11 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, view *co
 			worker.Call(notmuch.Action{Kind: notmuch.ActNew})
 			r.cycle()
 		case e := <-ch:
-			switch e.(type) {
+			switch e := e.(type) {
 			case core.WorkerDone:
 				r.cycle()
 			case core.ConfigChanged:
-				r.fullReload()
+				r.onConfig(st, e)
 			}
 		}
 	}

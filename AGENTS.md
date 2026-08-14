@@ -444,8 +444,10 @@ instead of a reversible stage.
 
 - A tag action on the cursor message STAGES a pending op: the view re-renders
   the staged state immediately (applied tags plus pending ops, with the R2
-  exclusive-group resolution applied, so staging archive drops inbox/unread
-  from the render); notmuch is untouched.
+  exclusive-group resolution applied, so staging archive drops inbox from
+  the render); notmuch is untouched. unread is a soft tag - it is never a
+  group member, survives folder moves (a move must not clear read state),
+  and leaves the render only via its own staged op (the r toggle).
 - Staged state is visually distinct and themable: a row with pending ops
   renders with the `[index.staged]` style (R11 machinery - palette names or
   raw hex, inherits the base index style, unified attrs) plus a staged glyph

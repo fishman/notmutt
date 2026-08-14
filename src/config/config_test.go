@@ -155,12 +155,21 @@ func TestValidateTagGroup(t *testing.T) {
 func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	want := map[string]string{
-		"j": "cursor-down", "k": "cursor-up", "q": "quit",
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 	}
 	if !maps.Equal(cfg.Bindings["index"], want) {
 		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
+	}
+	wantPager := map[string]string{
+		"j": "scroll-down", "k": "scroll-up",
+		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"g": "scroll-top", "G": "scroll-bottom",
+		"q": "back",
+	}
+	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
+		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
 	}
 }
 

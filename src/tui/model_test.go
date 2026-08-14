@@ -1,6 +1,9 @@
 package tui
 
 import (
+	"errors"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -15,7 +18,7 @@ import (
 )
 
 var testKeys = map[string]string{
-	"j": "cursor-down", "k": "cursor-up", "q": "quit",
+	"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 	"r": "toggle-read", "a": "archive", "d": "delete",
 	"u": "undo", "$": "apply",
 }
@@ -26,6 +29,18 @@ var testTagActions = map[string]string{
 	"delete":      "deleted",
 }
 
+// testBindings is the per-context binding table (R9): the index context
+// carries the staging keys, the pager context the scroll keys.
+var testBindings = map[string]map[string]string{
+	"index": testKeys,
+	"pager": {
+		"j": "scroll-down", "k": "scroll-up",
+		"ctrl+d": "page-down", "ctrl+u": "page-up",
+		"g": "scroll-top", "G": "scroll-bottom",
+		"q": "back",
+	},
+}
+
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
@@ -33,7 +48,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -44,7 +59,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -62,7 +77,7 @@ func stubModel() Model {
 		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
 		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
 	})
-	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
@@ -267,7 +282,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -295,7 +310,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"x": "archive"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -315,7 +330,7 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"x": "toggle-read"}}, map[string]string{"toggle-read": "wip"}, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	// wip is in no group, so it is soft: it toggles from the applied
@@ -342,7 +357,7 @@ func TestTagActionFolderAddCustomName(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "b", Timestamp: 200, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"y": "wip"}}, map[string]string{"wip": "archive"}, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "y")
 	row, _ := m.view.CursorRow()
 	// archive is a folder tag: a custom action name still stages +archive
@@ -368,7 +383,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (indicator style SGR) is not a
@@ -402,7 +417,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View(), "refresh 1/5") {
@@ -445,7 +460,7 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testKeys, testTagActions, nil, st, cfg.UI)
+	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
 	m.width, m.height = 80, 24
 	if out := m.View(); strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
@@ -483,7 +498,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
@@ -532,7 +547,7 @@ func TestProgressBarPerView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	// another view's fill publishes: the inbox bar stays off
@@ -555,5 +570,116 @@ func TestProgressBarPerView(t *testing.T) {
 	m = pump(t, m, ch)
 	if m.progressOn {
 		t.Fatal("bar must clear on this view's completion")
+	}
+}
+
+// fixtureMsg writes a synthetic message file and returns its path (mail
+// content in tests is synthetic; no real mail is used).
+func fixtureMsg(t *testing.T, body string) string {
+	t.Helper()
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: hello\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: text/plain; charset=utf-8\n\n" + body
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// openPager presses "o" with an open handler that injects the loaded
+// thread as a bus event, mirroring the app's worker publish path. The
+// handler updates the model synchronously, so the returned model
+// carries the pager state.
+func openPager(t *testing.T, m Model, path string) Model {
+	t.Helper()
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+		}})
+		m = next.(Model)
+	})
+	press(t, m, "o")
+	return m
+}
+
+func TestOpenSwitchesToPager(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
+	}
+	if m.pager == nil || len(m.pager.lines) == 0 {
+		t.Fatal("pager content missing")
+	}
+	out := stripANSI(m.View())
+	for _, want := range []string{"hello", "a@example.com", "body line"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("pager render missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestPagerBackReturnsToIndex(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
+	}
+	m = press(t, m, "q")
+	if m.mode != "index" {
+		t.Fatalf("q in pager mode must return to index, mode=%q", m.mode)
+	}
+}
+
+func TestPagerKeyOnlyActiveInPager(t *testing.T) {
+	m := model()
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	if m.mode != "pager" || m.pager == nil {
+		t.Fatal("o must open the pager")
+	}
+	cur := m.CursorIndex()
+	m = press(t, m, "j")
+	if m.pager.vp.offset != 1 {
+		t.Fatalf("j in pager mode must scroll the viewport, offset=%d", m.pager.vp.offset)
+	}
+	if m.CursorIndex() != cur {
+		t.Fatalf("j in pager mode must not move the cursor")
+	}
+	m = press(t, m, "G")
+	if m.pager.vp.offset < 2 {
+		t.Fatalf("G must scroll to the bottom, offset=%d", m.pager.vp.offset)
+	}
+	m = press(t, m, "g")
+	if m.pager.vp.offset != 0 {
+		t.Fatalf("g must scroll to the top, offset=%d", m.pager.vp.offset)
+	}
+	m = press(t, m, "q")
+	if m.mode != "index" {
+		t.Fatalf("q must return to index, mode=%q", m.mode)
+	}
+	m = press(t, m, "j")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("j in index mode must move the cursor, got %d", m.CursorIndex())
+	}
+}
+
+func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
+		m = next.(Model)
+	})
+	m = press(t, m, "o")
+	if m.mode != "index" {
+		t.Fatalf("a failed load must stay in index, mode=%q", m.mode)
+	}
+	if m.pager != nil {
+		t.Fatal("a failed load must drop the pager")
 	}
 }

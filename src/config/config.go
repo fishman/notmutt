@@ -479,9 +479,15 @@ func Default() Config {
 		},
 		Bindings: map[string]map[string]string{
 			"index": {
-				"j": "cursor-down", "k": "cursor-up", "q": "quit",
+				"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 				"r": "toggle-read", "a": "archive", "d": "delete",
 				"u": "undo", "$": "apply",
+			},
+			"pager": {
+				"j": "scroll-down", "k": "scroll-up",
+				"ctrl+d": "page-down", "ctrl+u": "page-up",
+				"g": "scroll-top", "G": "scroll-bottom",
+				"q": "back",
 			},
 		},
 		TagActions: map[string]string{

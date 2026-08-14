@@ -65,10 +65,28 @@ func Run() error {
 		}()
 	})
 
+	// open: the worker loads the thread's messages (headers + paths,
+	// ActThread), the TUI parses the files into the pager on the
+	// ThreadLoaded event (R13 two-step - content loads on open only)
+	tui.SetOpenHandler(func(threadID string) {
+		go func() {
+			rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+			if err != nil {
+				bus.Publish(core.ThreadLoaded{ThreadID: threadID, Err: err})
+				return
+			}
+			if rpl.Err != nil {
+				bus.Publish(core.ThreadLoaded{ThreadID: threadID, Err: rpl.Err})
+				return
+			}
+			bus.Publish(core.ThreadLoaded{ThreadID: threadID, Msgs: rpl.Msgs})
+		}()
+	})
+
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions, bus, st, cfg.UI), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), tea.WithAltScreen())
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

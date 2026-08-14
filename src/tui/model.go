@@ -9,22 +9,23 @@ import (
 
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 )
 
 // Actions is the BUILTIN action vocabulary (R9): cursor movement, quit,
-// and the buffer/apply ops. Tag actions are NOT in here - they come
-// from the [tag-actions] config map; the app validates every binding
-// value against both at startup (unknown action = load error).
+// open, and the buffer/apply ops. Tag actions are NOT in here - they
+// come from the [tag-actions] config map; the app validates every
+// binding value against both at startup (unknown action = load error).
 var Actions = map[string]bool{
 	"cursor-down": true, "cursor-up": true, "quit": true,
-	"undo": true, "apply": true,
+	"undo": true, "apply": true, "open": true,
 }
 
 type Model struct {
 	view       *core.View
 	ch         <-chan core.Event
 	bus        *core.Bus
-	keys       map[string]string
+	bindings   map[string]map[string]string
 	tagActions map[string]string
 	st         *config.Store
 	ui         config.UI
@@ -32,19 +33,23 @@ type Model struct {
 	rows       []core.Row
 	width      int
 	height     int
+	mode       string // "index" default; "pager" while a thread is open
+	pager      *pager
 	job        string
 	progress   core.Progress
 	progressOn bool
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
-// tests: the progress bar falls back to event payloads). The theme
-// resolves into the render style set at construction from the store's
-// current config; a ConfigChanged{Section: "theme"} event re-reads
-// the store and re-resolves it (variant switches re-render live).
-func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
+// tests: the progress bar falls back to event payloads). bindings is
+// the per-context key table (R9); keys dispatch against the current
+// mode's table. The theme resolves into the render style set at
+// construction from the store's current config; a ConfigChanged{Section:
+// "theme"} event re-reads the store and re-resolves it (variant
+// switches re-render live).
+func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette)}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), mode: "index"}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -55,20 +60,61 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		if m.mode == "pager" && m.pager != nil {
+			// the status row and the keyhint placeholder row sit below
+			// the pager window (Task 4 fills the placeholder)
+			m.pager.setSize(m.width, m.height-2)
+		}
 	case tea.KeyMsg:
-		switch m.keys[string(msg.Runes)] {
+		km := m.bindings[m.mode]
+		if km == nil {
+			km = m.bindings["index"]
+		}
+		switch action := actionForKey(msg, km); action {
 		case "cursor-down":
 			m.moveCursor(1)
 		case "cursor-up":
 			m.moveCursor(-1)
+		case "open":
+			if m.mode == "index" {
+				m.openCursorThread()
+			}
 		case "quit":
 			return m, tea.Quit
 		case "undo":
 			m.undo()
 		case "apply":
 			onApply()
+		case "scroll-down":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.LineDown(1)
+			}
+		case "scroll-up":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.LineUp(1)
+			}
+		case "page-down":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.HalfPageDown()
+			}
+		case "page-up":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.HalfPageUp()
+			}
+		case "scroll-top":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.GotoTop()
+			}
+		case "scroll-bottom":
+			if m.mode == "pager" && m.pager != nil {
+				m.pager.vp.GotoBottom()
+			}
+		case "back":
+			if m.mode == "pager" {
+				m.mode = "index"
+			}
 		default:
-			m.stage(m.keys[string(msg.Runes)])
+			m.stage(action)
 		}
 	case core.ConfigChanged:
 		m.onConfig(msg)
@@ -82,6 +128,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.progress = e
 				m.progressOn = e.Done < e.Total
 			}
+		case core.ThreadLoaded:
+			m.onThreadLoaded(e)
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
@@ -110,6 +158,69 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 		cfg := m.st.Config()
 		m.styles = ResolveStyles(cfg.Theme, cfg.Palette)
 	}
+}
+
+// onThreadLoaded fills the pager from the worker's thread messages and
+// switches to pager mode. A failed load falls back to index and drops
+// the pager (a stale pager would serve old content on a later reload).
+// The thread-id guard makes a repeated load of the already-open thread
+// a no-op (idempotent handler): content and scroll position survive.
+func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
+	if e.Err != nil {
+		m.mode, m.pager = "index", nil
+		return
+	}
+	if e.ThreadID != pagerThreadID(m.pager) {
+		lines, err := mail.RenderThread(e.Msgs)
+		if err != nil {
+			m.mode, m.pager = "index", nil
+			return
+		}
+		m.pager = newPager(e.ThreadID, lines)
+		if m.width > 0 {
+			m.pager.setSize(m.width, m.height-2)
+		}
+		// populate the scroll window now - render is lazy in View, and
+		// a scroll key before the first repaint must not clamp to an
+		// empty window
+		m.pager.render(m.styles)
+	}
+	m.mode = "pager"
+}
+
+// openCursorThread hands the cursor row's thread to the open seam (the
+// app loads it and publishes ThreadLoaded). Ghost and stub rows carry
+// the thread id in the row itself; the message fallback covers rows
+// built before the thread id landed on them.
+func (m *Model) openCursorThread() {
+	row, ok := m.view.CursorRow()
+	if !ok {
+		return
+	}
+	tid := row.ThreadID
+	if tid == "" && row.Msg != nil {
+		tid = row.Msg.ThreadID
+	}
+	if tid != "" {
+		onOpen(tid)
+	}
+}
+
+// actionForKey resolves the pressed key: runes first (plain keys),
+// then BubbleTea's canonical name ("ctrl+n", "alt+v", ...) so control
+// keys are bindable.
+func actionForKey(msg tea.KeyMsg, km map[string]string) string {
+	if a, ok := km[string(msg.Runes)]; ok {
+		return a
+	}
+	return km[msg.String()]
+}
+
+func pagerThreadID(p *pager) string {
+	if p == nil {
+		return ""
+	}
+	return p.threadID
 }
 
 // refreshProgress re-reads the bus snapshot for the current job and
@@ -264,6 +375,14 @@ func (m Model) CursorIndex() int {
 }
 
 func (m Model) View() string {
+	if m.mode == "pager" && m.pager != nil {
+		var b strings.Builder
+		b.WriteString(m.pager.render(m.styles))
+		b.WriteString("\n") // keyhint placeholder row (Task 4 fills it)
+		b.WriteString(m.statusLineWith(m.styles, m.ui))
+		b.WriteByte('\n')
+		return b.String()
+	}
 	if m.rows == nil {
 		m.rows = m.view.Rows()
 	}

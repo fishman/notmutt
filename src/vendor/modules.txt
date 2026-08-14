@@ -22,6 +22,7 @@ github.com/charmbracelet/x/term
 ## explicit; go 1.14
 github.com/emersion/go-message
 github.com/emersion/go-message/charset
+github.com/emersion/go-message/mail
 github.com/emersion/go-message/textproto
 # github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f
 ## explicit; go 1.16

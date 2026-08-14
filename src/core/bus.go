@@ -69,6 +69,16 @@ type ConfigChanged struct{ Section string }
 
 type ViewDiff struct{ View string }
 
+// ThreadLoaded carries the open thread's messages (headers + file
+// paths) from the worker to the TUI (R13 two-step: content loads on
+// open only). Err names a failed worker call; the TUI falls back to
+// index mode.
+type ThreadLoaded struct {
+	ThreadID string
+	Msgs     []Message
+	Err      error
+}
+
 // JobError surfaces a failed background job (R15 error surface); the
 // TUI ignores it until the error widget lands.
 type JobError struct {

@@ -74,7 +74,11 @@ func (r *refresher) cycle() {
 
 // onConfig applies a runtime config change: a view-section change takes
 // the query from the store (the single write path, R8), then a full
-// reload re-fetches. Called from runRefresher's event loop only.
+// reload re-fetches. Runs in runRefresher's event-loop goroutine, which
+// is unsynchronized against cycle(): an in-flight initial load touches
+// the same r.view.Query and r.snapshot. ConfigChanged cannot fire in M1
+// (the store has no mutation caller); when one lands, onConfig must be
+// serialized against cycle - the running flag does not cover it.
 func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
 	if e.Section == "view" {
 		if v, ok := st.Config().Views[r.view.Name]; ok && v.Query != r.view.Query {

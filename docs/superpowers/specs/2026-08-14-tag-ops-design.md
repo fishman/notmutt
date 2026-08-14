@@ -73,9 +73,12 @@ own it, per the M1 lock discipline).
 Groups come from the config store: `[tag-groups.<name>]` with one field,
 `tags` - the member list. Membership IS the hard-tag declaration: a tag
 in a group is hard (exclusive, a physical folder mapped to a notmuch
-tag); any tag not in a group is soft (work, conference, ...) - unlimited,
-coexists with everything, applied by header rules (R2, filter-engine
-milestone), never touched by group resolution, never triggers a move.
+tag); any tag not in a group is soft (unread, work, conference, ...) -
+unlimited, coexists with everything, applied by header rules (R2,
+filter-engine milestone), never touched by group resolution, never
+triggers a move. unread is the canonical soft tag: a folder move must
+not clear read state, and the unified-inbox view queries unread across
+all folders - so unread never joins the folder group.
 
 The default ships the reference folder set - inbox included, so the
 muttrc `-inbox` folder rule and the conflict chain are both obsolete:

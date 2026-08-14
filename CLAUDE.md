@@ -18,5 +18,6 @@ Pi and other tools). Read it first; it is normative.
 
 ## Commit trailer
 
-If AI generated any part of a change, add `AI-assisted: <tool name>` to the
-commit message.
+Commits follow the Conventional Commits style: `type(scope): subject`, brief
+lowercase imperative subject. If AI generated any part of a change, add
+`AI-assisted: <tool name>` to the commit message.

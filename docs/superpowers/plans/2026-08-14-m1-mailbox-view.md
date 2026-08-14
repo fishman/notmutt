@@ -122,7 +122,7 @@ Expected: no output, exit 0 (module with no Go files builds clean).
 ```bash
 cd /home/user/git/opencode/notmutt
 git add .gitignore src/go.mod src/go.sum src/vendor docs/examples/config.toml
-git commit -m "Scaffold Go module with pinned, vendored dependencies"
+git commit -m "chore: scaffold Go module"
 ```
 
 ## Task 2: Core types and the comparator
@@ -258,7 +258,7 @@ Expected: `ok notmutt/core` (2 tests pass). Then `gofmt -l .` prints nothing.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/core
-git commit -m "Add core message/thread types and the canonical comparator"
+git commit -m "feat(core): add message types and comparator"
 ```
 
 ## Task 3: Diff engine with property test
@@ -563,7 +563,7 @@ Expected: all three tests pass (2000 property iterations + the move-collapse che
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/core
-git commit -m "Add sorted-merge diff engine with move collapse and property test"
+git commit -m "feat(diff): add sorted-merge diff engine"
 ```
 
 ## Task 4: Event bus
@@ -703,7 +703,7 @@ Expected: both pass.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/core
-git commit -m "Add fan-out event bus with drop-on-full coalescing"
+git commit -m "feat(bus): add fan-out event bus"
 ```
 
 ## Task 5: Config store
@@ -1011,7 +1011,7 @@ Expected: all 8 tests pass. `gofmt -l .` prints nothing.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/config
-git commit -m "Add strict TOML config store with typed section observers"
+git commit -m "feat(config): add strict TOML store"
 ```
 
 ## Task 6: View model
@@ -1544,7 +1544,7 @@ Expected: all core tests pass, including the diff property tests. `gofmt -l .` p
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/core
-git commit -m "Reconcile fields, nearest-ancestor tree, cursor clamp, ghost rows, view mutex"
+git commit -m "feat(view): reconcile fields, tree, cursor, ghosts"
 ```
 
 ## Task 7: MIME cache
@@ -1985,7 +1985,7 @@ Expected: all 9 tests pass. `gofmt -l .` prints nothing.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/cache
-git commit -m "Add bbolt MIME cache and go-message attachment scan"
+git commit -m "feat(cache): add bbolt MIME cache"
 ```
 
 ### Review notes (applied fixes, T7)
@@ -2429,7 +2429,7 @@ Expected: one line, 3 tab-separated fields (count, uuid, revision). The search/s
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/notmuch
-git commit -m "Add notmuch CLI backend with JSON parsing and argv-only run"
+git commit -m "feat(notmuch): add CLI backend"
 ```
 
 ## Task 9: Notmuch worker
@@ -2808,7 +2808,7 @@ Expected: all 12 tests pass (7 CLI from task 8 + 5 worker).
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/notmuch
-git commit -m "Add worker action loop with lock budgets and bus events"
+git commit -m "feat(worker): add action loop with lock budgets"
 ```
 
 ## Task 10: Refresh cycle
@@ -3198,7 +3198,7 @@ Expected: all 4 tests pass.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/app
-git commit -m "Add lastmod incremental refresh cycle with full-reload triggers"
+git commit -m "feat(refresh): add lastmod incremental cycle"
 ```
 
 **Coordination notes (post-implementation)**: committed as ec3eadb
@@ -3772,7 +3772,7 @@ Expected: all 8 tests pass. `gofmt -l .` prints nothing.
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/tui
-git commit -m "Add BubbleTea index view with fixed-slot rows and bus bridge"
+git commit -m "feat(tui): add index view with fixed-slot rows"
 ```
 
 **Coordination notes (post-implementation, Task 11)**: committed as 0614baa,
@@ -4068,7 +4068,7 @@ Note: the TUI is an alt-screen program; run it in a real terminal to confirm ren
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/main.go src/app
-git commit -m "Wire app: config, worker, refresher, cache job, TUI"
+git commit -m "feat(app): wire config, worker, refresher, cache, TUI"
 ```
 
 **Coordination notes (post-implementation, Task 12)**: committed as
@@ -4144,36 +4144,29 @@ Ask the user which option they prefer before running anything that needs sudo. T
 
 package notmuch
 
-/*
-#cgo pkg-config: notmuch
-#include <notmuch.h>
-#include <stdlib.h>
-*/
-import "C"
-
 import (
 	"context"
 	"fmt"
-	"unsafe"
+
+	nm "github.com/fishman/go.notmuch"
 
 	"notmutt/core"
 )
 
-// CGOBackend is the in-tree binding (notmuch contrib pattern). It exists
-// only for the benchmark; the CLI backend stays the default unless cgo
-// demonstrably wins (SECURITY.md F10).
+// CGOBackend wraps github.com/zenhack/go.notmuch (fishman fork of zenhack's
+// go.notmuch, vendored; the upstream contrib/go bindings lack Revision and
+// were dormant 2018-2026). It exists only for the benchmark; the CLI backend
+// stays the default unless cgo demonstrably wins (SECURITY.md F10).
 type CGOBackend struct {
-	db *C.notmuch_database_t
+	db *nm.DB
 }
 
 func NewCGO() *CGOBackend { return &CGOBackend{} }
 
 func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
-	var db *C.notmuch_database_t
-	path := C.CString(dbPath)
-	defer C.free(unsafe.Pointer(path))
-	if st := C.notmuch_database_open(path, C.NOTMUCH_DATABASE_MODE_READ_ONLY, &db); st != C.NOTMUCH_STATUS_SUCCESS {
-		return errStatus(st, "open")
+	db, err := nm.Open(dbPath, nm.DBReadOnly)
+	if err != nil {
+		return fmt.Errorf("notmuch open: %w", err)
 	}
 	b.db = db
 	return nil
@@ -4181,54 +4174,40 @@ func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
 
 func (b *CGOBackend) Close(ctx context.Context) error {
 	if b.db != nil {
-		C.notmuch_database_destroy(b.db)
+		err := b.db.Close()
 		b.db = nil
+		return err
 	}
 	return nil
 }
 
 func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
-	var uuid *C.char
-	rev := C.notmuch_database_get_revision(b.db, &uuid)
-	return C.GoString(uuid), uint64(rev), nil
+	return b.db.Revision()
 }
 
 func (b *CGOBackend) Query(ctx context.Context, query string, limit int) ([]core.Message, error) {
-	qstr := C.CString(query)
-	defer C.free(unsafe.Pointer(qstr))
-	q := C.notmuch_query_create(b.db, qstr)
-	if q == nil {
-		return nil, fmt.Errorf("notmuch: query_create failed")
+	q := b.db.NewQuery(query)
+	defer q.Close()
+	q.SetSortScheme(nm.SORT_NEWEST_FIRST)
+	msgs, err := q.Messages()
+	if err != nil {
+		return nil, fmt.Errorf("notmuch search: %w", err)
 	}
-	defer C.notmuch_query_destroy(q)
-	C.notmuch_query_set_sort(q, C.NOTMUCH_SORT_NEWEST_FIRST)
-	var msgs *C.notmuch_messages_t
-	if st := C.notmuch_query_search_messages(q, &msgs); st != C.NOTMUCH_STATUS_SUCCESS {
-		return nil, errStatus(st, "search")
-	}
-	defer C.notmuch_messages_destroy(msgs)
+	defer msgs.Close()
 	var out []core.Message
-	for C.notmuch_messages_valid(msgs) != 0 {
+	for m := range msgs.All() {
 		if limit > 0 && len(out) >= limit {
 			break
 		}
-		m := C.notmuch_messages_get(msgs)
-		header := func(name string) string {
-			c := C.CString(name)
-			defer C.free(unsafe.Pointer(c))
-			return C.GoString(C.notmuch_message_get_header(m, c))
-		}
 		out = append(out, core.Message{
-			ID:        C.GoString(C.notmuch_message_get_message_id(m)),
-			ThreadID:  C.GoString(C.notmuch_message_get_thread_id(m)),
-			Timestamp: int64(C.notmuch_message_get_date(m)),
-			Author:    header("from"),
-			Subject:   header("subject"),
+			ID:        m.ID(),
+			ThreadID:  m.ThreadID(),
+			Timestamp: m.Date().Unix(),
+			Author:    m.Header("from"),
+			Subject:   m.Header("subject"),
 			Tags:      tagsOf(m),
 			Paths:     pathsOf(m),
 		})
-		C.notmuch_message_destroy(m)
-		C.notmuch_messages_move_to_next(msgs)
 	}
 	return out, nil
 }
@@ -4238,31 +4217,27 @@ func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 }
 
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
-	return errStatus(C.NOTMUCH_STATUS_UNSUPPORTED_OPERATION, "tag (read-only handle)")
+	return fmt.Errorf("notmuch tag: unsupported (read-only handle)")
 }
 
 func (b *CGOBackend) New(ctx context.Context) error {
-	return errStatus(C.NOTMUCH_STATUS_UNSUPPORTED_OPERATION, "new (read-only handle)")
+	return fmt.Errorf("notmuch new: unsupported (read-only handle)")
 }
 
-func tagsOf(m *C.notmuch_message_t) []string {
+func tagsOf(m *nm.Message) []string {
 	var out []string
-	for t := C.notmuch_message_get_tags(m); C.notmuch_tags_valid(t) != 0; C.notmuch_tags_move_to_next(t) {
-		out = append(out, C.GoString(C.notmuch_tags_get(t)))
+	for t := range m.Tags().All() {
+		out = append(out, t)
 	}
 	return out
 }
 
-func pathsOf(m *C.notmuch_message_t) []string {
+func pathsOf(m *nm.Message) []string {
 	var out []string
-	for f := C.notmuch_message_get_filenames(m); C.notmuch_filenames_valid(f) != 0; C.notmuch_filenames_move_to_next(f) {
-		out = append(out, C.GoString(C.notmuch_filenames_get(f)))
+	for f := range m.Filenames().All() {
+		out = append(out, f)
 	}
 	return out
-}
-
-func errStatus(st C.notmuch_status_t, op string) error {
-	return fmt.Errorf("notmuch %s: %s", op, C.GoString(C.notmuch_status_to_string(st)))
 }
 ```
 
@@ -4319,16 +4294,20 @@ Expected: PASS, logs message count only. If headers are missing, this task stays
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/notmuch
-git commit -m "Add cgo notmuch backend behind the Backend interface (build tag)"
+git commit -m "feat(notmuch): add cgo backend (build tag)"
 ```
 
-**Coordination notes (post-implementation, Task 13)**: committed as bb1e1af
-after review. Three plan defects found during implementation, reflected in
-the blocks above:
+**Coordination notes (post-implementation, Task 13, revised)**: first
+committed as bb1e1af (hand-rolled C), rewritten in f24ec4b to wrap the
+fishman go.notmuch binding, module path renamed zenhack->fishman in
+0b9ece0 (binding repo commits 03b6277 + 6e7c092). Plan defects found
+during implementation, reflected in the blocks above:
 (1) Revision API: notmuch 0.40 has no `notmuch_database_get_revision_uuid`;
 the real signature (notmuch.h:743) is
 `unsigned long notmuch_database_get_revision(db, const char **uuid)` with
-the uuid as an out parameter.
+the uuid as an out parameter. The binding lacked this API entirely, so
+`DB.Revision()` was added to the vendored fork (binding db.go, covered by
+TestSmokeRevision).
 (2) Build tag: `//go:build cgo` is a PREDEFINED constraint, satisfied
 whenever CGO_ENABLED=1 - the file compiled in DEFAULT builds and failed on
 the missing pkg-config path. The custom tag `notmuchcgo` makes the backend
@@ -4342,12 +4321,10 @@ false green.
 (3) Query limit: `notmuch_query_set_limit` does not exist in 0.40; the
 loop caps with `if limit > 0 && len(out) >= limit { break }`, mirroring
 the CLI backend's `--limit` semantics.
-Also noted for Task 14: `notmuch_database_open` is deprecated as of
-libnotmuch 5.4 (kept verbatim for the benchmark); the benchmark report
-must record that the cgo path is on a legacy API surface, and that the
-tagsOf/pathsOf iterators are never destroyed (per-message leak, verbatim
-from the spec block - harmless for a benchmark run, fix before any
-production adoption).
+The binding swap retired the hand-rolled C entirely: no C preamble, no
+CString, no unsafe; the deprecated `notmuch_database_open` surface is gone
+(the binding's Open delegates to `notmuch_database_open_with_config`), and
+tag/filename iterators are message-owned, not leaked.
 
 ## Task 14: Benchmark and backend selection
 
@@ -4359,6 +4336,8 @@ production adoption).
 `src/notmuch/bench_test.go`:
 
 ```go
+//go:build notmuchcgo
+
 package notmuch
 
 import (
@@ -4459,8 +4438,19 @@ Expected: `10` (or the configured value; record it).
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/notmuch/bench_test.go docs/superpowers/benchmarks
-git commit -m "Add backend benchmark and report; CLI remains default"
+git commit -m "test(notmuch): benchmark CLI vs cgo backends"
 ```
+
+**Coordination notes (post-implementation, Task 14)**: committed as
+e8a708e, amended by f24ec4b (the binding swap; the original report's
+deprecated-API paragraph failed spec review - two false claims) and
+0b9ece0 (fishman module path). The committed bench_test.go carries
+`//go:build notmuchcgo` as its first line (deviation D1 from the block
+above - without it, `-tags notmuchcgo` builds exclude the file and report
+a false green). The report is
+docs/superpowers/benchmarks/2026-08-14-notmuch-backend.md; CLI stays
+default: the cgo handle is read-only (Tag/New unsupported - would break
+the R2 tag pipeline) and the backend is build-tag gated.
 
 ## Task 15: Integration tests, soak, acceptance
 
@@ -4635,7 +4625,7 @@ Run each and record in the commit:
 ```bash
 cd /home/user/git/opencode/notmutt
 git add src/app
-git commit -m "Add soak and cursor-invariant tests; M1 acceptance"
+git commit -m "test(app): add soak and cursor-invariant tests"
 ```
 
 ## Self-review notes

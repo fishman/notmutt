@@ -432,7 +432,8 @@ structure, sizes - those need a file open and parse.
   sanitize/render/mailcap paths as fresh data - never trusted by
   virtue of being cached.
 
-The reference repos (neomutt, aerc, afew, neovim, muttrc) are advisory:
+The reference repos (neomutt, aerc, afew, neovim, lazygit, muttrc) are
+advisory:
 they prove the mail concept, the config intent, and the failure modes -
 not the implementation. Design decisions are made for notmutt (Go, TOML,
 async), never inherited from C tools. When a reference behavior is cited,
@@ -479,6 +480,16 @@ the spec must say why it serves notmutt, not cite it as authority.
   go-message for parsing. The worker model is the R3/R4 async reference.
   Its per-context keybinding config (`config/binds.conf`) is the
   keybinding-config model for R9.
+- `lazygit/` - production Go TUI (checkout d25315b55, tcell/v3 renderer).
+  Reference for HOW to structure a Go TUI (R5/R9): view models separated
+  from rendering (`pkg/gui/context/` - per-panel state), actions as
+  keybinding-driven controllers (`pkg/gui/controllers/`), the
+  config-driven binding map (`pkg/config/user_config.go:448`, per-context
+  sections, the help panel derives from it - the R9 model), the theme
+  struct (`pkg/config/user_config.go:231`), and cancellable background
+  tasks with UI update hooks (`pkg/tasks/` - the R3 refresh pattern).
+  Reference the ARCHITECTURE (state/UI split, data-driven config), not the
+  renderer: notmutt's TUI stays BubbleTea (R7).
 - `afew/MailMover.py` - per-account folder priority resolution.
 - `muttrc/notmuch/tags` + `muttrc/notmuch/post-new` + `muttrc/afew/config`
   - the live classification pipeline (R2 reference).
@@ -490,8 +501,9 @@ the spec must say why it serves notmutt, not cite it as authority.
   it with a script first and pass only the extracted value. Include a
   checksum (sha256 or faster) when correlating or verifying message
   identity.
-- Commits: if AI generated any part of a change, add an
-  `AI-assisted: <tool name>` trailer to the commit message.
+- Commits: Conventional Commits style (`type(scope): subject`), brief
+  lowercase imperative subject; if AI generated any part of a change, add
+  an `AI-assisted: <tool name>` trailer to the commit message.
 - Testing: treat AI-generated output like firmware - assume it fails in
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks

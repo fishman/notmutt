@@ -51,6 +51,9 @@ github.com/muesli/termenv
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg
+# github.com/zenhack/go.notmuch v0.0.0-20260814090000-000000000000 => ../notmuch/bindings/go.notmuch
+## explicit; go 1.23
+github.com/zenhack/go.notmuch
 # go.etcd.io/bbolt v1.3.11
 ## explicit; go 1.22
 go.etcd.io/bbolt
@@ -81,3 +84,4 @@ golang.org/x/text/internal/utf8internal
 golang.org/x/text/language
 golang.org/x/text/runes
 golang.org/x/text/transform
+# github.com/zenhack/go.notmuch => ../notmuch/bindings/go.notmuch

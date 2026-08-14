@@ -44,7 +44,7 @@ func Run() error {
 	name := firstView(cfg)
 	view := core.NewView(name, cfg.Views[name].Query)
 	refresher := newRefresher(bus, worker, view, 0)
-	refresher.cycle() // initial load (full reload path)
+	go refresher.cycle() // initial load streams in via ViewDiff; the TUI starts immediately
 
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)

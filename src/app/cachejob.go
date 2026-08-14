@@ -40,7 +40,7 @@ func (c *cacheJob) Run(ctx context.Context) {
 	}
 	ch := c.bus.Subscribe()
 	sem := make(chan struct{}, 2)
-	c.scanVisible(sem) // initial fill: the first ViewDiff was already published
+	c.scanVisible(sem) // startup no-op on an empty view; the ViewDiff event drives the scan
 	for {
 		select {
 		case <-ctx.Done():

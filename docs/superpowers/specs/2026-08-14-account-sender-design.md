@@ -158,17 +158,27 @@ q must not lose a long draft).
 
 ## 6. Reply/forward flows
 
-Account resolution (reply): the replied-to message's account tag
-(the account it was received on - the user's rule); fallback the
-view's active account (the status bar account); fallback the first
-account. The message's account tag resolves through the existing
-`accountTag` logic (status line machinery).
+Account DETECTION and account SELECTION are two different things:
+
+- Detection (the default, REUSED from the status bar - no new
+  logic): the existing `accountTag` machinery matches the message's
+  tags against the account-tag set derived from `[accounts.<name>].
+  folder` (the folder-prefix pattern) - the same detection the
+  status bar shows. For a reply, detect on the replied-to message
+  (the account it was received on - the user's rule); for new
+  compose, detect on the view context (the active account). Fallback
+  chain: detection on the message -> detection on the view -> first
+  account.
+- Selection (the override, R2 data-first): the fuzzy picker (c) sets
+  the dialogue's account explicitly; a selected account sticks for
+  the dialogue and overrides the detected default. The picker lists
+  the SAME `[accounts.<name>]` data the detection matches.
 
 Prefill rules (all data, no prompts):
 
 | | R (reply) | gr (reply-all) | F (forward) | new compose |
 |---|---|---|---|---|
-| account | original's account tag -> active | same | same | view's active account |
+| account | detected on the original -> view | same | same | detected on the view |
 | To | original From | original From | - | - |
 | Cc | - | original To+Cc minus the account's `from` address (milestone 1 has exactly one address; the address table is future work) | - | - |
 | subject | one "Re: " prefix (strip repeated Re:/Fwd: first) | same | one "Fwd: " prefix | - |

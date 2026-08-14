@@ -136,12 +136,26 @@ whatever is still staged; applied state stays applied).
 Bindings are CONFIG DATA, never hardcoded in the TUI (R9; the staged
 keys in the plan were examples, not the mechanism): the index context
 is a `[bindings.index]` table mapping keys to action names, defaults in
-the config store, injected into the model at construction. The action
-vocabulary (cursor-down, cursor-up, quit, toggle-read, archive, delete,
-undo, apply) lives in the TUI; the app wiring validates every binding
-value against it at startup - an unknown action name is a load error
-(strict load), so a typo'd binding fails loudly instead of silently
-doing nothing. Rebinding a key never touches code.
+the config store, injected into the model at construction. Rebinding a
+key never touches code.
+
+Actions come in two kinds. BUILT-IN actions (cursor-down, cursor-up,
+quit, undo, apply) are the fixed TUI vocabulary. TAG actions stage a
+tag on the cursor message; their name-to-tag mapping is config data
+(`[tag-actions]`), and the handler kind DERIVES from the tag's group
+membership - there are no per-tag cases anywhere in the TUI: a tag in
+any tag group is a FOLDER tag and stages `+tag` (exclusive-group
+resolution dedups at render and apply, section 4); a tag in no group is
+a SOFT tag (unread is canonical, section 4) and TOGGLES from the
+applied state (the read/unread flip). Two handler types are the entire
+tag logic in the TUI; adding a tag action is a config-only change, and
+the hard/soft distinction exists once (the group member lists), never
+re-declared in code.
+
+The app wiring validates at startup: every binding value must be a
+builtin action or a declared tag action (unknown action = load error,
+strict load), and a tag action may not collide with a builtin name - a
+typo'd or dead binding fails loudly instead of silently doing nothing.
 
 Defaults (the R9 binding map must keep these):
 
@@ -149,18 +163,23 @@ Defaults (the R9 binding map must keep these):
     j = "cursor-down"
     k = "cursor-up"
     q = "quit"
-    r = "toggle-read"   # flip from the applied state
-    a = "archive"       # +archive stage
-    d = "delete"        # +deleted stage
+    r = "toggle-read"   # tag action: unread (soft -> toggles)
+    a = "archive"       # tag action: archive (folder -> +archive)
+    d = "delete"        # tag action: deleted (folder -> +deleted)
     u = "undo"          # undo staged (cursor message)
     "$" = "apply"       # apply all (quoted TOML key)
+
+    [tag-actions]
+    "toggle-read" = "unread"   # soft tag: flips read state
+    archive = "archive"        # folder tag
+    delete = "deleted"         # folder tag
 
 Ghost-row cursor guards apply to all staging actions (the same
 `row.Msg == nil` check).
 
 Macros (a key bound to a sequence of actions) and the `[ui] keymap`
-scheme (vim/emacs) stay with the R9 milestone; the binding table is
-their substrate, so nothing here forecloses them.
+scheme (vim/emacs) stay with the R9 milestone; the binding and
+tag-action tables are their substrate, so nothing here forecloses them.
 
 ## 8. Progress display (R15)
 

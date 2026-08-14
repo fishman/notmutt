@@ -17,12 +17,14 @@ import (
 // attachment, signed, date, author, tags, subject. The number slot and the tag
 // slot are the variable-width slots: each grows to the widest on the
 // page (the caller passes the per-render widths) so the columns align
-// without padding waste. Optional slots reserve width; every slot
-// renders through its style, so the line carries per-slot SGR runs
-// (the outer row style is applied later by padRow). Glyphs and the
-// tag-slot cap come from config data, never hardcoded. Account tags
-// never render here - the account lives in the status bar (R2), not
-// the mail title.
+// without padding waste. The subject is the flexible last slot - it
+// renders in full and padRow clamps the row to the terminal width, so
+// the title takes the rest of the line. Optional slots reserve width;
+// every slot renders through its style, so the line carries per-slot
+// SGR runs (the outer row style is applied later by padRow). Glyphs
+// and the tag-slot cap come from config data, never hardcoded.
+// Account tags never render here - the account lives in the status
+// bar (R2), not the mail title.
 func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool) string {
 	// the cursor row is monochrome (R11): one highlight background and one
 	// text color - the indicator style replaces every slot style
@@ -49,7 +51,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 			b.WriteString(padCellsRight("", tagWidth))
 			b.WriteByte(' ')
 		}
-		b.WriteString(truncCells("[...] "+strconv.Itoa(row.Count), 40))
+		b.WriteString("[...] " + strconv.Itoa(row.Count))
 		return b.String()
 	}
 	tags := rowTagList(row)
@@ -81,7 +83,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		b.WriteByte(' ')
 	}
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(subjectStyle.Render(truncCells(subject, 40)))
+	b.WriteString(subjectStyle.Render(subject))
 	return b.String()
 }
 

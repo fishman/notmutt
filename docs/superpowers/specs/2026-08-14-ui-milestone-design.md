@@ -297,11 +297,16 @@ The milestone shipped. Deviations from this spec, pinned:
   map[context]map[action]bool; app.validateBindings rejects
   non-index contexts that bind non-builtin actions (tag actions are
   index-only); the tag-action collision check is index-scoped.
-- Keyhint bar: one row above the status line in ALL three render
-  paths (index list, pager, empty+progress); the index list height is
-  height-2 (the pager viewport was already height-2 with the row
-  reserved). Labels are the action names from the active context's
-  binding map - no key or label hardcoded.
+- Keyhint bar: one row above the status line in ALL render paths;
+  the index list height is height-2 (the pager viewport was already
+  height-2 with the row reserved). Labels are the action names from
+  the active context's binding map - no key or label hardcoded.
+- Empty views render like filled ones (the user's UX request): blank
+  rows fill the list area (the indicator sits on the first,
+  cursor-style), and the keyhint bar + status row ALWAYS render -
+  during a load and on a genuinely empty result alike. "Empty" is a
+  data state, never a surface state; the literal "empty" text never
+  appears.
 
 Acceptance status:
 

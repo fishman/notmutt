@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -48,16 +47,6 @@ func Run() error {
 
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)
-
-	tui.SetTagOpHandler(func(msgID string, add bool) {
-		go func() {
-			worker.Call(notmuch.Action{
-				Kind:   notmuch.ActTag,
-				Query:  "id:\"" + strings.ReplaceAll(msgID, `"`, `""`) + `"`,
-				TagOps: []notmuch.TagOp{{Tag: "unread", Add: add}},
-			})
-		}()
-	})
 
 	groups := st.Config().TagGroupList()
 	view.SetGroups(groups)

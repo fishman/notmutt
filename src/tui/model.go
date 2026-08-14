@@ -39,8 +39,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.moveCursor(-1)
 		case "q":
 			return m, tea.Quit
-		case "t":
-			m.toggleRead()
+		case "r", "a", "d", "u":
+			m.stageKey(string(msg.Runes))
+		case "$":
+			onApply()
 		}
 	case EventMsg:
 		m.rows = m.view.Rows()
@@ -79,38 +81,33 @@ func (m *Model) moveCursor(delta int) {
 	m.view.SetCursor(rows[idx].Msg.ID)
 }
 
-func (m *Model) toggleRead() {
+// stageKey routes the staging keys (R14, hardcoded defaults until the
+// R9 binding map): r toggles read from the applied state, a stages
+// +archive, d stages +deleted, u undoes. Ghost rows are guarded like
+// the M1 cursor keys.
+func (m *Model) stageKey(key string) {
 	row, ok := m.view.CursorRow()
 	if !ok || row.Msg == nil {
 		return
 	}
-	tags := append([]string(nil), m.view.MsgTags(row.Msg.ID)...)
-	has := false
-	for _, t := range tags {
-		if t == "unread" {
-			has = true
+	id := row.Msg.ID
+	switch key {
+	case "r":
+		has := false
+		for _, t := range m.view.MsgTags(id) {
+			if t == "unread" {
+				has = true
+			}
 		}
+		m.view.Stage(id, core.TagOp{Tag: "unread", Add: !has})
+	case "a":
+		m.view.Stage(id, core.TagOp{Tag: "archive", Add: true})
+	case "d":
+		m.view.Stage(id, core.TagOp{Tag: "deleted", Add: true})
+	case "u":
+		m.view.Undo(id)
 	}
-	// optimistic local flip on a fresh copy: removeTag compacts in place,
-	// and the view's message shares its backing array with the refresher's
-	// snapshot, so in-place compaction would corrupt the next merge
-	if has {
-		tags = removeTag(tags, "unread")
-	} else {
-		tags = append(tags, "unread")
-	}
-	m.view.SetTags(row.Msg.ID, tags)
-	onTagOp(row.Msg.ID, !has)
-}
-
-func removeTag(tags []string, tag string) []string {
-	out := tags[:0]
-	for _, t := range tags {
-		if t != tag {
-			out = append(out, t)
-		}
-	}
-	return out
+	m.rows = m.view.Rows()
 }
 
 func (m Model) CursorIndex() int {
@@ -163,6 +160,9 @@ func (m Model) View() string {
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
 		line := renderRow(i+1, rows[i])
+		if rows[i].Staged {
+			line = "\x1b[1m" + line + "\x1b[0m" // [index.staged] default: bold
+		}
 		if i == cur {
 			line = "\x1b[7m" + line + "\x1b[0m"
 		}
@@ -191,7 +191,16 @@ func renderRow(n int, row core.Row) string {
 		b.WriteString(truncCells("[...] "+strconv.Itoa(row.Count), 40))
 		return b.String()
 	}
-	b.WriteString(flags(row.Msg))
+	tags := row.Msg.Tags
+	flagStr := flags(tags)
+	if row.Staged {
+		// staged rows render the resolved display tags with the staged
+		// glyph (default "*", config data per R11 tag-transforms; the
+		// hardcoded default holds until the theming milestone)
+		tags = row.StagedTags
+		flagStr = padCellsRight("*"+flagChars(tags), 3)
+	}
+	b.WriteString(flagStr)
 	b.WriteString(attachIcon(row.Msg))
 	b.WriteByte(' ')
 	b.WriteString(padCellsRight(formatDate(row.Msg.Timestamp), 15))
@@ -202,13 +211,17 @@ func renderRow(n int, row core.Row) string {
 	subject := stripControls(row.Msg.Subject)
 	b.WriteString(truncCells(subject, 40))
 	b.WriteByte(' ')
-	b.WriteString(tagGlyphs(row.Msg))
+	b.WriteString(tagGlyphs(tags))
 	return b.String()
 }
 
-func flags(m *core.Message) string {
+func flags(tags []string) string {
+	return padCellsRight(flagChars(tags), 3)
+}
+
+func flagChars(tags []string) string {
 	var f strings.Builder
-	for _, t := range m.Tags {
+	for _, t := range tags {
 		switch t {
 		case "unread":
 			f.WriteByte('U')
@@ -220,7 +233,7 @@ func flags(m *core.Message) string {
 			f.WriteByte('D')
 		}
 	}
-	return padCellsRight(f.String(), 3)
+	return f.String()
 }
 
 func attachIcon(m *core.Message) string {
@@ -234,12 +247,12 @@ func formatDate(ts int64) string {
 	return time.Unix(ts, 0).Format("06/01/02 15:04")
 }
 
-func tagGlyphs(m *core.Message) string {
-	// max 2 tags, first two of the message's own order; the tag-groups
-	// slice supplies the priority list later (spec section 6)
+func tagGlyphs(tags []string) string {
+	// max 2 tags, first two of the display order; the tag-groups
+	// priority list supplies the order later (spec section 6)
 	var b strings.Builder
 	n := 0
-	for _, t := range m.Tags {
+	for _, t := range tags {
 		if t == "unread" {
 			continue
 		}

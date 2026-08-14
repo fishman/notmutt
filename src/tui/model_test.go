@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
@@ -111,51 +113,110 @@ func TestGhostRowRendersAndCursorSkips(t *testing.T) {
 	}
 }
 
-func TestToggleRead(t *testing.T) {
+func TestStageToggleRead(t *testing.T) {
 	m := model()
-	var gotID string
-	var gotAdd bool
-	calls := 0
-	SetTagOpHandler(func(id string, add bool) { calls++; gotID, gotAdd = id, add })
-	m = press(t, m, "t")
-	if calls != 1 || gotID != "b" || !gotAdd {
-		t.Fatalf("hook wrong: calls=%d id=%q add=%v", calls, gotID, gotAdd)
-	}
 	row, _ := m.view.CursorRow()
-	if !hasTag(row.Msg.Tags, "unread") {
-		t.Fatalf("unread not added to cursor message: %v", row.Msg.Tags)
+	if hasTag(row.Msg.Tags, "unread") {
+		t.Fatalf("fixture: cursor message must be read, got %v", row.Msg.Tags)
 	}
-	m = press(t, m, "t")
-	if calls != 2 || gotAdd {
-		t.Fatalf("second toggle must remove: id=%q add=%v", gotID, gotAdd)
+	m = press(t, m, "r")
+	row, _ = m.view.CursorRow()
+	if !row.Staged || !hasTag(row.StagedTags, "unread") {
+		t.Fatalf("r must stage +unread: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
 	if hasTag(row.Msg.Tags, "unread") {
-		t.Fatalf("unread not removed: %v", row.Msg.Tags)
+		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
+	}
+	m.width, m.height = 80, 24
+	if out := m.View(); !strings.Contains(out, "*U") {
+		t.Fatalf("staged glyph missing:\n%s", out)
+	}
+	m = press(t, m, "r")
+	row, _ = m.view.CursorRow()
+	if row.Staged {
+		t.Fatal("staging the same op twice must cancel")
 	}
 }
 
-func TestToggleReadConcurrent(t *testing.T) {
+func TestStageArchiveResolves(t *testing.T) {
+	m := model()
+	m = press(t, m, "a")
+	row, _ := m.view.CursorRow()
+	if !row.Staged {
+		t.Fatal("a must stage the cursor message")
+	}
+	// message b is [inbox]: the resolved display is [archive]
+	if !slices.Equal(row.StagedTags, []string{"archive"}) {
+		t.Fatalf("StagedTags = %v, want [archive]", row.StagedTags)
+	}
+	if hasTag(row.Msg.Tags, "archive") || !hasTag(row.Msg.Tags, "inbox") {
+		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
+	}
+}
+
+func TestUndoStaged(t *testing.T) {
+	m := model()
+	m = press(t, m, "a")
+	m = press(t, m, "r")
+	row, _ := m.view.CursorRow()
+	if !row.Staged || len(row.StagedTags) != 2 {
+		t.Fatalf("two staged ops expected: staged=%v tags=%v", row.Staged, row.StagedTags)
+	}
+	m = press(t, m, "u")
+	row, _ = m.view.CursorRow()
+	if row.Staged {
+		t.Fatal("u must clear the staged ops")
+	}
+	if hasTag(row.Msg.Tags, "archive") || !hasTag(row.Msg.Tags, "inbox") {
+		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
+	}
+}
+
+func TestApplyKeyInvokesHandler(t *testing.T) {
+	m := model()
+	called := false
+	SetApplyHandler(func() { called = true })
+	m = press(t, m, "$")
+	if !called {
+		t.Fatal("$ must invoke the apply handler")
+	}
+}
+
+func TestStagingKeysGhostGuarded(t *testing.T) {
+	m := ghostModel()
+	// ghostModel's cursor starts on the ghost root row
+	for _, key := range []string{"r", "a", "d", "u", "$"} {
+		m = press(t, m, key)
+	}
+	if m.view.HasStaged() {
+		t.Fatal("staging keys must be no-ops on ghost rows")
+	}
+}
+
+func TestStageUndoConcurrent(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"unread"}},
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
 	m := New(view, nil)
-	SetTagOpHandler(func(string, bool) {})
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
 			view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-				{ID: "a", Timestamp: 100, Tags: []string{"unread"}},
+				{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 			})})
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 200; i++ {
-			m.toggleRead()
+			m.stageKey("r")
+			m.stageKey("a")
+			m.stageKey("u")
 		}
 	}()
 	wg.Wait()

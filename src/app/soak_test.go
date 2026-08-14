@@ -51,7 +51,7 @@ func TestSoak(t *testing.T) {
 		t.Skip("no message with resolvable id")
 	}
 
-	// id query quoting follows app.go's SetTagOpHandler escape
+	// id query quoting follows applyStaged's escape (app/apply.go)
 	byID := "id:\"" + strings.ReplaceAll(target, `"`, `""`) + `"`
 
 	rpl, err = worker.Call(notmuch.Action{

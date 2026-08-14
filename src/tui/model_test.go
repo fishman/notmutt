@@ -474,6 +474,44 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	}
 }
 
+// TestPagerRestylesOnThemeSwitch pins the live variant switch for an
+// open pager: the pager's render is cached, so the theme change must
+// re-style it - the old colors must not linger until the next resize
+// or re-open.
+func TestPagerRestylesOnThemeSwitch(t *testing.T) {
+	cfg := config.Default()
+	cfg.Theme.Variants["red"] = config.StyleTable{Pager: config.PagerStyleTable{Header: config.Style{Fg: "#ff0000"}}}
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	path := fixtureMsg(t, "body line\n")
+	SetOpenHandler(func(threadID string) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+		}})
+		m = next.(Model)
+	})
+	press(t, m, "o")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	if out := m.View(); strings.Contains(out, "255;0;0") {
+		t.Fatalf("dark theme must not render the red pager header:\n%s", out)
+	}
+	if err := st.SetThemeVariant("red"); err != nil {
+		t.Fatal(err)
+	}
+	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
+	if out := m.View(); !strings.Contains(out, "255;0;0") {
+		t.Fatalf("variant switch must re-style the open pager:\n%s", out)
+	}
+}
+
 func pressEvent(t *testing.T, m tea.Model, e core.Event) Model {
 	t.Helper()
 	next, _ := m.Update(EventMsg{Event: e})

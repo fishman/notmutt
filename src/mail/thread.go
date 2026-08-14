@@ -64,12 +64,12 @@ func RenderThread(msgs []core.Message) ([]Line, error) {
 			lines = append(lines, Line{})
 		}
 		if len(m.Paths) == 0 {
-			lines = append(lines, Line{Text: fmt.Sprintf("message %s: no path", m.ID), Kind: LineError})
+			lines = append(lines, Line{Text: core.SanitizeControls(fmt.Sprintf("message %s: no path", m.ID)), Kind: LineError})
 			continue
 		}
 		parsed, err := ParseMessage(m.Paths[0])
 		if err != nil {
-			lines = append(lines, Line{Text: fmt.Sprintf("failed to parse message: %v", err), Kind: LineError})
+			lines = append(lines, Line{Text: core.SanitizeControls(fmt.Sprintf("failed to parse message: %v", err)), Kind: LineError})
 			continue
 		}
 		lines = append(lines, renderMessage(parsed)...)

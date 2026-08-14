@@ -133,7 +133,7 @@ func padCellsRight(s string, w int) string {
 }
 
 // stripANSI removes SGR sequences (ESC [ ... m) from s; other control
-// chars never reach rendered lines (stripControls ran on the content).
+// chars never reach rendered lines (SanitizeControls ran on the content).
 func stripANSI(s string) string {
 	if !strings.ContainsRune(s, '\x1b') {
 		return s

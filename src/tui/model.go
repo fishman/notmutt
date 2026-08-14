@@ -164,6 +164,12 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 	if e.Section == "theme" {
 		cfg := m.st.Config()
 		m.styles = ResolveStyles(cfg.Theme, cfg.Palette)
+		if m.pager != nil {
+			// the pager's render is cached - without re-styling here a
+			// variant switch keeps the old colors until the next
+			// resize or re-open
+			m.pager.setSize(m.width, m.height-2, m.styles)
+		}
 	}
 }
 

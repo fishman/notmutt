@@ -11,9 +11,10 @@ import (
 )
 
 type fakeWorker struct {
-	uuid atomic.Value
-	rev  atomic.Uint64
-	msgs atomic.Value
+	uuid      atomic.Value
+	rev       atomic.Uint64
+	msgs      atomic.Value
+	lastQuery atomic.Value
 }
 
 func (f *fakeWorker) set(uuid string, rev uint64) {
@@ -32,6 +33,7 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.UUID, _ = f.uuid.Load().(string)
 		r.Rev = f.rev.Load()
 	case notmuch.ActQuery:
+		f.lastQuery.Store(a.Query)
 		r.Msgs, _ = f.msgs.Load().([]core.Message)
 	case notmuch.ActThread:
 		stubs, _ := f.msgs.Load().([]core.Message)
@@ -161,6 +163,9 @@ func TestOnConfig(t *testing.T) {
 	r.onConfig(st, core.ConfigChanged{Section: "view"})
 	if r.view.Query != "tag:changed" {
 		t.Fatalf("view query not taken from the store: %q", r.view.Query)
+	}
+	if q, _ := fw.lastQuery.Load().(string); q != "tag:changed" {
+		t.Fatalf("reload must query with the new query, got %q", q)
 	}
 	select {
 	case e := <-ch:

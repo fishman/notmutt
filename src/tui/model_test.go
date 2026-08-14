@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
@@ -31,7 +32,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testKeys, testTagActions)
+	return New(view, nil, testKeys, testTagActions, nil)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -42,7 +43,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testKeys, testTagActions)
+	return New(view, nil, testKeys, testTagActions, nil)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -212,7 +213,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testKeys, testTagActions)
+	m := New(view, nil, testKeys, testTagActions, nil)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -240,7 +241,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions)
+	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -260,7 +261,7 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"})
+	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	// wip is in no group, so it is soft: it toggles from the applied
@@ -287,7 +288,7 @@ func TestTagActionFolderAddCustomName(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "b", Timestamp: 200, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"})
+	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil)
 	m = press(t, m, "y")
 	row, _ := m.view.CursorRow()
 	// archive is a folder tag: a custom action name still stages +archive
@@ -313,7 +314,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testKeys, testTagActions)
+	m := New(view, nil, testKeys, testTagActions, nil)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;
@@ -347,7 +348,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testKeys, testTagActions)
+	m := New(view, nil, testKeys, testTagActions, nil)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View(), "refresh 1/5") {
@@ -381,4 +382,55 @@ func hasTag(tags []string, tag string) bool {
 		}
 	}
 	return false
+}
+
+// TestProgressBarSurvivesDroppedCompletion pins the stuck-bar fix: the
+// bus keeps the latest progress as a snapshot, so a completion event
+// dropped from the channel under backpressure still clears the bar via
+// the tick (the tail of a publish burst used to vanish with the bar
+// stuck mid-progress).
+func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testKeys, testTagActions, bus)
+	m.width, m.height = 80, 24
+
+	bus.Publish(core.Progress{Job: "cache", Done: 33, Total: 37})
+	m = pump(t, m, ch)
+	if !m.progressOn {
+		t.Fatal("bar should be on mid-job")
+	}
+
+	// Saturate the subscriber channel so the completion event drops.
+	for i := 0; i < 64; i++ {
+		bus.Publish(core.ViewDiff{View: "inbox"})
+	}
+	bus.Publish(core.Progress{Job: "cache", Done: 37, Total: 37})
+	for i := 0; i < 64; i++ {
+		m = pump(t, m, ch)
+	}
+	// All 64 drained events are the ViewDiffs: the completion never made
+	// it into the channel.
+	if m.progressOn {
+		t.Fatal("bar must not go off mid-job")
+	}
+
+	// The tick re-reads the snapshot and clears the bar.
+	next, _ := m.Update(progressTick{})
+	if next.(Model).progressOn {
+		t.Fatal("bar must clear from the snapshot even with the completion event dropped")
+	}
+}
+
+func pump(t *testing.T, m Model, ch <-chan core.Event) Model {
+	t.Helper()
+	select {
+	case e := <-ch:
+		next, _ := m.Update(EventMsg{Event: e})
+		return next.(Model)
+	case <-time.After(2 * time.Second):
+		t.Fatal("no event on the bus channel")
+		return m
+	}
 }

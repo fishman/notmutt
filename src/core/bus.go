@@ -7,11 +7,14 @@ type Event any
 // Bus fans events out to subscribers. A full subscriber drops the event
 // (coalescing): consumers repaint from state, never from events.
 type Bus struct {
-	mu   sync.Mutex
-	subs []chan Event
+	mu       sync.Mutex
+	subs     []chan Event
+	progress map[string]Progress
 }
 
-func NewBus() *Bus { return &Bus{} }
+func NewBus() *Bus {
+	return &Bus{progress: map[string]Progress{}}
+}
 
 func (b *Bus) Subscribe() <-chan Event {
 	ch := make(chan Event, 64)
@@ -24,12 +27,25 @@ func (b *Bus) Subscribe() <-chan Event {
 func (b *Bus) Publish(e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if p, ok := e.(Progress); ok {
+		b.progress[p.Job] = p
+	}
 	for _, s := range b.subs {
 		select {
 		case s <- e:
 		default:
 		}
 	}
+}
+
+// LatestProgress returns the last published Progress for a job. The map
+// write never drops, so the completion event survives subscriber
+// backpressure - the TUI renders this snapshot, events only wake it.
+func (b *Bus) LatestProgress(job string) (Progress, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	p, ok := b.progress[job]
+	return p, ok
 }
 
 type QueryBatch struct {

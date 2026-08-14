@@ -25,17 +25,21 @@ var Actions = map[string]bool{
 type Model struct {
 	view       *core.View
 	ch         <-chan core.Event
+	bus        *core.Bus
 	keys       map[string]string
 	tagActions map[string]string
 	rows       []core.Row
 	width      int
 	height     int
+	job        string
 	progress   core.Progress
 	progressOn bool
 }
 
-func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string) Model {
-	return Model{view: view, ch: ch, keys: keys, tagActions: tagActions}
+// New builds the model. bus is the progress snapshot source (nil in
+// tests: the progress bar falls back to event payloads).
+func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus) Model {
+	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -64,13 +68,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case EventMsg:
 		switch e := msg.Event.(type) {
 		case core.Progress:
-			m.progress = e
-			m.progressOn = e.Done < e.Total
+			m.job = e.Job
+			if m.bus == nil {
+				m.progress = e
+				m.progressOn = e.Done < e.Total
+			}
 		}
+		m.refreshProgress()
 		m.rows = m.view.Rows()
+		if m.progressOn {
+			return m, tea.Batch(EventCmd(m.ch), progressTickCmd())
+		}
 		return m, EventCmd(m.ch)
+	case progressTick:
+		m.refreshProgress()
+		if m.progressOn {
+			return m, progressTickCmd()
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// refreshProgress re-reads the bus snapshot for the current job. The
+// snapshot write never drops, so a completion event dropped from the
+// channel still clears the bar on the next tick/event (the stuck-bar
+// failure mode: backpressure swallowed the tail of a burst).
+func (m *Model) refreshProgress() {
+	if m.bus == nil {
+		return
+	}
+	if p, ok := m.bus.LatestProgress(m.job); ok {
+		m.progress = p
+		m.progressOn = p.Done < p.Total
+	}
+}
+
+type progressTick struct{}
+
+const progressTickInterval = 200 * time.Millisecond
+
+func progressTickCmd() tea.Cmd {
+	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg { return progressTick{} })
 }
 
 func (m *Model) moveCursor(delta int) {

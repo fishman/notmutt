@@ -2,6 +2,7 @@ package tui
 
 import (
 	"strings"
+	"sync"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -131,6 +132,33 @@ func TestToggleRead(t *testing.T) {
 	if hasTag(row.Msg.Tags, "unread") {
 		t.Fatalf("unread not removed: %v", row.Msg.Tags)
 	}
+}
+
+func TestToggleReadConcurrent(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"unread"}},
+	})})
+	view.SetCursor("a")
+	m := New(view, nil)
+	SetTagOpHandler(func(string, bool) {})
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+				{ID: "a", Timestamp: 100, Tags: []string{"unread"}},
+			})})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			m.toggleRead()
+		}
+	}()
+	wg.Wait()
 }
 
 func TestPadCellsRightExactWidth(t *testing.T) {

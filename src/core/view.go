@@ -11,7 +11,7 @@ import (
 // SetCursor, CursorRow, SetCollapsed); touching Threads, message
 // fields, or Collapsed from another goroutine is a data race. The
 // cache job's Atts writes are T12 wiring and must also go through the
-// view under its lock.
+// view under its lock; UI tag toggles go through SetTags the same way.
 type View struct {
 	Name     string
 	Query    string
@@ -233,6 +233,38 @@ func (v *View) SetAtts(msgID string, atts []Attachment) {
 			}
 		}
 	}
+}
+
+// SetTags replaces a message's tags under the view lock. UI tag toggles
+// go through here, never by writing Msg.Tags directly: the message
+// pointers are shared with the refresher's merge path.
+func (v *View) SetTags(msgID string, tags []string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		for _, m := range t.msgs {
+			if m.ID == msgID {
+				m.Tags = tags
+				return
+			}
+		}
+	}
+}
+
+// MsgTags returns a message's tags under the view lock; the slice is
+// shared, so callers copy before mutating it (SetTags is the write
+// path). Unknown ids return nil.
+func (v *View) MsgTags(msgID string) []string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		for _, m := range t.msgs {
+			if m.ID == msgID {
+				return m.Tags
+			}
+		}
+	}
+	return nil
 }
 
 // buildTree attaches each message under the nearest present reference;

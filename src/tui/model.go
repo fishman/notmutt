@@ -84,7 +84,7 @@ func (m *Model) toggleRead() {
 	if !ok || row.Msg == nil {
 		return
 	}
-	tags := append([]string(nil), row.Msg.Tags...)
+	tags := append([]string(nil), m.view.MsgTags(row.Msg.ID)...)
 	has := false
 	for _, t := range tags {
 		if t == "unread" {
@@ -99,7 +99,7 @@ func (m *Model) toggleRead() {
 	} else {
 		tags = append(tags, "unread")
 	}
-	row.Msg.Tags = tags
+	m.view.SetTags(row.Msg.ID, tags)
 	onTagOp(row.Msg.ID, !has)
 }
 

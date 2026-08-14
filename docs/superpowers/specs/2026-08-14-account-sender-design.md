@@ -41,6 +41,23 @@ that is data, not hook code.
   acceptable shapes (R4 dialogue state machine territory: state is
   separate from UI, dialogues can be paused and restarted).
 
+### Fuzzy selection, signatures
+
+- In general, a FUZZY selector for compose-time choices: account
+  switcher, signature picker, (later: keys, templates). fzf-style
+  matching - in-process fuzzy filter over a list, likely a selector
+  dialogue state in the R4 machinery; whether it is an in-process
+  matcher or an fzf subprocess is an open question (lean in-process:
+  no new exec surface, fits the extractable TUI).
+- Signatures are a FOLDER (or config-defined list) of signature files,
+  easily selectable via the fuzzy picker. Mutt's single `signature`
+  string is the reference PAIN: one file, edited by hand. Selection
+  result is part of the dialogue state (R4), not a config mutation.
+- Send hooks are NOT a requirement now ("think about this later"), but
+  the account-selection model must not foreclose a data-driven
+  hook-like extension seam later - it must be data, not code, when it
+  lands.
+
 ## 3. Model sketch (for the design session, not settled)
 
 - Accounts are already data in R2: `[accounts.<name>] folder = "gmail"`,

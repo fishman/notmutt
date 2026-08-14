@@ -133,18 +133,34 @@ whatever is still staged; applied state stays applied).
 
 ## 7. Keybindings
 
-Hardcoded in the TUI model for this milestone (the M1 j/k/q/t pattern);
-the R9 data-driven binding map is a later milestone and must keep these
-keys as defaults:
+Bindings are CONFIG DATA, never hardcoded in the TUI (R9; the staged
+keys in the plan were examples, not the mechanism): the index context
+is a `[bindings.index]` table mapping keys to action names, defaults in
+the config store, injected into the model at construction. The action
+vocabulary (cursor-down, cursor-up, quit, toggle-read, archive, delete,
+undo, apply) lives in the TUI; the app wiring validates every binding
+value against it at startup - an unknown action name is a load error
+(strict load), so a typo'd binding fails loudly instead of silently
+doing nothing. Rebinding a key never touches code.
 
-- `r` toggle-read stage (flip from the applied state)
-- `a` archive stage (+archive)
-- `d` delete stage (+deleted)
-- `u` undo staged (cursor message)
-- `$` apply all
+Defaults (the R9 binding map must keep these):
 
-Ghost-row cursor guards apply to all staging keys (same check as
-toggleRead's `row.Msg == nil`).
+    [bindings.index]
+    j = "cursor-down"
+    k = "cursor-up"
+    q = "quit"
+    r = "toggle-read"   # flip from the applied state
+    a = "archive"       # +archive stage
+    d = "delete"        # +deleted stage
+    u = "undo"          # undo staged (cursor message)
+    "$" = "apply"       # apply all (quoted TOML key)
+
+Ghost-row cursor guards apply to all staging actions (the same
+`row.Msg == nil` check).
+
+Macros (a key bound to a sequence of actions) and the `[ui] keymap`
+scheme (vim/emacs) stay with the R9 milestone; the binding table is
+their substrate, so nothing here forecloses them.
 
 ## 8. Progress display (R15)
 

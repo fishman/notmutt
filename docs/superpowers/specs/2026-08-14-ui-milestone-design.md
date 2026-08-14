@@ -256,15 +256,27 @@ The milestone shipped. Deviations from this spec, pinned:
   bubbles module; adding it would break the R7 no-new-dependency
   rule). Scrollbar and mouse wheel are future surface, not lost
   features.
-- Pager reading is a READ-POSITION cursor, not line scrolling (the
-  user's vim-style UX request): j/k move the position inside the
-  visible page with the window holding still; only when the position
-  crosses a page edge does the window jump a FULL page (down lands on
-  the new page's first line, up on its last - vim ctrl-f/ctrl-b
-  flow). g/G jump absolutely (position + window); ctrl+d/ctrl+u move
-  half a window through the same machinery. The position's line
-  renders with the indicator style (render() copies the window so the
-  wrap never persists into the styled lines).
+- Pager reading is LINE SCROLLING (the glow/less model), superseding
+  the read-position cursor of the 2026-08-14 ship (2026-08-15 pin,
+  the user's directive after the render bugs). The read-position
+  cursor failed in production: the indicator wrap was style-only and
+  the line's own fg+bg style overrode it, so the parsed cells were
+  identical between presses and the renderer diff emitted ZERO bytes
+  - the first scroll press rendered nothing (the double-press bug),
+  and the short-frame case placed the keyhint/status at the top (the
+  status-at-top bug). Line scrolling changes every visible line per
+  press, so the diff repaints the whole window - nothing can diff to
+  zero. j/k move the window offset by line (counted moves work);
+  pgdown/pgup page a full window; ctrl+d/ctrl+u half a window
+  (new half-page-down/up actions); g/G jump absolutely. The frame is
+  ALWAYS exactly the window height - short content is padded with
+  blank styled rows (the R11 slot-reservation rule applied to the
+  frame), so the keyhint/status rows stay anchored at the bottom in
+  every mode and every content length. No read-position indicator
+  exists in the pager; the index keeps its anchored-window cursor.
+  The regressions are scripted: the repaint harness asserts a scroll
+  press emits bytes and the empty frame is full-height with the
+  status row last (tui/pager_repaint_test.go).
 - Key dispatch gains vim-style prefixes (R9 data-first - a binding
   wins over the prefix): digit keys accumulate a count ([count]j,
   [count]k, count loops single steps so edge crossings page), and an

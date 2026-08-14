@@ -325,6 +325,42 @@ func TestRenderSanitizesControls(t *testing.T) {
 	}
 }
 
+func TestProgressBarRendersAndClears(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	if strings.Contains(m.View(), "refresh") {
+		t.Fatal("no bar before any progress event")
+	}
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 5, Total: 10})
+	out := m.View()
+	if !strings.Contains(out, "refresh 5/10") {
+		t.Fatalf("bar missing:\n%s", out)
+	}
+	if !strings.Contains(out, "inbox 2") {
+		t.Fatalf("status line missing view + count:\n%s", out)
+	}
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
+	if strings.Contains(m.View(), "refresh") {
+		t.Fatal("bar must clear on completion")
+	}
+}
+
+func TestProgressBarEmptyView(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	m := New(view, nil, testKeys, testTagActions)
+	m.width, m.height = 80, 24
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
+	if !strings.Contains(m.View(), "refresh 1/5") {
+		t.Fatalf("empty view must still render the status line:\n%s", m.View())
+	}
+}
+
+func pressEvent(t *testing.T, m tea.Model, e core.Event) Model {
+	t.Helper()
+	next, _ := m.Update(EventMsg{Event: e})
+	return next.(Model)
+}
+
 func hasTag(tags []string, tag string) bool {
 	for _, t := range tags {
 		if t == tag {

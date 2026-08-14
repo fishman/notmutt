@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -29,6 +30,8 @@ type Model struct {
 	rows       []core.Row
 	width      int
 	height     int
+	progress   core.Progress
+	progressOn bool
 }
 
 func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string) Model {
@@ -59,6 +62,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stage(m.keys[string(msg.Runes)])
 		}
 	case EventMsg:
+		switch e := msg.Event.(type) {
+		case core.Progress:
+			m.progress = e
+			m.progressOn = e.Done < e.Total
+		}
 		m.rows = m.view.Rows()
 		return m, EventCmd(m.ch)
 	}
@@ -170,17 +178,26 @@ func (m Model) View() string {
 	}
 	rows := m.rows
 	if len(rows) == 0 {
+		if m.progressOn {
+			return "empty\n" + m.statusLine() + "\n"
+		}
 		return "empty\n"
 	}
 	cur := m.CursorIndex()
-	top := cur - m.height/2
+	// the bottom row is the status line (R15); the list window is
+	// height-1, the R11 slot-reservation rule
+	listHeight := m.height - 1
+	if listHeight < 1 {
+		listHeight = 1
+	}
+	top := cur - listHeight/2
 	if top < 0 {
 		top = 0
 	}
-	bottom := top + m.height
+	bottom := top + listHeight
 	if bottom > len(rows) {
 		bottom = len(rows)
-		top = bottom - m.height
+		top = bottom - listHeight
 		if top < 0 {
 			top = 0
 		}
@@ -197,7 +214,39 @@ func (m Model) View() string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
+	b.WriteString(m.statusLine())
+	b.WriteByte('\n')
 	return b.String()
+}
+
+const progressWidth = 40
+
+// statusLine is the bottom row: view name + visible count on the left,
+// the async progress bar right-aligned in a fixed-width region (R15).
+// Completion (Done == Total) clears the bar; labels are job-kind
+// derived, never mail content (F6). The `progress` style identifier and
+// the filled-cell glyph (default "#") are hardcoded defaults until the
+// theming milestone.
+func (m Model) statusLine() string {
+	left := fmt.Sprintf("%s %d", m.view.Name, len(m.rows))
+	if !m.progressOn {
+		return left
+	}
+	label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
+	fill := progressWidth - runewidth.StringWidth(label) - 1
+	right := label + " " + progressBar(m.progress, fill)
+	if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
+		return left + strings.Repeat(" ", pad) + right
+	}
+	return left + right
+}
+
+func progressBar(p core.Progress, cells int) string {
+	fill := cells
+	if p.Total > 0 && p.Done < p.Total {
+		fill = int(float64(p.Done) * float64(cells) / float64(p.Total))
+	}
+	return strings.Repeat("#", fill) + strings.Repeat("-", cells-fill)
 }
 
 // renderRow renders the fixed-slot template (R11): number, flags,

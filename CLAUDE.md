@@ -23,3 +23,9 @@ lowercase imperative subject. Spec/doc commits carry an
 `AI-assisted: deepseek` trailer (the session model is deepseek); code
 commits carry no AI-assisted trailer - the human bears responsibility for
 code.
+
+## Style
+
+- DRY: a concept exists once - derive, never duplicate.
+- Brief: shortest code that works.
+- No unnecessary comments; only non-obvious constraints get one.

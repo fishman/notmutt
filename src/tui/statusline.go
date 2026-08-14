@@ -21,18 +21,23 @@ const progressWidth = 40
 // theming milestone.
 func (m Model) statusLine(st Styles) string {
 	left := fmt.Sprintf("%s %d", m.view.Name, len(m.rows))
-	if !m.progressOn {
-		return st.Status.Render(left)
+	if m.progressOn {
+		label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
+		fill := progressWidth - runewidth.StringWidth(label) - 1
+		if fill < 0 {
+			fill = 0
+		}
+		right := label + " " + styleBar(progressBar(m.progress, fill), st)
+		// the right region is right-aligned in a fixed-width slot; a
+		// narrow terminal drops it
+		if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
+			return st.Status.Render(left + strings.Repeat(" ", pad) + right)
+		}
 	}
-	label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
-	fill := progressWidth - runewidth.StringWidth(label) - 1
-	if fill < 0 {
-		fill = 0
-	}
-	bar := styleBar(progressBar(m.progress, fill), st)
-	right := label + " " + bar
-	if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
-		return st.Status.Render(left + strings.Repeat(" ", pad) + right)
+	// no progress (or no room for the bar): left fills the width so the
+	// status background spans the whole row
+	if m.width > runewidth.StringWidth(left) {
+		return st.Status.Render(padCellsRight(left, m.width))
 	}
 	return st.Status.Render(left)
 }

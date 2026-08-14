@@ -173,7 +173,7 @@ func stripANSI(s string) string {
 // truncateStyled truncates a styled string to at most w visible cells;
 // SGR runs are zero-width and kept whole, so the line stays parseable.
 func truncateStyled(s string, w int) string {
-	if runewidth.StringWidth(s) <= w {
+	if runewidth.StringWidth(stripANSI(s)) <= w {
 		return s
 	}
 	var b strings.Builder

@@ -370,8 +370,8 @@ func TestRenderSanitizesControls(t *testing.T) {
 	m := New(view, nil, testKeys, testTagActions, nil)
 	m.width, m.height = 80, 24
 	out := m.View()
-	// the model's own cursor highlight (ESC[7m ... ESC[0m) is not a leak;
-	// check the injected sequences specifically
+	// the model's own cursor highlight (indicator style SGR) is not a
+	// leak; check the injected sequences specifically
 	for _, leak := range []string{"\x1b]", "\x07", "\x1b[31m", "\x1b[41m"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("control chars leaked into render:\n%q", out)

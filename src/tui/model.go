@@ -284,7 +284,11 @@ func (m Model) View() string {
 			// only override fg, so bold carries through the whole line
 			outer = st.Index.Staged.Inherit(outer)
 		}
-		line = padRow(line, m.width, outer)
+		if m.width > 0 {
+			// bubbletea's first View() runs before WindowSizeMsg: width 0
+			// must not blank the rows (padRow would truncate them away)
+			line = padRow(line, m.width, outer)
+		}
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}

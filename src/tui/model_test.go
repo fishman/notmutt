@@ -1026,9 +1026,12 @@ func TestGGTopGToBottom(t *testing.T) {
 }
 
 // TestCountedMove pins the digit prefix: 3j moves 3 rows, 2k moves back,
-// 99j clamps at the last row.
+// 99j clamps at the last row. The window is sized so the moves stay
+// inside one page (a counted move crossing a page edge pages - pinned
+// separately in TestIndexPagesAtEdges).
 func TestCountedMove(t *testing.T) {
 	m := rowsModel(5)
+	m.width, m.height = 80, 24
 	m = press(t, m, "3")
 	m = press(t, m, "j")
 	if m.CursorIndex() != 3 {
@@ -1044,6 +1047,35 @@ func TestCountedMove(t *testing.T) {
 	m = press(t, m, "j")
 	if m.CursorIndex() != 4 {
 		t.Fatalf("99j must clamp at the last row, got %d", m.CursorIndex())
+	}
+}
+
+// TestIndexPagesAtEdges pins the read-position model in the index: the
+// window holds still while the cursor moves within the page (row 1
+// stays the top line); only when the cursor crosses the bottom edge
+// does the window jump a full page and the cursor land on the new
+// page's first line (up: the new page's last line).
+func TestIndexPagesAtEdges(t *testing.T) {
+	m := rowsModel(60)
+	m.width, m.height = 80, 24
+	h := m.listHeight()
+	for i := 0; i < h-1; i++ {
+		m = press(t, m, "j")
+	}
+	if m.CursorIndex() != h-1 || m.indexOffset != 0 {
+		t.Fatalf("j must hold the window until the page edge, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
+	}
+	m = press(t, m, "j")
+	if m.CursorIndex() != h || m.indexOffset != h {
+		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
+	}
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	if !strings.HasPrefix(lines[0], "23") {
+		t.Fatalf("the new page must render from its first row: %q", lines[0])
+	}
+	m = press(t, m, "k")
+	if m.CursorIndex() != h-1 || m.indexOffset != 0 {
+		t.Fatalf("k at the top edge must page up, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
 	}
 }
 

@@ -50,6 +50,11 @@ type Model struct {
 	job        string
 	progress   core.Progress
 	progressOn bool
+	// indexOffset is the index window's anchored top row (the
+	// read-position model shared with the pager): the window holds
+	// still while the cursor moves within it; only when the cursor
+	// crosses a page edge does the window jump a full page.
+	indexOffset int
 	// vim-style prefixes (R9 data-first): digit keys accumulate into
 	// count (a bound digit wins), and "g" arms the gg chain - both
 	// engage only when the active context does NOT bind the key.
@@ -299,14 +304,35 @@ func progressTickCmd() tea.Cmd {
 	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg { return progressTick{} })
 }
 
+// moveCursor moves the index cursor n rows (a counted move loops
+// single steps so edge crossings page). The window holds still while
+// the cursor moves within the page; only at a page edge does it jump
+// a full page (cursorStep -> pageAtEdge).
 func (m *Model) moveCursor(delta int) {
 	rows := m.view.Rows()
 	m.rows = rows
 	if len(rows) == 0 {
 		return
 	}
+	m.clampIndexOffset()
+	n := delta
+	step := 1
+	if n < 0 {
+		n = -n
+		step = -1
+	}
+	for i := 0; i < n; i++ {
+		m.cursorStep(step)
+	}
+}
+
+// cursorStep moves the cursor one row in dir. Ghost rows are
+// pass-through: a step onto a ghost walks in the move direction to the
+// nearest real message; at a boundary, the step does not move.
+func (m *Model) cursorStep(dir int) {
+	rows := m.rows
 	idx := m.CursorIndex()
-	idx += delta
+	idx += dir
 	if idx < 0 {
 		idx = 0
 	}
@@ -314,10 +340,8 @@ func (m *Model) moveCursor(delta int) {
 		idx = len(rows) - 1
 	}
 	if rows[idx].Msg == nil {
-		// ghost rows are pass-through: walk in the move direction to the
-		// nearest real message; at a boundary, do not move
 		for {
-			idx += delta
+			idx += dir
 			if idx < 0 || idx >= len(rows) {
 				return
 			}
@@ -334,6 +358,87 @@ func (m *Model) moveCursor(delta int) {
 		// the stub with the real message and re-anchors by id
 		m.view.SetCursorIndex(idx)
 	}
+	m.pageAtEdge()
+}
+
+// pageAtEdge jumps the window a full page when the cursor crossed a
+// page edge (the read-position model shared with the pager): crossing
+// the bottom lands the cursor on the new page's first line, crossing
+// the top on its last line. A single step crosses exactly one edge.
+func (m *Model) pageAtEdge() {
+	rows := m.rows
+	if len(rows) == 0 {
+		return
+	}
+	cur := m.CursorIndex()
+	if cur > m.indexOffset+m.listHeight()-1 {
+		m.indexOffset += m.listHeight()
+		if m.indexOffset > len(rows)-m.listHeight() {
+			m.indexOffset = len(rows) - m.listHeight()
+		}
+		m.cursorLand(m.indexOffset, 1)
+		return
+	}
+	if cur < m.indexOffset {
+		m.indexOffset -= m.listHeight()
+		if m.indexOffset < 0 {
+			m.indexOffset = 0
+		}
+		m.cursorLand(m.indexOffset+m.listHeight()-1, -1)
+	}
+}
+
+// cursorLand anchors the cursor on the nearest real row from idx,
+// walking dir first (a page landing can hit a ghost at a page
+// boundary; the cursor never rests on a ghost). Stubs anchor by index.
+func (m *Model) cursorLand(idx, dir int) {
+	rows := m.rows
+	for i := idx; i >= 0 && i < len(rows); i += dir {
+		if rows[i].Msg != nil {
+			if id := rows[i].Msg.ID; id != "" {
+				m.view.SetCursor(id)
+			} else {
+				m.view.SetCursorIndex(i)
+			}
+			return
+		}
+	}
+	for i := idx; i >= 0 && i < len(rows); i -= dir {
+		if rows[i].Msg != nil {
+			if id := rows[i].Msg.ID; id != "" {
+				m.view.SetCursor(id)
+			} else {
+				m.view.SetCursorIndex(i)
+			}
+			return
+		}
+	}
+}
+
+// listHeight is the index window's row count: the bottom two rows are
+// the keyhint bar (R9) and the status line (R15).
+func (m *Model) listHeight() int {
+	h := m.height - 2
+	if h < 1 {
+		h = 1
+	}
+	return h
+}
+
+// clampIndexOffset keeps the anchored window inside the current rows
+// after resizes and refreshes shrank the view.
+func (m *Model) clampIndexOffset() {
+	rows := m.rows
+	if len(rows) == 0 {
+		m.indexOffset = 0
+		return
+	}
+	if max := len(rows) - m.listHeight(); m.indexOffset > max {
+		m.indexOffset = max
+	}
+	if m.indexOffset < 0 {
+		m.indexOffset = 0
+	}
 }
 
 // goTop jumps to the top of the current view (the gg chain): the index
@@ -348,11 +453,20 @@ func (m *Model) goTop() {
 }
 
 // cursorTop/cursorBottom jump the index cursor to the first/last real
-// row (gg / G). moveCursor's boundary walk cannot reach backward past
-// a leading ghost row, so the edge walk is direction-aware: ghosts and
-// stubs are skipped in the jump direction.
-func (m *Model) cursorTop()    { m.cursorEdge(1) }
-func (m *Model) cursorBottom() { m.cursorEdge(-1) }
+// row (gg / G) and pin the window to the matching edge. moveCursor's
+// boundary walk cannot reach backward past a leading ghost row, so the
+// edge walk is direction-aware: ghosts and stubs are skipped in the
+// jump direction.
+func (m *Model) cursorTop() {
+	m.cursorEdge(1)
+	m.indexOffset = 0
+}
+
+func (m *Model) cursorBottom() {
+	m.cursorEdge(-1)
+	m.indexOffset = len(m.rows) - m.listHeight()
+	m.clampIndexOffset()
+}
 
 func (m *Model) cursorEdge(dir int) {
 	rows := m.view.Rows()
@@ -510,16 +624,14 @@ func (m Model) View() string {
 		return b.String()
 	}
 	cur := m.CursorIndex()
-	// the bottom two rows are the keyhint bar (R9) and the status line
-	// (R15); the list window is height-2, the R11 slot-reservation rule
-	listHeight := m.height - 2
-	if listHeight < 1 {
-		listHeight = 1
-	}
-	top := cur - listHeight/2
-	if top < 0 {
-		top = 0
-	}
+	// the window is ANCHORED at indexOffset (the read-position model,
+	// shared with the pager): the cursor moves within the window, and
+	// only a page-edge crossing moves it. The clamp handles resizes and
+	// refreshes that shrank the rows; the write-back keeps the movement
+	// math in sync. The bottom two rows are the keyhint bar (R9) and
+	// the status line (R15); the list window is height-2.
+	listHeight := m.listHeight()
+	top := m.indexOffset
 	bottom := top + listHeight
 	if bottom > len(rows) {
 		bottom = len(rows)
@@ -527,6 +639,7 @@ func (m Model) View() string {
 		if top < 0 {
 			top = 0
 		}
+		m.indexOffset = top
 	}
 	// the number slot grows with the largest row number (the width is
 	// per-render and shared by every row - alignment never shifts)

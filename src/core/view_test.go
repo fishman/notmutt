@@ -356,11 +356,24 @@ func TestStagedGhostRowsNeverStaged(t *testing.T) {
 		{ID: "a", Timestamp: 200},
 		{ID: "b", Timestamp: 100},
 	})})
-	v.Stage("ghost", TagOp{Tag: "archive", Add: true}) // unknown id: no-op
+	v.Stage("a", TagOp{Tag: "archive", Add: true})
 	rows := v.Rows()
+	found := false
 	for _, r := range rows {
-		if r.Ghost && r.Staged {
-			t.Fatal("ghost rows must never be staged")
+		if r.Ghost {
+			if r.Staged {
+				t.Fatal("ghost rows must never be staged")
+			}
+			continue
 		}
+		if r.Msg != nil && r.Msg.ID == "a" {
+			found = true
+			if !r.Staged {
+				t.Fatal("staged message row must be staged")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("a row missing")
 	}
 }

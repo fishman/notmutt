@@ -68,7 +68,7 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions, bus, cfg.Theme, cfg.Palette, cfg.UI), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions, bus, st, cfg.UI), tea.WithAltScreen())
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

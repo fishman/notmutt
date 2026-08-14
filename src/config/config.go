@@ -221,8 +221,9 @@ func rawStyle(v interface{}) (Style, error) {
 // rawStyleTable decodes a full style table (normal/status/index/...)
 // as an overlay over base: Load merges file values over defaults (R8),
 // so a file naming one style in a variant keeps the variant's other
-// styles. Top-level style keys merge; nested tables (index, pager)
-// replace wholesale.
+// styles. Every style key merges individually - a [theme.dark.index]
+// naming only subject keeps the variant's number/date/... - and
+// unknown keys are load errors.
 func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 	raw, ok := v.(map[string]interface{})
 	if !ok {
@@ -603,6 +604,9 @@ func Load(path string) (Config, error) {
 func validate(cfg Config) error {
 	if cfg.UI.Keymap != "vim" && cfg.UI.Keymap != "emacs" {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", cfg.UI.Keymap)
+	}
+	if cfg.UI.Tags.Max < 1 {
+		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
 	}
 	if len(cfg.Views) == 0 {
 		return fmt.Errorf("at least one view required")

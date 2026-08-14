@@ -33,7 +33,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -44,7 +44,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -62,7 +62,7 @@ func stubModel() Model {
 		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
 		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
 	})
-	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	return New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
@@ -267,7 +267,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -295,7 +295,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -315,7 +315,7 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	// wip is in no group, so it is soft: it toggles from the applied
@@ -342,7 +342,7 @@ func TestTagActionFolderAddCustomName(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "b", Timestamp: 200, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "y")
 	row, _ := m.view.CursorRow()
 	// archive is a folder tag: a custom action name still stages +archive
@@ -368,7 +368,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (indicator style SGR) is not a
@@ -402,7 +402,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, nil, testKeys, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View(), "refresh 1/5") {
@@ -411,15 +411,51 @@ func TestProgressBarEmptyView(t *testing.T) {
 }
 
 func TestProgressBarSegments(t *testing.T) {
+	ui := config.Default().UI
 	// Done=5/Total=10 in 20 cells: half filled
-	if got := progressBar(core.Progress{Job: "refresh", Done: 5, Total: 10}, 20); got != "##########----------" {
-		t.Fatalf("half progress: got %q", got)
+	fill, empty := progressBar(ui, core.Progress{Job: "refresh", Done: 5, Total: 10}, 20)
+	if fill != "##########" || empty != "----------" {
+		t.Fatalf("half progress: fill %q empty %q", fill, empty)
+	}
+	// the glyphs are config data (R11): non-default glyphs must be used
+	ui.Glyphs.ProgressFill, ui.Glyphs.ProgressEmpty = "=", "."
+	fill, empty = progressBar(ui, core.Progress{Job: "refresh", Done: 5, Total: 10}, 20)
+	if fill != "==========" || empty != ".........." {
+		t.Fatalf("glyph config: fill %q empty %q", fill, empty)
 	}
 	// negative cells (narrow-terminal clamp path): never panics, empty bar
-	_ = progressBar(core.Progress{Job: "refresh", Done: 5, Total: 10}, -3)
+	if _, empty := progressBar(ui, core.Progress{Job: "refresh", Done: 5, Total: 10}, -3); empty != "" {
+		t.Fatalf("negative cells: empty %q", empty)
+	}
 	// zero total: no division by zero, empty bar
-	if got := progressBar(core.Progress{Job: "refresh", Done: 0, Total: 0}, 4); got != "----" {
-		t.Fatalf("zero total: got %q", got)
+	if _, empty := progressBar(ui, core.Progress{Job: "refresh", Done: 0, Total: 0}, 4); empty != "...." {
+		t.Fatalf("zero total: empty %q", empty)
+	}
+}
+
+// TestThemeVariantSwitchLive pins the live variant switch: the store
+// owns the theme and the model re-reads it on ConfigChanged{theme}, so
+// a switch to a variant with a distinct status fg re-renders the
+// status line in the new color.
+func TestThemeVariantSwitchLive(t *testing.T) {
+	cfg := config.Default()
+	cfg.Theme.Variants["red"] = config.StyleTable{Status: config.Style{Fg: "#ff0000"}}
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testKeys, testTagActions, nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	if out := m.View(); strings.Contains(out, "255;0;0") {
+		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
+	}
+	if err := st.SetThemeVariant("red"); err != nil {
+		t.Fatal(err)
+	}
+	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
+	if out := m.View(); !strings.Contains(out, "255;0;0") {
+		t.Fatalf("variant switch must re-render the status line in the new color:\n%s", out)
 	}
 }
 
@@ -447,7 +483,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, ch, testKeys, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
@@ -496,7 +532,7 @@ func TestProgressBarPerView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus, config.Default().Theme, config.Default().Palette, config.Default().UI)
+	m := New(view, ch, testKeys, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	// another view's fill publishes: the inbox bar stays off

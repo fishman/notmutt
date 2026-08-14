@@ -26,8 +26,7 @@ type Model struct {
 	bus        *core.Bus
 	keys       map[string]string
 	tagActions map[string]string
-	theme      config.Theme
-	palette    config.Palette
+	st         *config.Store
 	ui         config.UI
 	styles     Styles
 	rows       []core.Row
@@ -40,11 +39,12 @@ type Model struct {
 
 // New builds the model. bus is the progress snapshot source (nil in
 // tests: the progress bar falls back to event payloads). The theme
-// data resolves into the render style set at construction; a
-// ConfigChanged{Section: "theme"} event re-resolves it (variant
-// switches re-render live).
-func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus, theme config.Theme, palette config.Palette, ui config.UI) Model {
-	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions, theme: theme, palette: palette, ui: ui, styles: ResolveStyles(theme, palette)}
+// resolves into the render style set at construction from the store's
+// current config; a ConfigChanged{Section: "theme"} event re-reads
+// the store and re-resolves it (variant switches re-render live).
+func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
+	cfg := st.Config()
+	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette)}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -100,11 +100,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // onConfig re-resolves the render styles when the theme section
-// changes: variant switches land as ConfigChanged on the bus (wrapped
-// in EventMsg by the bridge) or as a direct message.
+// changes. The event only names the section - the store owns the
+// config, so the model re-reads it: SetThemeVariant mutates the
+// store's internal config, and this re-read is what makes the switch
+// live. Events arrive wrapped in EventMsg by the bridge or as a
+// direct message.
 func (m *Model) onConfig(e core.ConfigChanged) {
 	if e.Section == "theme" {
-		m.styles = ResolveStyles(m.theme, m.palette)
+		cfg := m.st.Config()
+		m.styles = ResolveStyles(cfg.Theme, cfg.Palette)
 	}
 }
 

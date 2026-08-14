@@ -284,6 +284,39 @@ status = { fg = "#ff0000" }
 	}
 }
 
+// TestThemeIndexPartialOverlay pins the per-key overlay merge: a
+// [theme.dark.index] naming only subject keeps the variant's other
+// index styles (R8 merge, not replace).
+func TestThemeIndexPartialOverlay(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, `
+[theme.dark.index]
+subject = { fg = "base0B" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := cfg.Theme.Resolved(cfg.Palette, "dark")
+	if got := res["index.number"].Fg; got != "#5c6370" {
+		t.Fatalf("index.number must survive the partial overlay, got %q", got)
+	}
+	if got := res["index.subject"].Fg; got != "#98c379" {
+		t.Fatalf("index.subject must be overridden, got %q", got)
+	}
+}
+
+func TestValidateTagsMax(t *testing.T) {
+	cfg := Default()
+	cfg.UI.Tags.Max = 0
+	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "ui.tags.max") {
+		t.Fatalf("max 0 must error, got %v", err)
+	}
+	cfg = Default()
+	cfg.UI.Tags.Max = -2
+	if err := validate(cfg); err == nil {
+		t.Fatal("negative max must error")
+	}
+}
+
 func TestSetThemeVariant(t *testing.T) {
 	cfg := Default()
 	cfg.Theme = Theme{Default: "dark", Variants: map[string]StyleTable{

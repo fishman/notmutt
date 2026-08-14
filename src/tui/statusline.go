@@ -63,7 +63,8 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 		if fill < 0 {
 			fill = 0
 		}
-		bar := styleBar(progressBar(*d.prog, fill), st)
+		fillBar, emptyBar := progressBar(ui, *d.prog, fill)
+		bar := styleBar(fillBar, emptyBar, st)
 		right = append(right, statusSegment{
 			content:  label + " " + bar,
 			style:    st.Status,
@@ -173,22 +174,27 @@ func seam(prev, next lipgloss.Style, sep string) string {
 	return s.Render(sep)
 }
 
-func progressBar(p core.Progress, cells int) string {
+// progressBar builds the fill and empty glyph runs for the job's
+// done/total at the given cell budget. The glyphs are config data
+// (R11), so the bar comes back as two runs and the caller styles each
+// separately - no glyph is hardcoded and multi-byte glyphs split
+// correctly. Empty runs for a clamped or zero-total job.
+func progressBar(ui config.UI, p core.Progress, cells int) (string, string) {
 	if cells < 0 {
-		return ""
+		return "", ""
 	}
 	fill := 0
 	if p.Total > 0 && p.Done < p.Total {
 		fill = int(float64(p.Done) * float64(cells) / float64(p.Total))
 	}
-	return strings.Repeat("#", fill) + strings.Repeat("-", cells-fill)
+	return strings.Repeat(ui.Glyphs.ProgressFill, fill), strings.Repeat(ui.Glyphs.ProgressEmpty, cells-fill)
 }
 
-// styleBar applies the progress style to the filled cells and the base
-// style to the empty cells of a bar string.
-func styleBar(bar string, st Styles) string {
-	if i := strings.IndexByte(bar, '-'); i >= 0 {
-		return st.Progress.Render(bar[:i]) + st.Normal.Render(bar[i:])
+// styleBar applies the progress style to the fill run and the base
+// style to the empty run.
+func styleBar(fill, empty string, st Styles) string {
+	if empty == "" {
+		return st.Progress.Render(fill)
 	}
-	return st.Progress.Render(bar)
+	return st.Progress.Render(fill) + st.Normal.Render(empty)
 }

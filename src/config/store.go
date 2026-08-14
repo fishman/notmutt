@@ -45,10 +45,39 @@ func (s *Store) Config() Config {
 	c.Theme.Default = s.cfg.Theme.Default
 	c.Theme.Variants = make(map[string]StyleTable, len(s.cfg.Theme.Variants))
 	for v, table := range s.cfg.Theme.Variants {
-		table.Index.Tag.Tags = maps.Clone(table.Index.Tag.Tags)
-		c.Theme.Variants[v] = table
+		c.Theme.Variants[v] = cloneStyleTable(table)
 	}
 	return c
+}
+
+// cloneStyleTable deep-copies one theme variant: every style's Attrs
+// slice gets its own backing array and the tag map is cloned (the same
+// discipline as TagGroups above - a Config() caller mutating the copy
+// must never touch the store).
+func cloneStyleTable(t StyleTable) StyleTable {
+	for _, s := range []*Style{
+		&t.Normal, &t.Indicator, &t.Status, &t.Progress, &t.Error,
+		&t.Index.Number, &t.Index.Date, &t.Index.Author, &t.Index.Subject,
+		&t.Index.Flags, &t.Index.Staged, &t.Index.Ghost, &t.Index.Tag.Default,
+		&t.Pager.Header, &t.Pager.HdrDefault, &t.Pager.Signature, &t.Pager.Attachment,
+	} {
+		if s.Attrs != nil {
+			s.Attrs = append([]string(nil), s.Attrs...)
+		}
+	}
+	for i := range t.Pager.Quoted {
+		if t.Pager.Quoted[i].Attrs != nil {
+			t.Pager.Quoted[i].Attrs = append([]string(nil), t.Pager.Quoted[i].Attrs...)
+		}
+	}
+	t.Index.Tag.Tags = maps.Clone(t.Index.Tag.Tags)
+	for n, s := range t.Index.Tag.Tags {
+		if s.Attrs != nil {
+			s.Attrs = append([]string(nil), s.Attrs...)
+		}
+		t.Index.Tag.Tags[n] = s
+	}
+	return t
 }
 
 func (s *Store) Subscribe(section string, fn func()) {

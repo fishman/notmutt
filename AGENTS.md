@@ -445,6 +445,12 @@ instead of a reversible stage.
   the staged state immediately (applied tags plus pending ops, with the R2
   exclusive-group resolution applied, so staging archive drops inbox/unread
   from the render); notmuch is untouched.
+- Staged state is visually distinct and themable: a row with pending ops
+  renders with the `[index.staged]` style (R11 machinery - palette names or
+  raw hex, inherits the base index style, unified attrs) plus a staged glyph
+  in the flags slot. The glyph is config data (default `*`, the
+  tag-transforms rule from R11), never hardcoded. Undo clears style and
+  glyph together with the ops.
 - APPLY (default `$`, mutt's sync semantics) flushes the buffer: one ActTag
   batch per message carrying the fully resolved op set (pending ops plus
   exclusive-group removals), on the worker's lock-budgeted action path. A

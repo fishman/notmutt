@@ -123,6 +123,19 @@ Config data, strict-loaded. TOML shape:
     staged = "*"
     progress_fill = "#"
     progress_empty = "-"
+    statusline_separator = "|"
+
+The status line is COMPOSABLE, modeled on the powerline-go segment
+pattern (workspace checkout) adapted to the TUI: segments are data
+(content + style + drop priority); the left group (view name, visible
+count; more segments append the same way) joins with the separator
+glyph; the right group is the R15 progress region (lowest priority);
+when the row exceeds the terminal width the lowest-priority segments
+drop first (progress, then count; the view name survives). The
+separator seam renders fg = previous bg on next bg (the chevron); on
+a shared background it falls back to the previous fg - a plain "|".
+Gaps pad with the status background so the row always covers the full
+width.
 
 Rules (R11):
 

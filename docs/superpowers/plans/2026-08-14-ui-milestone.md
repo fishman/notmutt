@@ -296,12 +296,13 @@ variant palette > base palette, strict load (unknown keys, unknown
 palette refs, bad hex, unknown attrs, missing variant all error).
 
 **Files:**
-- Modify: `src/config/config.go` (Style, Palette, Theme, StyleTable types + UnmarshalTOML + resolution + validation)
+- Modify: `src/config/config.go` (Style, Palette, Theme, StyleTable types + UnmarshalTOML + resolution + validation; Glyphs gains StatuslineSeparator)
 - Modify: `src/config/store.go` (SetThemeVariant)
 - Modify: `src/app/app.go` (theme subscription, pass theme data to the TUI)
 - Modify: `src/tui/styles.go` (config data in, lipgloss.Style out)
+- Modify: `src/tui/statusline.go` (the composable segment model, section below)
 - Modify: `src/tui/model.go` (hold theme data, re-resolve on ConfigChanged)
-- Test: `src/config/config_test.go`, `src/tui/styles_test.go`
+- Test: `src/config/config_test.go`, `src/tui/styles_test.go`, `src/tui/statusline_test.go`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -908,7 +909,7 @@ spec's onedark styles (the exact tables from the spec section 3;
 "normal" = {fg base05, bg base00}, indicator = {fg base00, bg base0A},
 status = {fg base05, bg base01}, progress = {fg base00, bg base0D},
 index slots per the muttrc port, pager quoted0-5 per the muttrc
-quoted colors, and the [ui] tables: `UI{Keymap: "vim", Tags: UITags{Max: 2}, Glyphs: Glyphs{Staged: "*", ProgressFill: "#", ProgressEmpty: "-"}}`).
+quoted colors, and the [ui] tables: `UI{Keymap: "vim", Tags: UITags{Max: 2}, Glyphs: Glyphs{Staged: "*", ProgressFill: "#", ProgressEmpty: "-", StatuslineSeparator: "|"}}`).
 
 Default theme must also be present: `Theme{Default: "dark", Variants: {"dark": ...}}`.
 
@@ -1028,6 +1029,94 @@ statusLine gain `ui config.UI` and consume the config-data glyphs
 tag slot max from ui.Tags.Max in tagGlyphs, the progress fill/empty
 from ui.Glyphs in progressBar - R11: never hardcoded); the Update
 loop adds:
+
+`src/tui/statusline.go` - the composable segment model (the
+powerline-go pattern, adapted to the current UI model):
+
+```go
+// statusSegment is one composable cell of the status line: content,
+// style, and a drop priority (powerline-go Segment, cut to notmutt).
+// The lower the priority, the earlier the segment drops when the
+// row exceeds the terminal width.
+type statusSegment struct {
+	content  string
+	style    lipgloss.Style // zero value inherits the status style
+	priority int
+}
+```
+
+statusLine(st, ui, d statusData) builds the segments from a small
+data struct, joins the LEFT group with the separator glyph
+(ui.Glyphs.StatuslineSeparator, default "|"), right-aligns the RIGHT
+group (the R15 progress region; lowest priority), and pads the gaps
+with the status background so the row always covers the full width
+(R11 slot reservation):
+
+```go
+type statusData struct {
+	view    string
+	visible int
+	prog    *core.Progress // nil = no job on
+	on      bool
+}
+```
+
+Composition rules (powerline-go's, sized down):
+
+- Left group: one segment per datum (view name, visible count;
+  future segments - keymap indicator, notification - append the same
+  way). Segments join with the separator glyph; the seam renders fg
+  = previous segment's bg on bg = next segment's bg (the powerline
+  chevron); when the two bgs are equal the separator renders in the
+  previous segment's fg instead - a plain "|" on the shared status
+  background. HideSeparators is not needed (no powerline symbol
+  templates); the right group has no separator, it abuts the gap.
+- Width fitting follows truncateRow: when the composed row exceeds
+  the terminal width, the lowest-priority segments drop first -
+  progress region (0), then the visible count (5); the view name
+  (10) always survives. This is the old narrow-terminal bar-drop
+  semantics, data-driven.
+- The status bar's own content never leaves the status style: a
+  segment's zero style inherits st.Status (per-segment styles land
+  when a segment needs one - a notification segment, R4 era).
+
+statusLine builds the segments from the data struct and returns the
+composed, width-fitted row (progressBar keeps its pure function; the
+segment machinery composes it into the row).
+
+`src/tui/statusline_test.go`:
+
+```go
+func TestStatusLineSegments(t *testing.T) {
+	ui := config.Default().UI
+	row := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
+	if !strings.Contains(row, "inbox") || !strings.Contains(row, "5") {
+		t.Fatalf("segments must render: %q", row)
+	}
+	if !strings.Contains(row, ui.Glyphs.StatuslineSeparator) {
+		t.Fatalf("segments must join with the separator: %q", row)
+	}
+}
+
+func TestStatusLineDropsLowPriorityOnNarrow(t *testing.T) {
+	ui := config.Default().UI
+	d := statusData{view: "inbox", visible: 5, prog: &core.Progress{Done: 1, Total: 5}, on: true}
+	full := statusLine(DefaultStyles(), ui, d)
+	if !strings.Contains(full, ui.Glyphs.ProgressFill) {
+		t.Fatalf("progress segment must render at full width: %q", full)
+	}
+	narrow := statusLineWidth(DefaultStyles(), ui, d, 8)
+	if strings.Contains(narrow, ui.Glyphs.ProgressFill) {
+		t.Fatalf("progress must drop first on a narrow terminal: %q", narrow)
+	}
+	if !strings.Contains(narrow, "inbox") {
+		t.Fatalf("the view name must survive: %q", narrow)
+	}
+}
+```
+
+(statusLineWidth is statusLine with an explicit width parameter for
+testability; the model calls it with m.width.)
 
 ```go
 case core.ConfigChanged:
@@ -1720,9 +1809,10 @@ type UITags struct {
 }
 
 type Glyphs struct {
-	Staged        string `toml:"staged"`
-	ProgressFill  string `toml:"progress_fill"`
-	ProgressEmpty string `toml:"progress_empty"`
+	Staged              string `toml:"staged"`
+	ProgressFill        string `toml:"progress_fill"`
+	ProgressEmpty       string `toml:"progress_empty"`
+	StatuslineSeparator string `toml:"statusline_separator"`
 }
 ```
 

@@ -24,7 +24,7 @@ func TestRowStyled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI)
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1)
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -51,7 +51,7 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles(), config.Default().UI)
+	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1)
 }
 
 // TestPadRowTruncates pins the common production path: rows render wider

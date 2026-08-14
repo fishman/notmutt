@@ -923,6 +923,21 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	}
 }
 
+// TestNumberColumnGrows pins the variable number slot: its width
+// tracks the widest row number (12 rows -> 2 cells), so single-digit
+// rows pad to it and the column never re-aligns per row.
+func TestNumberColumnGrows(t *testing.T) {
+	m := rowsModel(12)
+	m.width, m.height = 80, 24
+	lines := strings.Split(stripANSI(m.View()), "\n")
+	if !strings.HasPrefix(lines[0], "1  ") {
+		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[0])
+	}
+	if !strings.HasPrefix(lines[9], "10 ") {
+		t.Fatalf("row 10 must fit the 2-cell slot: %q", lines[9])
+	}
+}
+
 // TestArrowKeysMoveCursor pins the config overlay: up/down are bound to
 // the cursor actions in the index context (the defaults are untouched,
 // the user's config file adds the keys).

@@ -508,9 +508,12 @@ func (m Model) View() string {
 			top = 0
 		}
 	}
+	// the number slot grows with the largest row number (the width is
+	// per-render and shared by every row - alignment never shifts)
+	numWidth := len(strconv.Itoa(len(rows)))
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st, m.ui)
+		line := renderRow(i+1, rows[i], st, m.ui, numWidth)
 		outer := st.Normal
 		if i == cur {
 			outer = st.Indicator

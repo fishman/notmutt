@@ -13,18 +13,21 @@ import (
 )
 
 // renderRow renders the fixed-slot template (R11): number, flags,
-// attachment, date, author, subject, tags. Optional slots reserve width;
-// every slot renders through its style, so the line carries per-slot SGR
-// runs (the outer row style is applied later by padRow). Glyphs and the
-// tag-slot cap come from config data, never hardcoded.
-func renderRow(n int, row core.Row, st Styles, ui config.UI) string {
+// attachment, date, author, subject, tags. The number slot is the one
+// variable width: it grows to the widest row number (the caller passes
+// the count-derived width) so the column aligns without padding waste.
+// Optional slots reserve width; every slot renders through its style,
+// so the line carries per-slot SGR runs (the outer row style is applied
+// later by padRow). Glyphs and the tag-slot cap come from config data,
+// never hardcoded.
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int) string {
 	var b strings.Builder
-	b.WriteString(st.Index.Number.Render(padCellsRight(strconv.Itoa(n), 4)))
+	b.WriteString(st.Index.Number.Render(padCellsRight(strconv.Itoa(n), numWidth)))
 	b.WriteByte(' ')
 	if row.Msg == nil {
 		// ghost root: message-derived slots stay blank, "[...]" fills the
 		// subject slot so the template stays aligned
-		b.WriteString(padCellsRight("", 3))
+		b.WriteString(padCellsRight("", numWidth))
 		b.WriteString(" ")
 		b.WriteByte(' ')
 		b.WriteString(padCellsRight("", 15))

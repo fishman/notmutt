@@ -70,6 +70,25 @@ No own database. Mailbox state, flags, threads, search all come from
 libnotmuch. The client is a notmuch front-end. Virtual views are tag
 queries; folder state is derived, never authoritative.
 
+The ONE derived store: the index cache (R13) - a bbolt mirror of the
+overview query output. It is a materialized view, not a second truth:
+revision-keyed, invalidated by notmuch's lastmod, rebuilt from query
+output only, never written independently. Every mutation still goes
+through notmuch; the cache can be stale only by invalidation, and a
+read that finds it stale re-syncs from notmuch (startup is O(changed),
+a full walk only on cache miss or revision mismatch).
+
+Backend verdict (2026-08-14, 33k-thread inbox, NOTMUCH_BENCH=1): the
+CLI full-walk is 1.5s vs the cgo binding's 8.7s (~230us per-message
+row - the per-message iterator overhead). The CLI stays the runtime
+backend (SECURITY.md F10: default stays CLI unless cgo demonstrably
+wins - it does not); the go.notmuch batch-iteration work is dropped
+until the binding closes the gap. The cache ingests the CLI's JSON
+output as typed structs in batch (one bbolt transaction per emitted
+chunk); a JSON-ingesting DB (sqlite json_each) is not needed - the
+parse is ~10ms, and the write-at-end mset wall is untouched by the
+ingestion mechanism.
+
 ### R2. Filters and triggers through notmuch + afew
 
 Rules live in notmuch hooks (post-new) and afew. afew may later be replaced
@@ -410,28 +429,36 @@ Windows are DBus-free (darwin/windows excluded by build constraints).
 - Supply chain: godbus/dbus is a dependency only in the dbus build;
   it is pinned and vetted like everything else (R7 policy).
 
-### R13. Derived mail cache (MIME metadata)
+### R13. Derived caches (bbolt)
 
-notmuch IS the header cache: subjects, authors, dates, tags, thread
-ids are stored in its DB and served by queries without opening mail
-files (R1 - no duplicate header store). The only per-message data
-notmuch cannot serve is MIME-derived: attachment presence and list,
-structure, sizes - those need a file open and parse.
+Two derived stores behind the same `Cache` interface (Get/Put/Delete,
+pluggable backends, embedded pure-Go bbolt default - the R7
+supply-chain bar; interface first, so a backend can change without
+touching the notmuch layer, the same boundary discipline as the
+filter engine, R2). Both are 0600 (SECURITY.md F5); cached strings
+(subjects, attachment filenames - attacker-influenced) always pass
+the same sanitize/render/mailcap paths as fresh data - never trusted
+by virtue of being cached.
 
-- A `Cache` interface (Get/Put/Delete) with pluggable backends; the
-  default backend is an embedded pure-Go KV store (bbolt). Interface
-  first, so the backend can change without touching the notmuch layer
-  (same boundary discipline as the filter engine, R2).
-- Keyed by (path, size, mtime): renames (flag renames, afew folder
-  moves) and edits invalidate naturally; steady state is hit-only.
-- Payload is small structs (attachment list: name/type/size).
-  Compression is a future knob, not a requirement - measure first.
-- Client-local state is tags, not flags: reply/forward markers are
-  +replied/+forwarded tags (R1). Nothing else needs storing.
-- Cache files are 0600 (SECURITY.md F5); cached strings (attachment
-  filenames, attacker-influenced) always pass the same
-  sanitize/render/mailcap paths as fresh data - never trusted by
-  virtue of being cached.
+Index cache (the read surface; R1): mirrors the overview query output
+(thread id, timestamp, author, subject, tags, per-thread message
+counts), keyed by thread id, ingested from the one-call query output
+in batch - one bbolt transaction per emitted chunk (the Query emit
+cadence IS the ingestion batch). Revision-keyed; startup reads the
+cache and syncs the notmuch lastmod delta (O(changed)); a full walk
+only on cache miss or revision mismatch. notmuch stays authoritative
+- the cache mirrors tag state, never mutates it.
+
+MIME cache (per-message content metadata): attachment presence and
+list, structure, sizes - the only per-message data notmuch cannot
+serve (those need a file open and parse). Keyed by (path, size,
+mtime): renames (flag renames, afew folder moves) and edits
+invalidate naturally; steady state is hit-only. Payload is small
+structs (attachment list: name/type/size). Compression is a future
+knob, not a requirement - measure first.
+
+Client-local state is tags, not flags: reply/forward markers are
++replied/+forwarded tags (R1). Nothing else needs storing.
 
 ### R14. Staged tag operations (apply and undo)
 

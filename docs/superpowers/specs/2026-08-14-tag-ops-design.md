@@ -251,7 +251,8 @@ tag-action tables are their substrate, so nothing here forecloses them.
     thread id, date, authors, subject, tags - DB-side, zero file
     opens; the CLI has no content-free per-message dump).
     `--format=json` emits nothing until the mset is computed
-    (write-at-end, measured 4.8s for 33k threads; json0 unsupported
+    (write-at-end, measured 1.5s total for a 33k-thread inbox on the
+    2026-08-14 bench; json0 unsupported
     on this notmuch), so the parse is buffered and chunks are sliced
     from the result - a stream-parse buys nothing until a notmuch
     with progressive output exists;

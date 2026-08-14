@@ -80,8 +80,9 @@ in TestWorkerLockTimeout.
    the hand-rolled backend used is gone; the tagged build emits no
    deprecation warning. The binding itself is an unreleased fork, so
    the replace + vendor pins it; the official contrib/go bindings
-   (dormant 2018-2026, rewritten 2026-08-14) were NOT chosen because
-   they lack the revision/UUID API and the config-aware open.
+   (dormant 2018-2026) were NOT chosen because they lack the
+   revision/UUID API and the config-aware open; the workspace fork
+   (notmuch/bindings/go.notmuch) was modernized on 2026-08-14.
 2. Thread() shape divergence: CLI Thread runs `notmuch show --body=false
    thread:ID` (show tree, References populated); cgo Thread runs a flat
    newest-first search over `thread:ID` with empty References. The

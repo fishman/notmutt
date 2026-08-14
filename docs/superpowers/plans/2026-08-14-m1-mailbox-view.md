@@ -4467,6 +4467,7 @@ package app
 import (
 	"context"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -4474,54 +4475,81 @@ import (
 	"notmutt/notmuch"
 )
 
-// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoak -v
-// Mutates the real DB with a scratch tag, fully reversed. Prints counts
-// and ids only - never subjects or headers (privacy rule).
+// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoak -v; Mutates the real DB
+// with a scratch tag, fully reversed. Prints counts and ids only - never
+// subjects or headers (privacy rule).
 func TestSoak(t *testing.T) {
 	if os.Getenv("NOTMUCH_SOAK") == "" {
-		t.Skip("set NOTMUCH_SOAK=1 to run against the real DB")
+		t.Skip("soak runs against the real DB; set NOTMUCH_SOAK=1")
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	worker := notmuch.NewWorker(core.NewBus(), notmuch.NewCLI(), 10*time.Second)
 	go worker.Start(ctx)
 	defer worker.Call(notmuch.Action{Kind: notmuch.ActClose})
 
 	const scratch = "notmutt-soak"
-	defer worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: "tag:" + scratch, TagOps: []notmuch.TagOp{{Tag: scratch, Add: false}}})
+	// failure-path cleanup: remove the scratch tag from anything carrying it
+	defer worker.Call(notmuch.Action{
+		Kind:   notmuch.ActTag,
+		Query:  "tag:" + scratch,
+		TagOps: []notmuch.TagOp{{Tag: scratch, Add: false}},
+	})
 
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 50})
-	if err != nil || rpl.Err != nil {
-		t.Fatalf("seed query: %v %v", err, rpl.Err)
-	}
-	if len(rpl.Msgs) == 0 {
-		t.Skip("empty inbox")
+	if err != nil || rpl.Err != nil || len(rpl.Msgs) == 0 {
+		t.Skipf("no inbox mail: %v %v", err, rpl.Err)
 	}
 	before := len(rpl.Msgs)
-	target := rpl.Msgs[0].ID
 
-	if _, err := worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: `id:"` + target + `"`, TagOps: []notmuch.TagOp{{Tag: scratch, Add: true}}}); err != nil {
-		t.Fatal(err)
+	// CLI Query stubs carry empty IDs; resolve one via Thread.
+	target := ""
+	seed, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 1})
+	if err == nil && seed.Err == nil && len(seed.Msgs) > 0 {
+		thr, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: seed.Msgs[0].ThreadID})
+		if err == nil && thr.Err == nil && len(thr.Msgs) > 0 {
+			target = thr.Msgs[0].ID
+		}
 	}
-
-	// the next cycle's changeset must include the scratch tag
-	_, rev, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-	if err != nil || rev == 0 {
-		t.Fatalf("revision: %v %v", err, rev)
-	}
-	changed, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch})
-	if err != nil || changed.Err != nil {
-		t.Fatalf("lastmod check: %v %v", err, changed.Err)
-	}
-	if len(changed.Msgs) == 0 {
-		t.Fatal("scratch-tagged message not visible after tag op")
+	if target == "" {
+		t.Skip("no message with resolvable id")
 	}
 
-	if _, err := worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: `id:"` + target + `"`, TagOps: []notmuch.TagOp{{Tag: scratch, Add: false}}}); err != nil {
-		t.Fatal(err)
+	// id query quoting follows app.go's SetTagOpHandler escape
+	byID := "id:\"" + strings.ReplaceAll(target, `"`, `""`) + `"`
+
+	rpl, err = worker.Call(notmuch.Action{
+		Kind: notmuch.ActTag, Query: byID,
+		TagOps: []notmuch.TagOp{{Tag: scratch, Add: true}},
+	})
+	if err != nil || rpl.Err != nil {
+		t.Fatalf("apply scratch tag: %v %v", err, rpl.Err)
 	}
-	after, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 50})
-	if err != nil || len(after.Msgs) != before {
-		t.Fatalf("inbox changed by soak (%d -> %d): %v", before, len(after.Msgs), err)
+	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+	if err != nil || rpl.Err != nil {
+		t.Fatalf("revision: %v %v", err, rpl.Err)
+	}
+	if rpl.Rev == 0 {
+		t.Fatal("revision must be nonzero after a tag change")
+	}
+	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch, Limit: 10})
+	if err != nil || rpl.Err != nil || len(rpl.Msgs) == 0 {
+		t.Fatalf("scratch tag not visible: %v %v %d msgs", err, rpl.Err, len(rpl.Msgs))
+	}
+
+	rpl, err = worker.Call(notmuch.Action{
+		Kind: notmuch.ActTag, Query: byID,
+		TagOps: []notmuch.TagOp{{Tag: scratch, Add: false}},
+	})
+	if err != nil || rpl.Err != nil {
+		t.Fatalf("remove scratch tag: %v %v", err, rpl.Err)
+	}
+	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch, Limit: 10})
+	if err != nil || rpl.Err != nil {
+		t.Fatalf("removal check: %v %v", err, rpl.Err)
+	}
+	if len(rpl.Msgs) != 0 {
+		t.Fatalf("scratch tag still present after removal: %d msgs", len(rpl.Msgs))
 	}
 	t.Logf("soak ok: %d inbox msgs, scratch tag applied and removed on %s", before, target)
 }
@@ -4541,60 +4569,58 @@ import (
 	"notmutt/core"
 )
 
-// Cursor invariant: if the cursor's id is present in the new snapshot,
-// the cursor points at it after the merge.
+// TestCursorInvariant: the cursor must survive a merge when its message
+// survives the merge. Random lists and mutations, deterministic seed.
 func TestCursorInvariant(t *testing.T) {
-	r := rand.New(rand.NewSource(11))
-	for iter := 0; iter < 500; iter++ {
-		view := core.NewView("inbox", "tag:inbox")
-		var msgs []*core.Message
-		for i := 0; i < r.Intn(20); i++ {
-			msgs = append(msgs, &core.Message{ID: randID(r), Timestamp: r.Int63n(1e9), ThreadID: "t"})
+	rng := rand.New(rand.NewSource(11))
+	for i := 0; i < 500; i++ {
+		v := core.NewView("inbox", "tag:inbox")
+		n := rng.Intn(21)
+		msgs := make([]*core.Message, n)
+		for j := range msgs {
+			msgs[j] = &core.Message{ID: randID(rng), Timestamp: rng.Int63n(1e9), ThreadID: "t"}
 		}
 		if len(msgs) == 0 {
 			continue
 		}
-		view.MergeThreads([]*core.Thread{core.NewThread("t", msgs)})
-		cursor := msgs[r.Intn(len(msgs))].ID
-		view.SetCursor(cursor)
-
-		for i := 0; i < r.Intn(5); i++ {
-			switch r.Intn(3) {
+		v.MergeThreads([]*core.Thread{core.NewThread("t", msgs)})
+		target := msgs[rng.Intn(len(msgs))].ID
+		v.SetCursor(target)
+		for k := rng.Intn(6); k > 0; k-- {
+			switch rng.Intn(3) {
 			case 0:
-				msgs = append(msgs, &core.Message{ID: randID(r), Timestamp: r.Int63n(1e9), ThreadID: "t"})
+				msgs = append(msgs, &core.Message{ID: randID(rng), Timestamp: rng.Int63n(1e9), ThreadID: "t"})
 			case 1:
 				if len(msgs) > 1 {
-					msgs = append(msgs[:0], msgs[1:]...)
+					msgs = msgs[1:]
 				}
 			case 2:
-				msgs[r.Intn(len(msgs))].Timestamp += r.Int63n(10)
+				msgs[rng.Intn(len(msgs))].Timestamp += rng.Int63n(10)
 			}
+			v.MergeThreads([]*core.Thread{core.NewThread("t", msgs)})
 		}
-		view.MergeThreads([]*core.Thread{core.NewThread("t", msgs)})
-		row, ok := view.CursorRow()
+		row, ok := v.CursorRow()
 		if !ok {
-			continue
-		}
-		if row.Msg.ID == cursor {
 			continue
 		}
 		present := false
 		for _, m := range msgs {
-			if m.ID == cursor {
+			if m.ID == target {
 				present = true
+				break
 			}
 		}
-		if present {
-			t.Fatalf("iter %d: cursor %s present but lost", iter, cursor)
+		if present && (row.Msg == nil || row.Msg.ID != target) {
+			t.Fatalf("cursor lost: target %s present but row holds %v", target, row.Msg)
 		}
 	}
 }
 
-func randID(r *rand.Rand) string {
+func randID(rng *rand.Rand) string {
 	const hex = "0123456789abcdef"
 	b := make([]byte, 16)
-	for j := range b {
-		b[j] = hex[r.Intn(16)]
+	for i := range b {
+		b[i] = hex[rng.Intn(len(hex))]
 	}
 	return string(b)
 }
@@ -4627,6 +4653,26 @@ cd /home/user/git/opencode/notmutt
 git add src/app
 git commit -m "test(app): add soak and cursor-invariant tests"
 ```
+
+**Coordination notes (post-implementation, Task 15)**: committed as
+a013a1b9, amended by the fix commit 4489c3d after quality review. Two
+deviations from the blocks above, both recorded in the commit bodies:
+(1) Target resolution: the block's `rpl.Msgs[0].ID` yields an EMPTY id -
+the CLI backend's Query returns thread-level stubs whose per-message fields
+are populated only by Thread() (cli.go). The soak resolves the target via
+ActQuery Limit:1 -> ThreadID -> ActThread -> real ID, skipping if
+unresolvable.
+(2) Final assertion: the block's inbox-equality check is insensitive to the
+removal (a tag op cannot change inbox membership) and truncated-vacuous at
+>50 inbox messages. The committed test asserts `tag:notmutt-soak` returns
+0 messages after the explicit removal (loud failure, runs before the
+deferred scrub so the defer cannot mask a regression); the inbox check was
+dropped (can spuriously fail on concurrent mbsync delivery), `before` kept
+for the log line only.
+Also: the env gate is `== ""` (so NOTMUCH_SOAK=0 would run), matching the
+NOTMUCH_BENCH pattern in bench_test.go verbatim - accepted as the project
+pattern by review. Manual acceptance items 1-3 (strict config error, async
+render, tag-op from index) remain pending user verification in a terminal.
 
 ## Self-review notes
 

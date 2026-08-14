@@ -505,11 +505,14 @@ func scheme(keymap string) map[string]map[string]string {
 
 // mergeBindings overlays the file's per-key bindings on the scheme
 // defaults; a context table missing from the file is the whole scheme
-// table. Callers pass ONLY the file's tables (Load nils the Default
-// tables before decode, so scheme defaults never leak cross-keymap).
+// table. File contexts the scheme does not know survive to validation,
+// which rejects them (strict load, R8). Callers pass ONLY the file's
+// tables (Load nils the Default tables before decode, so scheme
+// defaults never leak cross-keymap).
 func mergeBindings(file map[string]map[string]string, keymap string) map[string]map[string]string {
+	sch := scheme(keymap)
 	out := map[string]map[string]string{}
-	for ctx, km := range scheme(keymap) {
+	for ctx, km := range sch {
 		merged := map[string]string{}
 		for k, v := range km {
 			merged[k] = v
@@ -518,6 +521,11 @@ func mergeBindings(file map[string]map[string]string, keymap string) map[string]
 			merged[k] = v
 		}
 		out[ctx] = merged
+	}
+	for ctx, km := range file {
+		if _, ok := sch[ctx]; !ok {
+			out[ctx] = km
+		}
 	}
 	return out
 }
@@ -704,6 +712,9 @@ func validate(cfg Config) error {
 		}
 	}
 	for name, km := range cfg.Bindings {
+		if _, ok := scheme(cfg.UI.Keymap)[name]; !ok {
+			return fmt.Errorf("bindings.%s: unknown context %q", name, name)
+		}
 		if len(km) == 0 {
 			return fmt.Errorf("bindings.%s: at least one binding required", name)
 		}

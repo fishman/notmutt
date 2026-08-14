@@ -768,6 +768,24 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	}
 }
 
+func TestPagerQuitKeyExits(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox"}},
+	})})
+	// the emacs pager binds q to quit: in pager mode the key exits the
+	// app (the spec's "quit in the pager exits the app; back returns to
+	// the index - both bound")
+	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "quit"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m.width, m.height = 40, 10
+	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("q")})
+	if cmd == nil {
+		t.Fatal("q bound to quit in pager mode must return a quit command")
+	}
+}
+
 func TestPagerPageKeys(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10

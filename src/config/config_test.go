@@ -230,17 +230,35 @@ func TestLoadUnknownBindingKey(t *testing.T) {
 
 func TestValidateBindings(t *testing.T) {
 	cfg := Default()
-	cfg.Bindings["empty"] = map[string]string{}
+	cfg.Bindings["index"] = map[string]string{}
 	if err := validate(cfg); err == nil {
 		t.Fatal("empty context must error")
 	}
-	cfg.Bindings["empty"] = map[string]string{"": "archive"}
+	cfg.Bindings["index"] = map[string]string{"": "archive"}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank key must error")
 	}
-	cfg.Bindings["empty"] = map[string]string{"x": " "}
+	cfg.Bindings["index"] = map[string]string{"x": " "}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank action must error")
+	}
+}
+
+func TestValidateUnknownBindingContext(t *testing.T) {
+	cfg := Default()
+	cfg.Bindings["indicx"] = map[string]string{"q": "quit"}
+	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "indicx") {
+		t.Fatalf("unknown context must error naming it, got %v", err)
+	}
+}
+
+func TestLoadUnknownBindingContext(t *testing.T) {
+	_, err := Load(write(t, "\n[bindings.indicx]\nq = \"quit\"\n"))
+	if err == nil {
+		t.Fatal("unknown binding context must error")
+	}
+	if !strings.Contains(err.Error(), "indicx") {
+		t.Fatalf("error must name the context, got: %v", err)
 	}
 }
 

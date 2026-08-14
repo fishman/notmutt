@@ -59,6 +59,19 @@ func Run() error {
 		}()
 	})
 
+	groups := st.Config().TagGroupList()
+	view.SetGroups(groups)
+
+	tui.SetApplyHandler(func() {
+		go func() {
+			if err := applyStaged(view, groups, worker); err != nil {
+				bus.Publish(core.JobError{Job: "apply", Err: err})
+				return
+			}
+			bus.Publish(core.ViewDiff{View: view.Name})
+		}()
+	})
+
 	go runRefresher(ctx, bus, worker, view, refresher, st)
 
 	busCh := bus.Subscribe()

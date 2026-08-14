@@ -51,3 +51,10 @@ type CacheResult struct {
 type ConfigChanged struct{ Section string }
 
 type ViewDiff struct{ View string }
+
+// JobError surfaces a failed background job (R15 error surface); the
+// TUI ignores it until the error widget lands.
+type JobError struct {
+	Job string
+	Err error
+}

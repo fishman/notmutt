@@ -45,6 +45,39 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return r, nil
 }
 
+type tagCall struct {
+	query  string
+	tagOps []core.TagOp
+}
+
+type fakeTagWorker struct {
+	*fakeWorker
+	tagErr   atomic.Value // error
+	tagCalls atomic.Value // []tagCall
+}
+
+func (f *fakeTagWorker) setTagErr(err error) { f.tagErr.Store(err) }
+
+func (f *fakeTagWorker) tagCallsSnapshot() []tagCall {
+	v, _ := f.tagCalls.Load().([]tagCall)
+	return v
+}
+
+func (f *fakeTagWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
+	if a.Kind == notmuch.ActTag {
+		if err, _ := f.tagErr.Load().(error); err != nil {
+			return notmuch.Reply{ID: a.ID}, err
+		}
+		var calls []tagCall
+		if v, ok := f.tagCalls.Load().([]tagCall); ok {
+			calls = v
+		}
+		f.tagCalls.Store(append(calls, tagCall{a.Query, a.TagOps}))
+		return notmuch.Reply{ID: a.ID}, nil
+	}
+	return f.fakeWorker.Call(a)
+}
+
 func TestCycleIncremental(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}

@@ -15,8 +15,11 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Open(ctx context.Context, p string) error { return f.err }
 func (f *fakeBackend) Close(ctx context.Context) error          { return f.err }
-func (f *fakeBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
-	return []core.Message{{ID: "m1", ThreadID: "t1"}}, f.err
+func (f *fakeBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+	if emit != nil {
+		emit([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	}
+	return f.err
 }
 func (f *fakeBackend) Count(ctx context.Context, q string) (int, error) { return 1, f.err }
 func (f *fakeBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
@@ -34,11 +37,15 @@ func TestWorkerCallQuery(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go w.Start(ctx)
-	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox", Limit: 10})
+	var got []core.Message
+	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox", Limit: 10, Emit: func(msgs []core.Message) bool {
+		got = append(got, msgs...)
+		return true
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rpl.Err != nil || len(rpl.Msgs) != 1 || rpl.Msgs[0].ID != "m1" {
+	if rpl.Err != nil || len(got) != 1 || got[0].ID != "m1" {
 		t.Fatalf("reply wrong: %+v %v", rpl, err)
 	}
 }
@@ -72,21 +79,25 @@ func (b *blockingBackend) Close(ctx context.Context) error          { return b.i
 func (b *blockingBackend) Count(ctx context.Context, q string) (int, error) {
 	return b.inner.Count(ctx, q)
 }
-func (b *blockingBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
+func (b *blockingBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+	time.Sleep(200 * time.Millisecond) // 4x the 50ms test budget
+	return b.inner.Query(ctx, q, limit, emit)
 }
 func (b *blockingBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
 	return b.inner.Thread(ctx, id)
 }
 func (b *blockingBackend) Tag(ctx context.Context, q string, ops []TagOp) error {
-	return b.inner.Tag(ctx, q, ops)
+	<-ctx.Done()
+	return ctx.Err()
 }
 func (b *blockingBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.inner.Revision(ctx)
 }
 func (b *blockingBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
 
+// TestWorkerLockTimeout pins the WRITER budget: tag holds notmuch's
+// write lock, so a hung tag errors out as ErrLockTimeout after the
+// budget - never a blocked UI.
 func TestWorkerLockTimeout(t *testing.T) {
 	bus := core.NewBus()
 	w := NewWorker(bus, &blockingBackend{inner: &fakeBackend{}}, 50*time.Millisecond)
@@ -94,7 +105,7 @@ func TestWorkerLockTimeout(t *testing.T) {
 	defer cancel()
 	go w.Start(ctx)
 	ch := bus.Subscribe()
-	if _, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"}); err != nil {
+	if _, err := w.Call(Action{Kind: ActTag, Query: "id:x", TagOps: []TagOp{{Tag: "unread", Add: false}}}); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -107,25 +118,42 @@ func TestWorkerLockTimeout(t *testing.T) {
 	}
 }
 
+// TestWorkerReadsUnbudgeted pins the read/write split: a query that
+// runs longer than the lock budget still completes - reads run on the
+// read handle, MVCC-safe, and the fill must never be cut off mid-walk.
+func TestWorkerReadsUnbudgeted(t *testing.T) {
+	bus := core.NewBus()
+	w := NewWorker(bus, &blockingBackend{inner: &fakeBackend{}}, 50*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rpl.Err != nil {
+		t.Fatalf("unbudgeted read must not hit the lock budget: %v", rpl.Err)
+	}
+}
+
 type killBackend struct {
 	inner Backend
 }
 
 func (b *killBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
 func (b *killBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
-func (b *killBackend) Query(ctx context.Context, q string, l, o int) ([]core.Message, error) {
-	<-ctx.Done()
-	return nil, errors.New("signal: killed")
+func (b *killBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+	return b.inner.Query(ctx, q, limit, emit)
 }
 func (b *killBackend) Count(ctx context.Context, q string) (int, error) {
-	<-ctx.Done()
-	return 0, errors.New("signal: killed")
+	return b.inner.Count(ctx, q)
 }
 func (b *killBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
 	return b.inner.Thread(ctx, id)
 }
 func (b *killBackend) Tag(ctx context.Context, q string, ops []TagOp) error {
-	return b.inner.Tag(ctx, q, ops)
+	<-ctx.Done()
+	return errors.New("signal: killed")
 }
 func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.inner.Revision(ctx)
@@ -133,7 +161,8 @@ func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
 func (b *killBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
 
 // exec.CommandContext reports a killed process as "signal: killed", not
-// context.DeadlineExceeded; the worker must map that shape too.
+// context.DeadlineExceeded; the worker must map that shape too. The
+// kill shape only exists on the budgeted path (tag/new).
 func TestWorkerMapsKillErrorToLockTimeout(t *testing.T) {
 	bus := core.NewBus()
 	w := NewWorker(bus, &killBackend{inner: &fakeBackend{}}, 50*time.Millisecond)
@@ -141,7 +170,7 @@ func TestWorkerMapsKillErrorToLockTimeout(t *testing.T) {
 	defer cancel()
 	go w.Start(ctx)
 	ch := bus.Subscribe()
-	rpl, err := w.Call(Action{Kind: ActQuery, Query: "tag:inbox"})
+	rpl, err := w.Call(Action{Kind: ActTag, Query: "id:x", TagOps: []TagOp{{Tag: "unread", Add: false}}})
 	if err != nil {
 		t.Fatal(err)
 	}

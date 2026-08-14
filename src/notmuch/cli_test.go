@@ -3,8 +3,11 @@ package notmuch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+
+	"notmutt/core"
 )
 
 const searchJSON = `[{"thread":"t1","timestamp":1700000000,"date_relative":"1 hour ago","matched":1,"total":2,"authors":"Ann","subject":"hello","query":["thread:t1 and tag:inbox",null],"tags":["inbox","unread"]}]`
@@ -26,8 +29,11 @@ func TestCLIQuery(t *testing.T) {
 		got = args
 		return []byte(searchJSON), nil
 	})
-	msgs, err := b.Query(context.Background(), "tag:inbox", 10, 0)
-	if err != nil {
+	var msgs []core.Message
+	if err := b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
+		msgs = append(msgs, chunk...)
+		return true
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if len(msgs) != 1 || msgs[0].ThreadID != "t1" || msgs[0].Timestamp != 1700000000 || msgs[0].Author != "Ann" || msgs[0].Subject != "hello" {
@@ -52,12 +58,69 @@ func TestCLIQueryNoLimit(t *testing.T) {
 		got = args
 		return []byte(searchJSON), nil
 	})
-	if _, err := b.Query(context.Background(), "tag:inbox", 0, 0); err != nil {
+	if err := b.Query(context.Background(), "tag:inbox", 0, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"search", "--format=json", "--sort=newest-first", "tag:inbox"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("limit=0 must omit --limit: %v", got)
+	}
+}
+
+// searchItemsJSON builds an N-item search result fixture.
+func searchItemsJSON(n int) string {
+	var sb strings.Builder
+	sb.WriteByte('[')
+	for i := 0; i < n; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, `{"thread":"t%d","timestamp":%d,"authors":"A","subject":"s","tags":[]}`, i, 1700000000+i)
+	}
+	sb.WriteByte(']')
+	return sb.String()
+}
+
+// TestCLIQueryChunks pins the chunk cadence: the whole result arrives in
+// one call (no offset paging) and is emitted as 200, then 1000s - the
+// render-batching contract: the first paint shows up after 200 threads.
+func TestCLIQueryChunks(t *testing.T) {
+	b := NewCLI()
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		return []byte(searchItemsJSON(2250)), nil
+	})
+	var sizes []int
+	if err := b.Query(context.Background(), "tag:inbox", 0, func(chunk []core.Message) bool {
+		sizes = append(sizes, len(chunk))
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []int{200, 1000, 1000, 50}
+	if len(sizes) != len(want) {
+		t.Fatalf("expected %d chunks, got %d (%v)", len(want), len(sizes), sizes)
+	}
+	for i, w := range want {
+		if sizes[i] != w {
+			t.Fatalf("chunk %d = %d, want %d", i, sizes[i], w)
+		}
+	}
+}
+
+func TestCLIQueryStopEarly(t *testing.T) {
+	b := NewCLI()
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		return []byte(searchItemsJSON(500)), nil
+	})
+	emits := 0
+	if err := b.Query(context.Background(), "tag:inbox", 0, func(chunk []core.Message) bool {
+		emits++
+		return false
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if emits != 1 {
+		t.Fatalf("emit=false must stop the walk, got %d emits", emits)
 	}
 }
 
@@ -139,7 +202,7 @@ func TestCLIQueryError(t *testing.T) {
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
 		return []byte("notmuch error: something"), errors.New("exit status 1")
 	})
-	if _, err := b.Query(context.Background(), "tag:inbox", 10, 0); err == nil {
+	if err := b.Query(context.Background(), "tag:inbox", 10, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }

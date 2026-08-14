@@ -47,35 +47,41 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.db.Revision()
 }
 
-// Query serves one page as the native batch: the in-process threads
-// iterator, skip/limit on thread positions (a page counts THREADS,
-// matching Count and the CLI's thread-summary pages), each thread's
-// messages mapped directly into core.Message from the DB header cache
-// (ids, references, from, subject, date, tags - zero subprocesses, zero
-// file opens). The thread is fetched whole: a thread never straddles a
-// page, so the refresh merge sees every thread at most once.
-func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int) ([]core.Message, error) {
+// Query walks the whole result as the native batch: the in-process
+// threads iterator, each thread's messages mapped directly into
+// core.Message from the DB header cache (ids, references, from, subject,
+// date, tags - zero subprocesses, zero file opens), emitted in chunks
+// at thread boundaries (a thread never straddles a chunk, so the merge
+// sees every thread at most once). The walk is naturally progressive:
+// no write-at-end wall, unlike the CLI's single `notmuch search` call.
+func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
 	if b.db == nil {
-		return nil, fmt.Errorf("notmuch search: database not open")
+		return fmt.Errorf("notmuch search: database not open")
 	}
 	q := b.db.NewQuery(query)
 	defer q.Close()
 	q.SetSortScheme(nm.SORT_NEWEST_FIRST)
 	threads, err := q.Threads()
 	if err != nil {
-		return nil, fmt.Errorf("notmuch search: %w", err)
+		return fmt.Errorf("notmuch search: %w", err)
 	}
 	defer threads.Close()
-	var out []core.Message
-	skip := offset
+	var chunk []core.Message
+	flush := func() bool {
+		if len(chunk) == 0 || emit == nil {
+			return true
+		}
+		if !emit(chunk) {
+			return false
+		}
+		chunk = nil
+		return true
+	}
 	nthreads := 0
+	size := firstChunk
 	for t := range threads.All() {
 		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if skip > 0 {
-			skip--
-			continue
+			return err
 		}
 		if limit > 0 && nthreads >= limit {
 			break
@@ -83,7 +89,7 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int)
 		nthreads++
 		msgs := t.Messages()
 		for m := range msgs.All() {
-			out = append(out, core.Message{
+			chunk = append(chunk, core.Message{
 				ID:         m.ID(),
 				ThreadID:   m.ThreadID(),
 				Timestamp:  m.Date().Unix(),
@@ -95,11 +101,20 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit, offset int)
 			})
 		}
 		if err := msgs.Err(); err != nil {
-			return nil, fmt.Errorf("notmuch search: %w", err)
+			return fmt.Errorf("notmuch search: %w", err)
 		}
 		msgs.Close()
+		if len(chunk) >= size {
+			if !flush() {
+				return nil
+			}
+			size = steadyChunk
+		}
 	}
-	return out, nil
+	if !flush() {
+		return nil
+	}
+	return nil
 }
 
 // refsOf parses the message's reference chain out of the DB header
@@ -131,7 +146,12 @@ func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {
 }
 
 func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
-	return b.Query(ctx, "thread:"+threadID, 0, 0)
+	var msgs []core.Message
+	err := b.Query(ctx, "thread:"+threadID, 0, func(chunk []core.Message) bool {
+		msgs = append(msgs, chunk...)
+		return true
+	})
+	return msgs, err
 }
 
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {

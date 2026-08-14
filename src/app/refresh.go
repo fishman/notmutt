@@ -14,10 +14,6 @@ type workerAPI interface {
 	Call(a notmuch.Action) (notmuch.Reply, error)
 }
 
-// firstPage is the initial fill page: 200 threads land fast so the first
-// paint shows up immediately, then the fill continues at the steady page.
-const firstPage = 200
-
 // refresher owns the lastmod incremental cycle and the full-reload
 // triggers. R_prev is the revision queried through - a change landing
 // mid-cycle falls into the next one: one-cycle lag, deterministic.
@@ -25,7 +21,6 @@ type refresher struct {
 	bus      *core.Bus
 	worker   workerAPI
 	view     *core.View
-	page     int
 	uuid     string
 	rPrev    uint64
 	snapshot []*core.Thread
@@ -34,7 +29,7 @@ type refresher struct {
 }
 
 func newRefresher(bus *core.Bus, w workerAPI, view *core.View, rPrev uint64) *refresher {
-	return &refresher{bus: bus, worker: w, view: view, page: 1000, rPrev: rPrev}
+	return &refresher{bus: bus, worker: w, view: view, rPrev: rPrev}
 }
 
 func (r *refresher) cycle() {
@@ -123,30 +118,39 @@ func (r *refresher) merge(changed []*core.Thread) {
 }
 
 func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
+	var msgs []core.Message
 	rpl, err := r.worker.Call(notmuch.Action{
 		Kind:  notmuch.ActQuery,
 		Query: fmt.Sprintf("lastmod:%d..%d", prev, cur),
+		Emit: func(chunk []core.Message) bool {
+			msgs = append(msgs, chunk...)
+			return true
+		},
 	})
 	if err != nil || rpl.Err != nil {
 		return nil, fmt.Errorf("changed query failed (err=%v, reply=%v)", err, rpl.Err)
 	}
-	return rpl.Msgs, nil
+	return msgs, nil
 }
 
-// fullReload re-fetches the view query page by page and merges each
-// page in as it lands (R3 progressive fill): one page call per page -
-// the batch unit (Backend.Query, the interface contract). The page IS
-// the index read: content-free, DB-side data (thread summaries on the
-// CLI, per-message DB-header rows on cgo), zero file opens - the whole
-// list loads in seconds (per-thread show round trips were the load
-// wall). Message content is step two, on open only (R13). One ViewDiff
-// per page; a short page ends the query. The bar's total comes from a
-// count query up front, so Done (threads accumulated) tracks the real
-// result size instead of resetting per page; a count failure degrades
-// to per-page totals. Threads that retagged out of the filter or were
-// deleted are removed by the full snapshot replacement. Called for uuid
-// changes, manual refresh, view config changes, and first load. The
-// cursor survives via the merge walk.
+// fullReload re-fetches the whole view query in ONE call (Backend.Query
+// walks the result and emits chunks - no offset paging: every paged
+// offset call re-walks the notmuch mset, measured ~40s for 33 pages of
+// a 33k-thread inbox against ~5s for one call). The chunk IS the index
+// read: content-free, DB-side data (thread summaries on the CLI,
+// per-message DB-header rows on cgo), zero file opens - the whole list
+// loads in seconds (per-thread show round trips were the load wall).
+// Message content is step two, on open only (R13). Each chunk merges
+// in as it lands (R3 progressive fill): progress then ViewDiff, so the
+// paint tracks the walk (the backend emits the first 200 fast, then
+// 1000s - the render-batching requirement). The bar's total comes from
+// a count query up front, so Done (threads accumulated) tracks the
+// real result size instead of resetting per chunk; a count failure
+// degrades to per-chunk totals. A chunkless result still merges once
+// (empty query = empty view - removals reconcile via the full snapshot
+// replacement). The emit closure runs on the worker goroutine inside
+// the Call, which cycle() is blocked on, so the refresher state it
+// touches is race-free. The cursor survives via the merge walk.
 func (r *refresher) fullReload() {
 	total := 0
 	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query}); err == nil && rpl.Err == nil {
@@ -154,19 +158,14 @@ func (r *refresher) fullReload() {
 	}
 	var snapshot []*core.Thread
 	done := 0
-	limit := firstPage
-	for offset := 0; ; {
-		rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: limit, Offset: offset})
-		if err != nil || rpl.Err != nil {
-			return
-		}
-		page := groupThreads(rpl.Msgs)
+	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Emit: func(msgs []core.Message) bool {
+		page := groupThreads(msgs)
 		sortThreads(page)
 		snapshot = mergeSorted(snapshot, page)
 		r.snapshot = snapshot
 		done += len(page)
-		// progress first, then the diff: the page is reported as soon as
-		// it lands. An empty page publishes nothing: a count/catalog
+		// progress first, then the diff: the chunk is reported as soon as
+		// it lands. An empty chunk publishes nothing: a count/catalog
 		// race that empties the result must not leave a stuck bar at
 		// Done 0.
 		if len(page) > 0 {
@@ -178,11 +177,15 @@ func (r *refresher) fullReload() {
 		}
 		r.view.MergeThreads(snapshot)
 		r.bus.Publish(core.ViewDiff{View: r.view.Name})
-		offset += limit
-		if len(rpl.Msgs) < limit {
-			break
-		}
-		limit = r.page
+		return true
+	}})
+	if err != nil || rpl.Err != nil {
+		return
+	}
+	if len(snapshot) == 0 {
+		r.snapshot = nil
+		r.view.MergeThreads(nil)
+		r.bus.Publish(core.ViewDiff{View: r.view.Name})
 	}
 }
 

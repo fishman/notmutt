@@ -27,7 +27,7 @@ type Action struct {
 	Query    string
 	ThreadID string
 	Limit    int
-	Offset   int
+	Emit     func([]core.Message) bool // ActQuery only: the fill consumes chunks as the backend walks
 	TagOps   []TagOp
 	replyCh  chan Reply
 }
@@ -94,7 +94,14 @@ func (w *Worker) Call(a Action) (Reply, error) {
 }
 
 func (w *Worker) handle(a Action) {
-	ctx, cancel := context.WithTimeout(w.ctx, w.timeout)
+	// The lock budget applies to WRITERS only: tag/new hold notmuch's
+	// write lock; reads (query, count, thread, revision) run on the
+	// read handle and are MVCC-safe, so the fill must never be cut off
+	// mid-walk by the budget.
+	ctx, cancel := context.WithCancel(w.ctx)
+	if a.Kind == ActTag || a.Kind == ActNew {
+		ctx, cancel = context.WithTimeout(w.ctx, w.timeout)
+	}
 	defer cancel()
 	r := Reply{ID: a.ID}
 	var err error
@@ -102,7 +109,7 @@ func (w *Worker) handle(a Action) {
 	case ActOpen:
 		err = w.backend.Open(ctx, a.Query)
 	case ActQuery:
-		r.Msgs, err = w.backend.Query(ctx, a.Query, a.Limit, a.Offset)
+		err = w.backend.Query(ctx, a.Query, a.Limit, a.Emit)
 	case ActCount:
 		r.Count, err = w.backend.Count(ctx, a.Query)
 	case ActThread:

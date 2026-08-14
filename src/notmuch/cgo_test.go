@@ -6,6 +6,8 @@ import (
 	"context"
 	"os"
 	"testing"
+
+	"notmutt/core"
 )
 
 func TestCGOSmoke(t *testing.T) {
@@ -25,9 +27,13 @@ func TestCGOSmoke(t *testing.T) {
 	if uuid == "" || rev == 0 {
 		t.Fatalf("revision: %q %d", uuid, rev)
 	}
-	msgs, err := b.Query(context.Background(), "tag:inbox", 10, 0)
+	n := 0
+	err = b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
+		n += len(chunk)
+		return true
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("got %d messages, rev %d (counts only, no content)", len(msgs), rev)
+	t.Logf("got %d messages, rev %d (counts only, no content)", n, rev)
 }

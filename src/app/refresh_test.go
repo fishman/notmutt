@@ -19,6 +19,7 @@ type fakeWorker struct {
 	stubs     atomic.Value
 	lastQuery atomic.Value
 	queries   atomic.Int32
+	emits     atomic.Int32 // ActQuery emit chunks - the chunk cadence
 	threads   atomic.Int32 // ActThread calls - must stay zero in the load path
 	countErr  atomic.Value // error: fails every ActCount when set
 }
@@ -32,9 +33,9 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 	f.msgs.Store(msgs)
 }
 
-// setStubs installs a paged query result; ActQuery serves it sliced by
-// Limit/Offset (the legacy setMsgs path serves the whole set at offset 0
-// and nothing after - the fill loop needs both to terminate).
+// setStubs installs a query result; ActQuery serves it to Emit in
+// chunks mirroring the backend cadence (200, then 1000 - the contract
+// refresh_test pins). The setMsgs path serves the changed-set cycle.
 func (f *fakeWorker) setStubs(msgs []core.Message) {
 	f.stubs.Store(msgs)
 }
@@ -59,20 +60,26 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	case notmuch.ActQuery:
 		f.lastQuery.Store(a.Query)
 		f.queries.Add(1)
-		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
-			lo := a.Offset
-			if lo > len(stubs) {
-				lo = len(stubs)
-			}
-			hi := lo + a.Limit
-			if hi > len(stubs) {
-				hi = len(stubs)
-			}
-			r.Msgs = stubs[lo:hi]
+		if a.Emit == nil {
 			break
 		}
-		if a.Offset == 0 {
-			r.Msgs, _ = f.msgs.Load().([]core.Message)
+		var msgs []core.Message
+		if stubs, ok := f.stubs.Load().([]core.Message); ok && len(stubs) > 0 {
+			msgs = stubs
+		} else if all, ok := f.msgs.Load().([]core.Message); ok {
+			msgs = all
+		}
+		for i := 0; i < len(msgs); {
+			f.emits.Add(1)
+			size := 200
+			if i > 0 {
+				size = 1000
+			}
+			hi := min(i+size, len(msgs))
+			if !a.Emit(msgs[i:hi]) {
+				break
+			}
+			i = hi
 		}
 	case notmuch.ActThread:
 		f.threads.Add(1)
@@ -289,14 +296,15 @@ func TestCycleQuiet(t *testing.T) {
 	}
 }
 
-// TestFullReloadPages pins the progressive fill: 2500 stubs served in
-// four pages (200/1000/1000/300) - the first page is the fast 200 so
-// the first paint lands immediately, then the steady page of 1000 takes
-// over. One ActQuery per page, and the view ends with the complete
-// merged set, still sorted. (ViewDiff events are not counted from the
-// channel: 2500 progress events flood the 64-slot subscriber buffer and
-// drops make that assertion flaky - the per-page publish is
-// code-guaranteed by the loop shape.)
+// TestFullReloadPages pins the progressive fill: 2500 stubs arrive in
+// ONE call, emitted as four chunks (200/1000/1000/300) - the first
+// chunk is the fast 200 so the first paint lands immediately, then the
+// steady chunk of 1000 takes over. One ActQuery per reload (no offset
+// paging - each paged call re-walks the notmuch mset), and the view
+// ends with the complete merged set, still sorted. (ViewDiff events
+// are not counted from the channel: 2500 progress events flood the
+// 64-slot subscriber buffer and drops make that assertion flaky - the
+// per-chunk publish is code-guaranteed by the emit shape.)
 func TestFullReloadPages(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -310,8 +318,11 @@ func TestFullReloadPages(t *testing.T) {
 
 	r.fullReload()
 
-	if got := fw.queries.Load(); got != 4 {
-		t.Fatalf("expected 4 query page fetches for 2500 stubs at 200/1000/1000/300, got %d", got)
+	if got := fw.queries.Load(); got != 1 {
+		t.Fatalf("expected 1 query call for the whole reload, got %d", got)
+	}
+	if got := fw.emits.Load(); got != 4 {
+		t.Fatalf("expected 4 emit chunks for 2500 stubs at 200/1000/1000/300, got %d", got)
 	}
 	if len(view.Threads) != 2500 {
 		t.Fatalf("view must hold all 2500 threads after the fill, got %d", len(view.Threads))

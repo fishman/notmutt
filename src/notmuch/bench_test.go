@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"notmutt/core"
 )
 
 // Run: NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v
@@ -41,21 +43,25 @@ func TestBench(t *testing.T) {
 		t.Logf("%-30s %8s  (%d msgs)", name, time.Since(t0).Round(time.Millisecond), n)
 	}
 
-	report("cli first-page (50)", func() (int, error) {
-		msgs, err := cli.Query(ctx, "tag:inbox", 50, 0)
-		return len(msgs), err
+	collect := func(b Backend, q string, limit int) (int, error) {
+		n := 0
+		err := b.Query(ctx, q, limit, func(chunk []core.Message) bool {
+			n += len(chunk)
+			return true
+		})
+		return n, err
+	}
+	report("cli peek (50)", func() (int, error) {
+		return collect(cli, "tag:inbox", 50)
 	})
-	report("cgo first-page (50)", func() (int, error) {
-		msgs, err := cgoB.Query(ctx, "tag:inbox", 50, 0)
-		return len(msgs), err
+	report("cgo peek (50)", func() (int, error) {
+		return collect(cgoB, "tag:inbox", 50)
 	})
 	report("cli full inbox", func() (int, error) {
-		msgs, err := cli.Query(ctx, "tag:inbox", 0, 0)
-		return len(msgs), err
+		return collect(cli, "tag:inbox", 0)
 	})
 	report("cgo full inbox", func() (int, error) {
-		msgs, err := cgoB.Query(ctx, "tag:inbox", 0, 0)
-		return len(msgs), err
+		return collect(cgoB, "tag:inbox", 0)
 	})
 	report("cli thread fetch", func() (int, error) {
 		msgs, err := cli.Thread(ctx, firstThreadID(t, ctx, cli))
@@ -69,8 +75,11 @@ func TestBench(t *testing.T) {
 
 func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 	t.Helper()
-	msgs, err := b.Query(ctx, "tag:inbox", 1, 0)
-	if err != nil || len(msgs) == 0 {
+	var msgs []core.Message
+	if err := b.Query(ctx, "tag:inbox", 1, func(chunk []core.Message) bool {
+		msgs = append(msgs, chunk...)
+		return true
+	}); err != nil || len(msgs) == 0 {
 		t.Fatalf("seed query: %v %d", err, len(msgs))
 	}
 	return msgs[0].ThreadID

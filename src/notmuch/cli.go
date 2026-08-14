@@ -48,32 +48,59 @@ type searchItem struct {
 	Tags      []string `json:"tags"`
 }
 
-// Query returns one stub per matching thread. The search summary carries
-// thread ids and thread-level fields only; per-message data (ids,
-// filenames, headers) comes from Thread. The refresh cycle groups by
-// ThreadID and fetches full threads, so the stub's ID stays empty.
-func (b *CLIBackend) Query(ctx context.Context, query string, limit, offset int) ([]core.Message, error) {
+// firstChunk is the initial fill chunk: 200 threads land fast so the
+// first paint shows up early, then the fill continues at steadyChunk.
+// The cadence is a backend contract - the refresh merges and paints
+// whatever chunk arrives (the render-batching requirement: a 1000-row
+// first chunk stalls the first paint).
+const (
+	firstChunk  = 200
+	steadyChunk = 1000
+)
+
+// Query walks the whole result in one call: one `notmuch search`
+// subprocess, one summary per thread (thread id, date, authors,
+// subject, tags - DB-side, zero file opens). `--format=json` emits
+// nothing until the mset is computed (write-at-end, measured 4.8s for a
+// 33k-thread inbox - json0 is unsupported here), so the parse is
+// buffered and chunks are sliced from the result; streaming buys
+// nothing until a notmuch with progressive output exists. limit is
+// passed through as `--limit=` (the startup validation probes with 1);
+// emit returning false stops the walk early; nil emit collects
+// nothing. The refresh cycle groups by ThreadID, so the stub's ID
+// stays empty - per-message data comes from Thread, on open only.
+func (b *CLIBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
 	args := []string{"search", "--format=json", "--sort=newest-first"}
 	if limit > 0 {
 		args = append(args, "--limit="+strconv.Itoa(limit))
 	}
-	if offset > 0 {
-		args = append(args, "--offset="+strconv.Itoa(offset))
-	}
 	args = append(args, query)
 	out, err := b.run(ctx, "notmuch", args)
 	if err != nil {
-		return nil, fmt.Errorf("notmuch search: %w: %s", err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("notmuch search: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	var items []searchItem
 	if err := json.Unmarshal(out, &items); err != nil {
-		return nil, fmt.Errorf("notmuch search: parse: %w", err)
+		return fmt.Errorf("notmuch search: parse: %w", err)
 	}
-	msgs := make([]core.Message, len(items))
-	for i, it := range items {
-		msgs[i] = core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags}
+	if emit == nil {
+		return nil
 	}
-	return msgs, nil
+	i := 0
+	size := firstChunk
+	for i < len(items) {
+		hi := min(i+size, len(items))
+		msgs := make([]core.Message, 0, hi-i)
+		for _, it := range items[i:hi] {
+			msgs = append(msgs, core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags})
+		}
+		if !emit(msgs) {
+			return nil
+		}
+		i = hi
+		size = steadyChunk
+	}
+	return nil
 }
 
 // Count returns the number of threads matching the query - the fill's

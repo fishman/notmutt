@@ -32,17 +32,25 @@ func TestSoak(t *testing.T) {
 		TagOps: []notmuch.TagOp{{Tag: scratch, Add: false}},
 	})
 
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 50})
-	if err != nil || rpl.Err != nil || len(rpl.Msgs) == 0 {
-		t.Skipf("no inbox mail: %v %v", err, rpl.Err)
+	query := func(q string, limit int) []core.Message {
+		var got []core.Message
+		worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: q, Limit: limit, Emit: func(msgs []core.Message) bool {
+			got = append(got, msgs...)
+			return true
+		}})
+		return got
 	}
-	before := len(rpl.Msgs)
+	inbox := query("tag:inbox", 50)
+	if len(inbox) == 0 {
+		t.Skip("no inbox mail")
+	}
+	before := len(inbox)
 
 	// CLI Query stubs carry empty IDs; resolve one via Thread.
 	target := ""
-	seed, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:inbox", Limit: 1})
-	if err == nil && seed.Err == nil && len(seed.Msgs) > 0 {
-		thr, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: seed.Msgs[0].ThreadID})
+	seed := query("tag:inbox", 1)
+	if len(seed) > 0 {
+		thr, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: seed[0].ThreadID})
 		if err == nil && thr.Err == nil && len(thr.Msgs) > 0 {
 			target = thr.Msgs[0].ID
 		}
@@ -54,7 +62,7 @@ func TestSoak(t *testing.T) {
 	// id query quoting follows applyStaged's escape (app/apply.go)
 	byID := "id:\"" + strings.ReplaceAll(target, `"`, `""`) + `"`
 
-	rpl, err = worker.Call(notmuch.Action{
+	rpl, err := worker.Call(notmuch.Action{
 		Kind: notmuch.ActTag, Query: byID,
 		TagOps: []notmuch.TagOp{{Tag: scratch, Add: true}},
 	})
@@ -68,9 +76,8 @@ func TestSoak(t *testing.T) {
 	if rpl.Rev == 0 {
 		t.Fatal("revision must be nonzero after a tag change")
 	}
-	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch, Limit: 10})
-	if err != nil || rpl.Err != nil || len(rpl.Msgs) == 0 {
-		t.Fatalf("scratch tag not visible: %v %v %d msgs", err, rpl.Err, len(rpl.Msgs))
+	if got := query("tag:"+scratch, 10); len(got) == 0 {
+		t.Fatal("scratch tag not visible after apply")
 	}
 
 	rpl, err = worker.Call(notmuch.Action{
@@ -80,12 +87,8 @@ func TestSoak(t *testing.T) {
 	if err != nil || rpl.Err != nil {
 		t.Fatalf("remove scratch tag: %v %v", err, rpl.Err)
 	}
-	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: "tag:" + scratch, Limit: 10})
-	if err != nil || rpl.Err != nil {
-		t.Fatalf("removal check: %v %v", err, rpl.Err)
-	}
-	if len(rpl.Msgs) != 0 {
-		t.Fatalf("scratch tag still present after removal: %d msgs", len(rpl.Msgs))
+	if got := query("tag:"+scratch, 10); len(got) != 0 {
+		t.Fatalf("scratch tag still present after removal: %d msgs", len(got))
 	}
 	t.Logf("soak ok: %d inbox msgs, scratch tag applied and removed on %s", before, target)
 }

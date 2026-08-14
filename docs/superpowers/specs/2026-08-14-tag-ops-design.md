@@ -215,17 +215,22 @@ tag-action tables are their substrate, so nothing here forecloses them.
   (inbox, unread, sent, drafts) each track their own fill; switching
   views swaps the bar.
 - The initial-load case is the primary visible one: the M1 async start
-  shows "refresh n/m" as each page of the query result streams in. Full
-  reloads PAGE the whole result (R3 progressive fill): a `notmuch count`
-  up front fixes the bar's total (the user requirement: the bar reflects
-  the total even as it updates periodically), then the refresher fetches
-  the query page by page (`--limit`/`--offset`), merges each page into
-  the view with a ViewDiff before fetching the next, and ends when a
-  page returns fewer than the requested budget (or an error). The first
-  page is 200 (fast first paint), then the steady page of 1000. Count
-  failure degrades to per-page totals with the base reset, so the bar
-  never exceeds its total. The changed-set cycle (lastmod diff) is
-  unchanged and reconciles mail that lands mid-fill (one-cycle lag).
+  shows "refresh n/m" as the query result arrives. Full reloads walk
+  the WHOLE result in ONE call (R3 progressive fill; measured: offset
+  pages each re-walk the notmuch mset - 0.2s for the first page vs
+  2.3s at offset 120000, 33 pages of a 33k-thread inbox took ~40s
+  against ~5s for one call; the user's "it's still very slow" was the
+  paging, not the CLI). A `notmuch count` up front fixes the bar's
+  total (the user requirement: the bar reflects the total even as it
+  updates periodically), then the one query call hands the result to
+  the refresher in chunks - the backend emits the first 200 (fast
+  first paint, the render-batching requirement) then 1000s, and the
+  refresher merges each chunk with a ViewDiff as it lands. Count
+  failure degrades to per-chunk totals with the base reset, so the
+  bar never exceeds its total. A chunkless result still merges once,
+  so an emptied query clears the view. The changed-set cycle (lastmod
+  diff) is unchanged and reconciles mail that lands mid-fill
+  (one-cycle lag).
 - Ingestion is TWO-STEP (the user directive, 2026-08-14: "step one
   read the message and then step two read the headers or content. no
   need to batch all at once"): step one is the INDEX - the fill reads
@@ -234,20 +239,27 @@ tag-action tables are their substrate, so nothing here forecloses them.
   path never runs `notmuch show` - show opens mail files, which was
   the load wall (per-thread round trips: 129k threads meant 129k
   subprocess spawns).
-- The page IS the batch: one `Backend.Query(limit, offset)` call per
-  page - the fundamental ingestion interface, a page counts THREADS
-  (matching Count). The backend serves it with whatever is fastest
-  for that interface (2026-08-14: "it's odd to use batch with the
-  cli rather than with the native interface" - the CLI has no batch
-  concept, it has one subprocess per page):
-  - CLI: one `notmuch search` page per fetch (thread summaries:
+- The page IS the batch: `Backend.Query(query, limit, emit)` walks the
+  whole result in one call and hands it to emit in chunks - the
+  fundamental ingestion interface, one call per reload, a chunk counts
+  THREADS (matching Count). limit stops the walk after N threads (0 =
+  all; the startup validation probes each view query with 1). The
+  backend serves it with whatever is fastest for that interface
+  (2026-08-14: "it's odd to use batch with the cli rather than with
+  the native interface"):
+  - CLI: one `notmuch search` subprocess per call (thread summaries:
     thread id, date, authors, subject, tags - DB-side, zero file
-    opens; the CLI has no content-free per-message dump);
-  - cgo: the native batch - the in-process threads iterator,
-    skip/limit on thread positions, each thread's messages mapped
-    directly into core.Message from the DB header cache (ids,
-    references, from, subject, date, tags; references and in-reply-to
-    are Xapian values, no file opens), zero subprocesses.
+    opens; the CLI has no content-free per-message dump).
+    `--format=json` emits nothing until the mset is computed
+    (write-at-end, measured 4.8s for 33k threads; json0 unsupported
+    on this notmuch), so the parse is buffered and chunks are sliced
+    from the result - a stream-parse buys nothing until a notmuch
+    with progressive output exists;
+  - cgo: the native batch - the in-process threads iterator, each
+    thread's messages mapped directly into core.Message from the DB
+    header cache (ids, references, from, subject, date, tags;
+    references and in-reply-to are Xapian values, no file opens),
+    zero subprocesses, naturally progressive (no write-at-end wall).
 - The index rows ARE thread summaries: a stub message (empty id)
   renders author/subject/tags directly and is cursorable (anchored
   by row index - no id to track). A tag op on a summary row is a

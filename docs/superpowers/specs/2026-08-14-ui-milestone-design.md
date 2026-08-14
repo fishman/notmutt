@@ -250,12 +250,30 @@ derived surface for now.
 
 The milestone shipped. Deviations from this spec, pinned:
 
-- Pager viewport: hand-rolled `pagerViewport` (clamp, GotoTop/
-  GotoBottom, HalfPage*, LineDown/Up) instead of bubbletea's viewport
-  component - vendored bubbletea v1.1.0 has no viewport package (it
-  lives in the separate bubbles module; adding it would break the R7
-  no-new-dependency rule). Scrollbar and mouse wheel are future
-  surface, not lost features.
+- Pager viewport: hand-rolled `pagerViewport` (an offset into styled
+  lines, clamp) instead of bubbletea's viewport component - vendored
+  bubbletea v1.1.0 has no viewport package (it lives in the separate
+  bubbles module; adding it would break the R7 no-new-dependency
+  rule). Scrollbar and mouse wheel are future surface, not lost
+  features.
+- Pager reading is a READ-POSITION cursor, not line scrolling (the
+  user's vim-style UX request): j/k move the position inside the
+  visible page with the window holding still; only when the position
+  crosses a page edge does the window jump a FULL page (down lands on
+  the new page's first line, up on its last - vim ctrl-f/ctrl-b
+  flow). g/G jump absolutely (position + window); ctrl+d/ctrl+u move
+  half a window through the same machinery. The position's line
+  renders with the indicator style (render() copies the window so the
+  wrap never persists into the styled lines).
+- Key dispatch gains vim-style prefixes (R9 data-first - a binding
+  wins over the prefix): digit keys accumulate a count ([count]j,
+  [count]k, count loops single steps so edge crossings page), and an
+  unbound "g" arms the gg chain (gg = index cursor top / pager top).
+  The index context gains cursor-top/cursor-bottom actions (G and the
+  chain); the edge walk is direction-aware because moveCursor's
+  boundary walk cannot reach backward past a leading ghost row. The
+  default schemes are untouched - the arrow keys and any overlays
+  arrive through the user's [bindings.*] config file (R9 overlay).
 - Thread rendering: `mail.RenderThread` returns []Line{Text, Kind,
   Quoted} with LineKind subject/header/body/signature/attachment/
   error. Per-message error lines instead of whole-thread abort (an
@@ -297,6 +315,7 @@ Acceptance status:
 5. F1-clean pager content, quoted 0-5 + signature styles - scripted.
 6. emacs swap + per-key overlay + keyhint bar from the binding map -
    scripted.
-7. Live-mailbox walk (open a real thread, scroll, return; switch the
-   theme variant; the bar and hints never shift) - MANUAL, pending
-   the user's walk.
+7. Live-mailbox walk (open a real thread, read with the position
+   cursor - j/k within the page, full-page jumps at the edges, gg/G,
+   counted moves, arrows - return; switch the theme variant; the bar
+   and hints never shift) - MANUAL, pending the user's walk.

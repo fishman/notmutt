@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -25,6 +26,10 @@ type Model struct {
 	bus        *core.Bus
 	keys       map[string]string
 	tagActions map[string]string
+	theme      config.Theme
+	palette    config.Palette
+	ui         config.UI
+	styles     Styles
 	rows       []core.Row
 	width      int
 	height     int
@@ -34,9 +39,12 @@ type Model struct {
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
-// tests: the progress bar falls back to event payloads).
-func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus) Model {
-	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions}
+// tests: the progress bar falls back to event payloads). The theme
+// data resolves into the render style set at construction; a
+// ConfigChanged{Section: "theme"} event re-resolves it (variant
+// switches re-render live).
+func New(view *core.View, ch <-chan core.Event, keys map[string]string, tagActions map[string]string, bus *core.Bus, theme config.Theme, palette config.Palette, ui config.UI) Model {
+	return Model{view: view, ch: ch, bus: bus, keys: keys, tagActions: tagActions, theme: theme, palette: palette, ui: ui, styles: ResolveStyles(theme, palette)}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -62,8 +70,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		default:
 			m.stage(m.keys[string(msg.Runes)])
 		}
+	case core.ConfigChanged:
+		m.onConfig(msg)
 	case EventMsg:
 		switch e := msg.Event.(type) {
+		case core.ConfigChanged:
+			m.onConfig(e)
 		case core.Progress:
 			m.job = e.Job
 			if m.bus == nil {
@@ -85,6 +97,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// onConfig re-resolves the render styles when the theme section
+// changes: variant switches land as ConfigChanged on the bus (wrapped
+// in EventMsg by the bridge) or as a direct message.
+func (m *Model) onConfig(e core.ConfigChanged) {
+	if e.Section == "theme" {
+		m.styles = ResolveStyles(m.theme, m.palette)
+	}
 }
 
 // refreshProgress re-reads the bus snapshot for the current job and
@@ -242,11 +263,11 @@ func (m Model) View() string {
 	if m.rows == nil {
 		m.rows = m.view.Rows()
 	}
-	st := DefaultStyles()
+	st := m.styles
 	rows := m.rows
 	if len(rows) == 0 {
 		if m.progressOn {
-			return "empty\n" + m.statusLine(st) + "\n"
+			return "empty\n" + m.statusLineWith(st, m.ui) + "\n"
 		}
 		return "empty\n"
 	}
@@ -271,7 +292,7 @@ func (m Model) View() string {
 	}
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st)
+		line := renderRow(i+1, rows[i], st, m.ui)
 		outer := st.Normal
 		if i == cur {
 			outer = st.Indicator
@@ -292,7 +313,22 @@ func (m Model) View() string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	b.WriteString(m.statusLine(st))
+	b.WriteString(m.statusLineWith(st, m.ui))
 	b.WriteByte('\n')
 	return b.String()
+}
+
+// statusLineWith builds the status data from the model's view and
+// progress state and renders the row at the window width.
+func (m Model) statusLineWith(st Styles, ui config.UI) string {
+	return statusLineWidth(st, ui, m.statusData(), m.width)
+}
+
+func (m Model) statusData() statusData {
+	d := statusData{view: m.view.Name, visible: len(m.rows), on: m.progressOn}
+	if m.progressOn {
+		p := m.progress
+		d.prog = &p
+	}
+	return d
 }

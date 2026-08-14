@@ -8,14 +8,16 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
 // renderRow renders the fixed-slot template (R11): number, flags,
 // attachment, date, author, subject, tags. Optional slots reserve width;
 // every slot renders through its style, so the line carries per-slot SGR
-// runs (the outer row style is applied later by padRow).
-func renderRow(n int, row core.Row, st Styles) string {
+// runs (the outer row style is applied later by padRow). Glyphs and the
+// tag-slot cap come from config data, never hardcoded.
+func renderRow(n int, row core.Row, st Styles, ui config.UI) string {
 	var b strings.Builder
 	b.WriteString(st.Index.Number.Render(padCellsRight(strconv.Itoa(n), 4)))
 	b.WriteByte(' ')
@@ -36,11 +38,10 @@ func renderRow(n int, row core.Row, st Styles) string {
 	flagStr := st.Index.Flags.Render(flags(tags))
 	if row.Staged {
 		// staged rows render the resolved display tags with the staged
-		// glyph (default "*", config data per R11 tag-transforms); the
-		// hardcoded default holds until the theming milestone. The slot
-		// keeps its fixed width - alignment never shifts per row.
+		// glyph (config data, R11 tag-transforms). The slot keeps its
+		// fixed width - alignment never shifts per row.
 		tags = row.StagedTags
-		flagStr = st.Index.Staged.Render(padCellsRight("*"+flagChars(tags), 3))
+		flagStr = st.Index.Staged.Render(padCellsRight(ui.Glyphs.Staged+flagChars(tags), 3))
 	}
 	b.WriteString(flagStr)
 	b.WriteString(attachIcon(row.Msg))
@@ -53,7 +54,7 @@ func renderRow(n int, row core.Row, st Styles) string {
 	subject := stripControls(row.Msg.Subject)
 	b.WriteString(st.Index.Subject.Render(truncCells(subject, 40)))
 	b.WriteByte(' ')
-	b.WriteString(st.Index.Tag.Render(tagGlyphs(tags)))
+	b.WriteString(tagGlyphs(tags, ui.Tags.Max, st.Index.Tag))
 	return b.String()
 }
 
@@ -89,19 +90,21 @@ func formatDate(ts int64) string {
 	return time.Unix(ts, 0).Format("06/01/02 15:04")
 }
 
-func tagGlyphs(tags []string) string {
-	// max 2 tags, first two of the display order; the tag-groups
-	// priority list supplies the order later (spec section 6)
+// tagGlyphs renders up to max tags as styled glyphs, first of the
+// display order; the tag-groups priority list supplies the order later
+// (spec section 6). Each glyph renders through its per-tag style (R11),
+// falling back to the default tag style.
+func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style) string {
 	var b strings.Builder
 	n := 0
 	for _, t := range tags {
 		if t == "unread" {
 			continue
 		}
-		if n >= 2 {
+		if n >= max {
 			break
 		}
-		b.WriteString(padCellsRight(truncCells(stripControls(t), 4), 4))
+		b.WriteString(tagStyle(t).Render(padCellsRight(truncCells(stripControls(t), 4), 4)))
 		b.WriteByte(' ')
 		n++
 	}

@@ -6,15 +6,25 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"notmutt/config"
 	"notmutt/core"
 )
+
+func TestResolveFromConfig(t *testing.T) {
+	st := ResolveStyles(config.Theme{Default: "dark", Variants: map[string]config.StyleTable{
+		"dark": {Status: config.Style{Fg: "base0A"}},
+	}}, config.Palette{Base: map[string]string{"base00": "#21252b", "base05": "#abb2bf", "base0A": "#e5c07b"}})
+	if !strings.Contains(st.Status.Render("x"), "38;2;229;192;123") {
+		t.Fatalf("status fg must resolve through the base palette: %q", st.Status.Render("x"))
+	}
+}
 
 func TestRowStyled(t *testing.T) {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles())
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI)
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -41,7 +51,7 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles())
+	return renderRow(1, row, DefaultStyles(), config.Default().UI)
 }
 
 // TestPadRowTruncates pins the common production path: rows render wider

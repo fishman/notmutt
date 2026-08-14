@@ -2,44 +2,175 @@ package tui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
 const progressWidth = 40
 
-// statusLine is the bottom row: view name + visible count on the left,
-// the async progress bar right-aligned in a fixed-width region (R15).
-// Completion (Done == Total) clears the bar; labels are job-kind
-// derived, never mail content (F6). The whole line renders through the
-// status style; the bar's filled cells carry the progress style, the
-// empty cells the base style. The `progress` style identifier and the
-// filled-cell glyph (default "#") are hardcoded defaults until the
-// theming milestone.
-func (m Model) statusLine(st Styles) string {
-	left := fmt.Sprintf("%s %d", m.view.Name, len(m.rows))
-	if m.progressOn {
-		label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
+// defaultStatusWidth is the width the width-less statusLine variant
+// renders at (tests and callers without a window size).
+const defaultStatusWidth = 80
+
+// statusSegment is one composable cell of the status line: content,
+// style, and a drop priority (powerline-go Segment, cut to notmutt).
+// The lower the priority, the earlier the segment drops when the row
+// exceeds the terminal width.
+type statusSegment struct {
+	content  string
+	style    lipgloss.Style // zero value inherits the status style
+	priority int
+}
+
+// statusData is the status line's input state; the model builds it
+// from the view and progress state.
+type statusData struct {
+	view    string
+	visible int
+	prog    *core.Progress // nil = no job on
+	on      bool
+}
+
+// statusLine renders the status row at the default width.
+func statusLine(st Styles, ui config.UI, d statusData) string {
+	return statusLineWidth(st, ui, d, defaultStatusWidth)
+}
+
+// statusLineWidth composes the status row at a given width: the left
+// group (view name, visible count - future segments append the same
+// way) and the right group (the progress region, R15) on the shared
+// status background. Width fitting follows powerline-go's truncateRow:
+// when the composed row exceeds the width, the lowest-priority
+// segments drop first - progress region (0), then the visible count
+// (5); the view name (10) always survives. The row always covers the
+// full width: the right group right-aligns, trailing gaps pad with
+// the status background (R11 slot reservation).
+func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
+	left := []statusSegment{
+		{content: d.view, priority: 10},
+		{content: strconv.Itoa(d.visible), priority: 5},
+	}
+	var right []statusSegment
+	if d.on && d.prog != nil {
+		label := fmt.Sprintf("%s %d/%d", d.prog.Job, d.prog.Done, d.prog.Total)
 		fill := progressWidth - runewidth.StringWidth(label) - 1
 		if fill < 0 {
 			fill = 0
 		}
-		right := label + " " + styleBar(progressBar(m.progress, fill), st)
-		// the right region is right-aligned in a fixed-width slot; a
-		// narrow terminal drops it
-		if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
-			return st.Status.Render(left + strings.Repeat(" ", pad) + right)
+		bar := styleBar(progressBar(*d.prog, fill), st)
+		right = append(right, statusSegment{
+			content:  label + " " + bar,
+			style:    st.Status,
+			priority: 0,
+		})
+	}
+	sep := ui.Glyphs.StatuslineSeparator
+	for {
+		w := groupWidth(left, sep) + groupWidth(right, sep)
+		if width <= 0 || w <= width {
+			break
+		}
+		dropFrom, dropIdx := pickLowest(left, right)
+		if dropIdx < 0 {
+			break // only the view name is left; it survives
+		}
+		if dropFrom == 0 {
+			left = append(left[:dropIdx], left[dropIdx+1:]...)
+		} else {
+			right = append(right[:dropIdx], right[dropIdx+1:]...)
 		}
 	}
-	// no progress (or no room for the bar): left fills the width so the
-	// status background spans the whole row
-	if m.width > runewidth.StringWidth(left) {
-		return st.Status.Render(padCellsRight(left, m.width))
+	row, rowWidth := composeGroup(left, sep, st)
+	if rightWidth := groupWidth(right, sep); rightWidth > 0 {
+		rr, _ := composeGroup(right, sep, st)
+		if pad := width - rowWidth - rightWidth; pad > 0 {
+			row += st.Status.Render(strings.Repeat(" ", pad))
+		}
+		row += rr
+		return row
 	}
-	return st.Status.Render(left)
+	if pad := width - rowWidth; pad > 0 {
+		row += st.Status.Render(strings.Repeat(" ", pad))
+	}
+	return row
+}
+
+// pickLowest finds the lowest-priority droppable segment across the
+// left (0) and right (1) groups; priorities >= 10 (the view name)
+// never drop.
+func pickLowest(left, right []statusSegment) (from, idx int) {
+	from, idx = -1, -1
+	lowest := 1 << 30
+	consider := func(g int, segs []statusSegment) {
+		for i, s := range segs {
+			if s.priority >= 10 {
+				continue
+			}
+			if s.priority < lowest {
+				lowest, from, idx = s.priority, g, i
+			}
+		}
+	}
+	consider(0, left)
+	consider(1, right)
+	return from, idx
+}
+
+// groupWidth is the visible width of a joined segment run.
+func groupWidth(segs []statusSegment, sep string) int {
+	if len(segs) == 0 {
+		return 0
+	}
+	w := 0
+	for _, s := range segs {
+		w += runewidth.StringWidth(stripANSI(s.content))
+	}
+	return w + (len(segs)-1)*runewidth.StringWidth(sep)
+}
+
+// composeGroup renders a run of segments joined by separator seams.
+func composeGroup(segs []statusSegment, sep string, st Styles) (string, int) {
+	if len(segs) == 0 {
+		return "", 0
+	}
+	var b strings.Builder
+	prev := segmentStyle(segs[0], st)
+	b.WriteString(prev.Render(segs[0].content))
+	for _, s := range segs[1:] {
+		cur := segmentStyle(s, st)
+		b.WriteString(seam(prev, cur, sep))
+		b.WriteString(cur.Render(s.content))
+		prev = cur
+	}
+	return b.String(), runewidth.StringWidth(stripANSI(b.String()))
+}
+
+// segmentStyle resolves a segment's zero style to the status style.
+func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
+	if s.style.GetForeground() == (lipgloss.NoColor{}) && s.style.GetBackground() == (lipgloss.NoColor{}) {
+		return st.Status
+	}
+	return s.style
+}
+
+// seam renders the separator between two adjacent segments: fg = the
+// previous segment's bg on the next segment's bg (the powerline
+// chevron); equal bgs render the separator in the previous segment's
+// fg instead - a plain "|" on the shared status background.
+func seam(prev, next lipgloss.Style, sep string) string {
+	s := next
+	if prev.GetBackground() != next.GetBackground() {
+		s = s.Foreground(prev.GetBackground())
+	} else if fg := prev.GetForeground(); fg != (lipgloss.NoColor{}) {
+		s = s.Foreground(fg)
+	}
+	return s.Render(sep)
 }
 
 func progressBar(p core.Progress, cells int) string {

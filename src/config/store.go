@@ -37,6 +37,17 @@ func (s *Store) Config() Config {
 		c.Bindings[ctx] = maps.Clone(km)
 	}
 	c.TagActions = maps.Clone(s.cfg.TagActions)
+	c.Palette.Base = maps.Clone(s.cfg.Palette.Base)
+	c.Palette.Variants = make(map[string]map[string]string, len(s.cfg.Palette.Variants))
+	for v, m := range s.cfg.Palette.Variants {
+		c.Palette.Variants[v] = maps.Clone(m)
+	}
+	c.Theme.Default = s.cfg.Theme.Default
+	c.Theme.Variants = make(map[string]StyleTable, len(s.cfg.Theme.Variants))
+	for v, table := range s.cfg.Theme.Variants {
+		table.Index.Tag.Tags = maps.Clone(table.Index.Tag.Tags)
+		c.Theme.Variants[v] = table
+	}
 	return c
 }
 
@@ -54,6 +65,18 @@ func (s *Store) SetKeymap(k string) error {
 	s.cfg.UI.Keymap = k
 	s.mu.Unlock()
 	s.notify("ui")
+	return nil
+}
+
+func (s *Store) SetThemeVariant(name string) error {
+	s.mu.Lock()
+	if _, ok := s.cfg.Theme.Variants[name]; !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("theme: no variant %q", name)
+	}
+	s.cfg.Theme.Default = name
+	s.mu.Unlock()
+	s.notify("theme")
 	return nil
 }
 

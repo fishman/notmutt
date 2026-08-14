@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/mattn/go-runewidth"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -32,7 +33,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil)
+	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -43,7 +44,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testKeys, testTagActions, nil)
+	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -61,7 +62,7 @@ func stubModel() Model {
 		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
 		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
 	})
-	return New(view, nil, testKeys, testTagActions, nil)
+	return New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 }
 
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
@@ -266,7 +267,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testKeys, testTagActions, nil)
+	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -294,7 +295,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil)
+	m := New(view, nil, map[string]string{"x": "archive"}, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -314,7 +315,7 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil)
+	m := New(view, nil, map[string]string{"x": "toggle-read"}, map[string]string{"toggle-read": "wip"}, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	// wip is in no group, so it is soft: it toggles from the applied
@@ -341,7 +342,7 @@ func TestTagActionFolderAddCustomName(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "b", Timestamp: 200, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil)
+	m := New(view, nil, map[string]string{"y": "wip"}, map[string]string{"wip": "archive"}, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m = press(t, m, "y")
 	row, _ := m.view.CursorRow()
 	// archive is a folder tag: a custom action name still stages +archive
@@ -367,7 +368,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testKeys, testTagActions, nil)
+	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m.width, m.height = 80, 24
 	out := m.View()
 	// the model's own cursor highlight (indicator style SGR) is not a
@@ -390,7 +391,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 	if !strings.Contains(out, "refresh 5/10") {
 		t.Fatalf("bar missing:\n%s", out)
 	}
-	if !strings.Contains(out, "inbox 2") {
+	if !strings.Contains(stripANSI(out), "inbox|2") {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
@@ -401,7 +402,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testKeys, testTagActions, nil)
+	m := New(view, nil, testKeys, testTagActions, nil, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View(), "refresh 1/5") {
@@ -446,7 +447,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus)
+	m := New(view, ch, testKeys, testTagActions, bus, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m.width, m.height = 80, 24
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
@@ -495,7 +496,7 @@ func TestProgressBarPerView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testKeys, testTagActions, bus)
+	m := New(view, ch, testKeys, testTagActions, bus, config.Default().Theme, config.Default().Palette, config.Default().UI)
 	m.width, m.height = 80, 24
 
 	// another view's fill publishes: the inbox bar stays off

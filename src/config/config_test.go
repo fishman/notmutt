@@ -216,3 +216,89 @@ func TestValidateTagAction(t *testing.T) {
 		t.Fatal("blank tag value must error")
 	}
 }
+
+// writeThemeFile writes a theme fixture into a fresh temp dir. Default()
+// already provides the inbox view, so fixtures need no view table; the
+// keymap defaults to "vim".
+func writeThemeFile(t *testing.T, body string) string {
+	t.Helper()
+	return write(t, body)
+}
+
+func TestThemeStrictLoad(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"unknown key":     {"[theme.dark]\nnonesuch = { fg = \"base00\" }", "unknown key"},
+		"unknown palette": {"[theme.dark]\nstatus = { fg = \"base99\" }", "base99"},
+		"bad hex":         {"[palette]\nbase00 = \"zzz\"", "base00"},
+		"bad attr":        {"[theme.dark]\nnormal = { attrs = [\"glow\"] }", "glow"},
+		"missing variant": {"[theme]\ndefault = \"light\"", "light"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := Load(write(name+".toml", tc.body))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want error containing %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestStyleResolutionOrder(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, `
+[palette]
+base00 = "#21252b"
+base05 = "#abb2bf"
+base0A = "#e5c07b"
+[palette.light]
+base00 = "#fafafa"
+[theme]
+default = "dark"
+[theme.dark]
+normal = { fg = "base05", bg = "base00" }
+status = { fg = "base0A" }
+[theme.light]
+normal = { fg = "base05", bg = "base00" }
+status = { fg = "#ff0000" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// dark: fg (base0A) resolves through the base palette, bg inherits
+	// normal's base00 through the base palette
+	res := cfg.Theme.Resolved(cfg.Palette, "dark")
+	if res["status"].Fg != "#e5c07b" || res["status"].Bg != "#21252b" {
+		t.Fatalf("dark resolution: %+v", res["status"])
+	}
+	// light: the style pins a raw hex, which beats the light palette;
+	// bg inherits normal's base00 resolved through the LIGHT palette
+	res = cfg.Theme.Resolved(cfg.Palette, "light")
+	if res["status"].Fg != "#ff0000" || res["status"].Bg != "#fafafa" {
+		t.Fatalf("light resolution: %+v", res["status"])
+	}
+}
+
+func TestSetThemeVariant(t *testing.T) {
+	cfg := Default()
+	cfg.Theme = Theme{Default: "dark", Variants: map[string]StyleTable{
+		"dark": {}, "light": {},
+	}}
+	s := NewStore(cfg)
+	got := ""
+	s.Subscribe("theme", func() { got = "theme" })
+	if err := s.SetThemeVariant("light"); err != nil {
+		t.Fatal(err)
+	}
+	if s.Config().Theme.Default != "light" || got != "theme" {
+		t.Fatalf("variant switch: %q %q", s.Config().Theme.Default, got)
+	}
+	if err := s.SetThemeVariant("nope"); err == nil {
+		t.Fatal("unknown variant must error")
+	}
+}

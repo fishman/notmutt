@@ -29,6 +29,7 @@ func Run() error {
 	st := config.NewStore(cfg)
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
 	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
+	st.Subscribe("theme", func() { bus.Publish(core.ConfigChanged{Section: "theme"}) })
 	worker := notmuch.NewWorker(bus, notmuch.NewCLI(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -67,7 +68,7 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions, bus), tea.WithAltScreen())
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings["index"], cfg.TagActions, bus, cfg.Theme, cfg.Palette, cfg.UI), tea.WithAltScreen())
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

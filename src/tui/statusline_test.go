@@ -75,6 +75,27 @@ func TestStatusLineAccount(t *testing.T) {
 	}
 }
 
+// TestStatusLinePowerlineGlyphs pins the powerline model (tmux2k
+// onedark reference): the left-group chevron is the default seam, the
+// right group has its own mirrored glyph, and replacing the separator
+// in config turns the powerline look off.
+func TestStatusLinePowerlineGlyphs(t *testing.T) {
+	ui := config.Default().UI
+	if ui.Glyphs.StatuslineSeparator != "" || ui.Glyphs.StatuslineSeparatorR != "" {
+		t.Fatalf("powerline chevrons must be the defaults: %q %q",
+			ui.Glyphs.StatuslineSeparator, ui.Glyphs.StatuslineSeparatorR)
+	}
+	row := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
+	if !strings.Contains(row, "") {
+		t.Fatalf("the left-group chevron must join segments: %q", row)
+	}
+	ui.Glyphs.StatuslineSeparator = " "
+	plain := statusLine(DefaultStyles(), ui, statusData{view: "inbox", visible: 5})
+	if strings.Contains(plain, "") {
+		t.Fatalf("the separator config must replace the chevron: %q", plain)
+	}
+}
+
 func TestStatusLineDropsLowPriorityOnNarrow(t *testing.T) {
 	ui := config.Default().UI
 	// non-default fill glyph: proves the bar consumes config data

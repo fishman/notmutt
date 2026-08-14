@@ -126,7 +126,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			km = m.bindings["index"]
 		}
 		// vim-style prefixes: digits accumulate a count and "g" chains
-		// with the next "g" (gg = top). A binding in the active context
+		// with the next "g" (gg = top); a counted "g" jumps to the
+		// numbered row (12g = row 12). A binding in the active context
 		// wins over the prefix (R9 data-first) - the prefix only engages
 		// on keys the context leaves unbound.
 		r := msg.Text
@@ -136,9 +137,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if km[r] == "" && r == "g" {
+			if m.count != "" {
+				// counted g: jump to the numbered row (consumes the
+				// count either way - an unusable count is a no-op)
+				n, _ := strconv.Atoi(m.count)
+				m.count = ""
+				m.ggPending = false
+				if m.mode == "index" && n > 0 {
+					m.gotoRow(n)
+				}
+				return m, nil
+			}
 			if m.ggPending {
 				m.ggPending = false
-				m.count = ""
 				m.goTop()
 				return m, nil
 			}
@@ -616,6 +627,13 @@ func (m *Model) cursorBottom() {
 	m.clampIndexOffset()
 }
 
+// gotoRow jumps the cursor to row n (1-based): the delta from the
+// current row walks through moveCursor, so window anchoring, ghost
+// skipping, and edge clamping behave exactly like a counted move.
+func (m *Model) gotoRow(n int) {
+	m.moveCursor(n - 1 - m.CursorIndex())
+}
+
 func (m *Model) cursorEdge(dir int) {
 	rows := m.view.Rows()
 	m.rows = rows
@@ -824,9 +842,18 @@ func (m Model) render() string {
 	// the number slot grows with the largest row number (the width is
 	// per-render and shared by every row - alignment never shifts)
 	numWidth := len(strconv.Itoa(len(rows)))
+	// the tag slot is sized the same way, per page: the widest tag run
+	// among the visible rows sets the width every row pads to, so the
+	// subject column aligns within the page (the next page re-aligns)
+	tagWidth := 0
+	for _, r := range rows[top:bottom] {
+		if w := tagRunWidth(rowTagList(r), m.ui.Tags.Max, m.ui.Tags, m.accountTags); w > tagWidth {
+			tagWidth = w
+		}
+	}
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st, m.ui, numWidth, i == cur, m.accountTags)
+		line := renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
 		outer := st.Normal
 		if i == cur {
 			outer = st.Indicator

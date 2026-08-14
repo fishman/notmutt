@@ -55,6 +55,7 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 		right = append(right, progressSegment(ui, *d.prog, st))
 	}
 	sep := ui.Glyphs.StatuslineSeparator
+	sepR := ui.Glyphs.StatuslineSeparatorR
 	if d.legend != "" {
 		// The legend is pre-fitted to the row: whatever width the fixed
 		// segments (view, count) and the right group leave, truncated
@@ -62,13 +63,13 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 		// (R11 slot reservation). The drop loop below stays as the
 		// backstop when a future segment overruns.
 		fixed := groupWidth(left, sep)
-		budget := width - fixed - groupWidth(right, sep) - runewidth.StringWidth(sep)
+		budget := width - fixed - groupWidth(right, sepR) - runewidth.StringWidth(sep)
 		if budget > 0 {
 			left = append(left, legendSegment(d.legend, budget))
 		}
 	}
 	for {
-		w := groupWidth(left, sep) + groupWidth(right, sep)
+		w := groupWidth(left, sep) + groupWidth(right, sepR)
 		if width <= 0 || w <= width {
 			break
 		}
@@ -83,8 +84,8 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 		}
 	}
 	row, rowWidth := composeGroup(left, sep, st)
-	if rightWidth := groupWidth(right, sep); rightWidth > 0 {
-		rr, _ := composeGroup(right, sep, st)
+	if rightWidth := groupWidth(right, sepR); rightWidth > 0 {
+		rr, _ := composeGroup(right, sepR, st)
 		if pad := width - rowWidth - rightWidth; pad > 0 {
 			row += st.Status.Render(strings.Repeat(" ", pad))
 		}
@@ -158,7 +159,7 @@ func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
 // seam renders the separator between two adjacent segments: fg = the
 // previous segment's bg on the next segment's bg (the powerline
 // chevron); equal bgs render the separator in the previous segment's
-// fg instead - a plain "|" on the shared status background.
+// fg instead - a plain separator on the shared status background.
 func seam(prev, next lipgloss.Style, sep string) string {
 	s := next
 	if prev.GetBackground() != next.GetBackground() {

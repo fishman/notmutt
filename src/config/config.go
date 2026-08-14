@@ -42,7 +42,8 @@ type Glyphs struct {
 	Staged              string `toml:"staged"`
 	ProgressFill        string `toml:"progress_fill"`
 	ProgressEmpty       string `toml:"progress_empty"`
-	StatuslineSeparator string `toml:"statusline_separator"`
+	StatuslineSeparator  string `toml:"statusline_separator"`   // seam in the left group (powerline chevron, E0B0)
+	StatuslineSeparatorR string `toml:"statusline_separator_right"` // seam in the right group (mirrored, E0B2)
 }
 
 // Style is one theme style: palette names or raw hex for fg/bg, a
@@ -569,17 +570,18 @@ func Default() Config {
 				ShowIcons: true,
 				Icons: map[string]string{
 					"attachment": "📎", "archive": "📦", "deleted": "🗑",
-					"spam": "🚫", "pending": "⏰", "inbox": "📥",
+					"draft": "✏️", "spam": "🚫", "pending": "⏰", "inbox": "📥",
 					"unread": "✉", "xolo": "💼", "work": "🏢",
 					"receipt": "🧾", "important": "⭐", "todo": "✅",
 					"later": "⏳", "personal": "👤", "cfp": "🎤",
-					"conference": "🎫", "exhibition": "🏛", "meeting": "📅",
-					"newsletter": "📰",
+					"conference": "🎫", "exhibition": "🏛", "flagged": "🚩",
+					"signed": "🔒", "meeting": "📅", "newsletter": "📰",
 				},
 			},
 			Glyphs: Glyphs{
 				Staged: "*", ProgressFill: "#", ProgressEmpty: "-",
-				StatuslineSeparator: "|",
+				StatuslineSeparator:  "", // powerline on by default (tmux2k onedark look)
+				StatuslineSeparatorR: "",
 			},
 		},
 		Views: map[string]View{
@@ -628,10 +630,14 @@ func defaultTheme() Theme {
 		Default: "dark",
 		Variants: map[string]StyleTable{
 			"dark": {
-				Normal:    Style{Fg: "base05", Bg: "base00"},
-				Indicator: Style{Fg: "base00", Bg: "base0A"},
-				Status:    Style{Fg: "base05", Bg: "base01"},
-				Progress:  Style{Fg: "base00", Bg: "base0D"},
+				// Status and background colors follow the tmux2k onedark
+				// theme (the user's reference): bar bg = the theme black
+				// #2d3139, text = #f8f8f8; the app background takes the
+				// same black so the bar blends like tmux2k's.
+				Normal:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
+				Indicator: Style{Fg: "#2d3139", Bg: "base0A"},
+				Status:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
+				Progress:  Style{Fg: "#2d3139", Bg: "base0D"},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},
@@ -788,7 +794,7 @@ func validate(cfg Config) error {
 		return fmt.Errorf("theme.default: no variant %q", cfg.Theme.Default)
 	}
 	g := cfg.UI.Glyphs
-	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" || g.StatuslineSeparator == "" {
+	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" || g.StatuslineSeparator == "" || g.StatuslineSeparatorR == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
 	}
 	for name, a := range cfg.Accounts {

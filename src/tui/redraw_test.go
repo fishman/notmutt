@@ -46,6 +46,10 @@ func TestCursorMovePartialRepaint(t *testing.T) {
 		New(view, bus.Subscribe(), testBindings, testTagActions, bus, st, config.Default().UI),
 		tea.WithOutput(out),
 		tea.WithInput(strings.NewReader("")),
+		// without a TTY, Run() sizes itself 0x0 and its own resizeMsg
+		// clobbers the test's WindowSizeMsg - the renderer never
+		// leaves the zero-size frame
+		tea.WithWindowSize(80, 24),
 	)
 	done := make(chan struct{})
 	go func() { prog.Run(); close(done) }()
@@ -64,14 +68,22 @@ func TestCursorMovePartialRepaint(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// A cursor move must repaint at most 3 rows: the two cursor rows plus
-	// the renderer's always-repainted line 0 - never the full page (the
-	// trailing-newline bug made every line differ and forced full 24-row
-	// repaints). Every frame after the first paint must be partial.
+	// the status-line segment - never the full page (the trailing-newline
+	// bug made every line differ and forced full 24-row repaints). The v2
+	// renderer repaints a row by positioning the cursor and erasing to
+	// EOL, so each repainted row carries one erase-to-EOL sequence.
+	// Every frame after the first paint must be partial.
 	partial := 0
+	painted := false
 	for i, f := range out.frames {
-		n := bytes.Count(f, []byte("\x1b[2K"))
-		if i == 0 {
-			continue // startup frame: no lines rendered yet, nothing erased
+		n := bytes.Count(f, []byte("\x1b[K"))
+		if !painted {
+			// startup frames carry no rows; the first content frame is
+			// the legitimate full paint at the window size
+			if n > 3 {
+				painted = true
+			}
+			continue
 		}
 		if n > 3 {
 			t.Fatalf("frame %d repainted %d rows (full page?): %d bytes\n%q", i, n, len(f), f)
@@ -99,7 +111,7 @@ func waitFrames(t *testing.T, out *recorder, n int) {
 func frameErases(frames [][]byte) []int {
 	var s []int
 	for _, f := range frames {
-		s = append(s, bytes.Count(f, []byte("\x1b[2K")))
+		s = append(s, bytes.Count(f, []byte("\x1b[K")))
 	}
 	return s
 }

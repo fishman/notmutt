@@ -153,6 +153,32 @@ func TestCursorMoves(t *testing.T) {
 	}
 }
 
+// TestCountedG pins the counted-g jump: 12g moves the cursor to row 12
+// (1-based), and the gg chain still jumps to the top.
+func TestCountedG(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	var threads []*core.Thread
+	for i := 0; i < 30; i++ {
+		id := fmt.Sprintf("t%d", i)
+		threads = append(threads, core.NewThread(id, []*core.Message{
+			{ID: fmt.Sprintf("m%d", i), ThreadID: id, Timestamp: int64(i), Author: "Ann", Subject: "s", Tags: []string{"inbox"}},
+		}))
+	}
+	view.MergeThreads(threads)
+	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m = press(t, m, "1")
+	m = press(t, m, "2")
+	m = press(t, m, "g")
+	if m.CursorIndex() != 11 {
+		t.Fatalf("12g must land on row 12 (index 11), got %d", m.CursorIndex())
+	}
+	m = press(t, m, "g")
+	m = press(t, m, "g")
+	if m.CursorIndex() != 0 {
+		t.Fatalf("gg must still jump to the top, got %d", m.CursorIndex())
+	}
+}
+
 func TestRenderShowsRows(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
@@ -430,7 +456,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 	if !strings.Contains(out, "refresh 5/10") {
 		t.Fatalf("bar missing:\n%s", out)
 	}
-	if !strings.Contains(stripANSI(out), "inbox|2") {
+	if !strings.Contains(stripANSI(out), "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"2") {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
@@ -463,10 +489,10 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 		t.Fatalf("the literal empty text must not render:\n%s", out)
 	}
 	strip := stripANSI(out)
-	if !strings.Contains(strip, "inbox|0") {
+	if !strings.Contains(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0") {
 		t.Fatalf("idle empty view must still render the status line:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|0"); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0"); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	if !strings.Contains(out, "229;192;123") {
@@ -499,7 +525,7 @@ func TestProgressBarEmptyViewHints(t *testing.T) {
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("empty view must render the keyhint row:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|0"); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox"+config.Default().UI.Glyphs.StatuslineSeparator+"0"); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 }
@@ -826,7 +852,8 @@ func TestKeyhintRowInView(t *testing.T) {
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("index hint row missing:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, "inbox|2"); si < 0 || si > sh {
+	status := "inbox" + config.Default().UI.Glyphs.StatuslineSeparator + "2"
+	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, status); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))

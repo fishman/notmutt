@@ -14,15 +14,16 @@ import (
 )
 
 // renderRow renders the fixed-slot template (R11): number, flags,
-// attachment, date, author, subject, tags. The number slot is the one
-// variable width: it grows to the widest row number (the caller passes
-// the count-derived width) so the column aligns without padding waste.
-// Optional slots reserve width; every slot renders through its style,
-// so the line carries per-slot SGR runs (the outer row style is applied
-// later by padRow). Glyphs and the tag-slot cap come from config data,
-// never hardcoded. Account tags never render here - the account lives
-// in the status bar (R2), not the mail title.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selected bool, accountTags map[string]bool) string {
+// attachment, signed, date, author, tags, subject. The number slot and the tag
+// slot are the variable-width slots: each grows to the widest on the
+// page (the caller passes the per-render widths) so the columns align
+// without padding waste. Optional slots reserve width; every slot
+// renders through its style, so the line carries per-slot SGR runs
+// (the outer row style is applied later by padRow). Glyphs and the
+// tag-slot cap come from config data, never hardcoded. Account tags
+// never render here - the account lives in the status bar (R2), not
+// the mail title.
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool) string {
 	// the cursor row is monochrome (R11): one highlight background and one
 	// text color - the indicator style replaces every slot style
 	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := st.Index.Number, st.Index.Flags, st.Index.Date, st.Index.Author, st.Index.Subject
@@ -38,38 +39,62 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth int, selec
 		b.WriteString(padCellsRight("", numWidth))
 		b.WriteString(" ")
 		b.WriteByte(' ')
+		b.WriteString(padCellsRight("", 2))
+		b.WriteString(padCellsRight("", 2))
 		b.WriteString(padCellsRight("", 15))
 		b.WriteByte(' ')
 		b.WriteString(padCellsRight("", 16))
 		b.WriteByte(' ')
+		if tagWidth > 0 {
+			b.WriteString(padCellsRight("", tagWidth))
+			b.WriteByte(' ')
+		}
 		b.WriteString(truncCells("[...] "+strconv.Itoa(row.Count), 40))
 		return b.String()
 	}
-	tags := row.Msg.Tags
+	tags := rowTagList(row)
 	flagStr := flagStyle.Render(flags(tags))
 	if row.Staged {
 		// staged rows render the resolved display tags with the staged
 		// glyph (config data, R11 tag-transforms). The slot keeps its
 		// fixed width - alignment never shifts per row.
-		tags = row.StagedTags
 		flagStr = st.Index.Staged.Render(padCellsRight(ui.Glyphs.Staged+flagChars(tags), 3))
 	}
 	b.WriteString(flagStr)
 	b.WriteString(padCellsRight(attachIcon(row.Msg, ui.Tags), 2))
+	b.WriteString(padCellsRight(signedIcon(row.Msg, ui.Tags), 2))
 	b.WriteString(dateStyle.Render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
 	author := core.SanitizeControls(row.Msg.Author)
 	b.WriteString(authorStyle.Render(padCellsRight(truncCells(author, 16), 16)))
 	b.WriteByte(' ')
-	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(subjectStyle.Render(truncCells(subject, 40)))
-	b.WriteByte(' ')
 	tagStyle := st.Index.Tag
 	if selected {
 		tagStyle = func(string) lipgloss.Style { return st.Indicator }
 	}
-	b.WriteString(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags, accountTags))
+	if tagWidth > 0 {
+		// the tag slot sits right after the sender (R2 surface split:
+		// account tags live in the status bar, display tags stay in the
+		// title). The run pads to the page width - the subject column
+		// never shifts within a page.
+		b.WriteString(padTagRun(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags, accountTags), tagWidth, tagStyle))
+		b.WriteByte(' ')
+	}
+	subject := core.SanitizeControls(row.Msg.Subject)
+	b.WriteString(subjectStyle.Render(truncCells(subject, 40)))
 	return b.String()
+}
+
+// rowTagList is the tag list a row renders in its tag slot: staged
+// rows show the staged set, ghost rows none.
+func rowTagList(row core.Row) []string {
+	if row.Msg == nil {
+		return nil
+	}
+	if row.Staged {
+		return row.StagedTags
+	}
+	return row.Msg.Tags
 }
 
 func flags(tags []string) string {
@@ -91,6 +116,21 @@ func flagChars(tags []string) string {
 		}
 	}
 	return f.String()
+}
+
+// signedIcon renders the signed marker slot at the row start, right
+// after the attachment slot: the signed tag's icon (config data,
+// ui.tags.icons) when the message is signed. The caller pads the slot
+// to 2 cells - the double-width lock emoji fits without shifting the
+// following columns (R11 slot reservation).
+func signedIcon(m *core.Message, t config.UITags) string {
+	if slices.Contains(m.Tags, "signed") {
+		if t.ShowIcons && t.Icons["signed"] != "" {
+			return t.Icons["signed"]
+		}
+		return "S"
+	}
+	return " "
 }
 
 // attachIcon renders the attachment slot at the row start: the marker
@@ -118,28 +158,74 @@ func formatDate(ts int64) string {
 // (spec section 6). Each glyph renders through its per-tag style (R11),
 // falling back to the default tag style. A tag with an icon entry in the
 // ui.tags.icons dict renders the icon instead of its name (muttrc
-// tag-transforms); the attachment marker tag is skipped - it owns the
-// attachment slot at the row start, and account tags are skipped too -
-// the account lives in the status bar (R2).
+// tag-transforms); flags-slot tags (unread, replied) and the signed
+// marker tag are skipped - they own row-start cells (flagChars,
+// signedIcon) - the attachment marker tag is skipped too - it owns
+// the attachment slot at the row start - and account tags are
+// skipped - the account lives in the status bar (R2).
 func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t config.UITags, accountTags map[string]bool) string {
 	var b strings.Builder
 	n := 0
 	for _, tag := range tags {
-		if tag == "unread" || tag == t.Attach || accountTags[tag] {
+		if tag == "unread" || tag == "replied" || tag == "signed" || tag == t.Attach || accountTags[tag] {
 			continue
 		}
 		if n >= max {
 			break
 		}
-		label := tag
 		if t.ShowIcons && t.Icons[tag] != "" {
-			label = t.Icons[tag]
+			// icons are config glyphs (1-2 cells): natural width, one
+			// separator - padding would leave gaps between icons
+			b.WriteString(tagStyle(tag).Render(t.Icons[tag]))
+			b.WriteByte(' ')
+			n++
+			continue
 		}
-		b.WriteString(tagStyle(tag).Render(padCellsRight(truncCells(core.SanitizeControls(label), 4), 4)))
+		// names render in full - the tag slot never truncates a tag name
+		b.WriteString(tagStyle(tag).Render(core.SanitizeControls(tag)))
 		b.WriteByte(' ')
 		n++
 	}
 	return strings.TrimRight(b.String(), " ")
+}
+
+// tagRunWidth is the visible-cell width of a tag glyph run: icons at
+// their natural width, names in full, one separator space per pair.
+// The per-page tag slot width is the widest run among the visible
+// rows; rows pad to it, so the subject column aligns within the page.
+func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bool) int {
+	n, cells := 0, 0
+	for _, tag := range tags {
+		if tag == "unread" || tag == "replied" || tag == "signed" || tag == t.Attach || accounts[tag] {
+			continue
+		}
+		if n >= max {
+			break
+		}
+		w := runewidth.StringWidth(tag)
+		if t.ShowIcons && t.Icons[tag] != "" {
+			w = runewidth.StringWidth(t.Icons[tag])
+		}
+		if n > 0 {
+			cells++ // separator space between glyphs
+		}
+		cells += w
+		n++
+	}
+	return cells
+}
+
+// padTagRun pads a styled tag run to the page's slot width; the pad
+// renders in the slot's style, so the blank cells carry the row's
+// background like every other slot.
+func padTagRun(run string, width int, tagStyle func(string) lipgloss.Style) string {
+	if width <= 0 {
+		return ""
+	}
+	if w := runewidth.StringWidth(stripANSI(run)); w < width {
+		return run + tagStyle("").Render(strings.Repeat(" ", width-w))
+	}
+	return run
 }
 
 // truncCells truncates s to at most w terminal cells; padCellsRight pads

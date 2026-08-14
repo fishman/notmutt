@@ -32,12 +32,14 @@ type Node struct {
 }
 
 type Row struct {
-	Msg      *Message
-	ThreadID string
-	Depth    int
-	Root     bool
-	Count    int
-	Ghost    bool // synthetic multi-root marker row; has no Msg
+	Msg        *Message
+	ThreadID   string
+	Depth      int
+	Root       bool
+	Count      int
+	Ghost      bool     // synthetic multi-root marker row; has no Msg
+	Staged     bool     // pending ops staged for this row (R14)
+	StagedTags []string // display tags with staged ops resolved
 }
 
 // TagOp is a pending tag change: add or remove Tag. The same shape the

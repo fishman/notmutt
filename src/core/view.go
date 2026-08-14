@@ -78,6 +78,16 @@ func (v *View) rowsLocked() []Row {
 	for _, t := range v.Threads {
 		rows = append(rows, flattenThread(t, t.Collapsed)...)
 	}
+	for i := range rows {
+		msg := rows[i].Msg
+		if msg == nil {
+			continue
+		}
+		if ops, ok := v.staged[msg.ID]; ok {
+			rows[i].Staged = true
+			rows[i].StagedTags, _ = ResolveOps(msg.Tags, ops, v.groups)
+		}
+	}
 	return rows
 }
 

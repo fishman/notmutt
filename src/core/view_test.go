@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func msg(id string, ts int64, refs ...string) *Message {
 	return &Message{ID: id, Timestamp: ts, References: refs}
@@ -313,5 +316,51 @@ func TestClearStagedGeneration(t *testing.T) {
 	v.ClearStaged("m1", gen2)
 	if v.IsStaged("m1") {
 		t.Fatal("current clear must remove")
+	}
+}
+
+func TestStagedRowShowsResolved(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.SetGroups([]TagGroup{folderGroup})
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{{
+		ID: "m1", Timestamp: 100, Tags: []string{"inbox", "unread"},
+	}})})
+	v.Stage("m1", TagOp{Tag: "archive", Add: true})
+	rows := v.Rows()
+	found := false
+	for _, r := range rows {
+		if r.Msg == nil || r.Msg.ID != "m1" {
+			continue
+		}
+		found = true
+		if !r.Staged {
+			t.Fatal("row must be staged")
+		}
+		if !slices.Equal(r.StagedTags, []string{"archive", "unread"}) {
+			t.Fatalf("StagedTags = %v", r.StagedTags)
+		}
+		if hasTag(r.Msg.Tags, "archive") {
+			t.Fatalf("applied Msg.Tags must be untouched: %v", r.Msg.Tags)
+		}
+	}
+	if !found {
+		t.Fatal("m1 row missing")
+	}
+}
+
+func TestStagedGhostRowsNeverStaged(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.SetGroups([]TagGroup{folderGroup})
+	// no references: ghost root + two rows
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{
+		{ID: "a", Timestamp: 200},
+		{ID: "b", Timestamp: 100},
+	})})
+	v.Stage("ghost", TagOp{Tag: "archive", Add: true}) // unknown id: no-op
+	rows := v.Rows()
+	for _, r := range rows {
+		if r.Ghost && r.Staged {
+			t.Fatal("ghost rows must never be staged")
+		}
 	}
 }

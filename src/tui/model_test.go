@@ -355,6 +355,19 @@ func TestProgressBarEmptyView(t *testing.T) {
 	}
 }
 
+func TestProgressBarSegments(t *testing.T) {
+	// Done=5/Total=10 in 20 cells: half filled
+	if got := progressBar(core.Progress{Job: "refresh", Done: 5, Total: 10}, 20); got != "##########----------" {
+		t.Fatalf("half progress: got %q", got)
+	}
+	// negative cells (narrow-terminal clamp path): never panics, empty bar
+	_ = progressBar(core.Progress{Job: "refresh", Done: 5, Total: 10}, -3)
+	// zero total: no division by zero, empty bar
+	if got := progressBar(core.Progress{Job: "refresh", Done: 0, Total: 0}, 4); got != "----" {
+		t.Fatalf("zero total: got %q", got)
+	}
+}
+
 func pressEvent(t *testing.T, m tea.Model, e core.Event) Model {
 	t.Helper()
 	next, _ := m.Update(EventMsg{Event: e})

@@ -234,15 +234,21 @@ func (m Model) statusLine() string {
 	}
 	label := fmt.Sprintf("%s %d/%d", m.progress.Job, m.progress.Done, m.progress.Total)
 	fill := progressWidth - runewidth.StringWidth(label) - 1
+	if fill < 0 {
+		fill = 0
+	}
 	right := label + " " + progressBar(m.progress, fill)
 	if pad := m.width - runewidth.StringWidth(left) - progressWidth; pad > 0 {
 		return left + strings.Repeat(" ", pad) + right
 	}
-	return left + right
+	return left
 }
 
 func progressBar(p core.Progress, cells int) string {
-	fill := cells
+	if cells < 0 {
+		return ""
+	}
+	fill := 0
 	if p.Total > 0 && p.Done < p.Total {
 		fill = int(float64(p.Done) * float64(cells) / float64(p.Total))
 	}

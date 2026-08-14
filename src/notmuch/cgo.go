@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	nm "github.com/zenhack/go.notmuch"
+	nm "github.com/fishman/go.notmuch"
 
 	"notmutt/core"
 )

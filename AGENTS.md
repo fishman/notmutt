@@ -280,7 +280,7 @@ Question: Rust, Zig, or Go?
 
 | dimension | Rust | Go | Zig |
 |---|---|---|---|
-| notmuch bindings | `notmuch` crate (0.8.0, wraps C API, stale ~3y but works); FFI direct | go.notmuch (zenhack module path; fishman fork, community-maintained, modernized 2026-08-14) | none; hand-written FFI |
+| notmuch bindings | `notmuch` crate (0.8.0, wraps C API, stale ~3y but works); FFI direct | go.notmuch (github.com/fishman/go.notmuch, community-maintained, modernized 2026-08-14) | none; hand-written FFI |
 | mail parse+compose | mail-parser + mail-builder (Stalwart, RFC 5322/MIME, zero-copy, fuzzed, production mail server, actively maintained 2026) | go-message (emersion, used by aerc) | none |
 | TUI | ratatui (mature, widget lib - UI extracted by design) | bubbletea/tview (fine, but app-state coupled) | none mature |
 | async | tokio (mature) | goroutines (built-in, simple) | none; std.event.Loop is barebones, userland |
@@ -291,12 +291,12 @@ Decision: Go (R7 is binding; the analysis above is the record).
 Decisive factors: go-message is aerc's production parser - the same
 client whose worker model notmutt mirrors (R3/R4), so the mail
 library is proven against the reference architecture; goroutines
-make the async model native; the cgo binding is go.notmuch (fishman
-fork of zenhack's go.notmuch, module path github.com/zenhack/go.notmuch,
-NOT an official binding - the official contrib/go bindings were dormant
-2018-2026 and lack the revision/UUID API the refresh cycle needs; we
-added DB.Revision() to the vendored fork, see the T14 benchmark report).
-Vendored and pinned by replace, never fetched from the proxy. The Rust
+make the async model native; the cgo binding is go.notmuch
+(module path github.com/fishman/go.notmuch, NOT an official binding -
+the official contrib/go bindings were dormant 2018-2026 and lack the
+revision/UUID API the refresh cycle needs; we added DB.Revision() to
+the vendored fork, see the T14 benchmark report). Vendored and pinned
+by replace, never fetched from the proxy. The Rust
 column's strengths (ratatui, mlua, tokio) are real; they lost on
 integration surface - mirroring aerc's proven stack beats best-in-class
 per part. Zig remains greenfield on every dimension.

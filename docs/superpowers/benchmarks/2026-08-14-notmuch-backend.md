@@ -10,13 +10,12 @@ read, printed, or recorded. All rows are latency + result count.
 - DB: /home/user/Mail (database.path, effective config)
 - notmuch CLI and libnotmuch 0.40 (hand-written notmuch.pc at
   $HOME/.local/lib/pkgconfig, Version: 0.40, prefix /usr)
-- cgo backend wraps `github.com/zenhack/go.notmuch` (fishman fork of
-  zenhack's go.notmuch, notmuch/bindings/go.notmuch in this workspace),
-  vendored and pinned via `replace` in src/go.mod. The vendored copy
-  carries one binding addition, `DB.Revision()` (the binding lacked the
-  revision/UUID pair the refresh cycle needs). The upstream module path
-  is zenhack's; the tree at HEAD is unreleased, so the replace pins the
-  workspace checkout, never the proxy.
+- cgo backend wraps `github.com/fishman/go.notmuch` (fishman fork,
+  notmuch/bindings/go.notmuch in this workspace), vendored and pinned
+  via `replace` in src/go.mod. The vendored copy carries one binding
+  addition, `DB.Revision()` (the binding lacked the revision/UUID pair
+  the refresh cycle needs). The tree at HEAD is unreleased, so the
+  replace pins the workspace checkout, never the proxy.
 - Test: `src/notmuch/bench_test.go`, env-gated on NOTMUCH_BENCH=1
 
 Command (3 runs):

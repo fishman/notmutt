@@ -1719,6 +1719,48 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	}
 }
 
+// TestAttachPromptRendersRow pins the prompt row: the attach path
+// input replaces the keyhint row 1:1 (the frame height invariant) and
+// shows the typed text - typing an attachment path is visible, and
+// pasted ESC bytes never reach the terminal (F1).
+func TestAttachPromptRendersRow(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "a")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the prompt frame must be exactly 24 lines, got %d", got)
+	}
+	if !strings.Contains(stripANSI(frame), "attach path:") {
+		t.Fatalf("the prompt row must render:\n%s", frame)
+	}
+	m = press(t, m, "h")
+	m = press(t, m, "i")
+	if !strings.Contains(stripANSI(m.render()), "attach path: hi") {
+		t.Fatalf("typed input must render in the prompt row:\n%s", m.render())
+	}
+	m.prompt.input = "x\x1b[31m"
+	if out := m.render(); strings.Contains(out, "\x1b[31m") {
+		t.Fatalf("control chars leaked into the prompt row:\n%q", out)
+	}
+}
+
+// TestEditGatedDuringSending pins the edit gate: an in-flight
+// delivery's result is discarded when the send completes, so e must
+// not launch the editor while the job runs.
+func TestEditGatedDuringSending(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Phase = compose.PhaseSending
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	if cmd != nil {
+		t.Fatal("e during PhaseSending must not launch the editor")
+	}
+	if next.(Model).tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("phase = %v", next.(Model).tabs[0].Phase)
+	}
+}
+
 func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "c")

@@ -59,10 +59,15 @@ func (m *Model) renderCompose() string {
 			b.WriteByte('\n')
 		}
 	}
-	// the abort confirm swaps the keyhint row (the two-press q)
-	if st.Phase == compose.PhaseAborting {
+	// the abort confirm and the attach prompt swap the keyhint row
+	// 1:1 (the frame height invariant); the prompt shows the typed
+	// path - pasted text can carry ESC, sanitized at render (F1)
+	switch {
+	case st.Phase == compose.PhaseAborting:
 		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
-	} else {
+	case m.prompt != nil:
+		b.WriteString(padRow("attach path: "+core.SanitizeControls(m.prompt.input), m.width, m.styles.Indicator))
+	default:
 		b.WriteString(m.keyhint())
 	}
 	b.WriteByte('\n')

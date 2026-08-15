@@ -430,18 +430,22 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.formIdx--
 		}
 	case "edit":
-		if m.composeTab().Phase == compose.PhaseFailed {
-			m.composeTab().Phase = compose.PhaseEditing
+		// an in-flight edit's result is discarded when the send
+		// completes - gate it like attach/detach
+		if m.composeTab().Phase != compose.PhaseSending {
+			if m.composeTab().Phase == compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseEditing
+			}
+			st := *m.composeTab()
+			tabID := st.ID
+			path, err := writeEditorBuffer(st)
+			if err != nil {
+				return m, nil
+			}
+			return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+				return editorDoneMsg{err: err, path: path, tabID: tabID}
+			})
 		}
-		st := *m.composeTab()
-		tabID := st.ID
-		path, err := writeEditorBuffer(st)
-		if err != nil {
-			return m, nil
-		}
-		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
-			return editorDoneMsg{err: err, path: path, tabID: tabID}
-		})
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
 			m.prompt = &pathPrompt{}

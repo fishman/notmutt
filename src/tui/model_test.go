@@ -191,6 +191,64 @@ func TestSendPhaseGuardNoDoubleSend(t *testing.T) {
 	}
 }
 
+// TestSendGatesDetachAttachDuringSending pins the PhaseSending gates
+// on the mutation keys: an in-flight delivery owns the Attachments
+// slice (sendJob's Assemble reads it), so detach and attach must no-op
+// while the job runs - not only double-send.
+func TestSendGatesDetachAttachDuringSending(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Phase = compose.PhaseSending
+	att := compose.Attachment{Name: "a.txt", Path: "/tmp/a.txt", Size: 3}
+	m.tabs[0].Attachments = []compose.Attachment{att}
+	m.formIdx = 4
+	m = press(t, m, "d")
+	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0] != att {
+		t.Fatalf("d during PhaseSending must not mutate the attachments: %+v", m.tabs[0].Attachments)
+	}
+	m = press(t, m, "a")
+	if m.prompt != nil {
+		t.Fatal("a during PhaseSending must not open the prompt")
+	}
+	if m.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("phase = %v", m.tabs[0].Phase)
+	}
+}
+
+// TestAbortNoOpDuringSending pins the abort gate: q must not arm the
+// abort confirm while the delivery is in flight - the tab closes when
+// the send result lands.
+func TestAbortNoOpDuringSending(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Phase = compose.PhaseSending
+	m = press(t, m, "q")
+	m = press(t, m, "q")
+	if len(m.tabs) != 1 {
+		t.Fatalf("q during PhaseSending must keep the tab, got %d", len(m.tabs))
+	}
+	if m.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("q during PhaseSending must not change the phase, got %v", m.tabs[0].Phase)
+	}
+}
+
+// TestSendRetryReArmsGate pins the retry path: after a failure the
+// first y re-arms PhaseSending and dispatches; a second press during
+// the retry is gated (one job in flight).
+func TestSendRetryReArmsGate(t *testing.T) {
+	calls := 0
+	SetSendHandler(func(st compose.State) { calls++ })
+	defer SetSendHandler(func(st compose.State) {})
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Phase = compose.PhaseFailed
+	m = press(t, m, "y")
+	m = press(t, m, "y")
+	if calls != 1 {
+		t.Fatalf("a second send press during the retry must no-op, calls=%d", calls)
+	}
+	if m.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("phase = %v", m.tabs[0].Phase)
+	}
+}
+
 func model() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})

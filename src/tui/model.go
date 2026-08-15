@@ -456,18 +456,21 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "send":
 		// PhaseSending gates duplicate presses: one job in flight
 		// (the detach/attach gates protect the shared Attachments
-		// slice while sendJob's Assemble reads it)
+		// slice while sendJob's Assemble reads it). A retry after a
+		// failure re-arms the gate on its first press.
 		if m.composeTab().Phase != compose.PhaseSending {
-			if m.composeTab().Phase != compose.PhaseFailed {
-				m.composeTab().Phase = compose.PhaseSending
-			}
+			m.composeTab().Phase = compose.PhaseSending
 			onSend(*m.composeTab())
 		}
 	case "abort":
 		st := m.composeTab()
-		if st.Phase == compose.PhaseAborting {
+		switch st.Phase {
+		case compose.PhaseSending:
+			// never cancel an in-flight delivery; the tab closes when
+			// the send result lands
+		case compose.PhaseAborting:
 			m.closeComposeTab(m.tabIdx - 1)
-		} else {
+		default:
 			st.Phase = compose.PhaseAborting
 		}
 	case "help":

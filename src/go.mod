@@ -7,10 +7,13 @@ require (
 	github.com/BurntSushi/toml v1.4.0
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
+	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.0.0-20260814090000-000000000000
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/muesli/termenv v0.15.2
+	github.com/yuin/gopher-lua v1.1.2
 	go.etcd.io/bbolt v1.3.11
 )
 
@@ -22,8 +25,6 @@ replace github.com/fishman/go.notmuch => ../notmuch/bindings/go.notmuch
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
-	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect

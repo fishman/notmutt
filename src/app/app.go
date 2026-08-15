@@ -84,6 +84,12 @@ func Run() error {
 	sigDir = filepath.Join(filepath.Dir(configPath()), "signatures")
 	tui.SetSignaturesDir(sigDir)
 
+	// the Lua layer (R8): plugin files from <configdir>/lua, each
+	// registering its body_render as a render transform. The adapter
+	// compiles only under the lua build tag (the R12 pattern); default
+	// builds run the no-op stub. Loaded before any open can fire.
+	loadLuaPlugins(filepath.Join(filepath.Dir(configPath()), "lua"))
+
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches
 	// the tab

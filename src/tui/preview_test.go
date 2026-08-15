@@ -29,7 +29,7 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
 		Msgs: []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}})
 	out := stripANSI(m.View().Content)
-	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  o open  q close", "----", "tab-prev"} {
+	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  o open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("preview box missing %q:\n%s", want, out)
 		}

@@ -93,6 +93,7 @@ func (g sgr) render(text string) string {
 type sgrSet struct {
 	normal, indicator, ghost                     sgr
 	stagedNormal, stagedIndicator, stagedGhost   sgr
+	border                                       sgr // the popup border: the indicator's fg over the normal bg (no fill)
 	number, flags, date, author, subject, staged sgr
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
@@ -114,6 +115,7 @@ func sgrSetOf(st Styles) sgrSet {
 		stagedNormal:    sgrOf(st.Index.Staged.Inherit(st.Normal)),
 		stagedIndicator: sgrOf(st.Index.Staged.Inherit(st.Indicator)),
 		stagedGhost:     sgrOf(st.Index.Staged.Inherit(st.Index.Ghost)),
+		border:          sgrOf(st.Normal.Foreground(st.Indicator.GetBackground())),
 		number:          sgrOf(st.Index.Number),
 		flags:           sgrOf(st.Index.Flags),
 		date:            sgrOf(st.Index.Date),

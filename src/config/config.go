@@ -43,6 +43,12 @@ type Glyphs struct {
 	Staged        string `toml:"staged"`
 	ProgressFill  string `toml:"progress_fill"`
 	ProgressEmpty string `toml:"progress_empty"`
+	BorderTL      string `toml:"border_tl"`
+	BorderTR      string `toml:"border_tr"`
+	BorderBL      string `toml:"border_bl"`
+	BorderBR      string `toml:"border_br"`
+	BorderH       string `toml:"border_h"`
+	BorderV       string `toml:"border_v"`
 }
 
 // Style is one theme style: palette names or raw hex for fg/bg, a
@@ -632,6 +638,8 @@ func Default() Config {
 			},
 			Glyphs: Glyphs{
 				Staged: "*", ProgressFill: "#", ProgressEmpty: "-",
+				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
+				BorderH: "─", BorderV: "│",
 			},
 		},
 		Views: map[string]View{
@@ -849,7 +857,8 @@ func validate(cfg Config) error {
 		return fmt.Errorf("theme.default: no variant %q", cfg.Theme.Default)
 	}
 	g := cfg.UI.Glyphs
-	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" {
+	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" ||
+		g.BorderTL == "" || g.BorderTR == "" || g.BorderBL == "" || g.BorderBR == "" || g.BorderH == "" || g.BorderV == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
 	}
 	if strings.TrimSpace(cfg.Send.Command) == "" {

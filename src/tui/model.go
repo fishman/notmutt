@@ -1498,20 +1498,25 @@ func (m Model) overlayPreview(frame string) string {
 		return frame
 	}
 	sg := m.styles.sgr
+	g := m.ui.Glyphs
 	ch := boxH - 4
 	content := make([]string, ch)
 	if m.pager != nil {
 		copy(content, strings.Split(m.pager.render(), "\n"))
 	}
 	rows := make([]string, 0, boxH)
-	edge := sg.indicator
-	rows = append(rows, padRowSGR("+"+strings.Repeat("-", boxW-2)+"+", m.width, edge))
+	edge := sg.border
+	hdash := strings.Repeat(g.BorderH, boxW-2)
+	rows = append(rows, padRowSGR(g.BorderTL+hdash+g.BorderTR, m.width, edge))
 	rows = append(rows, padRowSGR(m.previewTitle, m.width, edge))
+	// the side glyphs are border too - the box is one style all
+	// around (the indicator's fg, no fill); only the content keeps
+	// its own styling
 	for _, c := range content {
-		rows = append(rows, padRowSGR("|"+c+"|", m.width, sg.normal))
+		rows = append(rows, padRowSGR(edge.open+g.BorderV+c+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
 	}
-	rows = append(rows, padRowSGR("j/k scroll  o open  q close", m.width, sg.normal))
-	rows = append(rows, padRowSGR("+"+strings.Repeat("-", boxW-2)+"+", m.width, edge))
+	rows = append(rows, padRowSGR(edge.open+g.BorderV+sg.normal.open+"j/k scroll  o open  q close"+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
+	rows = append(rows, padRowSGR(g.BorderBL+hdash+g.BorderBR, m.width, edge))
 	copy(lines[top:top+boxH], rows)
 	return strings.Join(lines, "\n")
 }

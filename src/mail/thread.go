@@ -81,6 +81,9 @@ type Message struct {
 	From        string
 	Date        string
 	Subject     string
+	MessageID   string
+	To          []string // bare addresses, reply-all prefill
+	Cc          []string
 	Parts       []Part
 	Attachments []Attachment
 }
@@ -121,6 +124,17 @@ func ParseMessage(path string) (*Message, error) {
 	m := &Message{}
 	if addrs, err := hdr.AddressList("From"); err == nil && len(addrs) > 0 {
 		m.From = addrs[0].Address
+	}
+	m.MessageID = hdr.Get("Message-Id")
+	if addrs, err := hdr.AddressList("To"); err == nil {
+		for _, a := range addrs {
+			m.To = append(m.To, a.Address)
+		}
+	}
+	if addrs, err := hdr.AddressList("Cc"); err == nil {
+		for _, a := range addrs {
+			m.Cc = append(m.Cc, a.Address)
+		}
 	}
 	m.Date = hdr.Get("Date")
 	m.Subject = hdr.Get("Subject")

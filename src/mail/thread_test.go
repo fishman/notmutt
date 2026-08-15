@@ -221,3 +221,41 @@ func TestSplitBodyCRLF(t *testing.T) {
 		}
 	}
 }
+
+// fixtureMail is a fabricated message - never real mail content.
+const fixtureMail = `From: Alice <alice@example.com>
+To: Bob <bob@example.com>, Carol <carol@example.org>
+Cc: Dave <dave@example.net>
+Subject: hello
+Message-Id: <abc123@example.com>
+Date: Tue, 14 Aug 2026 10:00:00 +0000
+
+body line one
+body line two
+`
+
+func TestParseMessageHeaders(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fixture.eml")
+	if err := os.WriteFile(path, []byte(fixtureMail), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ParseMessage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.MessageID != "<abc123@example.com>" {
+		t.Fatalf("MessageID = %q", m.MessageID)
+	}
+	if m.From != "alice@example.com" {
+		t.Fatalf("From = %q", m.From)
+	}
+	if len(m.To) != 2 || m.To[0] != "bob@example.com" || m.To[1] != "carol@example.org" {
+		t.Fatalf("To = %v", m.To)
+	}
+	if len(m.Cc) != 1 || m.Cc[0] != "dave@example.net" {
+		t.Fatalf("Cc = %v", m.Cc)
+	}
+	if len(m.Parts) != 2 || m.Parts[0].Body != "body line one" {
+		t.Fatalf("Parts = %+v", m.Parts)
+	}
+}

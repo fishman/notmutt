@@ -115,8 +115,9 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 // renderFuzzy builds the selector popup frame: the title, the ranked
 // matches, the query row, the fuzzy keyhint, the status row. Exactly
 // m.height lines - the popup replaces the compose frame (a clean
-// diff, never an overlay). ponytail: the popup shows at most rows-2
-// matches (the slice cuts the tail); large lists scroll later.
+// diff, never an overlay). The query row always renders - the user's
+// filter input stays visible mid-type - and the match list clips to
+// fill the frame (large lists scroll later).
 func (m *Model) renderFuzzy() string {
 	rows := m.height - 2
 	if rows < 1 {
@@ -124,12 +125,22 @@ func (m *Model) renderFuzzy() string {
 	}
 	var b strings.Builder
 	lines := []string{m.fuzzy.title}
-	for i, idx := range m.fuzzy.filtered() {
+	// the query row always renders (the user's filter input must stay
+	// visible mid-type); the match list clips to fill
+	matchRows := rows - 2
+	if matchRows < 0 {
+		matchRows = 0
+	}
+	matches := m.fuzzy.filtered()
+	if matchRows > len(matches) {
+		matchRows = len(matches)
+	}
+	for i := 0; i < matchRows; i++ {
 		outer := m.styles.Normal
 		if i == m.fuzzy.sel {
 			outer = m.styles.Indicator
 		}
-		lines = append(lines, padRow(m.fuzzy.entries[idx], m.width, outer))
+		lines = append(lines, padRow(m.fuzzy.entries[matches[i]], m.width, outer))
 	}
 	lines = append(lines, padRow(m.fuzzy.title+" "+m.fuzzy.query, m.width, m.styles.Indicator))
 	for len(lines) < rows {

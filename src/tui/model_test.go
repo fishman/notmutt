@@ -1853,3 +1853,26 @@ func TestComposeRenderFuzzyPopup(t *testing.T) {
 		t.Fatalf("the popup must show the title and entries:\n%s", frame)
 	}
 }
+
+// TestFuzzyQueryRowSurvivesManyMatches pins the query row: when the
+// match list exceeds the frame, the user's filter input must stay
+// visible - the old clip cut the last element (the query row) mid-
+// type. The match list clips instead; the frame stays exact.
+func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 7})
+	m = next.(Model)
+	m = press(t, m, "c")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 7 {
+		t.Fatalf("the popup frame must be exactly 7 lines, got %d", got)
+	}
+	lines := strings.Split(stripANSI(frame), "\n")
+	// 5 popup rows: title, 3 matches (4 accounts exist), the query row
+	if got := strings.TrimSpace(lines[4]); got != "account:" {
+		t.Fatalf("the query row must stay visible above the keyhint:\n%s", frame)
+	}
+	if strings.Contains(frame, "toptal") {
+		t.Fatalf("the match list must clip to fill, not the query row:\n%s", frame)
+	}
+}

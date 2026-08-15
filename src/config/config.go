@@ -1,6 +1,7 @@
 package config
 
 import (
+	_ "embed"
 	"fmt"
 	"maps"
 	"os"
@@ -12,16 +13,42 @@ import (
 	"notmutt/core"
 )
 
+//go:embed base.toml
+var baseTOML []byte
+
+// baseConfig is the embedded base parsed once: the validation ground
+// truth for schemes (a keymap and its contexts are code surfaces, R9 -
+// the file overlays keys, never the schema).
+var baseConfig = mustBase()
+
+func mustBase() Config {
+	var c Config
+	if err := toml.Unmarshal(baseTOML, &c); err != nil {
+		panic(err) // the embedded base is ours; corruption is a build error
+	}
+	return c
+}
+
+// bindingContexts is the dispatch surface (the tui switches on these
+// names): a scheme table for any other context is dead data, rejected
+// at load (strict, R8). Context names are code surfaces - the keys,
+// actions, and descriptions are the translatable data.
+var bindingContexts = map[string]bool{
+	"index": true, "pager": true, "compose": true, "fuzzy": true,
+}
+
 type Config struct {
-	UI         UI                           `toml:"ui"`
-	Views      map[string]View              `toml:"view"`
-	TagGroups  map[string]core.TagGroup     `toml:"tag-groups"`
-	Bindings   map[string]map[string]string `toml:"bindings"`
-	TagActions map[string]string            `toml:"tag-actions"`
-	Accounts   map[string]Account           `toml:"accounts"`
-	Send       Send                         `toml:"send"`
-	Palette    Palette                      `toml:"palette"`
-	Theme      Theme                        `toml:"theme"`
+	UI           UI                                      `toml:"ui"`
+	Views        map[string]View                         `toml:"view"`
+	TagGroups    map[string]core.TagGroup                `toml:"tag-groups"`
+	Bindings     map[string]map[string]string            `toml:"-"`
+	TagActions   map[string]string                       `toml:"tag-actions"`
+	Accounts     map[string]Account                      `toml:"accounts"`
+	Send         Send                                    `toml:"send"`
+	Palette      Palette                                 `toml:"palette"`
+	Theme        Theme                                   `toml:"theme"`
+	Schemes      map[string]map[string]map[string]string `toml:"schemes"`
+	Descriptions map[string]string                       `toml:"descriptions"`
 }
 
 type UI struct {
@@ -501,127 +528,36 @@ func (c Config) AccountTags() map[string]bool {
 	return set
 }
 
-// vimScheme is the R9 default key scheme: the mutt key map
-// (muttrc/base.bindings + base.macros are the reference - the
-// mutt-exact keys, client-only actions on keys mutt leaves free).
-// Declarative data, never code.
-var vimScheme = map[string]map[string]string{
-	"index": {
-		"j": "cursor-down", "k": "cursor-up",
-		"enter": "open", "q": "quit",
-		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
-		"t": "toggle-read", "a": "archive", "d": "delete",
-		"u": "undo", "$": "apply",
-		"y": "spam", "p": "pending",
-		"P": "preview",
-		"g g": "cursor-top", "G": "cursor-bottom", "g r": "reply-all",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"pager": {
-		"j": "scroll-down", "k": "scroll-up",
-		"space": "page-down",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"g": "scroll-top", "G": "scroll-bottom",
-		"q": "back",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"compose": {
-		"j": "form-down", "k": "form-up",
-		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"fuzzy": {
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-	},
-}
-
-// emacsScheme is the R9 alternative scheme: emacs movement keys, the
-// rest scheme-neutral (open, tag actions, undo, apply, quit).
-var emacsScheme = map[string]map[string]string{
-	"index": {
-		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up",
-		"enter": "open", "q": "quit",
-		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
-		"t": "toggle-read", "a": "archive", "d": "delete",
-		"u": "undo", "$": "apply",
-		"y": "spam", "p": "pending",
-		"P": "preview",
-		"pgdown": "page-down", "pgup": "page-up",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"pager": {
-		"ctrl+n": "scroll-down", "ctrl+p": "scroll-up",
-		"ctrl+v": "page-down", "alt+v": "page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"ctrl+g": "back", "q": "quit",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"compose": {
-		"ctrl+n": "form-down", "ctrl+p": "form-up",
-		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"fuzzy": {
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-	},
-}
-
-// scheme returns the default binding tables for a keymap (R9): vim or
-// emacs. The schemes are the R9 "default scheme" data - declarative,
-// never code.
-func scheme(keymap string) map[string]map[string]string {
-	if keymap == "emacs" {
-		return emacsScheme
-	}
-	return vimScheme
-}
-
-// mergeBindings overlays the file's per-key bindings on the scheme
-// defaults; a context table missing from the file is the whole scheme
-// table. File contexts the scheme does not know survive to validation,
-// which rejects them (strict load, R8). Callers pass ONLY the file's
-// tables (Load nils the Default tables before decode, so scheme
-// defaults never leak cross-keymap).
-func mergeBindings(file map[string]map[string]string, keymap string) map[string]map[string]string {
-	sch := scheme(keymap)
-	out := map[string]map[string]string{}
-	for ctx, km := range sch {
-		merged := map[string]string{}
-		for k, v := range km {
-			merged[k] = v
+// mergeSchemes overlays file scheme tables over the embedded base per
+// key. BurntSushi merges only the top-level map field; a
+// [schemes.vim.index] table replaces the whole context table when
+// decoded into the nested map, so the R9 file overlay is applied
+// explicitly here (context and key levels merge).
+func mergeSchemes(base, over map[string]map[string]map[string]string) map[string]map[string]map[string]string {
+	out := make(map[string]map[string]map[string]string, len(base))
+	for km, ctxs := range base {
+		out[km] = make(map[string]map[string]string, len(ctxs))
+		for c, keys := range ctxs {
+			out[km][c] = maps.Clone(keys)
 		}
-		for k, v := range file[ctx] {
-			merged[k] = v
-		}
-		out[ctx] = merged
 	}
-	for ctx, km := range file {
-		if _, ok := sch[ctx]; !ok {
-			out[ctx] = km
+	for km, ctxs := range over {
+		if out[km] == nil {
+			out[km] = make(map[string]map[string]string)
+		}
+		for c, keys := range ctxs {
+			if out[km][c] == nil {
+				out[km][c] = make(map[string]string)
+			}
+			maps.Copy(out[km][c], keys)
 		}
 	}
 	return out
 }
 
-// cloneBindings deep-copies a binding table set: Default hands out a
-// fresh map so a caller's rebind never touches the scheme package vars.
+// cloneBindings deep-copies a binding table set: the resolved scheme
+// (Default and Load) hands out a fresh map so a caller's rebind never
+// touches the store or the next Default.
 func cloneBindings(b map[string]map[string]string) map[string]map[string]string {
 	out := make(map[string]map[string]string, len(b))
 	for ctx, km := range b {
@@ -631,7 +567,7 @@ func cloneBindings(b map[string]map[string]string) map[string]map[string]string 
 }
 
 func Default() Config {
-	return Config{
+	cfg := Config{
 		UI: UI{
 			Keymap: "vim",
 			Tags: UITags{
@@ -660,14 +596,6 @@ func Default() Config {
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
 		},
-		Bindings: cloneBindings(scheme("vim")),
-		TagActions: map[string]string{
-			"toggle-read": "unread",
-			"archive":     "archive",
-			"delete":      "deleted",
-			"spam":        "spam",
-			"pending":     "pending",
-		},
 		// the reference mail setup (muttrc): one account per maildir
 		// root, each mapping to its folder tag by name
 		Accounts: map[string]Account{
@@ -680,6 +608,18 @@ func Default() Config {
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 	}
+	// the embedded base (base.toml) overlays the Go defaults: the
+	// binding schemes, the tag actions, and the help descriptions are
+	// user data, ready for translation. Bindings is the derived view -
+	// the selected keymap's scheme, cloned per caller.
+	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
+		panic(err)
+	}
+	cfg.Bindings = cloneBindings(cfg.Schemes["vim"])
+	if err := validate(cfg); err != nil {
+		panic(err)
+	}
+	return cfg
 }
 
 // defaultPalette is the one-dark base16 palette the reference theme
@@ -724,14 +664,15 @@ func defaultTheme() Theme {
 					Ghost: Style{Fg: "base03"},
 					Tag: TagStyleTable{
 						// the base.colors tag markers (muttrc/base.colors):
-						// a color per hard tag, inbox red-on-light
+						// a color per hard tag; inbox stays plain green -
+						// red is the deleted marker, not the inbox one
 						Default: Style{Fg: "base0B"},
 						Tags: map[string]Style{
 							"deleted": {Fg: "base08"},
 							"archive": {Fg: "base0B"},
 							"spam":    {Fg: "base0A"},
 							"pending": {Fg: "base0E"},
-							"inbox":   {Fg: "base08", Bg: "base07"},
+							"inbox":   {Fg: "base0B"},
 							"unread":  {Fg: "base0B"},
 						},
 					},
@@ -766,19 +707,16 @@ func (c Config) TagGroupList() []core.TagGroup {
 
 // Load merges file values over defaults. Unknown keys are load errors
 // naming the key (strict load, R8). A missing file means defaults.
+// The file's [schemes.*] tables overlay the embedded base per key
+// (mergeSchemes; BurntSushi replaces whole context tables in nested
+// maps), so a rebinding names the scheme, context, and key it touches.
 func Load(path string) (Config, error) {
 	cfg := Default()
-	// R9: the file's binding tables replace the scheme defaults (they
-	// would otherwise overlay the vim scheme); the scheme merge happens
-	// after decode, keyed by the selected keymap.
-	cfg.Bindings = nil
 	md, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
 		if os.IsNotExist(err) {
-			cfg.Bindings = mergeBindings(nil, cfg.UI.Keymap)
 			return cfg, nil
 		}
-		cfg.Bindings = mergeBindings(cfg.Bindings, cfg.UI.Keymap)
 		return cfg, err
 	}
 	if und := md.Undecoded(); len(und) > 0 {
@@ -797,7 +735,8 @@ func Load(path string) (Config, error) {
 			return cfg, fmt.Errorf("%s: unknown key(s): %s", path, strings.Join(keys, ", "))
 		}
 	}
-	cfg.Bindings = mergeBindings(cfg.Bindings, cfg.UI.Keymap)
+	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
+	cfg.Bindings = cloneBindings(cfg.Schemes[cfg.UI.Keymap])
 	if err := validate(cfg); err != nil {
 		return cfg, err
 	}
@@ -805,7 +744,7 @@ func Load(path string) (Config, error) {
 }
 
 func validate(cfg Config) error {
-	if cfg.UI.Keymap != "vim" && cfg.UI.Keymap != "emacs" {
+	if _, ok := baseConfig.Schemes[cfg.UI.Keymap]; !ok {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", cfg.UI.Keymap)
 	}
 	if cfg.UI.Tags.Max < 1 {
@@ -834,19 +773,21 @@ func validate(cfg Config) error {
 			seen[t] = true
 		}
 	}
-	for name, km := range cfg.Bindings {
-		if _, ok := scheme(cfg.UI.Keymap)[name]; !ok {
-			return fmt.Errorf("bindings.%s: unknown context %q", name, name)
-		}
-		if len(km) == 0 {
-			return fmt.Errorf("bindings.%s: at least one binding required", name)
-		}
-		for k, v := range km {
-			if strings.TrimSpace(k) == "" {
-				return fmt.Errorf("bindings.%s: empty key", name)
+	for keymap, contexts := range cfg.Schemes {
+		for name, km := range contexts {
+			if !bindingContexts[name] {
+				return fmt.Errorf("schemes.%s.%s: unknown context %q", keymap, name, name)
 			}
-			if strings.TrimSpace(v) == "" {
-				return fmt.Errorf("bindings.%s: empty action for key %q", name, k)
+			if len(km) == 0 {
+				return fmt.Errorf("schemes.%s.%s: at least one binding required", keymap, name)
+			}
+			for k, v := range km {
+				if strings.TrimSpace(k) == "" {
+					return fmt.Errorf("schemes.%s.%s: empty key", keymap, name)
+				}
+				if strings.TrimSpace(v) == "" {
+					return fmt.Errorf("schemes.%s.%s: empty action for key %q", keymap, name, k)
+				}
 			}
 		}
 	}

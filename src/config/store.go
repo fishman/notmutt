@@ -37,6 +37,7 @@ func (s *Store) Config() Config {
 		c.Bindings[ctx] = maps.Clone(km)
 	}
 	c.TagActions = maps.Clone(s.cfg.TagActions)
+	c.Descriptions = maps.Clone(s.cfg.Descriptions)
 	c.Palette.Base = maps.Clone(s.cfg.Palette.Base)
 	c.Palette.Variants = make(map[string]map[string]string, len(s.cfg.Palette.Variants))
 	for v, m := range s.cfg.Palette.Variants {
@@ -87,11 +88,12 @@ func (s *Store) Subscribe(section string, fn func()) {
 }
 
 func (s *Store) SetKeymap(k string) error {
-	if k != "vim" && k != "emacs" {
+	if _, ok := baseConfig.Schemes[k]; !ok {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", k)
 	}
 	s.mu.Lock()
 	s.cfg.UI.Keymap = k
+	s.cfg.Bindings = cloneBindings(s.cfg.Schemes[k])
 	s.mu.Unlock()
 	s.notify("ui")
 	return nil

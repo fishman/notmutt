@@ -198,35 +198,16 @@ default_signature = "gmail"
 
 func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
-	want := map[string]string{
-		"j": "cursor-down", "k": "cursor-up",
-		"enter": "open", "q": "quit",
-		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
-		"t": "toggle-read", "a": "archive", "d": "delete",
-		"u": "undo", "$": "apply",
-		"y": "spam", "p": "pending",
-		"P": "preview",
-		"g g": "cursor-top", "G": "cursor-bottom", "g r": "reply-all",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"?": "help",
-		"[": "tab-prev", "]": "tab-next",
+	// the default bindings ARE the embedded vim scheme (base.toml),
+	// context for context - the Go side derives, never re-declares
+	if !maps.EqualFunc(cfg.Bindings, baseConfig.Schemes["vim"], maps.Equal) {
+		t.Fatalf("default bindings = %v, want the embedded vim scheme %v", cfg.Bindings, baseConfig.Schemes["vim"])
 	}
-	if !maps.Equal(cfg.Bindings["index"], want) {
-		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
-	}
-	wantPager := map[string]string{
-		"j": "scroll-down", "k": "scroll-up",
-		"space": "page-down",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"g": "scroll-top", "G": "scroll-bottom",
-		"q": "back",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	}
-	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
-		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
+	// the derived table is a clone: rebinding a Default never touches
+	// the scheme the next Default hands out
+	cfg.Bindings["index"]["j"] = "mutated"
+	if next := Default(); next.Bindings["index"]["j"] != "cursor-down" {
+		t.Fatalf("Default must hand out fresh bindings, got %q", next.Bindings["index"]["j"])
 	}
 	wantCompose := map[string]string{
 		"j": "form-down", "k": "form-up",
@@ -273,9 +254,9 @@ func TestKeymapFileOverlay(t *testing.T) {
 	cfg, err := Load(write(t, `
 [ui]
 keymap = "emacs"
-[bindings.index]
+[schemes.emacs.index]
 q = "open"
-[bindings.pager]
+[schemes.emacs.pager]
 q = "back"
 `))
 	if err != nil {
@@ -309,15 +290,15 @@ func TestLoadUnknownBindingKey(t *testing.T) {
 
 func TestValidateBindings(t *testing.T) {
 	cfg := Default()
-	cfg.Bindings["index"] = map[string]string{}
+	cfg.Schemes["vim"]["index"] = map[string]string{}
 	if err := validate(cfg); err == nil {
 		t.Fatal("empty context must error")
 	}
-	cfg.Bindings["index"] = map[string]string{"": "archive"}
+	cfg.Schemes["vim"]["index"] = map[string]string{"": "archive"}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank key must error")
 	}
-	cfg.Bindings["index"] = map[string]string{"x": " "}
+	cfg.Schemes["vim"]["index"] = map[string]string{"x": " "}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank action must error")
 	}
@@ -325,14 +306,14 @@ func TestValidateBindings(t *testing.T) {
 
 func TestValidateUnknownBindingContext(t *testing.T) {
 	cfg := Default()
-	cfg.Bindings["indicx"] = map[string]string{"q": "quit"}
+	cfg.Schemes["vim"]["indicx"] = map[string]string{"q": "quit"}
 	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "indicx") {
 		t.Fatalf("unknown context must error naming it, got %v", err)
 	}
 }
 
 func TestLoadUnknownBindingContext(t *testing.T) {
-	_, err := Load(write(t, "\n[bindings.indicx]\nq = \"quit\"\n"))
+	_, err := Load(write(t, "\n[schemes.vim.indicx]\nq = \"quit\"\n"))
 	if err == nil {
 		t.Fatal("unknown binding context must error")
 	}
@@ -343,15 +324,22 @@ func TestLoadUnknownBindingContext(t *testing.T) {
 
 func TestDefaultTagActions(t *testing.T) {
 	cfg := Default()
-	want := map[string]string{
-		"toggle-read": "unread",
-		"archive":     "archive",
-		"delete":      "deleted",
-		"spam":        "spam",
-		"pending":     "pending",
+	// the tag actions come from the embedded base (base.toml), like
+	// the schemes and descriptions
+	if !maps.Equal(cfg.TagActions, baseConfig.TagActions) {
+		t.Fatalf("default tag actions = %v, want the embedded base's %v", cfg.TagActions, baseConfig.TagActions)
 	}
-	if !maps.Equal(cfg.TagActions, want) {
-		t.Fatalf("default tag actions = %v, want %v", cfg.TagActions, want)
+	if cfg.TagActions["toggle-read"] != "unread" {
+		t.Fatalf("toggle-read must map to unread, got %q", cfg.TagActions["toggle-read"])
+	}
+}
+
+func TestLoadStaleBindingsKey(t *testing.T) {
+	// the [bindings] table is gone: schemes replaced it, so a stale
+	// table must fail load loudly (strict, R8) instead of silently
+	// no-oping a user's rebinding
+	if _, err := Load(write(t, "\n[bindings.index]\nj = \"cursor-up\"\n")); err == nil || !strings.Contains(err.Error(), "bindings") {
+		t.Fatalf("a stale [bindings] table must error naming it, got %v", err)
 	}
 }
 

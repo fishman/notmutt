@@ -20,6 +20,14 @@ import (
 // never mis-sequences a later press. Tests shrink it to 0.
 var chainTimeout = time.Second
 
+// frameInterval is the fixed paint cadence: a navigation defers its
+// paint (ShouldRender false) and the frame tick lands it one interval
+// later, so a hold paints at most once per interval no matter how
+// fast the terminal repeats. 8ms (120 paints/sec) - the per-paint
+// cost after the SGR precompute is ~1ms, so the cadence stays
+// comfortably under the render budget.
+var frameInterval = 8 * time.Millisecond
+
 // Actions is the BUILTIN action vocabulary per context (R9): the index
 // context carries navigation (including the gg/G edge jumps), open, the
 // buffer/apply ops, the compose/reply/forward entry points, and the tab
@@ -110,6 +118,18 @@ type Model struct {
 	// hold-time tick churn (80-100 extra render cycles/sec) is pure
 	// waste. False until the terminal answers, safe for tests.
 	keyReleases bool
+	// paint is the ShouldRender gate's state: a navigation defers its
+	// paint (false) and the frame tick turns it back on one
+	// frameInterval later, so the tea loop skips every intermediate
+	// render (one paint per frame window, not one per keypress).
+	// Every other message paints immediately.
+	paint bool
+	// renderDue is a deferred paint waiting on the frame tick.
+	renderDue bool
+	// frameTickOn gates the frame tick to a single one in flight:
+	// repeated navigations inside one interval never pile timers up
+	// (the legendTickOn pattern).
+	frameTickOn bool
 	// legendMoves counts cursor moves: the tick carries the count from
 	// when it was armed and resolves only when it matches - a tick that
 	// finds newer moves re-arms, so the legend settles one debounce
@@ -185,6 +205,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.onComposeOpened(e)
 		}
 	}
+	// every message paints except the navigation deferrals below (they
+	// set paint false and let the frame tick re-arm it); the frameTick
+	// case itself overrides this after the fact
+	m.paint = true
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -231,8 +255,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingPrefix = ""
 			if m.mode == "index" && n > 0 {
 				m.gotoRow(n)
+				// a counted jump defers its paint like any movement
+				m.paint, m.renderDue = false, true
 			}
-			return m, nil
+			return m, m.armFrameTick()
 		}
 		n := 1
 		if m.count != "" {
@@ -282,6 +308,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.legendPending = false
 			m.legendTickOn = false
 		}
+		// the release paints immediately; the press's deferred paint
+		// is settled by it, so the in-flight frame tick must not land
+		// a second paint
+		m.renderDue = false
 		return m, nil
 	case tea.KeyboardEnhancementsMsg:
 		// the terminal's answer to the ReportEventTypes request (model
@@ -303,6 +333,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		os.Remove(msg.path)
+		return m, nil
+	case frameTick:
+		// the deferred paint lands here at the fixed cadence; a tick
+		// with nothing deferred (idle model) turns the gate off again
+		// and dies - an idle model never renders on a timer
+		m.frameTickOn = false
+		if m.renderDue {
+			m.renderDue = false
+			m.paint = true
+		} else {
+			m.paint = false
+		}
 		return m, nil
 	case legendTick:
 		// fallback for terminals without release reporting: the tick
@@ -367,15 +409,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // here too - the chain machinery dispatches the completed chain's
 // action, and "?" opens the help overlay.
 func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
+	// navigation defers its paint to the frame tick: paint=false
+	// gates the render (ShouldRender), renderDue lets the tick re-arm
+	// it, and the tail arms a single tick
+	deferPaint := func() { m.paint, m.renderDue = false, true }
+	deferred := false
 	switch action {
 	case "cursor-down":
 		m.moveCursor(n)
+		deferPaint()
+		deferred = true
 	case "cursor-up":
 		m.moveCursor(-n)
+		deferPaint()
+		deferred = true
 	case "cursor-top":
 		m.cursorTop()
+		deferPaint()
+		deferred = true
 	case "cursor-bottom":
 		m.cursorBottom()
+		deferPaint()
+		deferred = true
 	case "open":
 		if m.mode == "index" {
 			m.openCursorThread()
@@ -391,10 +446,14 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "scroll-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollDown(n)
+			deferPaint()
+			deferred = true
 		}
 	case "scroll-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollUp(n)
+			deferPaint()
+			deferred = true
 		}
 	case "page-down":
 		if m.mode == "pager" && m.pager != nil {
@@ -402,27 +461,39 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		} else if m.mode == "index" {
 			m.moveCursor(m.pageRows())
 		}
+		deferPaint()
+		deferred = true
 	case "page-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.pageUp()
 		} else if m.mode == "index" {
 			m.moveCursor(-m.pageRows())
 		}
+		deferPaint()
+		deferred = true
 	case "half-page-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageDown()
+			deferPaint()
+			deferred = true
 		}
 	case "half-page-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageUp()
+			deferPaint()
+			deferred = true
 		}
 	case "scroll-top":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollTop()
+			deferPaint()
+			deferred = true
 		}
 	case "scroll-bottom":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollBottom()
+			deferPaint()
+			deferred = true
 		}
 	case "back":
 		if m.mode == "pager" {
@@ -448,10 +519,14 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
 			m.formIdx = max
 		}
+		deferPaint()
+		deferred = true
 	case "form-up":
 		if m.formIdx > 0 {
 			m.formIdx--
 		}
+		deferPaint()
+		deferred = true
 	case "edit":
 		// an in-flight edit's result is discarded when the send
 		// completes - gate it like attach/detach
@@ -520,11 +595,28 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.moveCursor(1)
 		}
 	}
+	var cmds []tea.Cmd
+	if deferred {
+		cmds = append(cmds, m.armFrameTick())
+	}
 	if m.legendPending && !m.legendTickOn && !m.keyReleases {
 		m.legendTickOn = true
-		return m, legendTickCmd(m.legendMoves)
+		cmds = append(cmds, legendTickCmd(m.legendMoves))
+	}
+	if len(cmds) > 0 {
+		return m, tea.Batch(cmds...)
 	}
 	return m, nil
+}
+
+// armFrameTick starts the frame tick once; deferrals while one is in
+// flight return no cmd (the single-in-flight pattern).
+func (m *Model) armFrameTick() tea.Cmd {
+	if !m.frameTickOn {
+		m.frameTickOn = true
+		return frameTickCmd()
+	}
+	return nil
 }
 
 // chainContinuation reports whether any binding key extends the
@@ -680,6 +772,21 @@ type legendTick struct{ moves int }
 func legendTickCmd(moves int) tea.Cmd {
 	return tea.Tick(legendDebounce, func(time.Time) tea.Msg { return legendTick{moves} })
 }
+
+// frameTick lands one frameInterval after a navigation defers its
+// paint; the handler re-arms the ShouldRender gate for that one
+// update, so the paint lands at the fixed cadence.
+type frameTick struct{}
+
+func frameTickCmd() tea.Cmd {
+	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameTick{} })
+}
+
+// ShouldRender is the tea loop's optional paint gate (the vendored
+// loop consults it when the model implements it): false skips the
+// render after an update, so a deferred paint lands on the frame tick
+// instead of on every keypress of a hold.
+func (m Model) ShouldRender() bool { return m.paint }
 
 // resolveStatus computes the status-line legend and account for the
 // cursor's message: the icon library over the row's tags, and the

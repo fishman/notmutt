@@ -1961,3 +1961,109 @@ func TestKeyboardEnhancementsMsgSetsReleasePath(t *testing.T) {
 		t.Fatal("without release reporting the tick fallback must stay armed")
 	}
 }
+
+// TestPaintGateDeferredNavigation pins the ShouldRender gate's core
+// promise: a navigation defers its paint to the frame tick (paint
+// false, renderDue true, one tick in flight), the tick re-arms the
+// gate exactly once, and an idle tick turns the gate off again - the
+// model never renders on a timer with nothing to show.
+func TestPaintGateDeferredNavigation(t *testing.T) {
+	m := model()
+	m = press(t, m, "j")
+	if m.paint {
+		t.Fatal("a navigation must defer its paint")
+	}
+	if !m.renderDue || !m.frameTickOn {
+		t.Fatalf("the deferral must arm the frame tick: renderDue=%v frameTickOn=%v", m.renderDue, m.frameTickOn)
+	}
+	if m.ShouldRender() {
+		t.Fatal("the gate must report false for a deferred paint")
+	}
+	// the tick lands the deferred paint exactly once
+	next, _ := m.Update(frameTick{})
+	m = next.(Model)
+	if !m.paint || m.renderDue || m.frameTickOn {
+		t.Fatalf("the tick must re-arm the gate once: paint=%v renderDue=%v frameTickOn=%v", m.paint, m.renderDue, m.frameTickOn)
+	}
+	if !m.ShouldRender() {
+		t.Fatal("the tick must arm the paint")
+	}
+	// an idle tick (nothing deferred) turns the gate off and dies
+	next, _ = m.Update(frameTick{})
+	m = next.(Model)
+	if m.paint || m.frameTickOn {
+		t.Fatalf("an idle tick must not paint: paint=%v frameTickOn=%v", m.paint, m.frameTickOn)
+	}
+}
+
+// TestPaintGateImmediacy pins the exceptions: every message class
+// except navigation paints immediately, including the release that
+// resolves a held key.
+func TestPaintGateImmediacy(t *testing.T) {
+	m := model()
+	// the fresh model renders unconditionally at startup (the loop's
+	// initial render, before the gate); the first message paints
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	if !m.paint {
+		t.Fatal("a resize must paint immediately")
+	}
+	m = press(t, m, "?")
+	if !m.help || !m.paint {
+		t.Fatalf("the help overlay must paint immediately: help=%v paint=%v", m.help, m.paint)
+	}
+	// close the overlay again
+	m = press(t, m, "?")
+	if m.help {
+		t.Fatal("the second ? must close the overlay")
+	}
+	m = pressEvent(t, m, core.ViewDiff{View: "inbox"})
+	if !m.paint {
+		t.Fatal("a refresh event must paint immediately")
+	}
+	// a navigation defers, then the release paints immediately and
+	// settles the deferred paint - the in-flight tick lands as a no-op
+	m = press(t, m, "j")
+	if m.paint {
+		t.Fatal("the navigation must have deferred")
+	}
+	next, _ = m.Update(tea.KeyReleaseMsg{})
+	m = next.(Model)
+	if !m.paint || m.renderDue {
+		t.Fatalf("the release must paint immediately and settle the deferral: paint=%v renderDue=%v", m.paint, m.renderDue)
+	}
+	next, _ = m.Update(frameTick{})
+	m = next.(Model)
+	if m.paint {
+		t.Fatal("the settled tick must not paint a second time")
+	}
+}
+
+// TestPaintGateHoldBurst pins the cadence: 50 rapid navigation
+// presses inside one frame window paint nothing, and each frame tick
+// lands exactly one paint - a hold renders at the fixed cadence, not
+// once per terminal repeat.
+func TestPaintGateHoldBurst(t *testing.T) {
+	m := model()
+	paints := 0
+	for w := 0; w < 5; w++ {
+		for i := 0; i < 10; i++ {
+			m = press(t, m, "j")
+			if m.ShouldRender() {
+				t.Fatalf("window %d press %d must not paint during the deferred window", w, i)
+			}
+			if !m.frameTickOn {
+				t.Fatalf("window %d press %d must keep the single tick in flight", w, i)
+			}
+		}
+		next, _ := m.Update(frameTick{})
+		m = next.(Model)
+		if !m.ShouldRender() {
+			t.Fatalf("window %d must land exactly one paint", w)
+		}
+		paints++
+	}
+	if paints != 5 {
+		t.Fatalf("50 presses across 5 frame windows must paint 5 times, got %d", paints)
+	}
+}

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
 
@@ -30,6 +32,7 @@ type Styles struct {
 	Error     lipgloss.Style
 	Index     IndexStyles
 	Pager     PagerStyles
+	sgr       sgrSet // precomputed hot-path fragments (index rows, pager lines)
 }
 
 type IndexStyles struct {
@@ -51,9 +54,91 @@ type PagerStyles struct {
 	Attachment lipgloss.Style
 }
 
+// sgr is a style's precomputed render fragments: the SGR open sequence
+// and its reset. sgrSetOf computes them once at style resolution time;
+// the render hot paths (index rows, pager lines) join open + text +
+// close with string ops instead of calling Style.Render per slot (the
+// measured 58% of the frame build: per-call hex parse, border
+// pipeline, and grapheme splits).
+type sgr struct {
+	open  string
+	close string
+}
+
+func sgrOf(st lipgloss.Style) sgr {
+	open := strings.TrimSuffix(st.Render(""), "\x1b[0m")
+	if open == "" {
+		return sgr{}
+	}
+	return sgr{open: open, close: "\x1b[0m"}
+}
+
+// render joins the SGR open, the text, and the reset - byte-identical
+// to Style.Render for the single-line, unpadded styles the hot paths
+// use (lipgloss styles each line of a multi-line input separately, so
+// this stays single-line; mail content is sanitized and line-split
+// before it gets here). Tabs expand to 4 spaces like lipgloss's
+// Render, so direct constructions match too.
+func (g sgr) render(text string) string {
+	if strings.ContainsRune(text, '\t') {
+		text = strings.ReplaceAll(text, "\t", "    ")
+	}
+	if g.open == "" {
+		return text
+	}
+	return g.open + text + g.close
+}
+
+// sgrSet precomputes the SGR fragments of the render hot paths.
+type sgrSet struct {
+	normal, indicator, ghost               sgr
+	stagedNormal, stagedIndicator, stagedGhost sgr
+	number, flags, date, author, subject, staged sgr
+	tag        func(name string) sgr
+	pagerHdr   sgr
+	pagerDef   sgr
+	pagerSig   sgr
+	pagerAtt   sgr
+	pagerErr   sgr
+	pagerQuoted [6]sgr
+}
+
+func sgrSetOf(st Styles) sgrSet {
+	tagStyle := st.Index.Tag
+	cache := make(map[string]sgr)
+	return sgrSet{
+		normal:          sgrOf(st.Normal),
+		indicator:       sgrOf(st.Indicator),
+		ghost:           sgrOf(st.Index.Ghost),
+		stagedNormal:    sgrOf(st.Index.Staged.Inherit(st.Normal)),
+		stagedIndicator: sgrOf(st.Index.Staged.Inherit(st.Indicator)),
+		stagedGhost:     sgrOf(st.Index.Staged.Inherit(st.Index.Ghost)),
+		number:  sgrOf(st.Index.Number),
+		flags:   sgrOf(st.Index.Flags),
+		date:    sgrOf(st.Index.Date),
+		author:  sgrOf(st.Index.Author),
+		subject: sgrOf(st.Index.Subject),
+		staged:  sgrOf(st.Index.Staged),
+		tag: func(name string) sgr {
+			if g, ok := cache[name]; ok {
+				return g
+			}
+			g := sgrOf(tagStyle(name))
+			cache[name] = g
+			return g
+		},
+		pagerHdr:     sgrOf(st.Pager.Header),
+		pagerDef:     sgrOf(st.Pager.HdrDefault),
+		pagerSig:     sgrOf(st.Pager.Signature),
+		pagerAtt:     sgrOf(st.Pager.Attachment),
+		pagerErr:     sgrOf(st.Error),
+		pagerQuoted:  [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
+	}
+}
+
 func DefaultStyles() Styles {
 	c := func(hex string) lipgloss.Color { return lipgloss.Color(hex) }
-	return Styles{
+	st := Styles{
 		Normal:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#21252b")),
 		Indicator: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#e5c07b")),
 		Status:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
@@ -89,6 +174,8 @@ func DefaultStyles() Styles {
 			Attachment: lipgloss.NewStyle().Foreground(c("#c678dd")),
 		},
 	}
+	st.sgr = sgrSetOf(st)
+	return st
 }
 
 // ResolveStyles converts the config theme data into the render style
@@ -126,7 +213,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		return base
 	}
 	normal := to("normal", lipgloss.NewStyle())
-	return Styles{
+	st := Styles{
 		Normal:    normal,
 		Indicator: to("indicator", normal),
 		Status:    to("status", normal),
@@ -157,4 +244,6 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 			Signature: to("pager.signature", normal), Attachment: to("pager.attachment", normal),
 		},
 	}
+	st.sgr = sgrSetOf(st)
+	return st
 }

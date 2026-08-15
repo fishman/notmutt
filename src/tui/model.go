@@ -1113,25 +1113,33 @@ func (m Model) render() string {
 			tagWidth = w
 		}
 	}
+	sg := st.sgr
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
 		line := renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
-		outer := st.Normal
+		outer := sg.normal
 		if i == cur {
-			outer = st.Indicator
+			outer = sg.indicator
 		} else if rows[i].Ghost {
-			outer = st.Index.Ghost
+			outer = sg.ghost
 		}
 		if rows[i].Staged {
 			// staged rows keep the row style and gain the staged look
 			// ([index.staged] default: bold + muted fg); the slot styles
 			// only override fg, so bold carries through the whole line
-			outer = st.Index.Staged.Inherit(outer)
+			switch {
+			case i == cur:
+				outer = sg.stagedIndicator
+			case rows[i].Ghost:
+				outer = sg.stagedGhost
+			default:
+				outer = sg.stagedNormal
+			}
 		}
 		if m.width > 0 {
 			// bubbletea's first View() runs before WindowSizeMsg: width 0
 			// must not blank the rows (padRow would truncate them away)
-			line = padRow(line, m.width, outer)
+			line = padRowSGR(line, m.width, outer)
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

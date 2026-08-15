@@ -4,8 +4,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-
 	"notmutt/mail"
 )
 
@@ -46,30 +44,33 @@ func (p *pager) setSize(w, h int, st Styles) {
 // -> hdrdefault, body -> quotedN by depth, signature -> signature,
 // attachment -> attachment, error -> error. Every line pads to the
 // window width with its own style (the R11 slot-reservation rule -
-// alignment never shifts per line).
+// alignment never shifts per line). The styles' SGR fragments are
+// precomputed (st.sgr), so a line is plain string joins, never a
+// Style.Render per line.
 func (p *pager) style(st Styles) {
+	sg := st.sgr
 	var b strings.Builder
 	for _, l := range p.lines {
-		var s lipgloss.Style
+		var g sgr
 		switch l.Kind {
 		case mail.LineSubject:
-			s = st.Pager.Header
+			g = sg.pagerHdr
 		case mail.LineHeader:
-			s = st.Pager.HdrDefault
+			g = sg.pagerDef
 		case mail.LineBody:
-			s = st.Pager.Quoted[l.Quoted]
+			g = sg.pagerQuoted[l.Quoted]
 		case mail.LineSignature:
-			s = st.Pager.Signature
+			g = sg.pagerSig
 		case mail.LineAttachment:
-			s = st.Pager.Attachment
+			g = sg.pagerAtt
 		case mail.LineError:
-			s = st.Error
+			g = sg.pagerErr
 		default:
-			s = st.Normal
+			g = sg.normal
 		}
-		text := s.Render(l.Text)
+		text := g.render(l.Text)
 		if p.width > 0 {
-			text = padRow(text, p.width, s)
+			text = padRowSGR(text, p.width, g)
 		}
 		b.WriteString(text)
 		b.WriteByte('\n')

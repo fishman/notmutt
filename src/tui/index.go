@@ -26,14 +26,15 @@ import (
 // Account tags never render here - the account lives in the status
 // bar (R2), not the mail title.
 func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool) string {
+	sg := st.sgr
 	// the cursor row is monochrome (R11): one highlight background and one
 	// text color - the indicator style replaces every slot style
-	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := st.Index.Number, st.Index.Flags, st.Index.Date, st.Index.Author, st.Index.Subject
+	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := sg.number, sg.flags, sg.date, sg.author, sg.subject
 	if selected {
-		numStyle, flagStyle, dateStyle, authorStyle, subjectStyle = st.Indicator, st.Indicator, st.Indicator, st.Indicator, st.Indicator
+		numStyle, flagStyle, dateStyle, authorStyle, subjectStyle = sg.indicator, sg.indicator, sg.indicator, sg.indicator, sg.indicator
 	}
 	var b strings.Builder
-	b.WriteString(numStyle.Render(padCellsRight(strconv.Itoa(n), numWidth)))
+	b.WriteString(numStyle.render(padCellsRight(strconv.Itoa(n), numWidth)))
 	b.WriteByte(' ')
 	if row.Msg == nil {
 		// ghost root: message-derived slots stay blank, "[...]" fills the
@@ -55,24 +56,24 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		return b.String()
 	}
 	tags := rowTagList(row)
-	flagStr := flagStyle.Render(flags(tags))
+	flagStr := flagStyle.render(flags(tags))
 	if row.Staged {
 		// staged rows render the resolved display tags with the staged
 		// glyph (config data, R11 tag-transforms). The slot keeps its
 		// fixed width - alignment never shifts per row.
-		flagStr = st.Index.Staged.Render(padCellsRight(ui.Glyphs.Staged+flagChars(tags), 3))
+		flagStr = sg.staged.render(padCellsRight(ui.Glyphs.Staged+flagChars(tags), 3))
 	}
 	b.WriteString(flagStr)
 	b.WriteString(padCellsRight(attachIcon(row.Msg, ui.Tags), 2))
 	b.WriteString(padCellsRight(signedIcon(row.Msg, ui.Tags), 2))
-	b.WriteString(dateStyle.Render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
+	b.WriteString(dateStyle.render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
 	author := core.SanitizeControls(row.Msg.Author)
-	b.WriteString(authorStyle.Render(padCellsRight(truncCells(author, 16), 16)))
+	b.WriteString(authorStyle.render(padCellsRight(truncCells(author, 16), 16)))
 	b.WriteByte(' ')
-	tagStyle := st.Index.Tag
+	tagStyle := sg.tag
 	if selected {
-		tagStyle = func(string) lipgloss.Style { return st.Indicator }
+		tagStyle = func(string) sgr { return sg.indicator }
 	}
 	if tagWidth > 0 {
 		// the tag slot sits right after the sender (R2 surface split:
@@ -83,7 +84,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		b.WriteByte(' ')
 	}
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(subjectStyle.Render(subject))
+	b.WriteString(subjectStyle.render(subject))
 	return b.String()
 }
 
@@ -165,7 +166,7 @@ func formatDate(ts int64) string {
 // signedIcon) - the attachment marker tag is skipped too - it owns
 // the attachment slot at the row start - and account tags are
 // skipped - the account lives in the status bar (R2).
-func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t config.UITags, accountTags map[string]bool) string {
+func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITags, accountTags map[string]bool) string {
 	var b strings.Builder
 	n := 0
 	for _, tag := range tags {
@@ -178,13 +179,13 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) lipgloss.Style, t c
 		if t.ShowIcons && t.Icons[tag] != "" {
 			// icons are config glyphs (1-2 cells): natural width, one
 			// separator - padding would leave gaps between icons
-			b.WriteString(tagStyle(tag).Render(t.Icons[tag]))
+			b.WriteString(tagStyle(tag).render(t.Icons[tag]))
 			b.WriteByte(' ')
 			n++
 			continue
 		}
 		// names render in full - the tag slot never truncates a tag name
-		b.WriteString(tagStyle(tag).Render(core.SanitizeControls(tag)))
+		b.WriteString(tagStyle(tag).render(core.SanitizeControls(tag)))
 		b.WriteByte(' ')
 		n++
 	}
@@ -220,12 +221,12 @@ func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bo
 // padTagRun pads a styled tag run to the page's slot width; the pad
 // renders in the slot's style, so the blank cells carry the row's
 // background like every other slot.
-func padTagRun(run string, width int, tagStyle func(string) lipgloss.Style) string {
+func padTagRun(run string, width int, tagStyle func(string) sgr) string {
 	if width <= 0 {
 		return ""
 	}
 	if w := runewidth.StringWidth(stripANSI(run)); w < width {
-		return run + tagStyle("").Render(strings.Repeat(" ", width-w))
+		return run + tagStyle("").render(strings.Repeat(" ", width-w))
 	}
 	return run
 }
@@ -313,12 +314,18 @@ func truncateStyled(s string, w int) string {
 // re-applied after every reset; the line's own slot colors survive
 // inside.
 func padRow(line string, w int, outer lipgloss.Style) string {
-	open := strings.TrimSuffix(outer.Render(""), "\x1b[0m")
+	return padRowSGR(line, w, sgrOf(outer))
+}
+
+// padRowSGR is the hot-path padRow: the row style's SGR fragments are
+// precomputed, so the wrap is pure string ops (byte-identical to the
+// Style-based form).
+func padRowSGR(line string, w int, outer sgr) string {
 	inner := line
 	if width := runewidth.StringWidth(stripANSI(line)); width >= w {
 		inner = truncateStyled(line, w)
 	} else {
 		inner += strings.Repeat(" ", w-width)
 	}
-	return open + strings.ReplaceAll(inner, "\x1b[0m", "\x1b[0m"+open) + "\x1b[0m"
+	return outer.open + strings.ReplaceAll(inner, "\x1b[0m", "\x1b[0m"+outer.open) + "\x1b[0m"
 }

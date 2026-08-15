@@ -136,9 +136,11 @@ the write-at-end mset wall is untouched by the ingestion mechanism.
 ## 14. Render coalescing (2026-08-15, the lag round)
 
 Decision: BubbleTea v2's loop renders unconditionally on every message -
-no skip-render path, no aggregation of key repeats (one KeyPressMsg per
-physical repeat). A held key was one full frame build per repeat. The
-vendored gate:
+the model's View() builds the full frame string per message; the
+renderer's 60fps tick only throttles the terminal write (cell-level
+diff), never the build. No aggregation of key repeats (one KeyPressMsg
+per physical repeat): a held key was one full frame build per repeat.
+The vendored gate:
 
     if r, ok := model.(interface{ ShouldRender() bool }); ok && !r.ShouldRender() {
         // tick paints at cadence

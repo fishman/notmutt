@@ -26,9 +26,11 @@ merge system can cost more than neomutt's in general:
    flatten that costs O(rows) whenever the tree changes (8us at 100
    rows, 6.3ms at 33k). neomutt paints directly from a flat array and
    never pays that derivation in steady state.
-2. Every paint rebuilds the whole frame string - every row re-styled -
-   instead of writing only the changed rows like neomutt's curses
-   updates.
+2. Every message rebuilds the whole frame string in Go - every row
+   re-styled - before the renderer can diff anything. v2's renderer
+   itself writes incrementally (a cell-level diff against the previous
+   screen, capped at 60fps), so the terminal write is cheap; the cost is
+   the full styling pass, which runs per message regardless.
 3. The loop renders once per message, so a held key was one full frame
    build per repeat, and every merge during a refresh marked the view
    dirty - the next paint paid the full flatten again.

@@ -139,6 +139,10 @@ type Model struct {
 	// prompt is the attach path input row; non-nil captures the
 	// prompt keys and replaces the compose keyhint row.
 	prompt *pathPrompt
+	// opened tracks every attached dialogue's TabID: the bus's
+	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
+	// closed dialogue can never resurrect on a later keypress.
+	opened map[string]bool
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
@@ -150,7 +154,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), mode: "index"}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index"}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -158,6 +162,22 @@ func (m Model) Init() tea.Cmd {
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// the bus keeps last-value snapshots of the compose events (the
+	// LatestProgress pattern, R15): a completion dropped from the
+	// channel under backpressure still resolves the dialogue on the
+	// next keypress instead of wedging it in PhaseSending
+	if m.bus != nil {
+		for i := range m.tabs {
+			if m.tabs[i].Phase == compose.PhaseSending {
+				if e, ok := m.bus.LatestSendResult(m.tabs[i].ID); ok {
+					m.onSendResult(e)
+				}
+			}
+		}
+		if e, ok := m.bus.LatestComposeOpened(); ok && !m.opened[e.TabID] {
+			m.onComposeOpened(e)
+		}
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -294,25 +314,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case core.ThreadLoaded:
 			m.onThreadLoaded(e)
 		case core.ComposeOpened:
-			st := compose.FromEvent(e)
-			m.tabs = append(m.tabs, *st)
-			m.tabIdx = len(m.tabs)
-			m.attachTab()
+			m.onComposeOpened(e)
 		case core.SendResult:
-			for i := range m.tabs {
-				if m.tabs[i].ID == e.TabID {
-					if e.OK {
-						m.closeComposeTab(i)
-					} else {
-						m.tabs[i].Phase = compose.PhaseFailed
-						m.tabs[i].Output = e.Output
-						if e.Err != nil && m.tabs[i].Output == "" {
-							m.tabs[i].Output = e.Err.Error()
-						}
-					}
-					break
-				}
-			}
+			m.onSendResult(e)
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
@@ -460,6 +464,11 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		// failure re-arms the gate on its first press.
 		if m.composeTab().Phase != compose.PhaseSending {
 			m.composeTab().Phase = compose.PhaseSending
+			if m.bus != nil {
+				// drop the old result snapshot: a stale failure
+				// must not re-apply while the new job is in flight
+				m.bus.ClearSendResult(m.composeTab().ID)
+			}
 			onSend(*m.composeTab())
 		}
 	case "abort":
@@ -545,6 +554,41 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	}
 	m.mode = "pager"
 	m.legendPending = true
+}
+
+// onSendResult applies a send result to its dialogue: OK closes the
+// tab, a failure keeps it open with Output for review. Addressed by
+// tab ID, so a closed tab's ID is a no-op (idempotent - the same
+// result may arrive via the channel and the bus snapshot).
+func (m *Model) onSendResult(e core.SendResult) {
+	for i := range m.tabs {
+		if m.tabs[i].ID == e.TabID {
+			if e.OK {
+				m.closeComposeTab(i)
+			} else {
+				m.tabs[i].Phase = compose.PhaseFailed
+				m.tabs[i].Output = e.Output
+				if e.Err != nil && m.tabs[i].Output == "" {
+					m.tabs[i].Output = e.Err.Error()
+				}
+			}
+			break
+		}
+	}
+}
+
+// onComposeOpened attaches a dialogue tab (R4). The opened set makes
+// it idempotent per TabID: the bus snapshot re-attaches a dropped
+// open event exactly once, never a closed dialogue.
+func (m *Model) onComposeOpened(e core.ComposeOpened) {
+	if m.opened[e.TabID] {
+		return
+	}
+	m.opened[e.TabID] = true
+	st := compose.FromEvent(e)
+	m.tabs = append(m.tabs, *st)
+	m.tabIdx = len(m.tabs)
+	m.attachTab()
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the

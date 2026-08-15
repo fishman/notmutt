@@ -1531,6 +1531,132 @@ func TestSendResultFailureKeepsDialogue(t *testing.T) {
 	}
 }
 
+// TestSendResultSnapshotResolvesDroppedCompletion pins the bus
+// last-value recovery: a SendResult dropped from the channel under
+// backpressure (64-deep subscriber) must still resolve the dialogue -
+// the snapshot is polled on the next keypress instead of wedging the
+// tab in PhaseSending forever.
+func TestSendResultSnapshotResolvesDroppedCompletion(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m = openDialogue(t, m, "t1")
+	m.tabs[0].Phase = compose.PhaseSending
+
+	// Saturate the subscriber channel so the completion event drops.
+	for i := 0; i < 64; i++ {
+		bus.Publish(core.ViewDiff{View: "inbox"})
+	}
+	bus.Publish(core.SendResult{TabID: "t1", OK: true})
+	for i := 0; i < 64; i++ {
+		<-ch // drain: the SendResult never made it into the channel
+	}
+	select {
+	case e := <-ch:
+		t.Fatalf("the SendResult must have dropped, got %v", e)
+	default:
+	}
+
+	// The next keypress polls the snapshot and resolves the dialogue.
+	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if len(m.tabs) != 0 || m.mode != "index" {
+		t.Fatalf("the dropped completion must close the tab: %d %q", len(m.tabs), m.mode)
+	}
+}
+
+// TestSendResultSnapshotFailureKeepsDialogue pins the failure half of
+// the snapshot recovery: a dropped failed result re-applies the
+// PhaseFailed state with its output on the next keypress.
+func TestSendResultSnapshotFailureKeepsDialogue(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m = openDialogue(t, m, "t1")
+	m.tabs[0].Phase = compose.PhaseSending
+
+	for i := 0; i < 64; i++ {
+		bus.Publish(core.ViewDiff{View: "inbox"})
+	}
+	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "boom"})
+	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if len(m.tabs) != 1 || m.tabs[0].Phase != compose.PhaseFailed || m.tabs[0].Output != "boom" {
+		t.Fatalf("a dropped failure must keep the dialogue failed: %+v", m.tabs)
+	}
+}
+
+// TestSendRetryClearsSnapshot pins the re-arm: a retry after a
+// failure must not re-apply the stale failure snapshot while the new
+// job is in flight - the dialogue stays Sending until the new result
+// lands (a stale failure would reopen the send gates).
+func TestSendRetryClearsSnapshot(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m = openDialogue(t, m, "t1")
+	m.tabs[0].Phase = compose.PhaseFailed
+	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "old failure"})
+
+	m = press(t, m, "y") // retry: re-arms Sending and clears the snapshot
+	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if m.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("the stale failure must not re-apply during the retry, phase=%v", m.tabs[0].Phase)
+	}
+}
+
+// TestComposeOpenedSnapshotAttachesOnce pins the ComposeOpened
+// snapshot: a dropped open event attaches the dialogue on the next
+// keypress, and a closed dialogue never resurrects from the same
+// snapshot.
+func TestComposeOpenedSnapshotAttachesOnce(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+
+	// The open event drops: the channel is full when it publishes.
+	for i := 0; i < 64; i++ {
+		bus.Publish(core.ViewDiff{View: "inbox"})
+	}
+	bus.Publish(core.ComposeOpened{TabID: "t1", Mode: "reply", Subject: "Re: x"})
+	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if len(m.tabs) != 1 || m.tabs[0].Subject != "Re: x" {
+		t.Fatalf("the dropped open must attach the dialogue: %+v", m.tabs)
+	}
+
+	// The same snapshot must not resurrect a closed dialogue.
+	m.tabs[0].Phase = compose.PhaseSending
+	bus.Publish(core.SendResult{TabID: "t1", OK: true})
+	next, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if len(m.tabs) != 0 {
+		t.Fatalf("a closed dialogue must never resurrect, got %d tabs", len(m.tabs))
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
+	m = next.(Model)
+	if len(m.tabs) != 0 {
+		t.Fatalf("the ComposeOpened snapshot must not re-attach, got %d tabs", len(m.tabs))
+	}
+}
+
 func TestSendArmsSeam(t *testing.T) {
 	got := compose.State{}
 	SetSendHandler(func(st compose.State) { got = st })

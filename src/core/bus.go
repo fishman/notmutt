@@ -5,15 +5,19 @@ import "sync"
 type Event any
 
 // Bus fans events out to subscribers. A full subscriber drops the event
-// (coalescing): consumers repaint from state, never from events.
+// (coalescing): consumers repaint from state, never from events. The
+// compose completion events (SendResult, ComposeOpened) keep last-value
+// snapshots so a drop never wedges a dialogue.
 type Bus struct {
 	mu       sync.Mutex
 	subs     []chan Event
 	progress map[string]Progress
+	sendLast map[string]SendResult
+	openLast []ComposeOpened
 }
 
 func NewBus() *Bus {
-	return &Bus{progress: map[string]Progress{}}
+	return &Bus{progress: map[string]Progress{}, sendLast: map[string]SendResult{}}
 }
 
 func (b *Bus) Subscribe() <-chan Event {
@@ -27,8 +31,13 @@ func (b *Bus) Subscribe() <-chan Event {
 func (b *Bus) Publish(e Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if p, ok := e.(Progress); ok {
-		b.progress[p.Job+"\x00"+p.View] = p
+	switch e := e.(type) {
+	case Progress:
+		b.progress[e.Job+"\x00"+e.View] = e
+	case SendResult:
+		b.sendLast[e.TabID] = e
+	case ComposeOpened:
+		b.openLast = append(b.openLast, e)
 	}
 	for _, s := range b.subs {
 		select {
@@ -47,6 +56,38 @@ func (b *Bus) LatestProgress(job, view string) (Progress, bool) {
 	defer b.mu.Unlock()
 	p, ok := b.progress[job+"\x00"+view]
 	return p, ok
+}
+
+// LatestSendResult returns the last published SendResult for a tab.
+// The map write never drops, so a completion dropped from the channel
+// under backpressure still resolves the dialogue on the next keypress
+// instead of wedging it in PhaseSending.
+func (b *Bus) LatestSendResult(tabID string) (SendResult, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	s, ok := b.sendLast[tabID]
+	return s, ok
+}
+
+// ClearSendResult forgets a tab's last result: a retry re-arms the
+// snapshot, so a stale failure cannot re-apply while the new job is
+// in flight (which would reopen the send gates).
+func (b *Bus) ClearSendResult(tabID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.sendLast, tabID)
+}
+
+// LatestComposeOpened returns the most recent ComposeOpened event
+// (insertion order), so a dropped open event still attaches the
+// dialogue on the next keypress.
+func (b *Bus) LatestComposeOpened() (ComposeOpened, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.openLast) == 0 {
+		return ComposeOpened{}, false
+	}
+	return b.openLast[len(b.openLast)-1], true
 }
 
 type QueryBatch struct {

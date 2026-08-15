@@ -38,7 +38,11 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 		return
 	}
 	var note string
-	if sent := cfg.Accounts[st.Account].SentFolder; sent != "" {
+	sent := st.Fcc
+	if sent == "" {
+		sent = cfg.Accounts[st.Account].SentFolder
+	}
+	if sent != "" {
 		if err := writeFcc(compose.ExpandHome(sent), data); err != nil {
 			note = "fcc failed: " + err.Error()
 		}

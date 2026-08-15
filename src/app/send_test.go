@@ -22,6 +22,42 @@ func (w *stubWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return notmuch.Reply{}, nil
 }
 
+func TestSendJobFccStateWins(t *testing.T) {
+	dir := t.TempDir()
+	captured := filepath.Join(dir, "captured")
+	stub := "#!/bin/sh\ncat > " + captured + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "account-sent")}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab1"
+	st.To = []string{"a@b.c"}
+	st.Subject = "x"
+	st.Body = "y"
+	st.Fcc = filepath.Join(dir, "state-sent")
+
+	sendJob(bus, w, view, cfg, *st)
+
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	if entries, err := os.ReadDir(filepath.Join(dir, "state-sent", "new")); err != nil || len(entries) != 1 {
+		t.Fatalf("the dialogue Fcc must win over the account sent_folder: %v %v", entries, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "account-sent")); !os.IsNotExist(err) {
+		t.Fatal("the account sent_folder must not receive the copy")
+	}
+}
+
 func TestSendJobDelivers(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")

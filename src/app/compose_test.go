@@ -98,6 +98,9 @@ func TestBuildComposeReply(t *testing.T) {
 	if st.MessageID != "<m1@example.com>" || st.OriginalID != "<m1@example.com>" {
 		t.Fatalf("ids = %q %q", st.MessageID, st.OriginalID)
 	}
+	if st.Fcc != "/tmp/sent" {
+		t.Fatalf("Fcc = %q, want the account sent_folder", st.Fcc)
+	}
 
 	if st := buildCompose(cfg, view, msg, "reply-all"); st.Mode != compose.ModeReplyAll || len(st.Cc) != 1 || st.Cc[0] != "carole@example.com" {
 		t.Fatalf("reply-all must exclude the own address: %+v", st)

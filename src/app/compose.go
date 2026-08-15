@@ -63,29 +63,30 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode st
 	account := resolveAccount(cfg, tagsOf(msg), cursorTags(view))
 	from := cfg.Accounts[account].From
 	sigName, sigBody := defaultSig(cfg, account)
+	var st *compose.State
 	if mode == "compose" {
-		return compose.NewCompose(account, from, sigName, sigBody)
-	}
-	if msg == nil || len(msg.Paths) == 0 {
-		return nil
-	}
-	parsed, err := mail.ParseMessage(msg.Paths[0])
-	if err != nil {
-		return nil
-	}
-	switch mode {
-	case "reply":
-		return compose.Reply(*msg, parsed, account, from, sigName, sigBody)
-	case "reply-all":
-		own := ""
-		if p, err := netmail.ParseAddress(from); err == nil {
-			own = p.Address
+		st = compose.NewCompose(account, from, sigName, sigBody)
+	} else if msg != nil && len(msg.Paths) > 0 {
+		parsed, err := mail.ParseMessage(msg.Paths[0])
+		if err == nil {
+			switch mode {
+			case "reply":
+				st = compose.Reply(*msg, parsed, account, from, sigName, sigBody)
+			case "reply-all":
+				own := ""
+				if p, err := netmail.ParseAddress(from); err == nil {
+					own = p.Address
+				}
+				st = compose.ReplyAll(*msg, parsed, account, from, own, sigName, sigBody)
+			case "forward":
+				st = compose.Forward(*msg, parsed, account, from, sigName, sigBody)
+			}
 		}
-		return compose.ReplyAll(*msg, parsed, account, from, own, sigName, sigBody)
-	case "forward":
-		return compose.Forward(*msg, parsed, account, from, sigName, sigBody)
 	}
-	return nil
+	if st != nil {
+		st.Fcc = cfg.Accounts[account].SentFolder
+	}
+	return st
 }
 
 func tagsOf(msg *core.Message) []string {

@@ -2117,3 +2117,118 @@ func TestPaintGateHoldBurst(t *testing.T) {
 		t.Fatalf("50 presses across 5 frame windows must paint 5 times, got %d", paints)
 	}
 }
+
+// TestAttachPromptCommandPicker pins the '?' flow end to end: the
+// picker lists the registered commands, selecting arms the attach
+// prompt with "@name", and enter arms the exec (a non-nil tea.Cmd) and
+// closes the prompt. The picker outranks the prompt while both are
+// live - the dispatch order change this test enforces.
+func TestAttachPromptCommandPicker(t *testing.T) {
+	saved := attachCommands
+	defer func() { attachCommands = saved }()
+	attachCommands = func() map[string][]string {
+		return map[string][]string{
+			"yazi": {"yazi", "--chooser-file"},
+			"fzf":  {"fzf"},
+		}
+	}
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a")
+	if m.prompt == nil || m.prompt.kind != "attach" {
+		t.Fatalf("a must open the attach prompt: %+v", m.prompt)
+	}
+	m = press(t, m, "?")
+	if m.fuzzy == nil || m.fuzzy.kind != "attachcmd" {
+		t.Fatalf("? must open the command picker: %+v", m.fuzzy)
+	}
+	if got := strings.Join(m.fuzzy.entries, ","); got != "fzf,yazi" {
+		t.Fatalf("entries = %q, want sorted fzf,yazi", got)
+	}
+	m = press(t, m, "j") // fzf -> yazi
+	m = press(t, m, "enter")
+	if m.fuzzy != nil {
+		t.Fatal("select must close the picker")
+	}
+	if m.prompt == nil || m.prompt.input != "@yazi" {
+		t.Fatalf("the selection must arm the prompt: %+v", m.prompt)
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("enter must return the command exec")
+	}
+	if m.prompt != nil {
+		t.Fatal("the command run must close the prompt")
+	}
+}
+
+// TestAttachCmdUnknownKeepsPrompt pins the unknown-command path: no
+// exec is armed and the prompt keeps the text for correction.
+func TestAttachCmdUnknownKeepsPrompt(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a")
+	m = press(t, m, "@nope")
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	m = next.(Model)
+	if cmd != nil {
+		t.Fatal("an unknown command must not exec")
+	}
+	if m.prompt == nil || m.prompt.input != "@nope" {
+		t.Fatalf("the prompt must stay open with the text: %+v", m.prompt)
+	}
+}
+
+// TestAttachCmdResultAddsFiles pins the success path: the chooser file
+// yields one attachment per line, blank lines are skipped, and the
+// chooser file is removed after the read.
+func TestAttachCmdResultAddsFiles(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	f1, _ := os.CreateTemp("", "notmutt-attach-*")
+	f2, _ := os.CreateTemp("", "notmutt-attach-*")
+	chooser, err := os.CreateTemp("", "notmutt-chooser-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := f1.Name() + "\n" + f2.Name() + "\n   \n"
+	if _, err := chooser.WriteString(lines); err != nil {
+		t.Fatal(err)
+	}
+	chooser.Close()
+
+	next, _ := m.Update(attachCmdDoneMsg{path: chooser.Name(), tabID: "t1"})
+	m = next.(Model)
+	got := m.tabs[0].Attachments
+	if len(got) != 2 || got[0].Path != f1.Name() || got[1].Path != f2.Name() {
+		t.Fatalf("attachments = %+v", got)
+	}
+	if _, err := os.Stat(chooser.Name()); !os.IsNotExist(err) {
+		t.Fatal("the chooser file must be removed after the read")
+	}
+}
+
+// TestAttachCmdFailureReopensPrompt pins the failure path: the prompt
+// comes back prefilled with "@name" for a retry.
+func TestAttachCmdFailureReopensPrompt(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
+	m = next.(Model)
+	if m.prompt == nil || m.prompt.kind != "attach" || m.prompt.input != "@yazi" {
+		t.Fatalf("the prompt must re-open prefilled: %+v", m.prompt)
+	}
+}
+
+// TestAttachCmdClosedTabNoOp pins the stale-result lookup: a result for
+// a tab closed while the command ran changes nothing.
+func TestAttachCmdClosedTabNoOp(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
+	m = next.(Model)
+	if len(m.tabs) != 0 {
+		t.Fatalf("the send must close the tab: %d", len(m.tabs))
+	}
+	next, _ = m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
+	m = next.(Model)
+	if m.prompt != nil {
+		t.Fatalf("a stale result must not resurrect the prompt: %+v", m.prompt)
+	}
+}

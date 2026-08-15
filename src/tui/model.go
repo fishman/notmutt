@@ -2,8 +2,10 @@ package tui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -261,13 +263,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpView.setSize(m.width, h)
 		}
 	case tea.KeyPressMsg:
-		if m.prompt != nil {
-			m.promptKey(msg)
-			return m, nil
-		}
+		// the picker outranks the prompt: the attach '?' picker arms the
+		// attach prompt (input = "@name"), so both can be live at once
 		if m.fuzzy != nil {
 			m.fuzzyKey(msg, m.bindings["fuzzy"])
 			return m, nil
+		}
+		if m.prompt != nil {
+			return m, m.promptKey(msg)
 		}
 		if m.help {
 			// the help surface borrows the pager keys (neomutt renders
@@ -396,6 +399,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if st, err := applyEditorResult(m.tabs[i], msg.path); err == nil {
 						m.tabs[i] = st
 					}
+					break
+				}
+			}
+		}
+		os.Remove(msg.path)
+		return m, nil
+	case attachCmdDoneMsg:
+		if msg.err == nil {
+			if data, err := os.ReadFile(msg.path); err == nil {
+				for i := range m.tabs {
+					if m.tabs[i].ID != msg.tabID {
+						continue
+					}
+					for _, line := range strings.Split(string(data), "\n") {
+						if line = strings.TrimSpace(line); line != "" {
+							m.tabs[i].AddAttachment(compose.ExpandHome(line))
+						}
+					}
+					break
+				}
+			}
+		} else {
+			for i := range m.tabs { // the tab may have closed meanwhile
+				if m.tabs[i].ID == msg.tabID {
+					m.prompt = &formPrompt{kind: "attach", label: "attach path: ", input: "@" + msg.name}
 					break
 				}
 			}
@@ -1650,37 +1678,88 @@ type formPrompt struct {
 // prompt open; field: the value replaces the dialogue field), esc
 // cancels. The prompt only exists while a dialogue is attached (the
 // compose-context actions), so the direct index is safe.
-func (m *Model) promptKey(msg tea.KeyPressMsg) bool {
+// promptKey drives the prompt row; it returns the tea.Cmd to run when
+// the enter key arms one (an attach command exec - a path enter has no
+// side command). Update forwards the cmd, so the prompt can hand back
+// a subprocess run without escaping the message loop.
+func (m *Model) promptKey(msg tea.KeyPressMsg) tea.Cmd {
 	p := m.prompt
 	switch {
 	case msg.String() == "enter":
-		if p.kind == "field" {
-			st := &m.tabs[m.tabIdx-1]
-			switch p.field {
-			case "from":
-				st.From = strings.TrimSpace(p.input)
-			case "subject":
-				st.Subject = strings.TrimSpace(p.input)
-			case "to":
-				st.To = compose.SplitAddrs(p.input)
+		input := strings.TrimSpace(p.input)
+		if p.kind == "attach" {
+			if strings.HasPrefix(input, "@") {
+				return m.runAttachCommand(strings.TrimPrefix(input, "@"))
 			}
-			m.prompt = nil
-			return true
+			path := compose.ExpandHome(input)
+			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
+				m.prompt = nil
+			}
+			return nil
 		}
-		path := compose.ExpandHome(strings.TrimSpace(p.input))
-		if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
-			m.prompt = nil
+		st := &m.tabs[m.tabIdx-1]
+		switch p.field {
+		case "from":
+			st.From = input
+		case "subject":
+			st.Subject = input
+		case "to":
+			st.To = compose.SplitAddrs(input)
 		}
+		m.prompt = nil
 	case msg.String() == "esc":
 		m.prompt = nil
 	case msg.String() == "backspace":
 		if p.input != "" {
 			p.input = p.input[:len(p.input)-1]
 		}
+	case msg.Text == "?" && p.kind == "attach" && p.input == "":
+		// a path can legally contain '?' - the list key is only the
+		// empty-prompt '?'; anything else appends
+		if names := attachCommandNames(); len(names) > 0 {
+			m.fuzzy = newFuzzy("attachcmd", "attach command:", names)
+		}
 	case msg.Text != "":
 		p.input += msg.Text
 	}
-	return true
+	return nil
+}
+
+// runAttachCommand arms the command exec (the $EDITOR pattern): the
+// chooser temp file is appended to the command's argv (F4 - argv only,
+// never a shell string), the command runs as a foreground TUI
+// subprocess, the result handler reads the selected paths back. An
+// unknown command keeps the prompt open (no exec, no error).
+func (m *Model) runAttachCommand(name string) tea.Cmd {
+	if m.composeTab().Phase == compose.PhaseSending {
+		return nil
+	}
+	argv, ok := attachCommands()[name]
+	if !ok {
+		return nil
+	}
+	f, err := os.CreateTemp("", "notmutt-chooser-*")
+	if err != nil {
+		return nil
+	}
+	f.Close() // the subprocess writes it
+	st := m.composeTab()
+	cmd := exec.Command(argv[0], append(argv[1:], f.Name())...)
+	m.prompt = nil
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		return attachCmdDoneMsg{err: err, path: f.Name(), tabID: st.ID, name: name}
+	})
+}
+
+// attachCommandNames lists the registered attach commands, sorted (the
+// picker entry list contract).
+func attachCommandNames() []string {
+	names := make([]string, 0, len(attachCommands()))
+	for name := range attachCommands() {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // fuzzyKey captures the fuzzy context: bound actions dispatch,
@@ -1718,6 +1797,14 @@ func (m *Model) fuzzyKey(msg tea.KeyPressMsg, km map[string]string) bool {
 func (m *Model) fuzzySelect() {
 	entry, ok := m.fuzzy.selected()
 	if !ok {
+		m.fuzzy = nil
+		return
+	}
+	if m.fuzzy.kind == "attachcmd" {
+		// the selection arms the attach prompt: enter runs it
+		if m.prompt != nil && m.prompt.kind == "attach" {
+			m.prompt.input = "@" + entry
+		}
 		m.fuzzy = nil
 		return
 	}
@@ -1850,4 +1937,14 @@ type editorDoneMsg struct {
 	err   error
 	path  string
 	tabID string
+}
+
+// attachCmdDoneMsg reports an attach command run: the chooser file
+// holds one selected path per line; err is the exec failure. name
+// prefills the retry prompt.
+type attachCmdDoneMsg struct {
+	err   error
+	path  string // the chooser file
+	tabID string
+	name  string // command name, for the failure retry
 }

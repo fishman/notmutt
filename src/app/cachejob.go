@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -28,6 +29,9 @@ func newCacheJob(bus *core.Bus, w workerAPI, view *core.View, dbPath string) *ca
 	}
 	c, err := cache.Open(dbPath)
 	if err != nil {
+		// the cache is an optimization: an open failure (another
+		// instance holds the file) degrades to cacheless, never a hang
+		log.Printf("mime cache disabled: %v", err)
 		return cj
 	}
 	cj.cache = c

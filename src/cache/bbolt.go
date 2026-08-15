@@ -3,6 +3,7 @@ package cache
 import (
 	"bytes"
 	"encoding/gob"
+	"time"
 
 	"go.etcd.io/bbolt"
 
@@ -11,6 +12,12 @@ import (
 
 var bucket = []byte("atts")
 
+// openTimeout bounds the single-writer flock wait: bbolt's default
+// retry is infinite, so a second instance would hang at startup until
+// the holder exits. The cache is derived and disposable (R13) - a
+// contended open gives up quickly and the app runs cacheless.
+const openTimeout = time.Second
+
 // Bbolt is the default Cache backend. The file is 0600 (F5); corrupt
 // payloads are discarded, never fatal (defensive parse).
 type Bbolt struct {
@@ -18,7 +25,7 @@ type Bbolt struct {
 }
 
 func Open(path string) (*Bbolt, error) {
-	db, err := bbolt.Open(path, 0600, nil)
+	db, err := bbolt.Open(path, 0600, &bbolt.Options{Timeout: openTimeout})
 	if err != nil {
 		return nil, err
 	}

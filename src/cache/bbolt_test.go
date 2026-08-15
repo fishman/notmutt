@@ -1,10 +1,12 @@
 package cache
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"go.etcd.io/bbolt"
 
@@ -109,5 +111,27 @@ func TestBboltEmptyListHit(t *testing.T) {
 	got, ok, err := c.Get(k)
 	if err != nil || !ok || len(got) != 0 {
 		t.Fatalf("empty list must be a hit, got %v ok=%v err=%v", got, ok, err)
+	}
+}
+
+// TestOpenContendedReturnsError pins the startup-hang fix: the cache
+// is single-writer (flock), and a second open while the first holds
+// it must fail fast (bbolt's infinite retry would hang the second
+// notmutt instance at startup, the lock_timeout-style bound the app
+// relies on).
+func TestOpenContendedReturnsError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	c, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	start := time.Now()
+	_, err = Open(path)
+	if !errors.Is(err, bbolt.ErrTimeout) {
+		t.Fatalf("a contended open must time out, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 3*time.Second {
+		t.Fatalf("the contended open must fail within the bound, took %v", elapsed)
 	}
 }

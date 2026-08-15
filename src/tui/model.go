@@ -237,6 +237,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// kills it. An expired prefix dies like a dead key.
 			if time.Since(m.pendingAt) >= chainTimeout {
 				m.pendingPrefix = ""
+				// a chain-starting key re-arms on the expired press
+				// (an unbound key must not waste it on a dead
+				// dispatch)
+				if r != "" && km[r] == "" && chainContinuation(km, r) {
+					m.pendingPrefix = r
+					m.pendingAt = time.Now()
+					return m, nil
+				}
 			} else {
 				cand := m.pendingPrefix + " " + r
 				m.pendingPrefix = ""

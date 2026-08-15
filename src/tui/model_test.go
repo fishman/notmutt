@@ -133,6 +133,8 @@ func TestChainDataCompletes(t *testing.T) {
 
 // TestChainExpires pins the chain timeout: an expired prefix never
 // dispatches the stale completion - the next key acts on its own.
+// A chain-starting key re-arms on the expired press instead of
+// wasting it, so the hint still shows what the chain can become.
 func TestChainExpires(t *testing.T) {
 	old := chainTimeout
 	chainTimeout = 0
@@ -145,6 +147,14 @@ func TestChainExpires(t *testing.T) {
 	m = press(t, m, "r")
 	if got != "" {
 		t.Fatalf("an expired chain must not dispatch, got %q", got)
+	}
+	// the expired chain-starting key re-arms the prefix: the armed
+	// hint lists only the continuations, not the base bindings
+	m = press(t, m, "g")
+	m = press(t, m, "g")
+	clean := stripANSI(m.render())
+	if !strings.Contains(clean, "g g cursor-top") || strings.Contains(clean, "j cursor-down") {
+		t.Fatalf("an expired chain-starting key must re-arm the prefix:\n%s", clean)
 	}
 }
 

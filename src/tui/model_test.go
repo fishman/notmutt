@@ -130,6 +130,27 @@ func TestChainExpires(t *testing.T) {
 	}
 }
 
+// TestChainExpiryResetsKeyhint pins the expiry tick: an armed chain
+// whose timeout elapses resets the keyhint to the base bindings - the
+// continuation view must not stay stuck until the next keypress.
+func TestChainExpiryResetsKeyhint(t *testing.T) {
+	old := chainTimeout
+	chainTimeout = 0
+	defer func() { chainTimeout = old }()
+	m := model()
+	m = press(t, m, "g")
+	clean := stripANSI(m.render())
+	if !strings.Contains(clean, "g g cursor-top") || strings.Contains(clean, "j cursor-down") {
+		t.Fatalf("the armed prefix must list only its chains:\n%s", clean)
+	}
+	next, _ := m.Update(chainTick{})
+	m = next.(Model)
+	clean = stripANSI(m.render())
+	if !strings.Contains(clean, "j cursor-down") {
+		t.Fatalf("the expired chain must reset the continuation view:\n%s", clean)
+	}
+}
+
 // TestHelpListsBindings pins the ? overlay: a full-frame binding list
 // for the active context - the neomutt help columns over a viewport
 // (the pager widget), scrolled by the pager keys, closed by any other

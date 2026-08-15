@@ -358,7 +358,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if r != "" && km[r] == "" && chainContinuation(km, r) {
 					m.pendingPrefix = r
 					m.pendingAt = time.Now()
-					return m, nil
+					return m, chainTickCmd()
 				}
 			} else {
 				cand := m.pendingPrefix + " " + r
@@ -369,7 +369,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case r != "" && chainContinuation(km, cand):
 					m.pendingPrefix = cand
 					m.pendingAt = time.Now()
-					return m, nil
+					return m, chainTickCmd()
 				}
 				// dead key (or a special key): the chain dies and
 				// the key dispatches normally below
@@ -377,7 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if r != "" && km[r] == "" && chainContinuation(km, r) {
 			m.pendingPrefix = r
 			m.pendingAt = time.Now()
-			return m, nil
+			return m, chainTickCmd()
 		}
 		return m.dispatchAction(actionForKey(msg, km), n)
 	case tea.KeyReleaseMsg:
@@ -451,6 +451,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.paint = true
 		} else {
 			m.paint = false
+		}
+		return m, nil
+	case chainTick:
+		// the armed prefix expires on its timer (an extended chain's
+		// stale tick no-ops on the age check); the continuation view
+		// resets to the base bindings
+		if m.pendingPrefix != "" && time.Since(m.pendingAt) >= chainTimeout {
+			m.pendingPrefix = ""
+			m.paint = true
 		}
 		return m, nil
 	case legendTick:
@@ -1102,6 +1111,16 @@ type frameTick struct{}
 
 func frameTickCmd() tea.Cmd {
 	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameTick{} })
+}
+
+// chainTick lands chainTimeout after a chain is armed; the handler
+// expires the prefix on the timer, not only on the next keypress, so
+// the keyhint's continuation view resets to the base bindings when
+// the chain times out.
+type chainTick struct{}
+
+func chainTickCmd() tea.Cmd {
+	return tea.Tick(chainTimeout, func(time.Time) tea.Msg { return chainTick{} })
 }
 
 // ShouldRender is the tea loop's optional paint gate (the vendored

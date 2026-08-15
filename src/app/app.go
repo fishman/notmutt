@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
@@ -81,6 +82,32 @@ func Run() error {
 			}
 			bus.Publish(core.ThreadLoaded{ThreadID: threadID, Msgs: rpl.Msgs})
 		}()
+	})
+
+	// the signatures root (spec section 9): ONE path, both halves of
+	// the send surface read the same tree - the app (default signature
+	// in buildCompose) and the tui (the picker lists the files)
+	sigDir = filepath.Join(filepath.Dir(configPath()), "signatures")
+	tui.SetSignaturesDir(sigDir)
+
+	// reply: the app prefills the dialogue (account detection, parse,
+	// default signature) and publishes ComposeOpened - the TUI attaches
+	// the tab
+	tui.SetReplyHandler(func(msg *core.Message, mode string) {
+		go func() {
+			st := buildCompose(cfg, view, msg, mode)
+			if st == nil {
+				return
+			}
+			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(st))
+		}()
+	})
+
+	// send: the app runs the send job on its own goroutine; SendResult
+	// closes the tab or keeps it failed
+	tui.SetSendHandler(func(st compose.State) {
+		go sendJob(bus, worker, view, cfg, st)
 	})
 
 	go runRefresher(ctx, bus, worker, refresher, st)

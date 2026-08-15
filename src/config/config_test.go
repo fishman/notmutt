@@ -40,6 +40,30 @@ threads = true
 	}
 }
 
+func TestLoadAttachCommands(t *testing.T) {
+	cfg, err := Load(write(t, `
+[attach-commands]
+yazi = ["yazi", "--chooser-file"]
+fzf = ["fzf", "--multi"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.AttachCommands) != 2 || len(cfg.AttachCommands["yazi"]) != 2 || cfg.AttachCommands["yazi"][1] != "--chooser-file" {
+		t.Fatalf("attach-commands = %+v", cfg.AttachCommands)
+	}
+}
+
+func TestLoadAttachCommandsEmptyArgvErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[attach-commands]
+yazi = []
+`))
+	if err == nil || !strings.Contains(err.Error(), "yazi") {
+		t.Fatalf("empty argv must error naming the command, got: %v", err)
+	}
+}
+
 func TestLoadUnknownKeyErrors(t *testing.T) {
 	_, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nksy = true\n"))
 	if err == nil {

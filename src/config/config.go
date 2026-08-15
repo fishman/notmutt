@@ -38,17 +38,18 @@ var bindingContexts = map[string]bool{
 }
 
 type Config struct {
-	UI           UI                                      `toml:"ui"`
-	Views        map[string]View                         `toml:"view"`
-	TagGroups    map[string]core.TagGroup                `toml:"tag-groups"`
-	Bindings     map[string]map[string]string            `toml:"-"`
-	TagActions   map[string]string                       `toml:"tag-actions"`
-	Accounts     map[string]Account                      `toml:"accounts"`
-	Send         Send                                    `toml:"send"`
-	Palette      Palette                                 `toml:"palette"`
-	Theme        Theme                                   `toml:"theme"`
-	Schemes      map[string]map[string]map[string]string `toml:"schemes"`
-	Descriptions map[string]string                       `toml:"descriptions"`
+	UI             UI                                      `toml:"ui"`
+	Views          map[string]View                         `toml:"view"`
+	TagGroups      map[string]core.TagGroup                `toml:"tag-groups"`
+	Bindings       map[string]map[string]string            `toml:"-"`
+	TagActions     map[string]string                       `toml:"tag-actions"`
+	Accounts       map[string]Account                      `toml:"accounts"`
+	Send           Send                                    `toml:"send"`
+	AttachCommands map[string][]string                     `toml:"attach-commands"`
+	Palette        Palette                                 `toml:"palette"`
+	Theme          Theme                                   `toml:"theme"`
+	Schemes        map[string]map[string]map[string]string `toml:"schemes"`
+	Descriptions   map[string]string                       `toml:"descriptions"`
 }
 
 type UI struct {
@@ -749,6 +750,14 @@ func validate(cfg Config) error {
 	}
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
+	}
+	for name, argv := range cfg.AttachCommands {
+		if strings.TrimSpace(name) == "" {
+			return fmt.Errorf("attach-commands: empty command name")
+		}
+		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
+			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
+		}
 	}
 	if len(cfg.Views) == 0 {
 		return fmt.Errorf("at least one view required")

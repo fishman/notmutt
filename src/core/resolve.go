@@ -2,6 +2,20 @@ package core
 
 import "sort"
 
+// AccountTag is the message's account: the first account tag in the
+// tag list (R2 - accounts map to folder-prefix tags). Empty when the
+// message carries no account tag. The one definition: the status bar,
+// the compose dialogue detection, and the account resolution all use
+// it (DRY - never a second copy).
+func AccountTag(tags []string, set map[string]bool) string {
+	for _, tag := range tags {
+		if set[tag] {
+			return tag
+		}
+	}
+	return ""
+}
+
 // ResolveOps applies ops to tags, then normalizes exclusive groups.
 // Per group, when the ops touch it (any op names a member), exactly one
 // member survives: the last member-ADD op wins (moves are symmetric -

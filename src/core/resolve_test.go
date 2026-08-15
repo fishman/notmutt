@@ -120,6 +120,19 @@ func TestResolveAddThenRemoveNets(t *testing.T) {
 	}
 }
 
+func TestAccountTag(t *testing.T) {
+	set := map[string]bool{"gmail": true, "dynamia": true}
+	if AccountTag([]string{"inbox", "gmail", "work"}, set) != "gmail" {
+		t.Fatal("must find the first account tag in the tag list")
+	}
+	if AccountTag([]string{"inbox", "work"}, set) != "" {
+		t.Fatal("no account tag must resolve empty")
+	}
+	if AccountTag(nil, set) != "" {
+		t.Fatal("nil tags must resolve empty")
+	}
+}
+
 func TestResolveOrderPreserved(t *testing.T) {
 	// input order preserved, additions appended in op order
 	got, _ := ResolveOps([]string{"unread", "inbox"}, []TagOp{{Tag: "archive", Add: true}}, []TagGroup{folderGroup})

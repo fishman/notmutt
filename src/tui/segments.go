@@ -58,16 +58,10 @@ func progressSegment(ui config.UI, p core.Progress, st Styles) statusSegment {
 	return statusSegment{content: label + " " + bar, style: st.Status, priority: 0}
 }
 
-// accountTag is the message's account: the first account tag in the
-// tag list (R2 - accounts map to folder-prefix tags). Empty when the
-// message carries no account tag.
+// accountTag is the message's account: core owns the one definition
+// (the compose dialogue's detection chain uses it too).
 func accountTag(tags []string, set map[string]bool) string {
-	for _, tag := range tags {
-		if set[tag] {
-			return tag
-		}
-	}
-	return ""
+	return core.AccountTag(tags, set)
 }
 
 // iconLegend builds the status-bar icon library for the currently

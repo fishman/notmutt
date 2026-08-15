@@ -69,6 +69,42 @@ type ConfigChanged struct{ Section string }
 
 type ViewDiff struct{ View string }
 
+// ComposeOpened opens a compose dialogue tab (R4): the app builds the
+// prefill (account detection, quoting, default signature) and the TUI
+// attaches the dialogue. Mode is one of "compose" | "reply" |
+// "reply-all" | "forward".
+type ComposeOpened struct {
+	TabID       string
+	Mode        string
+	Account     string
+	From        string
+	To, Cc      []string
+	Subject     string
+	Body        string
+	Attachments []ComposeAttachment
+	Signature   string
+	SigContent  string
+	MessageID   string
+	References  []string
+	OriginalID  string
+}
+
+// ComposeAttachment is the bus contract's attachment shape (core stays
+// dependency-free; compose owns the mapping to its own type).
+type ComposeAttachment struct {
+	Name, Path string
+	Size       int64
+}
+
+// SendResult reports the send job's outcome to the dialogue (R4): OK
+// closes the tab; a failure keeps it open with Output for review.
+type SendResult struct {
+	TabID  string
+	OK     bool
+	Output string
+	Err    error
+}
+
 // ThreadLoaded carries the open thread's messages (headers + file
 // paths) from the worker to the TUI (R13 two-step: content loads on
 // open only). Err names a failed worker call; the TUI falls back to

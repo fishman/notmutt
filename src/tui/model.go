@@ -170,6 +170,17 @@ type Model struct {
 	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
 	// closed dialogue can never resurrect on a later keypress.
 	opened map[string]bool
+	// render caches: the row cache (styled index rows, content-addressed
+	// by rowKey) and the region layers (keyhint, status, help). The
+	// layers are pointers - the program holds the model by value, so
+	// render-time writes persist only through reference fields.
+	rowCache    map[rowKey]string
+	hintLayer   *layer
+	statusLayer *layer
+	helpLayer   *layer
+	// styleVer bumps when the theme re-resolves: every cache key carries
+	// it, so a variant switch invalidates at the next render.
+	styleVer int
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
@@ -181,7 +192,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index"}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, styleVer: 1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -641,6 +652,7 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 	if e.Section == "theme" {
 		cfg := m.st.Config()
 		m.styles = ResolveStyles(cfg.Theme, cfg.Palette)
+		m.styleVer++
 		if m.pager != nil {
 			// the pager's render is cached - without re-styling here a
 			// variant switch keeps the old colors until the next
@@ -1238,30 +1250,48 @@ func (m Model) render() string {
 	sg := st.sgr
 	var b strings.Builder
 	for i := top; i < bottom; i++ {
-		line := renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
-		outer := sg.normal
-		if i == cur {
-			outer = sg.indicator
-		} else if rows[i].Ghost {
-			outer = sg.ghost
+		// the row cache: a cursor move restyles only the two rows whose
+		// selected flag flips; the rest concatenate from the cache. The
+		// key carries the row address (reflattens churn it - auto-miss)
+		// plus every style-affecting parameter; the outer row style is
+		// a function of the row's own fields and selected, so the
+		// rendered line is fully keyed.
+		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur}
+		if rows[i].Msg != nil {
+			key.atts = len(rows[i].Msg.Atts) > 0
 		}
-		if rows[i].Staged {
-			// staged rows keep the row style and gain the staged look
-			// ([index.staged] default: bold + muted fg); the slot styles
-			// only override fg, so bold carries through the whole line
-			switch {
-			case i == cur:
-				outer = sg.stagedIndicator
-			case rows[i].Ghost:
-				outer = sg.stagedGhost
-			default:
-				outer = sg.stagedNormal
+		line, ok := m.rowCache[key]
+		if !ok {
+			if len(m.rowCache) > rowCacheMax {
+				m.rowCache = make(map[rowKey]string, 512)
 			}
-		}
-		if m.width > 0 {
-			// bubbletea's first View() runs before WindowSizeMsg: width 0
-			// must not blank the rows (padRow would truncate them away)
-			line = padRowSGR(line, m.width, outer)
+			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
+			outer := sg.normal
+			if i == cur {
+				outer = sg.indicator
+			} else if rows[i].Ghost {
+				outer = sg.ghost
+			}
+			if rows[i].Staged {
+				// staged rows keep the row style and gain the staged look
+				// ([index.staged] default: bold + muted fg); the slot
+				// styles only override fg, so bold carries through
+				switch {
+				case i == cur:
+					outer = sg.stagedIndicator
+				case rows[i].Ghost:
+					outer = sg.stagedGhost
+				default:
+					outer = sg.stagedNormal
+				}
+			}
+			if m.width > 0 {
+				// bubbletea's first View() runs before WindowSizeMsg:
+				// width 0 must not blank the rows (padRow would truncate
+				// them away)
+				line = padRowSGR(line, m.width, outer)
+			}
+			m.rowCache[key] = line
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
@@ -1273,9 +1303,17 @@ func (m Model) render() string {
 }
 
 // statusLineWith builds the status data from the model's view and
-// progress state and renders the row at the window width.
+// progress state and renders the row at the window width. The layer
+// cache rebuilds the row only when its inputs change - a cursor move
+// repaints the status from the cache, not from a re-render.
 func (m Model) statusLineWith(st Styles, ui config.UI) string {
-	return statusLineWidth(st, ui, m.statusData(), m.width)
+	d := m.statusData()
+	sig := m.mode + "|" + d.view + "|" + strconv.Itoa(d.visible) + "|" + strconv.FormatBool(d.on)
+	if d.prog != nil {
+		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
+	}
+	sig += "|" + d.legend + "|" + d.account + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
 
 // statusData builds the status row's input: the cursor row's tags feed

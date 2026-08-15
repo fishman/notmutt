@@ -2,6 +2,7 @@ package tui
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -38,8 +39,15 @@ func (m Model) activeBindings() map[string]string {
 // keyhint is the context keyhint row, extended while a chain prefix
 // is armed: pressing "g" lists "g g cursor-top" and "g r
 // reply-all", so the user sees what the prefix can become (R9 - the
-// binding data answers, no hardcoded list).
+// binding data answers, no hardcoded list). The layer caches the row
+// per (mode, armed prefix, width) - a cursor move repaints it without
+// rebuilding.
 func (m Model) keyhint() string {
+	sig := m.mode + "|" + m.pendingPrefix + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+	return m.hintLayer.get(sig, m.keyhintBuild)
+}
+
+func (m Model) keyhintBuild() string {
 	km := m.activeBindings()
 	if m.pendingPrefix == "" {
 		return keyhintRow(km, m.width)
@@ -60,6 +68,11 @@ func (m Model) keyhint() string {
 // exactly m.height lines, assembled like renderCompose (R11 slot
 // reservation).
 func (m Model) renderHelp() string {
+	sig := m.mode + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.height) + "|" + strconv.Itoa(m.styleVer)
+	return m.helpLayer.get(sig, m.helpBuild)
+}
+
+func (m Model) helpBuild() string {
 	km := m.activeBindings()
 	rows := m.height - 2
 	if rows < 1 {

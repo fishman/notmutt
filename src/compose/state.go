@@ -51,6 +51,35 @@ type Attachment struct {
 	Size       int64
 }
 
+// Security is the dialogue's crypto flag set (R10): none, sign,
+// encrypt, sign+encrypt. A dialogue flag only - the transport ignores
+// it (no crypto engine yet); it renders and survives the event round
+// trip.
+type Security int
+
+const (
+	SecurityNone Security = iota
+	SecuritySign
+	SecurityEncrypt
+	SecuritySignEncrypt
+)
+
+func (s Security) String() string {
+	switch s {
+	case SecuritySign:
+		return "sign"
+	case SecurityEncrypt:
+		return "encrypt"
+	case SecuritySignEncrypt:
+		return "sign+encrypt"
+	}
+	return "none"
+}
+
+func (s Security) Next() Security {
+	return Security((s + 1) % (SecuritySignEncrypt + 1))
+}
+
 // State is one dialogue (R4): fields, attachments, send progress,
 // error output. The signature is stored SEPARATELY from the body
 // (SignatureBody) - the body is the user's edited text, the signature
@@ -64,11 +93,14 @@ type State struct {
 	Account       string
 	From          string
 	To, Cc        []string
+	Bcc, ReplyTo  []string
 	Subject       string
 	Body          string
 	Attachments   []Attachment
 	Signature     string // signature name ("" = none)
 	SignatureBody string
+	Fcc           string // sent-folder path, derived from the account
+	Security      Security
 	MessageID     string // original message-id (In-Reply-To)
 	References    []string
 	OriginalID    string // original notmuch id (reply/forward tagging)

@@ -10,8 +10,12 @@ func TestEventRoundTrip(t *testing.T) {
 	s.Mode = ModeReplyAll
 	s.To = []string{"a@b.c"}
 	s.Cc = []string{"c@d.e"}
+	s.Bcc = []string{"b@d.e"}
+	s.ReplyTo = []string{"r@d.e"}
 	s.Subject = "Re: x"
 	s.Body = "quoted body"
+	s.Fcc = "/tmp/sent"
+	s.Security = SecuritySignEncrypt
 	s.Attachments = []Attachment{{Name: "n.txt", Path: "/tmp/n.txt", Size: 3}}
 	s.MessageID = "<m@x>"
 	s.References = []string{"<r@x>"}
@@ -24,6 +28,9 @@ func TestEventRoundTrip(t *testing.T) {
 	if len(e.Attachments) != 1 || e.Attachments[0].Path != "/tmp/n.txt" {
 		t.Fatalf("event attachments = %+v", e.Attachments)
 	}
+	if e.Security != "sign+encrypt" || e.Fcc != "/tmp/sent" {
+		t.Fatalf("event security/fcc = %q %q", e.Security, e.Fcc)
+	}
 
 	got := FromEvent(e)
 	if got.ID != "t1" || got.Mode != ModeReplyAll || got.Account != "gmail" {
@@ -31,6 +38,12 @@ func TestEventRoundTrip(t *testing.T) {
 	}
 	if got.Body != "quoted body" || got.SignatureBody != "sig" {
 		t.Fatalf("state body/sig = %q %q", got.Body, got.SignatureBody)
+	}
+	if len(got.Bcc) != 1 || got.Bcc[0] != "b@d.e" || len(got.ReplyTo) != 1 || got.ReplyTo[0] != "r@d.e" {
+		t.Fatalf("state bcc/replyto = %v %v", got.Bcc, got.ReplyTo)
+	}
+	if got.Fcc != "/tmp/sent" || got.Security != SecuritySignEncrypt {
+		t.Fatalf("state fcc/security = %q %v", got.Fcc, got.Security)
 	}
 	if len(got.Attachments) != 1 || got.Attachments[0].Name != "n.txt" {
 		t.Fatalf("state attachments = %+v", got.Attachments)

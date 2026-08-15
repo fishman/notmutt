@@ -14,7 +14,8 @@ import (
 func ToEvent(s *State) core.ComposeOpened {
 	e := core.ComposeOpened{
 		TabID: s.ID, Mode: s.Mode.String(), Account: s.Account, From: s.From,
-		To: s.To, Cc: s.Cc, Subject: s.Subject, Body: s.Body,
+		To: s.To, Cc: s.Cc, Bcc: s.Bcc, ReplyTo: s.ReplyTo,
+		Subject: s.Subject, Body: s.Body, Fcc: s.Fcc, Security: s.Security.String(),
 		Signature: s.Signature, SigContent: s.SignatureBody,
 		MessageID: s.MessageID, References: s.References, OriginalID: s.OriginalID,
 	}
@@ -27,7 +28,8 @@ func ToEvent(s *State) core.ComposeOpened {
 func FromEvent(e core.ComposeOpened) *State {
 	s := &State{
 		ID: e.TabID, Mode: parseMode(e.Mode), Account: e.Account, From: e.From,
-		To: e.To, Cc: e.Cc, Subject: e.Subject, Body: e.Body,
+		To: e.To, Cc: e.Cc, Bcc: e.Bcc, ReplyTo: e.ReplyTo,
+		Subject: e.Subject, Body: e.Body, Fcc: e.Fcc, Security: parseSecurity(e.Security),
 		Signature: e.Signature, SignatureBody: e.SigContent,
 		MessageID: e.MessageID, References: e.References, OriginalID: e.OriginalID,
 	}
@@ -47,6 +49,18 @@ func parseMode(s string) Mode {
 		return ModeForward
 	}
 	return ModeCompose
+}
+
+func parseSecurity(s string) Security {
+	switch s {
+	case "sign":
+		return SecuritySign
+	case "encrypt":
+		return SecurityEncrypt
+	case "sign+encrypt":
+		return SecuritySignEncrypt
+	}
+	return SecurityNone
 }
 
 // ExpandHome expands a leading ~ to the user's home dir (the config

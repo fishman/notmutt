@@ -41,6 +41,14 @@ func (s *State) Assemble(w io.Writer) error {
 	if err := setAddrs("Cc", s.Cc); err != nil {
 		return err
 	}
+	if err := setAddrs("Bcc", s.Bcc); err != nil {
+		return err
+	}
+	if len(s.ReplyTo) > 0 {
+		if err := setAddrs("Reply-To", s.ReplyTo); err != nil {
+			return err
+		}
+	}
 	hdr.SetSubject(s.Subject)
 	hdr.SetDate(time.Now())
 	if err := hdr.GenerateMessageID(); err != nil {
@@ -56,7 +64,9 @@ func (s *State) Assemble(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	b, err := mw.CreateSingleInline(mail.InlineHeader{})
+	ih := mail.InlineHeader{}
+	ih.Set("Content-Type", ContentTypeOf(s.Body)+"; charset=utf-8")
+	b, err := mw.CreateSingleInline(ih)
 	if err != nil {
 		return err
 	}

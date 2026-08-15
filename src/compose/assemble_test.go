@@ -19,6 +19,8 @@ func TestAssemble(t *testing.T) {
 	s := NewCompose("gmail", "Bob <bob@example.com>", "gmail", "sig line")
 	s.To = []string{"Alice <alice@example.com>"}
 	s.Cc = []string{"cc@example.net"}
+	s.Bcc = []string{"bcc@example.net"}
+	s.ReplyTo = []string{"reply@example.net"}
 	s.Subject = "hello"
 	s.Body = "body line"
 	s.MessageID = "<orig@example.com>"
@@ -48,6 +50,12 @@ func TestAssemble(t *testing.T) {
 	if cc, _ := hdr.AddressList("Cc"); len(cc) != 1 || cc[0].Address != "cc@example.net" {
 		t.Fatalf("Cc = %v", cc)
 	}
+	if bcc, _ := hdr.AddressList("Bcc"); len(bcc) != 1 || bcc[0].Address != "bcc@example.net" {
+		t.Fatalf("Bcc = %v", bcc)
+	}
+	if rt, _ := hdr.AddressList("Reply-To"); len(rt) != 1 || rt[0].Address != "reply@example.net" {
+		t.Fatalf("Reply-To = %v", rt)
+	}
 	if hdr.Get("Subject") != "hello" {
 		t.Fatalf("Subject = %q", hdr.Get("Subject"))
 	}
@@ -62,6 +70,7 @@ func TestAssemble(t *testing.T) {
 	}
 
 	var inline, attached []byte
+	var inlineCT string
 	for {
 		p, err := mr.NextPart()
 		if err == io.EOF {
@@ -77,6 +86,7 @@ func TestAssemble(t *testing.T) {
 		switch p.Header.(type) {
 		case *mail.InlineHeader:
 			inline = data
+			inlineCT = p.Header.Get("Content-Type")
 		case *mail.AttachmentHeader:
 			attached = data
 		}
@@ -84,8 +94,33 @@ func TestAssemble(t *testing.T) {
 	if !strings.Contains(strings.ReplaceAll(string(inline), "\r\n", "\n"), "body line\n\n-- \nsig line") {
 		t.Fatalf("inline part = %q", inline)
 	}
+	if inlineCT != "text/plain; charset=utf-8" {
+		t.Fatalf("inline part Content-Type = %q", inlineCT)
+	}
 	if string(attached) != "attachment bytes" {
 		t.Fatalf("attachment part = %q", attached)
+	}
+}
+
+func TestAssembleMarkdownBody(t *testing.T) {
+	s := NewCompose("gmail", "bob@example.com", "", "")
+	s.To = []string{"a@b.c"}
+	s.Body = "# title\n\n- one\n- two"
+	var buf bytes.Buffer
+	if err := s.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	mr, err := mail.CreateReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	p, err := mr.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ct := p.Header.Get("Content-Type"); ct != "text/markdown; charset=utf-8" {
+		t.Fatalf("markdown body Content-Type = %q", ct)
 	}
 }
 

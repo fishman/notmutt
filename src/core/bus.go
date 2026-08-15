@@ -120,8 +120,11 @@ type ComposeOpened struct {
 	Account     string
 	From        string
 	To, Cc      []string
+	Bcc, ReplyTo []string
 	Subject     string
 	Body        string
+	Fcc         string
+	Security    string
 	Attachments []ComposeAttachment
 	Signature   string
 	SigContent  string

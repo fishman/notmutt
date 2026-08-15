@@ -30,6 +30,8 @@ func (s *State) BuildBuffer() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "To: %s\n", strings.Join(s.To, ", "))
 	fmt.Fprintf(&b, "Cc: %s\n", strings.Join(s.Cc, ", "))
+	fmt.Fprintf(&b, "Bcc: %s\n", strings.Join(s.Bcc, ", "))
+	fmt.Fprintf(&b, "Reply-To: %s\n", strings.Join(s.ReplyTo, ", "))
 	fmt.Fprintf(&b, "Subject: %s\n\n", s.Subject)
 	b.WriteString(BodyWithSig(s.Body, s.SignatureBody))
 	return b.String()
@@ -59,7 +61,7 @@ func SplitAddrs(s string) []string {
 // keeps the signature, an edited tail stays as user text and detaches
 // it. A buffer without the separator parses as all-headers, empty
 // body.
-func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc []string, subject, body, sigName, sigBody string) {
+func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc, bcc, replyTo []string, subject, body, sigName, sigBody string) {
 	buf = strings.ReplaceAll(buf, "\r\n", "\n")
 	buf = strings.TrimSuffix(buf, "\n")
 	head, rest := buf, ""
@@ -76,6 +78,7 @@ func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc []string, subject
 		return out
 	}
 	to, cc = parse("To:"), parse("Cc:")
+	bcc, replyTo = parse("Bcc:"), parse("Reply-To:")
 	for _, l := range strings.Split(head, "\n") {
 		if v, ok := strings.CutPrefix(l, "Subject:"); ok {
 			subject = strings.TrimSpace(v)
@@ -86,8 +89,8 @@ func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc []string, subject
 		block := SigBlock(prevSigBody)
 		if strings.HasSuffix(body, block) {
 			body = strings.TrimSuffix(body, block)
-			return to, cc, subject, body, prevSigName, prevSigBody
+			return to, cc, bcc, replyTo, subject, body, prevSigName, prevSigBody
 		}
 	}
-	return to, cc, subject, body, "", ""
+	return to, cc, bcc, replyTo, subject, body, "", ""
 }

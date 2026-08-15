@@ -44,8 +44,8 @@ func applyEditorResult(st compose.State, path string) (compose.State, error) {
 	if err != nil {
 		return st, err
 	}
-	to, cc, subject, body, sigName, sigBody := compose.ParseBuffer(string(data), st.Signature, st.SignatureBody)
-	st.To, st.Cc, st.Subject, st.Body = to, cc, subject, body
+	to, cc, bcc, replyTo, subject, body, sigName, sigBody := compose.ParseBuffer(string(data), st.Signature, st.SignatureBody)
+	st.To, st.Cc, st.Bcc, st.ReplyTo, st.Subject, st.Body = to, cc, bcc, replyTo, subject, body
 	st.Signature, st.SignatureBody = sigName, sigBody
 	return st, nil
 }

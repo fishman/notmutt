@@ -9,10 +9,14 @@ func TestBuildBuffer(t *testing.T) {
 	s := NewCompose("gmail", "Bob <bob@example.com>", "gmail", "bob\nbob2")
 	s.To = []string{"a@example.com", "b@example.org"}
 	s.Cc = []string{"c@example.net"}
+	s.Bcc = []string{"d@example.net"}
+	s.ReplyTo = []string{"r@example.org"}
 	s.Subject = "hello"
 	s.Body = "line one"
 	want := "To: a@example.com, b@example.org\n" +
 		"Cc: c@example.net\n" +
+		"Bcc: d@example.net\n" +
+		"Reply-To: r@example.org\n" +
 		"Subject: hello\n\n" +
 		"line one\n\n" +
 		"-- \nbob\nbob2"
@@ -25,14 +29,22 @@ func TestParseBufferRoundTrip(t *testing.T) {
 	s := NewCompose("gmail", "Bob <bob@example.com>", "gmail", "bob")
 	s.To = []string{"a@example.com", "b@example.org"}
 	s.Cc = []string{"c@example.net"}
+	s.Bcc = []string{"d@example.net"}
+	s.ReplyTo = []string{"r@example.org"}
 	s.Subject = "Re: hello"
 	s.Body = "> quoted\nsecond line"
-	to, cc, subject, body, sigName, sigBody := ParseBuffer(s.BuildBuffer(), s.Signature, s.SignatureBody)
+	to, cc, bcc, replyTo, subject, body, sigName, sigBody := ParseBuffer(s.BuildBuffer(), s.Signature, s.SignatureBody)
 	if len(to) != 2 || to[0] != "a@example.com" || to[1] != "b@example.org" {
 		t.Fatalf("to = %v", to)
 	}
 	if len(cc) != 1 || cc[0] != "c@example.net" {
 		t.Fatalf("cc = %v", cc)
+	}
+	if len(bcc) != 1 || bcc[0] != "d@example.net" {
+		t.Fatalf("bcc = %v", bcc)
+	}
+	if len(replyTo) != 1 || replyTo[0] != "r@example.org" {
+		t.Fatalf("replyTo = %v", replyTo)
 	}
 	if subject != "Re: hello" || body != "> quoted\nsecond line" {
 		t.Fatalf("subject/body = %q %q", subject, body)
@@ -44,7 +56,7 @@ func TestParseBufferRoundTrip(t *testing.T) {
 
 func TestParseBufferEditedSignatureDetaches(t *testing.T) {
 	buf := "To: a@example.com\nCc: \nSubject: x\n\nbody\n\n-- \nbob\nEDITED"
-	to, _, subject, body, sigName, sigBody := ParseBuffer(buf, "gmail", "bob")
+	to, _, _, _, subject, body, sigName, sigBody := ParseBuffer(buf, "gmail", "bob")
 	if to[0] != "a@example.com" || subject != "x" {
 		t.Fatalf("headers = %v %q", to, subject)
 	}
@@ -60,21 +72,21 @@ func TestParseBufferEditedSignatureDetaches(t *testing.T) {
 func TestParseBufferNoSeparator(t *testing.T) {
 	// the spec contract: a buffer without the separator blank line
 	// parses as all-headers, empty body
-	to, _, subject, body, _, _ := ParseBuffer("To: a@example.com\nSubject: x", "", "")
+	to, _, _, _, subject, body, _, _ := ParseBuffer("To: a@example.com\nSubject: x", "", "")
 	if len(to) != 1 || subject != "x" || body != "" {
 		t.Fatalf("no-separator parse = %v %q %q", to, subject, body)
 	}
 }
 
 func TestParseBufferDropsUnknownHeaders(t *testing.T) {
-	to, _, _, body, _, _ := ParseBuffer("To: a@example.com\nX-Custom: keep\nSubject: x\n\nbody", "", "")
+	to, _, _, _, _, body, _, _ := ParseBuffer("To: a@example.com\nX-Custom: keep\nSubject: x\n\nbody", "", "")
 	if len(to) != 1 || body != "body" {
 		t.Fatalf("unknown header dropped: %v %q", to, body)
 	}
 }
 
 func TestParseBufferBlankFields(t *testing.T) {
-	to, cc, _, _, _, _ := ParseBuffer("To: a@example.com, , b@example.org\nCc: \nSubject: \n\nbody", "", "")
+	to, cc, _, _, _, _, _, _ := ParseBuffer("To: a@example.com, , b@example.org\nCc: \nSubject: \n\nbody", "", "")
 	if len(to) != 2 || to[1] != "b@example.org" {
 		t.Fatalf("to = %v", to)
 	}
@@ -89,7 +101,7 @@ func TestParseBufferCRLF(t *testing.T) {
 	s.Subject = "hello"
 	s.Body = "line1\nline2"
 	buf := strings.ReplaceAll(s.BuildBuffer(), "\n", "\r\n")
-	to, cc, subject, body, sigName, sigBody := ParseBuffer(buf, s.Signature, s.SignatureBody)
+	to, cc, _, _, subject, body, sigName, sigBody := ParseBuffer(buf, s.Signature, s.SignatureBody)
 	if len(to) != 1 || to[0] != "a@b.c" || subject != "hello" || body != "line1\nline2" || sigName != "sig" || sigBody != "sig body" {
 		t.Fatalf("CRLF round trip: %v %v %q %q %q %q", to, cc, subject, body, sigName, sigBody)
 	}

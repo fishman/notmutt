@@ -323,9 +323,13 @@ Gaps matcha leaves open (design around these):
   TUI attaches the lines from the ThreadLoaded event, it never parses
   mail on its event path. The hook context carries the deadline
   (context.WithTimeout), the wire point for gopher-lua's SetContext
-  kill switch (v1.1.2, unused by matcha) when the Lua adapter lands;
-  the TUI-free round trip also removed the inline-render freeze matcha
-  guards against only partially.
+  kill switch (v1.1.2, unused by matcha); the adapter landed
+  (src/app/lua_plugin.go, `//go:build lua`, the R12 build-gating
+  pattern - default builds stay Lua-free) with plugins from
+  `<configdir>/lua` and one `body_render(lines)` hook per plugin,
+  deadline-killed and falling back like any Go hook. Rendering left
+  the UI path entirely, so the inline-render freeze class matcha
+  guards against only partially cannot exist at all.
 - No hot reload. Plugins load at startup; edits need a restart. Fine
   for the first Lua milestone; reload is a future knob.
 - Render hooks see mail content by design. matcha passes raw bodies

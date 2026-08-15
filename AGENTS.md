@@ -229,6 +229,15 @@ model (neovim/ checkout in this workspace): libuv event loop, RPC
 (msgpack), Lua as extension language, UI attached via protocol. UI async
 design should be compatible with that model.
 
+The Lua runtime is a build-tag-gated layer (the R12 pattern): the adapter
+and the gopher-lua dependency exist only under the `lua` build tag
+(src/app/lua_plugin.go vs the `!lua` no-op stub); default builds carry no
+Lua runtime. Plugins are files in `<configdir>/lua`; the initial surface
+is one `body_render(lines)` function per plugin, registered as a render
+transform (decision record 20) and run on the open job under the chain
+deadline via SetContext - a busy-looping plugin falls back, it never
+freezes the UI. The VM sandbox is a lib whitelist (no os/io/debug).
+
 Config model: TOML is the config language and the file shape IS the
 schema shape. Config files unmarshal into typed Go structs (1:1 with
 the TOML), with neomutt's ConfigSet properties (`neomutt-docs/docs/

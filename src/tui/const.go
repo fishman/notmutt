@@ -8,13 +8,16 @@ import "time"
 // Timing.
 const (
 	// legendDebounce is how long the cursor must rest before the status
-	// legend resolves (the debounced part of the status line). tea.Tick
+	// legend resolves on terminals without release reporting (the
+	// KeyReleaseMsg path resolves immediately, no debounce). tea.Tick
 	// is a one-shot with no cancellation, so key auto-repeat piles
 	// ticks up; the settle guard in the legendTick handler makes a tick
 	// resolve only when no move happened since it was armed - a
 	// too-young tick re-arms itself. The legend shows what the cursor
-	// rested on, never what it flashed past.
-	legendDebounce = 20 * time.Millisecond
+	// rested on, never what it flashed past. 100ms caps the hold-time
+	// re-arm churn at 10 ticks/sec (the old 20ms tick doubled the
+	// render rate during a hold).
+	legendDebounce = 100 * time.Millisecond
 	// progressTickInterval is the progress bar's repaint cadence while
 	// a job is on (R15).
 	progressTickInterval = 200 * time.Millisecond

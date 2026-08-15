@@ -103,6 +103,13 @@ type Model struct {
 	// own re-arm keeps the chain alive while the cursor keeps moving -
 	// holding a key never piles timers up.
 	legendTickOn bool
+	// keyReleases records whether the terminal answers the
+	// ReportEventTypes request with release reporting (the
+	// KeyboardEnhancementsMsg). While true, movement never arms the
+	// legend tick - the real KeyReleaseMsg resolves the legend, so the
+	// hold-time tick churn (80-100 extra render cycles/sec) is pure
+	// waste. False until the terminal answers, safe for tests.
+	keyReleases bool
 	// legendMoves counts cursor moves: the tick carries the count from
 	// when it was armed and resolves only when it matches - a tick that
 	// finds newer moves re-arms, so the legend settles one debounce
@@ -276,6 +283,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.legendTickOn = false
 		}
 		return m, nil
+	case tea.KeyboardEnhancementsMsg:
+		// the terminal's answer to the ReportEventTypes request (model
+		// View): release reporting on means the KeyReleaseMsg handler
+		// resolves the legend, so movement must never arm the debounce
+		// tick. Terminals that do not answer keep keyReleases false and
+		// the tick fallback.
+		m.keyReleases = msg.SupportsEventTypes()
+		return m, nil
 	case editorDoneMsg:
 		if msg.err == nil {
 			for i := range m.tabs {
@@ -328,7 +343,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
-		if m.legendPending && !m.legendTickOn {
+		if m.legendPending && !m.legendTickOn && !m.keyReleases {
 			m.legendTickOn = true
 			return m, tea.Batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
 		}
@@ -505,7 +520,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.moveCursor(1)
 		}
 	}
-	if m.legendPending && !m.legendTickOn {
+	if m.legendPending && !m.legendTickOn && !m.keyReleases {
 		m.legendTickOn = true
 		return m, legendTickCmd(m.legendMoves)
 	}

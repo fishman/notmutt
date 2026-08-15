@@ -12,6 +12,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"notmutt/compose"
@@ -1884,5 +1885,79 @@ func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 	}
 	if strings.Contains(frame, "toptal") {
 		t.Fatalf("the match list must clip to fill, not the query row:\n%s", frame)
+	}
+}
+
+// TestLegendNoTickWithReleaseReporting pins the FIX2 gate: on a
+// terminal that reports key releases, movement never arms the legend
+// debounce tick - the real KeyReleaseMsg resolves the legend, so a
+// held key no longer churns the tick's 80-100 render cycles/sec.
+func TestLegendNoTickWithReleaseReporting(t *testing.T) {
+	m := stubModel()
+	m.keyReleases = true
+	m = press(t, m, "j")
+	if m.legendTickOn {
+		t.Fatal("movement must not arm the legend tick when the terminal reports releases")
+	}
+	if !m.legendPending {
+		t.Fatal("movement must still mark the legend pending")
+	}
+	// a sequence of presses stays tick-free (the hold)
+	m = press(t, m, "j")
+	m = press(t, m, "j")
+	if m.legendTickOn {
+		t.Fatal("a hold must never arm the legend tick with release reporting on")
+	}
+	next, _ := m.Update(tea.KeyReleaseMsg{})
+	m = next.(Model)
+	if m.legendPending || m.legendTickOn {
+		t.Fatal("the release must resolve the legend")
+	}
+	if m.legend == "" {
+		t.Fatal("the release must resolve the cursor's tag icons")
+	}
+}
+
+// TestLegendTickFallbackResolves pins the no-release-reporting path:
+// movement arms the debounce tick, and the settled tick (its move
+// count matching) resolves the legend.
+func TestLegendTickFallbackResolves(t *testing.T) {
+	m := stubModel()
+	m = press(t, m, "j")
+	if !m.legendTickOn {
+		t.Fatal("without release reporting, movement must arm the debounce tick")
+	}
+	if !m.legendPending {
+		t.Fatal("the press must mark the legend pending")
+	}
+	next, _ := m.Update(legendTick{moves: m.legendMoves})
+	m = next.(Model)
+	if m.legendPending || m.legendTickOn {
+		t.Fatal("the settled tick must resolve the legend")
+	}
+	if m.legend == "" {
+		t.Fatal("the tick must resolve the cursor's tag icons")
+	}
+}
+
+// TestKeyboardEnhancementsMsgSetsReleasePath pins the wiring: the
+// terminal's answer to the ReportEventTypes request flips the model's
+// keyReleases flag, which gates the legend tick arming.
+func TestKeyboardEnhancementsMsgSetsReleasePath(t *testing.T) {
+	m := stubModel()
+	next, _ := m.Update(tea.KeyboardEnhancementsMsg{Flags: ansi.KittyReportEventTypes})
+	m = next.(Model)
+	if !m.keyReleases {
+		t.Fatal("release reporting must be recorded from the enhancement message")
+	}
+	// a terminal answering without release reporting keeps the tick path
+	next, _ = m.Update(tea.KeyboardEnhancementsMsg{Flags: ansi.KittyDisambiguateEscapeCodes})
+	m = next.(Model)
+	if m.keyReleases {
+		t.Fatal("a disambiguation-only answer must not enable the release path")
+	}
+	m = press(t, m, "j")
+	if !m.legendTickOn {
+		t.Fatal("without release reporting the tick fallback must stay armed")
 	}
 }

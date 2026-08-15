@@ -315,11 +315,17 @@ Gaps matcha leaves open (design around these):
 - Render-path hooks run inline. email_body_render executes Lua inside
   the view-render flow on the orchestrator goroutine; a busy-loop
   plugin freezes the UI - only HTTP has timeouts, hook execution has
-  none. notmutt's body-render hooks run on the async core with the
-  reply threaded back (the R3 channel), with gopher-lua's
-  SetContext deadline (v1.1.2, unused by matcha) as the kill switch;
-  a render hook that exceeds its budget falls back to the un-hooked
-  render.
+  none. FIXED (2026-08-15): notmutt's body-render hooks run on the
+  async open job (app.BodyRenderHook registry, `applyBodyRenderHooks`
+  in app/app.go) with a chain deadline and fall back to the un-hooked
+  render on error or budget overrun; the render itself moved with the
+  hooks - the open job renders the thread (mail.RenderThread) and the
+  TUI attaches the lines from the ThreadLoaded event, it never parses
+  mail on its event path. The hook context carries the deadline
+  (context.WithTimeout), the wire point for gopher-lua's SetContext
+  kill switch (v1.1.2, unused by matcha) when the Lua adapter lands;
+  the TUI-free round trip also removed the inline-render freeze matcha
+  guards against only partially.
 - No hot reload. Plugins load at startup; edits need a restart. Fine
   for the first Lua milestone; reload is a future knob.
 - Render hooks see mail content by design. matcha passes raw bodies

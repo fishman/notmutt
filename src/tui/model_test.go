@@ -22,6 +22,8 @@ var testKeys = map[string]string{
 	"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
 	"r": "toggle-read", "a": "archive", "d": "delete",
 	"u": "undo", "$": "apply",
+	"m": "compose", "R": "reply", "F": "forward",
+	"[": "tab-prev", "]": "tab-next",
 	// the arrow and G keys come from the user config overlay (the
 	// defaults are untouched); the test table mirrors the live config
 	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
@@ -40,7 +42,8 @@ var testTagActions = map[string]string{
 }
 
 // testBindings is the per-context binding table (R9): the index context
-// carries the staging keys, the pager context the scroll keys.
+// carries the staging keys, the pager context the scroll keys, the
+// compose context the dialogue keys, the fuzzy context the picker keys.
 var testBindings = map[string]map[string]string{
 	"index": testKeys,
 	"pager": {
@@ -49,7 +52,35 @@ var testBindings = map[string]map[string]string{
 		"g": "scroll-top", "G": "scroll-bottom",
 		"up": "scroll-up", "down": "scroll-down",
 		"q": "back",
+		"[": "tab-prev", "]": "tab-next",
 	},
+	"compose": {
+		"j": "form-down", "k": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"fuzzy": {
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+	},
+}
+
+// TestActionsCoverComposeAndFuzzy pins the action vocabulary: the
+// compose and fuzzy contexts exist in the builtin table, and the tab
+// actions are bound in every tabbed context (R4 tabs).
+func TestActionsCoverComposeAndFuzzy(t *testing.T) {
+	for _, ctx := range []string{"compose", "fuzzy"} {
+		if len(Actions[ctx]) == 0 {
+			t.Fatalf("Actions[%q] must cover the context", ctx)
+		}
+	}
+	for _, ctx := range []string{"index", "pager"} {
+		if !Actions[ctx]["tab-prev"] || !Actions[ctx]["tab-next"] {
+			t.Fatalf("Actions[%q] must carry tab-prev/tab-next", ctx)
+		}
+	}
 }
 
 func model() Model {
@@ -489,7 +520,7 @@ func TestProgressBarEmptyView(t *testing.T) {
 func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 80, 24
+	m.width, m.height = 160, 24
 	out := m.View().Content
 	if strings.Contains(out, "empty") {
 		t.Fatalf("the literal empty text must not render:\n%s", out)
@@ -505,7 +536,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 		t.Fatalf("the first blank row must carry the indicator style:\n%s", out)
 	}
 	lines := strings.Split(strip, "\n")
-	if len(lines) < 24 || lines[0] != strings.Repeat(" ", 80) {
+	if len(lines) < 24 || lines[0] != strings.Repeat(" ", 160) {
 		t.Fatalf("the list area must fill with blank rows:\n%s", strip)
 	}
 	// loading: the progress bar rides the same status line
@@ -522,7 +553,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 func TestProgressBarEmptyViewHints(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 120, 24
+	m.width, m.height = 160, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	strip := stripANSI(m.View().Content)
 	if !strings.Contains(strip, "refresh 1/5") {
@@ -853,7 +884,7 @@ func TestKeyhintBar(t *testing.T) {
 // and the pager context's table replaces it in pager mode.
 func TestKeyhintRowInView(t *testing.T) {
 	m := model()
-	m.width, m.height = 120, 24
+	m.width, m.height = 160, 24
 	strip := stripANSI(m.View().Content)
 	if !strings.Contains(strip, "j cursor-down") {
 		t.Fatalf("index hint row missing:\n%s", strip)

@@ -14,9 +14,11 @@ import (
 )
 
 // Actions is the BUILTIN action vocabulary per context (R9): the index
-// context carries navigation (including the gg/G edge jumps), open, and
-// the buffer/apply ops; the pager context the scroll and back/quit
-// surface. Tag actions are NOT in here - they come from the
+// context carries navigation (including the gg/G edge jumps), open, the
+// buffer/apply ops, the compose/reply/forward entry points, and the tab
+// keys; the pager context the scroll and back/quit surface plus the tab
+// keys; the compose context the dialogue keys (R4); the fuzzy context
+// the picker keys. Tag actions are NOT in here - they come from the
 // [tag-actions] config map; the app validates every binding value
 // against its context's map at startup (unknown action = load error).
 var Actions = map[string]map[string]bool{
@@ -25,6 +27,8 @@ var Actions = map[string]map[string]bool{
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
 		"open": true, "quit": true, "undo": true, "apply": true,
+		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"tab-prev": true, "tab-next": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -32,6 +36,18 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true,
+		"tab-prev": true, "tab-next": true,
+	},
+	"compose": {
+		"form-down": true, "form-up": true,
+		"edit": true, "attach": true, "detach": true,
+		"account": true, "signature": true,
+		"send": true, "abort": true,
+		"tab-prev": true, "tab-next": true,
+	},
+	"fuzzy": {
+		"fuzzy-down": true, "fuzzy-up": true,
+		"fuzzy-select": true, "fuzzy-cancel": true,
 	},
 }
 

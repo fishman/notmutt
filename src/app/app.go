@@ -68,20 +68,11 @@ func Run() error {
 
 	// open: the worker loads the thread's messages (headers + paths,
 	// ActThread), the TUI parses the files into the pager on the
-	// ThreadLoaded event (R13 two-step - content loads on open only)
-	tui.SetOpenHandler(func(threadID string) {
-		go func() {
-			rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
-			if err != nil {
-				bus.Publish(core.ThreadLoaded{ThreadID: threadID, Err: err})
-				return
-			}
-			if rpl.Err != nil {
-				bus.Publish(core.ThreadLoaded{ThreadID: threadID, Err: rpl.Err})
-				return
-			}
-			bus.Publish(core.ThreadLoaded{ThreadID: threadID, Msgs: rpl.Msgs})
-		}()
+	// ThreadLoaded event (R13 two-step - content loads on open only).
+	// The preview variant (the p key) skips the read-marking; the TUI
+	// keeps the index surface for the popup.
+	tui.SetOpenHandler(func(threadID string, preview bool) {
+		go openThread(worker, bus, threadID, preview)
 	})
 
 	// the signatures root (spec section 9): ONE path, both halves of
@@ -125,6 +116,35 @@ func Run() error {
 	}()
 	_, err = prog.Run()
 	return err
+}
+
+// openThread loads a thread through the worker and publishes
+// ThreadLoaded (R13 two-step: content loads on open only). A full open
+// (preview=false) marks the thread read with an ActTag -unread (R1 -
+// read is a tag; the refresh cycle reconciles it into the view). The
+// tag failure keeps the thread open - the fetch already succeeded -
+// and surfaces as a JobError.
+func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+	if err != nil {
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
+		return
+	}
+	if rpl.Err != nil {
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
+		return
+	}
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Msgs: rpl.Msgs})
+	if !preview {
+		rpl, err := worker.Call(notmuch.Action{
+			Kind:   notmuch.ActTag,
+			Query:  "thread:" + threadID,
+			TagOps: []core.TagOp{{Tag: "unread", Add: false}},
+		})
+		if err != nil || rpl.Err != nil {
+			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", threadID, err, rpl.Err)})
+		}
+	}
 }
 
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {

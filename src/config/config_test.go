@@ -199,7 +199,7 @@ default_signature = "gmail"
 func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	want := map[string]string{
-		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",

@@ -21,7 +21,7 @@ import (
 )
 
 var testKeys = map[string]string{
-	"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+	"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
 	"r": "toggle-read", "a": "archive", "d": "delete",
 	"u": "undo", "$": "apply",
 	"m": "compose", "R": "reply", "F": "forward",
@@ -829,7 +829,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
 	m.width, m.height = 80, 24
 	path := fixtureMsg(t, "body line\n")
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
@@ -987,7 +987,7 @@ func rowsModel(n int) Model {
 // carries the pager state.
 func openPager(t *testing.T, m Model, path string) Model {
 	t.Helper()
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
@@ -1169,7 +1169,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
@@ -1204,7 +1204,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
@@ -1399,7 +1399,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 	}
 	m := model()
 	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}},
@@ -1419,7 +1419,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 func TestThreadLoadedEmptyFallsBackToIndex(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID}})
 		m = next.(Model)
 	})
@@ -1432,7 +1432,7 @@ func TestThreadLoadedEmptyFallsBackToIndex(t *testing.T) {
 func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string) {
+	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
 		m = next.(Model)
 	})

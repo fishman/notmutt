@@ -28,8 +28,13 @@ func keyhintRow(km map[string]string, w int) string {
 }
 
 // activeBindings resolves the current context's map, falling back to
-// the index map for modes without bindings.
+// the index map for modes without bindings. The preview popup borrows
+// the pager surface: its scroll keys ARE the pager keys, so the
+// keyhint derives the same way (R9 - the binding data answers).
 func (m Model) activeBindings() map[string]string {
+	if m.preview {
+		return m.bindings["pager"]
+	}
 	if km := m.bindings[m.mode]; km != nil {
 		return km
 	}
@@ -43,7 +48,7 @@ func (m Model) activeBindings() map[string]string {
 // per (mode, armed prefix, width) - a cursor move repaints it without
 // rebuilding.
 func (m Model) keyhint() string {
-	sig := m.mode + "|" + m.pendingPrefix + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+	sig := m.mode + "|" + strconv.FormatBool(m.preview) + "|" + m.pendingPrefix + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.hintLayer.get(sig, m.keyhintBuild)
 }
 

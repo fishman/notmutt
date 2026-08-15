@@ -149,9 +149,13 @@ type SendResult struct {
 // ThreadLoaded carries the open thread's messages (headers + file
 // paths) from the worker to the TUI (R13 two-step: content loads on
 // open only). Err names a failed worker call; the TUI falls back to
-// index mode.
+// index mode. Preview marks the preview fetch (the p key): the load
+// did NOT mark the thread read, and the TUI shows the popup instead of
+// switching to the pager - a stale preview reply (closed or
+// re-targeted meanwhile) drops in onThreadLoaded.
 type ThreadLoaded struct {
 	ThreadID string
+	Preview  bool
 	Msgs     []Message
 	Err      error
 }

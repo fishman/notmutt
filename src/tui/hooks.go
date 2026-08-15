@@ -16,10 +16,11 @@ func SetApplyHandler(fn func()) {
 // onOpen is the open seam: the app wires it with SetOpenHandler (the
 // open key hands the thread id to the app, which loads the thread's
 // messages and publishes ThreadLoaded); the default is a no-op so the
-// model works in tests.
-var onOpen = func(threadID string) {}
+// model works in tests. preview=true is the preview fetch - the app
+// skips the read-marking, the model keeps the index mode.
+var onOpen = func(threadID string, preview bool) {}
 
-func SetOpenHandler(fn func(string)) {
+func SetOpenHandler(fn func(string, bool)) {
 	onOpen = fn
 }
 

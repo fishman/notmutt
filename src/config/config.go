@@ -499,7 +499,7 @@ func (c Config) AccountTags() map[string]bool {
 // classic index keys, pager scroll keys. Declarative data, never code.
 var vimScheme = map[string]map[string]string{
 	"index": {
-		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
@@ -535,7 +535,7 @@ var vimScheme = map[string]map[string]string{
 // rest scheme-neutral (open, tag actions, undo, apply, quit).
 var emacsScheme = map[string]map[string]string{
 	"index": {
-		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up", "o": "open",
+		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up", "o": "open", "p": "preview",
 		"q": "quit", "r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",

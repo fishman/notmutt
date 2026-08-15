@@ -41,7 +41,7 @@ var Actions = map[string]map[string]bool{
 		"cursor-down": true, "cursor-up": true,
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
-		"open": true, "quit": true, "undo": true, "apply": true,
+		"open": true, "preview": true, "quit": true, "undo": true, "apply": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true,
@@ -163,6 +163,15 @@ type Model struct {
 	// help is the ? overlay: any keypress closes it (the check runs
 	// before dispatch, so the closing key never fires).
 	help bool
+	// preview is the preview popup (the p key): the thread loads
+	// WITHOUT the read-marking, the box overlays the index, and the
+	// cursor stays put. previewThread is the load's guard - a stale
+	// preview reply (closed or re-targeted meanwhile) drops in
+	// onThreadLoaded; previewTitle is the popup title (the cursor
+	// row's subject, captured at press time).
+	preview       bool
+	previewThread string
+	previewTitle  string
 	// prompt is the attach path input row; non-nil captures the
 	// prompt keys and replaces the compose keyhint row.
 	prompt *pathPrompt
@@ -228,8 +237,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// pager window (height-2). Re-size and re-style even in
 			// index mode: a resize between close and re-open must not
 			// leave the window at the old width (the re-open guard
-			// skips the re-render).
-			m.pager.setSize(m.width, m.height-2, m.styles)
+			// skips the re-render). The preview popup sizes its pager
+			// to the box's content area instead (pagerSize).
+			w, h := m.pagerSize()
+			m.pager.setSize(w, h, m.styles)
 		}
 	case tea.KeyPressMsg:
 		if m.prompt != nil {
@@ -244,6 +255,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// any key closes the help overlay without firing
 			m.help = false
 			return m, nil
+		}
+		if m.preview {
+			// the popup captures the keys: the pager scroll keys
+			// scroll the box, o promotes to a full open, anything else
+			// closes
+			return m.previewKey(msg)
 		}
 		km := m.activeBindings()
 		// vim-style prefixes (R9 data-first): digits accumulate a
@@ -445,6 +462,10 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "open":
 		if m.mode == "index" {
 			m.openCursorThread()
+		}
+	case "preview":
+		if m.mode == "index" {
+			m.previewCursorThread()
 		}
 	case "quit":
 		return m, tea.Quit
@@ -656,8 +677,10 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 		if m.pager != nil {
 			// the pager's render is cached - without re-styling here a
 			// variant switch keeps the old colors until the next
-			// resize or re-open
-			m.pager.setSize(m.width, m.height-2, m.styles)
+			// resize or re-open (the preview box sizes the pager to
+			// its content area, pagerSize)
+			w, h := m.pagerSize()
+			m.pager.setSize(w, h, m.styles)
 		}
 	}
 }
@@ -667,7 +690,31 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 // the pager (a stale pager would serve old content on a later reload).
 // The thread-id guard makes a repeated load of the already-open thread
 // a no-op (idempotent handler): content and scroll position survive.
+// A PREVIEW reply only fills the box when the model still targets that
+// thread - a stale preview (closed or re-targeted meanwhile) drops
+// silently - and the index surface stays put (mode is re-forced to
+// index in case a racing full-open reply flipped it meanwhile).
 func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
+	if e.Preview {
+		if m.preview && e.ThreadID == m.previewThread {
+			m.mode = "index"
+			if e.Err != nil {
+				m.closePreview()
+				return
+			}
+			if e.ThreadID != pagerThreadID(m.pager) {
+				lines, err := mail.RenderThread(e.Msgs)
+				if err != nil {
+					m.closePreview()
+					return
+				}
+				m.pager = newPager(e.ThreadID, lines)
+				w, h := m.pagerSize()
+				m.pager.setSize(w, h, m.styles)
+			}
+		}
+		return
+	}
 	if e.Err != nil {
 		m.mode, m.pager = "index", nil
 		return
@@ -681,7 +728,8 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.pager = newPager(e.ThreadID, lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
-		m.pager.setSize(m.width, m.height-2, m.styles)
+		w, h := m.pagerSize()
+		m.pager.setSize(w, h, m.styles)
 	}
 	m.mode = "pager"
 	m.legendPending = true
@@ -722,22 +770,134 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	m.attachTab()
 }
 
-// openCursorThread hands the cursor row's thread to the open seam (the
-// app loads it and publishes ThreadLoaded). Ghost and stub rows carry
-// the thread id in the row itself; the message fallback covers rows
-// built before the thread id landed on them.
-func (m *Model) openCursorThread() {
+// cursorThreadID resolves the cursor row's thread id and subject (the
+// preview title source); empty tid means no openable thread. Ghost and
+// stub rows carry the thread id in the row itself; the message
+// fallback covers rows built before the thread id landed on them.
+func (m *Model) cursorThreadID() (tid, subject string) {
 	row, ok := m.view.CursorRow()
 	if !ok {
-		return
+		return "", ""
 	}
-	tid := row.ThreadID
+	tid = row.ThreadID
 	if tid == "" && row.Msg != nil {
 		tid = row.Msg.ThreadID
 	}
-	if tid != "" {
-		onOpen(tid)
+	if row.Msg != nil {
+		subject = row.Msg.Subject
 	}
+	return tid, subject
+}
+
+// openCursorThread hands the cursor row's thread to the open seam (the
+// app loads it, marks it read, and publishes ThreadLoaded).
+func (m *Model) openCursorThread() {
+	tid, _ := m.cursorThreadID()
+	if tid != "" {
+		onOpen(tid, false)
+	}
+}
+
+// previewCursorThread opens the cursor thread in the preview popup
+// instead: the same seam with preview=true (the app skips the
+// read-marking), the popup armed immediately (the empty pager renders
+// the title until the load lands), and any stale open pager dropped -
+// the box must never show another thread's content. The pre-load pager
+// carries an EMPTY threadID: the load's idempotent guard must rebuild,
+// not mistake the empty box for the loaded thread.
+func (m *Model) previewCursorThread() {
+	tid, subject := m.cursorThreadID()
+	if tid == "" {
+		return
+	}
+	if subject == "" {
+		subject = "thread " + tid
+	}
+	m.preview = true
+	m.previewThread = tid
+	m.previewTitle = subject
+	m.pager = newPager("", nil)
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+	onOpen(tid, true)
+}
+
+// previewKey drives the popup: the pager scroll actions scroll the
+// box, o promotes to a full open, anything else closes. Scrolls defer
+// their paint like pager navigation. The promotion keeps the loaded
+// pager (content and scroll position survive via the reload guard);
+// an in-flight load rebuilds fresh instead.
+func (m Model) previewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if msg.Text == "o" {
+		tid := m.previewThread
+		m.preview, m.previewThread, m.previewTitle = false, "", ""
+		if len(m.pager.lines) > 0 {
+			// the pager leaves the box: re-size it to the full frame
+			w, h := m.pagerSize()
+			m.pager.setSize(w, h, m.styles)
+		} else {
+			m.pager = nil
+		}
+		onOpen(tid, false)
+		return m, nil
+	}
+	switch actionForKey(msg, m.bindings["pager"]) {
+	case "scroll-down":
+		m.pager.scrollDown(1)
+	case "scroll-up":
+		m.pager.scrollUp(1)
+	case "page-down":
+		m.pager.pageDown()
+	case "page-up":
+		m.pager.pageUp()
+	case "half-page-down":
+		m.pager.halfPageDown()
+	case "half-page-up":
+		m.pager.halfPageUp()
+	case "scroll-top":
+		m.pager.scrollTop()
+	case "scroll-bottom":
+		m.pager.scrollBottom()
+	default:
+		m.closePreview()
+		return m, nil
+	}
+	m.paint, m.renderDue = false, true
+	return m, m.armFrameTick()
+}
+
+// closePreview drops the preview popup and its pager, returning to the
+// plain index surface.
+func (m *Model) closePreview() {
+	m.preview = false
+	m.previewThread = ""
+	m.previewTitle = ""
+	m.pager = nil
+}
+
+// pagerSize resolves the pager window: the preview box's content area
+// while previewing (the box grows and shrinks with the terminal), the
+// full frame otherwise. Every pager resize goes through this so the
+// two surfaces never disagree on the window.
+func (m Model) pagerSize() (int, int) {
+	if m.preview {
+		return m.previewContentSize()
+	}
+	return m.width, m.height - 2
+}
+
+// previewContentSize is the popup box's content area: the box spans
+// the width minus 4, starts 2 rows down, and its title and hint rows
+// take 2 of the box's inner rows.
+func (m Model) previewContentSize() (int, int) {
+	boxW, boxH := m.width-4, m.height-6
+	if boxW < 2 {
+		boxW = 2
+	}
+	if boxH < 4 {
+		boxH = 4
+	}
+	return boxW - 2, boxH - 4
 }
 
 // actionForKey resolves the pressed key: runes first (plain keys),
@@ -1215,7 +1375,7 @@ func (m Model) render() string {
 		b.WriteString(m.keyhint())
 		b.WriteByte('\n')
 		b.WriteString(m.statusLineWith(st, m.ui))
-		return b.String()
+		return m.overlayPreview(b.String())
 	}
 	cur := m.CursorIndex()
 	// the window is ANCHORED at indexOffset (the read-position model):
@@ -1299,7 +1459,61 @@ func (m Model) render() string {
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
-	return b.String()
+	return m.overlayPreview(b.String())
+}
+
+// overlayPreview splices the preview popup over the index frame: a
+// bordered box (title, pager content, hint) whose rows replace WHOLE
+// frame lines, so the splice never cuts an SGR sequence. The pager is
+// sized to the box's content area (pagerSize), so its lines fit the
+// box exactly; before the load lands the empty pager renders blank
+// content rows. A terminal too small for the box (height < 10) leaves
+// the frame untouched.
+func (m Model) overlayPreview(frame string) string {
+	if !m.preview {
+		return frame
+	}
+	lines := strings.Split(frame, "\n")
+	boxW, boxH := m.width-4, m.height-6
+	if boxW < 2 {
+		boxW = 2
+	}
+	if boxH < 4 {
+		return frame
+	}
+	top := 2
+	// index mode renders short lists shorter than the window (only the
+	// empty view pads to height); the popup must splice a full-height
+	// frame - pad the list section before the keyhint/status tail
+	pad := m.height - len(lines)
+	if pad > 0 {
+		tail := append([]string{}, lines[len(lines)-2:]...)
+		lines = append(lines[:len(lines)-2], make([]string, pad)...)
+		lines = append(lines, tail...)
+	}
+	if top+boxH > len(lines) {
+		boxH = len(lines) - top
+	}
+	if boxH < 4 {
+		return frame
+	}
+	sg := m.styles.sgr
+	ch := boxH - 4
+	content := make([]string, ch)
+	if m.pager != nil {
+		copy(content, strings.Split(m.pager.render(), "\n"))
+	}
+	rows := make([]string, 0, boxH)
+	edge := sg.indicator
+	rows = append(rows, padRowSGR("+"+strings.Repeat("-", boxW-2)+"+", m.width, edge))
+	rows = append(rows, padRowSGR(m.previewTitle, m.width, edge))
+	for _, c := range content {
+		rows = append(rows, padRowSGR("|"+c+"|", m.width, sg.normal))
+	}
+	rows = append(rows, padRowSGR("j/k scroll  o open  q close", m.width, sg.normal))
+	rows = append(rows, padRowSGR("+"+strings.Repeat("-", boxW-2)+"+", m.width, edge))
+	copy(lines[top:top+boxH], rows)
+	return strings.Join(lines, "\n")
 }
 
 // statusLineWith builds the status data from the model's view and

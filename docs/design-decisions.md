@@ -182,7 +182,35 @@ The measurements that settled it:
   offset paging, which measurement killed (~40s for 33 paged calls vs
   ~5s for one walk).
 
-## 16. Privacy and trust boundaries
+## 16. Render caches: content-addressed rows and region layers (2026-08-15)
+
+Decision: the frame's regions cache model-side. BubbleTea v2 has no
+layer API (the View is one flat string; the vendored source's layer
+doc mention is stale), so the cache lives on the model: the keyhint,
+status, and help regions each rebuild only when their inputs change
+(mode, width, progress values, style version), and index rows cache
+content-addressed by the row's address plus every style-affecting
+parameter (numWidth, tagWidth, width, styleVer, selected, atts).
+
+Why the keying works: merges, tag changes, and staged ops reflatten
+and churn row addresses (auto-miss); SetAtts mutates the shared
+message without a reflatten, so the atts bool (the attach icon reads
+only len(Atts) > 0) covers it; styles resolve at two sites, covered by
+one styleVer bumped on theme changes. The cache is bounded (8192
+rows - a full walk at a few widths fits; overflow clears wholesale
+once per large scroll, never per press). The program holds the model
+by value, so render-time cache writes persist only through reference
+fields (the map and the layer pointers) - the shape the cache design
+is built on.
+
+Measured (5000-row list, 40 visible): hit path 23.6us vs 182us
+cleared per frame build (7.7x) - the steady-state press was 133-148us
+before the cache. The benchmark trap: a never-moved model resolves
+the cursor via the view's flattening CursorRow per frame (the
+documented page-key stall at 33k rows), which dwarfs the row cost -
+the benchmark arms the cursor-id scan with one real move first.
+
+## 17. Privacy and trust boundaries
 
 Decision: mail content (bodies, headers, whole .eml/.mbox files) is
 never submitted to an LLM; a field inside mail is extracted by script
@@ -193,7 +221,7 @@ content never interpolates into shell strings (F4); everything written
 is 0600/0700 (F5/F7); bodies, headers, and passphrases are never logged
 (F6).
 
-## 17. Supply chain
+## 18. Supply chain
 
 Decision: minimal, deliberate dependency set - every dependency must
 earn its place; exact pins; the build is vendored and reproducible; the

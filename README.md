@@ -44,6 +44,7 @@ The render-coalescing round addressed all three. Measured on the
 | single press, full list | ~2.5ms frame build | 133us |
 | pager resize, 20k-line document | 385ms | 44-74us |
 | fill-window press, whole-fill batch | 2.61ms | 147us (17.7x) |
+| frame rebuild, all rows cached (40 visible @ 5k list) | 182us uncached | 24us (7.7x) |
 
 The mechanisms: SGR sequences precomputed at style resolution (was 58%
 of the frame build), lazy pager styling (visible window only), the
@@ -52,6 +53,10 @@ flatten rebuilt only on dirty marks with the refresh merging in
 batches, and render coalescing: state updates land at input rate,
 paints coalesce at an 8ms cadence (the debounce and the cadence are
 one constant), the key release paints immediately to settle a hold.
+On top of that: a content-addressed row-string cache (a cursor move
+restyles only the two rows whose selection flips; every other row
+concatenates from the cache) and region layers for the keyhint,
+status, and help rows, which rebuild only when their inputs change.
 
 The remaining structural differences are deliberate: full-frame
 rebuilds are the price of a maintained BubbleTea model, and the thread

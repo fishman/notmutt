@@ -63,7 +63,7 @@ func (m *Model) renderCompose() string {
 	if st.Phase == compose.PhaseAborting {
 		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
 	} else {
-		b.WriteString(keyhintRow(m.bindings["compose"], m.width))
+		b.WriteString(m.keyhint())
 	}
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(m.styles, m.ui))

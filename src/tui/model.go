@@ -16,6 +16,10 @@ import (
 	"notmutt/mail"
 )
 
+// chainTimeout expires an armed multi-key prefix: a stray first key
+// never mis-sequences a later press. Tests shrink it to 0.
+var chainTimeout = time.Second
+
 // Actions is the BUILTIN action vocabulary per context (R9): the index
 // context carries navigation (including the gg/G edge jumps), open, the
 // buffer/apply ops, the compose/reply/forward entry points, and the tab
@@ -32,6 +36,7 @@ var Actions = map[string]map[string]bool{
 		"open": true, "quit": true, "undo": true, "apply": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
+		"help": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -40,6 +45,7 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true,
 		"tab-prev": true, "tab-next": true,
+		"help": true,
 	},
 	"compose": {
 		"form-down": true, "form-up": true,
@@ -47,6 +53,7 @@ var Actions = map[string]map[string]bool{
 		"account": true, "signature": true,
 		"send": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
+		"help": true,
 	},
 	"fuzzy": {
 		"fuzzy-down": true, "fuzzy-up": true,
@@ -106,10 +113,13 @@ type Model struct {
 	// the mail title) and the account resolution scans against it.
 	accountTags map[string]bool
 	// vim-style prefixes (R9 data-first): digit keys accumulate into
-	// count (a bound digit wins), and "g" arms the gg chain - both
-	// engage only when the active context does NOT bind the key.
-	count     string
-	ggPending bool
+	// count (a bound digit wins), and an unbound key can arm a
+	// multi-key chain (space-joined data keys - "g g", "g r") that
+	// expires after chainTimeout. Both engage only when the active
+	// context does NOT bind the key.
+	count         string
+	pendingPrefix string
+	pendingAt     time.Time
 	// compose tabs: the dialogue stack (R4). tabIdx 0 = the mail
 	// surface (index/pager); tabIdx > 0 = tabs[tabIdx-1] attached as
 	// the compose dialogue. Stepping off a dialogue parks it - state
@@ -123,6 +133,9 @@ type Model struct {
 	// fuzzy is the selector popup (account/signature); non-nil
 	// renders the popup frame and captures the fuzzy context.
 	fuzzy *fuzzy
+	// help is the ? overlay: any keypress closes it (the check runs
+	// before dispatch, so the closing key never fires).
+	help bool
 	// prompt is the attach path input row; non-nil captures the
 	// prompt keys and replaces the compose keyhint row.
 	prompt *pathPrompt
@@ -165,39 +178,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fuzzyKey(msg, m.bindings["fuzzy"])
 			return m, nil
 		}
-		km := m.bindings[m.mode]
-		if km == nil {
-			km = m.bindings["index"]
+		if m.help {
+			// any key closes the help overlay without firing
+			m.help = false
+			return m, nil
 		}
-		// vim-style prefixes: digits accumulate a count and "g" chains
-		// with the next "g" (gg = top); a counted "g" jumps to the
-		// numbered row (12g = row 12). A binding in the active context
-		// wins over the prefix (R9 data-first) - the prefix only engages
-		// on keys the context leaves unbound.
+		km := m.activeBindings()
+		// vim-style prefixes (R9 data-first): digits accumulate a
+		// count; an unbound key can arm a multi-key chain (space-
+		// joined data keys) that expires after chainTimeout. A bound
+		// key wins over the prefix - the prefix only engages on keys
+		// the context leaves unbound. A counted "g" keeps its jump
+		// semantic (12g = row 12) - the chain data never sees it.
 		r := msg.Text
 		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' {
-			m.ggPending = false
+			m.pendingPrefix = ""
 			m.count += r
 			return m, nil
 		}
-		if km[r] == "" && r == "g" {
-			if m.count != "" {
-				// counted g: jump to the numbered row (consumes the
-				// count either way - an unusable count is a no-op)
-				n, _ := strconv.Atoi(m.count)
-				m.count = ""
-				m.ggPending = false
-				if m.mode == "index" && n > 0 {
-					m.gotoRow(n)
-				}
-				return m, nil
+		if km[r] == "" && r == "g" && m.count != "" {
+			// counted g: jump to the numbered row (consumes the
+			// count either way - an unusable count is a no-op)
+			n, _ := strconv.Atoi(m.count)
+			m.count = ""
+			m.pendingPrefix = ""
+			if m.mode == "index" && n > 0 {
+				m.gotoRow(n)
 			}
-			if m.ggPending {
-				m.ggPending = false
-				m.goTop()
-				return m, nil
-			}
-			m.ggPending = true
 			return m, nil
 		}
 		n := 1
@@ -205,149 +212,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			n, _ = strconv.Atoi(m.count)
 			m.count = ""
 		}
-		if m.ggPending {
-			// the g-prefix chain: gg = top (above), g r = reply-all.
-			// Any other next key consumes the chain and dispatches
-			// normally.
-			m.ggPending = false
-			if r == "r" && (m.mode == "index" || m.mode == "pager") {
-				m.openReply("reply-all")
-				return m, nil
-			}
-		}
-		m.ggPending = false
-		switch action := actionForKey(msg, km); action {
-		case "cursor-down":
-			m.moveCursor(n)
-		case "cursor-up":
-			m.moveCursor(-n)
-		case "cursor-top":
-			m.cursorTop()
-		case "cursor-bottom":
-			m.cursorBottom()
-		case "open":
-			if m.mode == "index" {
-				m.openCursorThread()
-			}
-		case "quit":
-			return m, tea.Quit
-		case "undo":
-			if m.undo() {
-				m.moveCursor(1)
-			}
-		case "apply":
-			onApply()
-		case "scroll-down":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.scrollDown(n)
-			}
-		case "scroll-up":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.scrollUp(n)
-			}
-		case "page-down":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.pageDown()
-			} else if m.mode == "index" {
-				m.moveCursor(m.pageRows())
-			}
-		case "page-up":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.pageUp()
-			} else if m.mode == "index" {
-				m.moveCursor(-m.pageRows())
-			}
-		case "half-page-down":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.halfPageDown()
-			}
-		case "half-page-up":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.halfPageUp()
-			}
-		case "scroll-top":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.scrollTop()
-			}
-		case "scroll-bottom":
-			if m.mode == "pager" && m.pager != nil {
-				m.pager.scrollBottom()
-			}
-		case "back":
-			if m.mode == "pager" {
-				m.mode = "index"
-			}
-		case "reply":
-			m.openReply("reply")
-		case "forward":
-			m.openReply("forward")
-		case "compose":
-			m.openReply("compose")
-		case "tab-prev":
-			m.tabPrev()
-		case "tab-next":
-			m.tabNext()
-		case "form-down":
-			if m.composeTab().Phase == compose.PhaseAborting {
-				m.composeTab().Phase = compose.PhaseEditing
-			}
-			m.formIdx++
-			if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
-				m.formIdx = max
-			}
-		case "form-up":
-			if m.formIdx > 0 {
-				m.formIdx--
-			}
-		case "edit":
-			if m.composeTab().Phase == compose.PhaseFailed {
-				m.composeTab().Phase = compose.PhaseEditing
-			}
-			st := *m.composeTab()
-			tabID := st.ID
-			path, err := writeEditorBuffer(st)
-			if err != nil {
-				return m, nil
-			}
-			return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
-				return editorDoneMsg{err: err, path: path, tabID: tabID}
-			})
-		case "attach":
-			m.prompt = &pathPrompt{}
-		case "detach":
-			t := m.composeTab()
-			if i := m.formIdx - 4; i >= 0 && i < len(t.Attachments) {
-				t.Attachments = slices.Delete(t.Attachments, i, i+1)
-			}
-		case "account":
-			m.openPicker("account")
-		case "signature":
-			m.openPicker("signature")
-		case "send":
-			if m.composeTab().Phase != compose.PhaseFailed {
-				m.composeTab().Phase = compose.PhaseSending
-			}
-			onSend(*m.composeTab())
-		case "abort":
-			st := m.composeTab()
-			if st.Phase == compose.PhaseAborting {
-				m.closeComposeTab(m.tabIdx - 1)
+		if m.pendingPrefix != "" {
+			// a chain is armed: the next key completes, extends, or
+			// kills it. An expired prefix dies like a dead key.
+			if time.Since(m.pendingAt) >= chainTimeout {
+				m.pendingPrefix = ""
 			} else {
-				st.Phase = compose.PhaseAborting
+				cand := m.pendingPrefix + " " + r
+				m.pendingPrefix = ""
+				switch {
+				case r != "" && km[cand] != "":
+					return m.dispatchAction(km[cand], n)
+				case r != "" && chainContinuation(km, cand):
+					m.pendingPrefix = cand
+					m.pendingAt = time.Now()
+					return m, nil
+				}
+				// dead key (or a special key): the chain dies and
+				// the key dispatches normally below
 			}
-		default:
-			// staged tag ops (and undo) advance the cursor one row -
-			// the next keypress acts on the next message (mutt's
-			// auto-advance). A no-op action (ghost row, unknown action)
-			// does not move.
-			if m.stage(action) {
-				m.moveCursor(1)
-			}
+		} else if r != "" && km[r] == "" && chainContinuation(km, r) {
+			m.pendingPrefix = r
+			m.pendingAt = time.Now()
+			return m, nil
 		}
-		if m.legendPending && !m.legendTickOn {
-			m.legendTickOn = true
-			return m, legendTickCmd(m.legendMoves)
-		}
+		return m.dispatchAction(actionForKey(msg, km), n)
 	case tea.KeyReleaseMsg:
 		// the real keyup (kitty keyboard protocol release reporting):
 		// the legend resolves at the release, no debounce needed.
@@ -443,6 +332,172 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// dispatchAction runs a bound action with its count, then the
+// legend-tick tail (the fall-through path). Actions with their own
+// cmds (quit, edit) return them directly. Multi-key chains resolve
+// here too - the chain machinery dispatches the completed chain's
+// action, and "?" opens the help overlay.
+func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
+	switch action {
+	case "cursor-down":
+		m.moveCursor(n)
+	case "cursor-up":
+		m.moveCursor(-n)
+	case "cursor-top":
+		m.cursorTop()
+	case "cursor-bottom":
+		m.cursorBottom()
+	case "open":
+		if m.mode == "index" {
+			m.openCursorThread()
+		}
+	case "quit":
+		return m, tea.Quit
+	case "undo":
+		if m.undo() {
+			m.moveCursor(1)
+		}
+	case "apply":
+		onApply()
+	case "scroll-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollDown(n)
+		}
+	case "scroll-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollUp(n)
+		}
+	case "page-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.pageDown()
+		} else if m.mode == "index" {
+			m.moveCursor(m.pageRows())
+		}
+	case "page-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.pageUp()
+		} else if m.mode == "index" {
+			m.moveCursor(-m.pageRows())
+		}
+	case "half-page-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.halfPageDown()
+		}
+	case "half-page-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.halfPageUp()
+		}
+	case "scroll-top":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollTop()
+		}
+	case "scroll-bottom":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollBottom()
+		}
+	case "back":
+		if m.mode == "pager" {
+			m.mode = "index"
+		}
+	case "reply":
+		m.openReply("reply")
+	case "reply-all":
+		m.openReply("reply-all")
+	case "forward":
+		m.openReply("forward")
+	case "compose":
+		m.openReply("compose")
+	case "tab-prev":
+		m.tabPrev()
+	case "tab-next":
+		m.tabNext()
+	case "form-down":
+		if m.composeTab().Phase == compose.PhaseAborting {
+			m.composeTab().Phase = compose.PhaseEditing
+		}
+		m.formIdx++
+		if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
+			m.formIdx = max
+		}
+	case "form-up":
+		if m.formIdx > 0 {
+			m.formIdx--
+		}
+	case "edit":
+		if m.composeTab().Phase == compose.PhaseFailed {
+			m.composeTab().Phase = compose.PhaseEditing
+		}
+		st := *m.composeTab()
+		tabID := st.ID
+		path, err := writeEditorBuffer(st)
+		if err != nil {
+			return m, nil
+		}
+		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+			return editorDoneMsg{err: err, path: path, tabID: tabID}
+		})
+	case "attach":
+		if m.composeTab().Phase != compose.PhaseSending {
+			m.prompt = &pathPrompt{}
+		}
+	case "detach":
+		t := m.composeTab()
+		if t.Phase != compose.PhaseSending {
+			if i := m.formIdx - 4; i >= 0 && i < len(t.Attachments) {
+				t.Attachments = slices.Delete(t.Attachments, i, i+1)
+			}
+		}
+	case "account":
+		m.openPicker("account")
+	case "signature":
+		m.openPicker("signature")
+	case "send":
+		// PhaseSending gates duplicate presses: one job in flight
+		// (the detach/attach gates protect the shared Attachments
+		// slice while sendJob's Assemble reads it)
+		if m.composeTab().Phase != compose.PhaseSending {
+			if m.composeTab().Phase != compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseSending
+			}
+			onSend(*m.composeTab())
+		}
+	case "abort":
+		st := m.composeTab()
+		if st.Phase == compose.PhaseAborting {
+			m.closeComposeTab(m.tabIdx - 1)
+		} else {
+			st.Phase = compose.PhaseAborting
+		}
+	case "help":
+		m.help = true
+	default:
+		// staged tag ops (and undo) advance the cursor one row -
+		// the next keypress acts on the next message (mutt's
+		// auto-advance). A no-op action (ghost row, unknown action)
+		// does not move.
+		if m.stage(action) {
+			m.moveCursor(1)
+		}
+	}
+	if m.legendPending && !m.legendTickOn {
+		m.legendTickOn = true
+		return m, legendTickCmd(m.legendMoves)
+	}
+	return m, nil
+}
+
+// chainContinuation reports whether any binding key extends the
+// prefix: the prefix can still become a complete chain, so the key
+// arms instead of dispatching.
+func chainContinuation(km map[string]string, prefix string) bool {
+	for k := range km {
+		if k != prefix && strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // onConfig re-resolves the render styles when the theme section
@@ -753,16 +808,6 @@ func (m *Model) clampIndexOffset() {
 	}
 }
 
-// goTop jumps to the top of the current view (the gg chain): the index
-// cursor to the first message, the pager window to the first line.
-func (m *Model) goTop() {
-	if m.mode == "pager" && m.pager != nil {
-		m.pager.scrollTop()
-		return
-	}
-	m.cursorTop()
-}
-
 // cursorTop/cursorBottom jump the index cursor to the first/last real
 // row (gg / G) and pin the window to the matching edge. moveCursor's
 // boundary walk cannot reach backward past a leading ghost row, so the
@@ -934,6 +979,9 @@ func (m Model) View() tea.View {
 // and shifts every line - the diff then matches nothing and the whole page
 // repaints on every keypress.
 func (m Model) render() string {
+	if m.help {
+		return m.renderHelp()
+	}
 	if m.mode == "compose" {
 		return m.renderCompose()
 	}
@@ -941,7 +989,7 @@ func (m Model) render() string {
 		var b strings.Builder
 		b.WriteString(m.pager.render())
 		b.WriteString("\n")
-		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+		b.WriteString(m.keyhint())
 		b.WriteString("\n")
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
 		return b.String()
@@ -971,7 +1019,7 @@ func (m Model) render() string {
 			}
 			b.WriteByte('\n')
 		}
-		b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+		b.WriteString(m.keyhint())
 		b.WriteByte('\n')
 		b.WriteString(m.statusLineWith(st, m.ui))
 		return b.String()
@@ -1029,7 +1077,7 @@ func (m Model) render() string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
-	b.WriteString(keyhintRow(m.bindings[m.mode], m.width))
+	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
 	return b.String()

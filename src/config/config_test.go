@@ -204,6 +204,8 @@ func TestDefaultBindings(t *testing.T) {
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
 		"m": "compose", "R": "reply", "F": "forward",
+		"g g": "cursor-top", "g r": "reply-all",
+		"?": "help",
 		"[": "tab-prev", "]": "tab-next",
 	}
 	if !maps.Equal(cfg.Bindings["index"], want) {
@@ -216,6 +218,7 @@ func TestDefaultBindings(t *testing.T) {
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	}
 	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
 		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
@@ -225,6 +228,7 @@ func TestDefaultBindings(t *testing.T) {
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	}
 	if !maps.Equal(cfg.Bindings["compose"], wantCompose) {
 		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)

@@ -504,6 +504,8 @@ var vimScheme = map[string]map[string]string{
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
 		"m": "compose", "R": "reply", "F": "forward",
+		"g g": "cursor-top", "g r": "reply-all",
+		"?": "help",
 		"[": "tab-prev", "]": "tab-next",
 	},
 	"pager": {
@@ -513,12 +515,14 @@ var vimScheme = map[string]map[string]string{
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"compose": {
 		"j": "form-down", "k": "form-up",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"fuzzy": {
 		"j": "fuzzy-down", "k": "fuzzy-up",
@@ -537,6 +541,7 @@ var emacsScheme = map[string]map[string]string{
 		"pgdown": "page-down", "pgup": "page-up",
 		"m": "compose", "R": "reply", "F": "forward",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"pager": {
 		"ctrl+n": "scroll-down", "ctrl+p": "scroll-up",
@@ -544,12 +549,14 @@ var emacsScheme = map[string]map[string]string{
 		"pgdown": "page-down", "pgup": "page-up",
 		"ctrl+g": "back", "q": "quit",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"compose": {
 		"ctrl+n": "form-down", "ctrl+p": "form-up",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"fuzzy": {
 		"j": "fuzzy-down", "k": "fuzzy-up",

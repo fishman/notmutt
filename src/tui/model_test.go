@@ -28,6 +28,10 @@ var testKeys = map[string]string{
 	// the arrow and G keys come from the user config overlay (the
 	// defaults are untouched); the test table mirrors the live config
 	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
+	// multi-key chains are data like single keys (space-joined);
+	// "?" opens the help overlay (index context)
+	"g g": "cursor-top", "g r": "reply-all",
+	"?": "help",
 }
 
 // statusMarker is the unstyled view+count boundary on the status row:
@@ -54,12 +58,14 @@ var testBindings = map[string]map[string]string{
 		"up": "scroll-up", "down": "scroll-down",
 		"q": "back",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"compose": {
 		"j": "form-down", "k": "form-up",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"fuzzy": {
 		"j": "fuzzy-down", "k": "fuzzy-up",
@@ -81,6 +87,107 @@ func TestActionsCoverComposeAndFuzzy(t *testing.T) {
 		if !Actions[ctx]["tab-prev"] || !Actions[ctx]["tab-next"] {
 			t.Fatalf("Actions[%q] must carry tab-prev/tab-next", ctx)
 		}
+	}
+	// the help overlay (?) is bound and builtin in every tabbed context
+	for _, ctx := range []string{"index", "pager", "compose"} {
+		if !Actions[ctx]["help"] {
+			t.Errorf("Actions[%q] must define help", ctx)
+		}
+		if testBindings[ctx]["?"] != "help" {
+			t.Errorf("bindings[%q] must bind ? to help", ctx)
+		}
+	}
+}
+
+// TestChainDataCompletes pins the data-driven chain resolver: the
+// armed prefix is listed in the keyhint (queryable data, R9), and the
+// second key completes the chain into the bound action.
+func TestChainDataCompletes(t *testing.T) {
+	got := ""
+	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
+	defer SetReplyHandler(func(msg *core.Message, mode string) {})
+	m := model()
+	// g g completes as cursor-top (j moved the cursor down first)
+	m = press(t, m, "j")
+	m = press(t, m, "g")
+	m = press(t, m, "g")
+	if m.CursorIndex() != 0 {
+		t.Fatalf("g g must move the cursor to the top, idx=%d", m.CursorIndex())
+	}
+	// an armed prefix lists its continuations in the keyhint
+	m = press(t, m, "g")
+	frame := m.render()
+	clean := stripANSI(frame)
+	if !strings.Contains(clean, "g g cursor-top") || !strings.Contains(clean, "g r reply-all") {
+		t.Fatalf("the armed prefix must list its chains:\n%s", clean)
+	}
+	if strings.Contains(clean, "j cursor-down") {
+		t.Fatalf("an armed prefix must replace the base hint:\n%s", clean)
+	}
+	// g r completes as reply-all
+	m = press(t, m, "r")
+	if got != "reply-all" {
+		t.Fatalf("g r must open a reply-all, got %q", got)
+	}
+}
+
+// TestChainExpires pins the chain timeout: an expired prefix never
+// dispatches the stale completion - the next key acts on its own.
+func TestChainExpires(t *testing.T) {
+	old := chainTimeout
+	chainTimeout = 0
+	defer func() { chainTimeout = old }()
+	got := ""
+	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
+	defer SetReplyHandler(func(msg *core.Message, mode string) {})
+	m := model()
+	m = press(t, m, "g") // arms the prefix; the next press sees it expired
+	m = press(t, m, "r")
+	if got != "" {
+		t.Fatalf("an expired chain must not dispatch, got %q", got)
+	}
+}
+
+// TestHelpListsBindings pins the ? overlay: a full-frame binding list
+// for the active context, closed by any keypress without firing it.
+func TestHelpListsBindings(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "?")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the help frame must be exactly 24 lines, got %d", got)
+	}
+	clean := stripANSI(frame)
+	if !strings.Contains(clean, "help: index bindings") {
+		t.Fatalf("the help must title the context:\n%s", clean)
+	}
+	if !strings.Contains(clean, "j cursor-down") || !strings.Contains(clean, "g r reply-all") {
+		t.Fatalf("the help must list the bindings:\n%s", clean)
+	}
+	m = press(t, m, "j")
+	if m.help {
+		t.Fatal("a keypress must close the help")
+	}
+	if m.CursorIndex() != 0 {
+		t.Fatalf("the closing key must be consumed (cursor unmoved), idx=%d", m.CursorIndex())
+	}
+}
+
+// TestSendPhaseGuardNoDoubleSend pins the send gate (Task 14 quality
+// review note): while the job is in flight (PhaseSending) a second
+// send press must not launch a duplicate delivery. The detach/attach
+// gates share the same phase check - one test pins the mechanism.
+func TestSendPhaseGuardNoDoubleSend(t *testing.T) {
+	calls := 0
+	SetSendHandler(func(st compose.State) { calls++ })
+	defer SetSendHandler(func(st compose.State) {})
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "y")
+	m = press(t, m, "y")
+	if calls != 1 {
+		t.Fatalf("a second send press during PhaseSending must no-op, calls=%d", calls)
 	}
 }
 
@@ -530,7 +637,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	if !strings.Contains(strip, statusMarker("0")) {
 		t.Fatalf("idle empty view must still render the status line:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	if !strings.Contains(out, "229;192;123") {
@@ -560,10 +667,10 @@ func TestProgressBarEmptyViewHints(t *testing.T) {
 	if !strings.Contains(strip, "refresh 1/5") {
 		t.Fatalf("empty view must still render the status line:\n%s", strip)
 	}
-	if !strings.Contains(strip, "j cursor-down") {
+	if !strings.Contains(strip, "g g cursor-top") {
 		t.Fatalf("empty view must render the keyhint row:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 }
@@ -887,11 +994,11 @@ func TestKeyhintRowInView(t *testing.T) {
 	m := model()
 	m.width, m.height = 160, 24
 	strip := stripANSI(m.View().Content)
-	if !strings.Contains(strip, "j cursor-down") {
+	if !strings.Contains(strip, "g g cursor-top") {
 		t.Fatalf("index hint row missing:\n%s", strip)
 	}
 	status := statusMarker("2")
-	if si, sh := strings.Index(strip, "j cursor-down"), strings.Index(strip, status); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, status); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
@@ -899,7 +1006,7 @@ func TestKeyhintRowInView(t *testing.T) {
 	if !strings.Contains(strip, "j scroll-down") {
 		t.Fatalf("pager hint row missing:\n%s", strip)
 	}
-	if strings.Contains(strip, "j cursor-down") {
+	if strings.Contains(strip, "g g cursor-top") {
 		t.Fatalf("pager must not show index bindings:\n%s", strip)
 	}
 }

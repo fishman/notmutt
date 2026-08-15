@@ -137,9 +137,11 @@ Pointers: AGENTS.md R2, `muttrc/afew/config` (the reference side effects).
   godbus dependency only in that build.
 - **Preview popup vs open-reads distinction** - effort S. Existing pending
   task in the backlog (the pager opens reads; a preview popup is separate).
-- **Render coalescing lever** - effort M. Only if the lag fix round (dirty
-  batch, SGR precompute, tick kill, pager lazy style) proves insufficient on
-  slow terminals: throttle renderer flushes (~10-16 ms) to bound per-hold CPU.
+- **Whole-fill dirty batch on refresh** - effort S. Wrap the phase-2 emit
+  loop in one Begin/EndMerge pair (src/app/refresh.go). Measured 147us per
+  press in the fill window vs 2.61ms (17.7x) at the cost of the progressive
+  reveal - the list appears in one jump. Decision and numbers:
+  docs/design-decisions.md 15.
 - **Send-epoch stamping on SendResult** - effort S. Closes the one accepted
   residual from the M2 snapshot fix: a channel-delivered failure racing a
   retry dispatch can re-apply the stale failure for one Update.

@@ -98,6 +98,12 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		rows = append(rows, composeForm{slot: 4 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "---"})
+	// the form rows render mail-derived text (Subject/To/Cc from the
+	// replied-to message's headers) - same sanitizer as the index rows
+	// and the preview pane (F1)
+	for i := range rows {
+		rows[i].text = core.SanitizeControls(rows[i].text)
+	}
 	return rows
 }
 

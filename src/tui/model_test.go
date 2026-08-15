@@ -648,6 +648,27 @@ func TestRenderSanitizesControls(t *testing.T) {
 	}
 }
 
+// TestComposeFormSanitizesControls pins the F1 rule on the compose
+// form: Subject/To/Cc carry the replied-to message's headers
+// (attacker-controlled), so the form rows must pass the same
+// sanitizer as the index rows and the preview pane.
+func TestComposeFormSanitizesControls(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Subject = "evil\x1b[31mred"
+	m.tabs[0].To = []string{"x\x07y@example.com"}
+	m.width, m.height = 80, 24
+	out := m.View().Content
+	for _, leak := range []string{"\x1b[31m", "\x07"} {
+		if strings.Contains(out, leak) {
+			t.Fatalf("control chars leaked into the compose form:\n%q", out)
+		}
+	}
+	clean := stripANSI(out)
+	if !strings.Contains(clean, "Subject: evil") || !strings.Contains(clean, "xy@example.com") {
+		t.Fatalf("the sanitized fields must still render:\n%s", clean)
+	}
+}
+
 func TestProgressBarRendersAndClears(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24

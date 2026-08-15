@@ -24,12 +24,12 @@ written independently. Every mutation goes through notmuch; a read that
 finds the cache stale re-syncs from notmuch (startup is O(changed), a
 full walk only on cache miss or revision mismatch).
 
-## 3. CLI over cgo (R1, 2026-08-14, updated 2026-08-16)
+## 3. cgo as the runtime backend (R1, 2026-08-14, flipped 2026-08-16)
 
-Decision: the notmuch CLI is the runtime backend; go.notmuch (cgo) is
-compiled and measured but not the default (the flip is a separate
-decision - the batched walk only closes the speed gap). Measured on the
-inbox (33k mails / 32952 threads, NOTMUCH_BENCH=1):
+Decision: cgo (go.notmuch, vendored fork) IS the runtime backend; the
+CLI backend survives behind `-tags cli` as the F10 escape hatch - the
+same binary code, the same interface, one build tag away. Measured on
+the inbox (33k mails / 32952 threads, NOTMUCH_BENCH=1):
 
 | operation | CLI | cgo (per-message) | cgo (batched walk) |
 |---|---|---|---|
@@ -37,17 +37,29 @@ inbox (33k mails / 32952 threads, NOTMUCH_BENCH=1):
 | full walk | 1.58s | 8.7s | 1.65s |
 | thread fetch | 18ms | - | 8ms |
 
-The 8.7s was the per-message iterator overhead (~230us per row); the
-batched walk keeps the query and threads iterator alive in C across
-chunks and packs per-thread summaries into one buffer per boundary
-crossing (ThreadsWalk in the vendored binding), so the per-thread
-header-cache reads amortize C-side exactly like `notmuch search` does.
-Both backends emit identical per-thread summaries (thread id, newest
-date, authors, subject, tags), so the merge path is shared; per-message
-data still comes from Thread, on open only. The CLI's write-at-end JSON
-wall (measured 1.4s) is mitigated by the two-step fill, not by chunk
+Flip-day re-run (2026-08-16): cgo full walk 1.645s vs CLI 1.534s -
+parity, within run-to-run noise; the cgo peek (50) is 12ms and the
+thread fetch 8ms vs the CLI's 19ms. The 8.7s was the per-message
+iterator overhead (~230us per row); the batched walk keeps the query
+and threads iterator alive in C across chunks and packs per-thread
+summaries into one buffer per boundary crossing (ThreadsWalk in the
+vendored binding), so the per-thread header-cache reads amortize
+C-side exactly like `notmuch search` does. Both backends emit
+identical per-thread summaries (thread id, newest date, authors,
+subject, tags), so the merge path is shared; per-message data still
+comes from Thread, on open only. The CLI's write-at-end JSON wall
+(measured 1.4s) is mitigated by the two-step fill, not by chunk
 streaming - json0 is unsupported, so the parse buffers; chunk slicing
 alone cannot make the first paint early.
+
+Lock footprint: the cgo handle opens READ-ONLY and stays read-only for
+the fill; Tag reopens read-write for the op only (one atomic
+transaction, like `notmuch tag`) and reopens read-only after. A
+persistent write handle would hold Xapian's exclusive flock for the
+process lifetime and block every other notmuch process (including the
+sync hook's `notmuch new`) - the reopen pattern keeps the CLI
+backend's exact lock footprint. The DB path resolves at open via
+`notmuch config get database.path` (argv-only, F4) when not configured.
 
 ## 4. Mail parsing/composition: go-message (R6, 2026-08-14)
 

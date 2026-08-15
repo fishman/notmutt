@@ -113,10 +113,14 @@ fuzzed or tested, not trusted.
 - **F9. Key server trust (gpg --recv-keys).** TOFU/trust-on-first-use
   by design; prefer WKD. Document in crypto section; no client-side
   trust policy beyond gpg's own.
-- **F10. cgo surface.** M1's notmuch decision (CLI-per-query vs cgo):
-  cgo adds unsafe/FFI surface and crashes take down the client.
-  Security bias: CLI-per-query unless the benchmark forces cgo; if
-  cgo, the bindings are a reviewed, minimal, fuzz-covered module.
+- **F10. cgo surface.** cgo IS the runtime backend since 2026-08-16
+  (decision record 3: the batched walk closed the T14 gap; the write
+  path reopens read-write per op, so the read handle never holds the
+  DB lock). cgo adds unsafe/FFI surface and crashes take down the
+  client - the mitigation is the reviewed, minimal, vendored binding
+  (github.com/fishman/go.notmuch fork, pinned by replace) plus the
+  CLI backend kept as a one-build-tag escape hatch (-tags cli) if a
+  binding issue ever outweighs the benchmark.
 
 ### LOW
 

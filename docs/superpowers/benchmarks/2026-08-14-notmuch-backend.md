@@ -111,3 +111,12 @@ default is NOT flipped in `app/app.go`. Reasons:
 The latency win is real but does not translate into a production default
 change for M1. CLI remains the default; revisit with a writable,
 un-gated cgo backend when one exists.
+
+UPDATE 2026-08-16 (decision record 3): both conditions landed. The
+batched walk (ThreadsWalk, one C/Go crossing per chunk) closed the gap
+(1.65s full walk) and the writable backend shipped: Tag reopens the
+handle read-write per op (one atomic transaction, CLI lock footprint),
+New stays unsupported (`notmuch new` runs outside the client). cgo IS
+the runtime default; the CLI moved behind `-tags cli` as the F10 escape
+hatch. Flip-day re-run: cgo full walk 1.645s vs CLI 1.534s, peek 12ms
+vs 16ms, thread fetch 8ms vs 19ms (NOTMUCH_BENCH=1 go test -tags cli).

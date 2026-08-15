@@ -78,16 +78,20 @@ through notmuch; the cache can be stale only by invalidation, and a
 read that finds it stale re-syncs from notmuch (startup is O(changed),
 a full walk only on cache miss or revision mismatch).
 
-Backend verdict (2026-08-14, then updated 2026-08-16; inbox = 33k
+Backend verdict (2026-08-14, flipped 2026-08-16; inbox = 33k
 mails / 32952 threads, NOTMUCH_BENCH=1): the CLI full-walk is 1.5s
 vs the cgo binding's original 8.7s (~230us per-message row - the
 per-message iterator overhead). The batched walk landed 2026-08-16
 (binding ThreadsWalk: the C threads iterator stays alive across
 chunks, one boundary crossing per chunk): cgo full-walk 1.65s vs
 CLI 1.58s - the gap is closed, the cgo peek (50) is 11ms and the
-thread fetch 8ms. The CLI still stays the runtime backend for now
-(SECURITY.md F10 - the default flips only with the backend-switch
-decision; the cgo path is benchmark-proven, not yet default). The
+thread fetch 8ms. cgo IS the runtime backend (decision record 3:
+re-benchmarked 1.645s vs the CLI's 1.534s on the flip day); the CLI
+backend survives behind `-tags cli` as the F10 escape hatch - the
+same binary code, the same interface, one build tag away. The cgo
+handle stays read-only; Tag reopens read-write for the op only (the
+CLI's lock footprint - a persistent write handle would block every
+other notmuch process for the client's lifetime). The
 cache ingests the CLI's JSON
 output as typed structs in batch (one bbolt transaction per emitted
 chunk); a JSON-ingesting DB (sqlite json_each) is not needed - the

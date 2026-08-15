@@ -729,7 +729,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 		t.Fatalf("the first blank row must carry the indicator style:\n%s", out)
 	}
 	lines := strings.Split(strip, "\n")
-	if len(lines) < 24 || lines[0] != strings.Repeat(" ", 160) {
+	if len(lines) < 24 || lines[1] != strings.Repeat(" ", 160) {
 		t.Fatalf("the list area must fill with blank rows:\n%s", strip)
 	}
 	// loading: the progress bar rides the same status line
@@ -1165,7 +1165,7 @@ func TestPagerPageKeys(t *testing.T) {
 	// the dispatch finds the page-down/page-up bindings
 	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	m = next.(Model)
-	if m.pager.vp.offset != 4 {
+	if m.pager.vp.offset != 3 {
 		t.Fatalf("ctrl+d must scroll half a window, offset=%d", m.pager.vp.offset)
 	}
 	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
@@ -1228,7 +1228,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	press(t, m, "q") // back to index, pager kept alive
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
 	m = next.(Model)
-	if m.pager.vp.width != 40 || m.pager.vp.height != 8 {
+	if m.pager.vp.width != 40 || m.pager.vp.height != 7 {
 		t.Fatalf("resize in index mode must re-size the pager window: %dx%d", m.pager.vp.width, m.pager.vp.height)
 	}
 	press(t, m, "enter") // re-open the same thread - render happens at the new width
@@ -1247,11 +1247,11 @@ func TestNumberColumnGrows(t *testing.T) {
 	m := rowsModel(12)
 	m.width, m.height = 80, 24
 	lines := strings.Split(stripANSI(m.View().Content), "\n")
-	if !strings.HasPrefix(lines[0], "1  ") {
-		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[0])
+	if !strings.HasPrefix(lines[1], "1  ") {
+		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[1])
 	}
-	if !strings.HasPrefix(lines[9], "10 ") {
-		t.Fatalf("row 10 must fit the 2-cell slot: %q", lines[9])
+	if !strings.HasPrefix(lines[10], "10 ") {
+		t.Fatalf("row 10 must fit the 2-cell slot: %q", lines[10])
 	}
 }
 
@@ -1361,8 +1361,8 @@ func TestIndexPagesAtEdges(t *testing.T) {
 		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
 	}
 	lines := strings.Split(stripANSI(m.View().Content), "\n")
-	if !strings.HasPrefix(lines[0], "23") {
-		t.Fatalf("the new page must render from its first row: %q", lines[0])
+	if !strings.HasPrefix(lines[1], "22") {
+		t.Fatalf("the new page must render from its first row: %q", lines[1])
 	}
 	m = press(t, m, "k")
 	if m.CursorIndex() != h-1 || m.indexOffset != 0 {
@@ -2234,32 +2234,124 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 	}
 }
 
-// TestComposeFrameMuttLayout pins the mutt frame: the keyhint on the
-// first line, the sender-info rows (Bcc, Reply-To, Fcc), the Security
-// divider, the content-type entry, and the prompt swapping line 0.
+// TestComposeFrameMuttLayout pins the mutt frame: the tab bar on the
+// first line, the keyhint on the second, the sender-info rows (Bcc,
+// Reply-To, Fcc), the Security divider, the content-type entry, and
+// the prompt swapping the keyhint row.
 func TestComposeFrameMuttLayout(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	frame := m.render()
 	lines := strings.Split(frame, "\n")
-	if !strings.Contains(stripANSI(lines[0]), "a attach") {
-		t.Fatalf("line 0 must be the keyhint: %q", stripANSI(lines[0]))
+	if lines[0] != m.tabBar() {
+		t.Fatalf("line 0 must be the tab bar: %q", lines[0])
+	}
+	if !strings.Contains(stripANSI(lines[1]), "a attach") {
+		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
 	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "[ ] text/plain"} {
 		if !strings.Contains(frame, want) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
 	}
-	// the prompt row swaps line 0 1:1 (the frame height invariant)
+	// the prompt row swaps the keyhint row 1:1 (the frame height
+	// invariant)
 	m = press(t, m, "a")
 	frame = m.render()
-	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[0]), "attach path:") {
-		t.Fatalf("the attach prompt must occupy line 0: %q", stripANSI(strings.Split(frame, "\n")[0]))
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), "attach path:") {
+		t.Fatalf("the attach prompt must occupy the keyhint row: %q", stripANSI(strings.Split(frame, "\n")[1]))
 	}
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the prompt frame must still be exactly 24 lines, got %d", got)
 	}
+}
+
+// TestTabBarStrip pins the tab strip: the mail surface tab and every
+// dialogue, the active one highlighted, subjects F1-sanitized, the
+// strip padded to the full width (R11 slot reservation).
+func TestTabBarStrip(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = openDialogue(t, m, "t2")
+	m.tabs[1].Subject = "second"
+	m = openDialogue(t, m, "t3")
+	m.tabs[2].Subject = "third"
+	if m.tabIdx != 3 {
+		t.Fatalf("tabIdx = %d", m.tabIdx)
+	}
+	// the active tab (the last-opened dialogue) renders in the active
+	// style; the others in the bar style
+	strip := m.tabBar()
+	if !strings.Contains(strip, m.styles.TabActive.Render(" third ")) {
+		t.Fatalf("the active tab must render in the active style:\n%s", strip)
+	}
+	if !strings.Contains(strip, m.styles.Tabbar.Render(" inbox ")) ||
+		!strings.Contains(strip, m.styles.Tabbar.Render(" second ")) {
+		t.Fatalf("the other tabs must render in the bar style:\n%s", strip)
+	}
+	// the subject is mail-derived: control characters sanitize (F1) -
+	// the ESC byte is gone, the inert "[31m" text remains
+	m.tabs[0].Subject = "Re: \x1b[31mx"
+	if s := m.tabBar(); strings.Contains(s, "\x1b[31m") || !strings.Contains(s, "Re: [31m") {
+		t.Fatalf("a subject ESC must sanitize in the strip: %q", s)
+	}
+	// the strip pads to the full width (R11 slot reservation)
+	if w := runewidth.StringWidth(stripANSI(m.tabBar())); w != 80 {
+		t.Fatalf("the strip must fill the width, got %d cells", w)
+	}
+}
+
+// TestTabBarDropsTrailing pins the width fitting: tabs drop from the
+// tail to fit, and the active tab survives by trading places with the
+// dropped tail.
+func TestTabBarDropsTrailing(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
+	m = next.(Model)
+	m = openDialogue(t, m, "t2")
+	m.tabs[1].Subject = "aaaa"
+	m = openDialogue(t, m, "t3")
+	m.tabs[2].Subject = "bbbb"
+	// width 20: four tabs do not fit - the tail drops twice (bbbb,
+	// then aaaa), the mail tab and the first dialogue survive
+	m.tabIdx = 0
+	if s := m.tabBar(); strings.Contains(s, "bbbb") || strings.Contains(s, "aaaa") || !strings.Contains(s, "Re: x") {
+		t.Fatalf("the tail tabs must drop to fit:\n%s", s)
+	}
+	// the active tab survives: an active tail trades places with the
+	// dropped tabs instead of being cut
+	m.tabIdx = 3
+	if s := m.tabBar(); strings.Contains(s, "aaaa") || strings.Contains(s, "Re: x") || !strings.Contains(s, "bbbb") {
+		t.Fatalf("the active tab must survive the drop:\n%s", s)
+	}
+}
+
+// TestFramesChrome pins the chrome on every tab: each frame opens
+// with the tab bar and closes with the status line - the tab bar
+// never displaces the status row, including in the compose window.
+func TestFramesChrome(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	// render() runs on a value copy - the frame's status line reads
+	// the copy's rows, so the outer model warms the same state
+	m.rows = m.view.Rows()
+	check := func(name, frame string) {
+		t.Helper()
+		lines := strings.Split(frame, "\n")
+		if lines[0] != m.tabBar() || lines[len(lines)-1] != m.statusLineWith(m.styles, m.ui) {
+			t.Fatalf("%s frame chrome:\n%s", name, frame)
+		}
+	}
+	check("index", m.render())
+	m = press(t, m, "enter")
+	check("pager", m.render())
+	m = openDialogue(t, m, "t1")
+	check("compose", m.render())
+	m = press(t, m, "?")
+	check("help", m.render())
 }
 
 // TestComposeSlotEditFieldPrompts pins the slot-aware e: slot 3/4/6

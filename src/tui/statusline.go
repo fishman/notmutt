@@ -180,3 +180,87 @@ func styleBar(fill, empty string, st Styles) string {
 	}
 	return st.Progress.Render(fill) + st.Normal.Render(empty)
 }
+
+// tabBar renders the tab strip: the mail surface tab and every open
+// dialogue, the active one highlighted. Trailing tabs drop to fit the
+// width and the active tab always survives (it trades places with the
+// dropped tail); the row pads to the full width (R11 slot
+// reservation - the strip never shifts with content).
+func (m Model) tabBar() string {
+	if m.width <= 0 {
+		return ""
+	}
+	names := m.tabNames()
+	active := m.tabIdx
+	if active >= len(names) {
+		active = 0
+	}
+	for len(names) > 1 && tabStripWidth(names, active, m.styles) > m.width {
+		last := len(names) - 1
+		if last == active {
+			// the tail is the active tab: drop the one before it so
+			// the active keeps the tail slot
+			names = append(names[:last-1], names[last:]...)
+			active = len(names) - 1
+		} else {
+			names = names[:last]
+		}
+	}
+	var b strings.Builder
+	for i, n := range names {
+		s := m.styles.Tabbar
+		if i == active {
+			s = m.styles.TabActive
+		}
+		if i > 0 {
+			b.WriteString(m.styles.Tabbar.Render(pillGap))
+		}
+		b.WriteString(s.Render(pillGap + n + pillGap))
+	}
+	row := b.String()
+	if pad := m.width - lipgloss.Width(row); pad > 0 {
+		row += m.styles.Tabbar.Render(strings.Repeat(" ", pad))
+	}
+	return row
+}
+
+// tabNames is the strip's labels in session order: the mail surface
+// first (the view name), then every open dialogue (the subject,
+// "compose" when none - the subject is mail-derived, F1 sanitize
+// applies). Names cap at a third of the strip so one long subject
+// cannot crowd the rest.
+func (m Model) tabNames() []string {
+	capName := func(n string) string {
+		if c := m.width / 3; c > 0 && lipgloss.Width(n) > c {
+			n = truncCells(n, c)
+		}
+		return n
+	}
+	names := make([]string, 0, len(m.tabs)+1)
+	names = append(names, capName(m.view.Name))
+	for _, st := range m.tabs {
+		n := st.Subject
+		if n == "" {
+			n = "compose"
+		}
+		names = append(names, capName(core.SanitizeControls(n)))
+	}
+	return names
+}
+
+// tabStripWidth is the pill run's visible width (groupWidth for the
+// tab strip, gaps included).
+func tabStripWidth(names []string, active int, st Styles) int {
+	w := 0
+	for i, n := range names {
+		s := st.Tabbar
+		if i == active {
+			s = st.TabActive
+		}
+		w += lipgloss.Width(s.Render(pillGap + n + pillGap))
+		if i > 0 {
+			w += lipgloss.Width(pillGap)
+		}
+	}
+	return w
+}

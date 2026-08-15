@@ -135,7 +135,8 @@ func (m Model) helpBuild() string {
 	for len(rows) < m.helpView.height {
 		rows = append(rows, "")
 	}
-	body := make([]string, 0, len(rows)+2)
+	body := make([]string, 0, len(rows)+3)
+	body = append(body, m.tabBar())
 	body = append(body, "help: "+m.mode+" bindings")
 	body = append(body, rows...)
 	body = append(body, m.helpFooter())

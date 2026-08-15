@@ -18,22 +18,24 @@ type composeForm struct {
 }
 
 // renderCompose builds the attached dialogue frame (spec section 5,
-// the mutt layout): the keyhint on the first line, the form rows (the
-// sender info, the Security divider, the content-type entry and the
-// attachments), the preview pane (the pager widget) filling the rest,
-// the status line on the last. The frame is ALWAYS exactly m.height
-// lines - the frame discipline applies to the compose surface like
-// everywhere else.
+// the mutt layout): the tab bar on the first line, the keyhint on the
+// second, the form rows (the sender info, the Security divider, the
+// content-type entry and the attachments), the preview pane (the
+// pager widget) filling the rest, the status line on the last. The
+// frame is ALWAYS exactly m.height lines - the frame discipline
+// applies to the compose surface like everywhere else.
 func (m *Model) renderCompose() string {
 	if m.fuzzy != nil {
 		return m.renderFuzzy()
 	}
 	st := m.tabs[m.tabIdx-1]
-	rows := m.height - 2
+	rows := m.height - 3
 	if rows < 1 {
 		rows = 1
 	}
 	var b strings.Builder
+	b.WriteString(m.tabBar())
+	b.WriteByte('\n')
 	// the abort confirm and the attach prompt swap the keyhint row
 	// 1:1 (the frame height invariant); the prompt shows the typed
 	// path - pasted text can carry ESC, sanitized at render (F1)
@@ -190,11 +192,13 @@ func formRowOf(form []composeForm, slot int) int {
 // filter input stays visible mid-type - and the match list clips to
 // fill the frame (large lists scroll later).
 func (m *Model) renderFuzzy() string {
-	rows := m.height - 2
+	rows := m.height - 3
 	if rows < 1 {
 		rows = 1
 	}
 	var b strings.Builder
+	b.WriteString(m.tabBar())
+	b.WriteByte('\n')
 	lines := []string{m.fuzzy.title}
 	// the query row always renders (the user's filter input must stay
 	// visible mid-type); the match list clips to fill

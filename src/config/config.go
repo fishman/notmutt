@@ -177,8 +177,17 @@ type StyleTable struct {
 	Account   Style // statusline account pill (R2)
 	Progress  Style
 	Error     Style
+	Tabbar    TabbarStyleTable
 	Index     IndexStyleTable
 	Pager     PagerStyleTable
+}
+
+// TabbarStyleTable: the tab strip's bar style at the table's own
+// level, the active-tab pill in the nested "active" table (the
+// index.tag nested-table shape).
+type TabbarStyleTable struct {
+	Default Style
+	Active  Style
 }
 
 type IndexStyleTable struct {
@@ -289,6 +298,26 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				t.Progress = s
 			case "error":
 				t.Error = s
+			}
+		case "tabbar":
+			tm, ok := val.(map[string]interface{})
+			if !ok {
+				return StyleTable{}, fmt.Errorf("tabbar: expected a table")
+			}
+			if a, ok := tm["active"]; ok {
+				s, err := rawStyle(a)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				t.Tabbar.Active = s
+				delete(tm, "active")
+			}
+			if len(tm) > 0 {
+				s, err := rawStyle(tm)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				t.Tabbar.Default = s
 			}
 		case "index":
 			im, ok := val.(map[string]interface{})
@@ -460,6 +489,8 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 	out["status.account"] = apply("status.account", table.Account)
 	out["progress"] = apply("progress", table.Progress)
 	out["error"] = apply("error", table.Error)
+	out["tabbar"] = apply("tabbar", table.Tabbar.Default)
+	out["tabbar.active"] = apply("tabbar.active", table.Tabbar.Active)
 	for id, s := range map[string]Style{
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,

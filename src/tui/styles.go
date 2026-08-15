@@ -30,6 +30,8 @@ type Styles struct {
 	Account   lipgloss.Style // statusline account pill (R2)
 	Progress  lipgloss.Style
 	Error     lipgloss.Style
+	Tabbar    lipgloss.Style // tab strip bar (inactive tabs, padding)
+	TabActive lipgloss.Style // tab strip active-tab pill
 	Index     IndexStyles
 	Pager     PagerStyles
 	sgr       sgrSet // precomputed hot-path fragments (index rows, pager lines)
@@ -160,6 +162,8 @@ func DefaultStyles() Styles {
 		Account:   lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Progress:  lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Error:     lipgloss.NewStyle().Foreground(c("#e06c75")),
+		Tabbar:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#2c313a")),
+		TabActive: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#98c379")),
 		Index: IndexStyles{
 			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),
@@ -235,6 +239,8 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		Account:   to("status.account", normal),
 		Progress:  to("progress", normal),
 		Error:     to("error", normal),
+		Tabbar:    to("tabbar", normal),
+		TabActive: to("tabbar.active", normal),
 		Index: IndexStyles{
 			Number: to("index.number", normal), Date: to("index.date", normal),
 			Author: to("index.author", normal), Subject: to("index.subject", normal),

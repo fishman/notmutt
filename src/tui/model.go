@@ -267,7 +267,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pager.setSize(w, h, m.styles)
 		}
 		if m.help {
-			h := m.height - 3
+			h := m.height - 4
 			if h < 1 {
 				h = 1
 			}
@@ -768,7 +768,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "help":
 		m.help = true
-		h := m.height - 3
+		h := m.height - 4
 		if h < 1 {
 			h = 1
 		}
@@ -1033,7 +1033,7 @@ func (m Model) pagerSize() (int, int) {
 	if m.preview {
 		return m.previewContentSize()
 	}
-	return m.width, m.height - 2
+	return m.width, m.height - 3
 }
 
 // previewContentSize is the popup box's content area: the box spans
@@ -1280,10 +1280,11 @@ func (m *Model) setCursorAt(rows []core.Row, idx int) {
 	}
 }
 
-// listHeight is the index window's row count: the bottom two rows are
-// the keyhint bar (R9) and the status line (R15).
+// listHeight is the index window's row count: the top row is the tab
+// bar, the bottom two rows are the keyhint bar (R9) and the status
+// line (R15).
 func (m *Model) listHeight() int {
-	h := m.height - 2
+	h := m.height - 3
 	if h < 1 {
 		h = 1
 	}
@@ -1490,6 +1491,8 @@ func (m Model) render() string {
 	}
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
+		b.WriteString(m.tabBar())
+		b.WriteByte('\n')
 		b.WriteString(m.pager.render())
 		b.WriteString("\n")
 		b.WriteString(m.keyhint())
@@ -1512,6 +1515,8 @@ func (m Model) render() string {
 			listHeight = 1
 		}
 		var b strings.Builder
+		b.WriteString(m.tabBar())
+		b.WriteByte('\n')
 		for i := 0; i < listHeight; i++ {
 			outer := st.Normal
 			if i == 0 {
@@ -1559,6 +1564,8 @@ func (m Model) render() string {
 	}
 	sg := st.sgr
 	var b strings.Builder
+	b.WriteString(m.tabBar())
+	b.WriteByte('\n')
 	for i := top; i < bottom; i++ {
 		// the row cache: a cursor move restyles only the two rows whose
 		// selected flag flips; the rest concatenate from the cache. The
@@ -1634,7 +1641,7 @@ func (m Model) overlayPreview(frame string) string {
 	if boxH < 4 {
 		return frame
 	}
-	top := 2
+	top := 3 // below the tab bar and the first two list rows
 	// index mode renders short lists shorter than the window (only the
 	// empty view pads to height); the popup must splice a full-height
 	// frame - pad the list section before the keyhint/status tail

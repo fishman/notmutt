@@ -199,12 +199,16 @@ default_signature = "gmail"
 func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	want := map[string]string{
-		"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
-		"r": "toggle-read", "a": "archive", "d": "delete",
+		"j": "cursor-down", "k": "cursor-up",
+		"enter": "open", "q": "quit",
+		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
+		"t": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"y": "spam", "p": "pending",
+		"P": "preview",
+		"g g": "cursor-top", "G": "cursor-bottom", "g r": "reply-all",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"pgdown": "page-down", "pgup": "page-up",
-		"m": "compose", "R": "reply", "F": "forward",
-		"g g": "cursor-top", "g r": "reply-all",
 		"?": "help",
 		"[": "tab-prev", "]": "tab-next",
 	}
@@ -213,6 +217,7 @@ func TestDefaultBindings(t *testing.T) {
 	}
 	wantPager := map[string]string{
 		"j": "scroll-down", "k": "scroll-up",
+		"space": "page-down",
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
@@ -225,6 +230,7 @@ func TestDefaultBindings(t *testing.T) {
 	}
 	wantCompose := map[string]string{
 		"j": "form-down", "k": "form-up",
+		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
@@ -341,6 +347,8 @@ func TestDefaultTagActions(t *testing.T) {
 		"toggle-read": "unread",
 		"archive":     "archive",
 		"delete":      "deleted",
+		"spam":        "spam",
+		"pending":     "pending",
 	}
 	if !maps.Equal(cfg.TagActions, want) {
 		t.Fatalf("default tag actions = %v, want %v", cfg.TagActions, want)

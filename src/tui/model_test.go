@@ -22,10 +22,12 @@ import (
 )
 
 var testKeys = map[string]string{
-	"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
-	"r": "toggle-read", "a": "archive", "d": "delete",
+	"j": "cursor-down", "k": "cursor-up",
+	"enter": "open", "P": "preview", "q": "quit",
+	"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
+	"t": "toggle-read", "a": "archive", "d": "delete",
 	"u": "undo", "$": "apply",
-	"m": "compose", "R": "reply", "F": "forward",
+	"y": "spam", "p": "pending",
 	"[": "tab-prev", "]": "tab-next",
 	// the arrow and G keys come from the user config overlay (the
 	// defaults are untouched); the test table mirrors the live config
@@ -57,13 +59,13 @@ var testBindings = map[string]map[string]string{
 		"j": "scroll-down", "k": "scroll-up",
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
-		"up": "scroll-up", "down": "scroll-down",
 		"q": "back",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help",
 	},
 	"compose": {
 		"j": "form-down", "k": "form-up",
+		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
@@ -146,7 +148,7 @@ func TestChainExpires(t *testing.T) {
 	defer SetReplyHandler(func(msg *core.Message, mode string) {})
 	m := model()
 	m = press(t, m, "g") // arms the prefix; the next press sees it expired
-	m = press(t, m, "r")
+	m = press(t, m, "x") // an unbound key: the stale g r must not fire
 	if got != "" {
 		t.Fatalf("an expired chain must not dispatch, got %q", got)
 	}
@@ -212,7 +214,7 @@ func TestSendGatesDetachAttachDuringSending(t *testing.T) {
 	m.tabs[0].Phase = compose.PhaseSending
 	att := compose.Attachment{Name: "a.txt", Path: "/tmp/a.txt", Size: 3}
 	m.tabs[0].Attachments = []compose.Attachment{att}
-	m.formIdx = 4
+	m.formIdx = 5
 	m = press(t, m, "d")
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0] != att {
 		t.Fatalf("d during PhaseSending must not mutate the attachments: %+v", m.tabs[0].Attachments)
@@ -339,13 +341,13 @@ func TestStubThreadStaging(t *testing.T) {
 	if m.CursorIndex() != 0 {
 		t.Fatalf("cursor after k on stubs = %d", m.CursorIndex())
 	}
-	m = press(t, m, "r") // soft toggle resolves against the thread's tags
+	m = press(t, m, "t") // soft toggle resolves against the thread's tags
 	if !m.view.IsStaged("t:t1") {
-		t.Fatal("r on the unread stub must stage t:t1")
+		t.Fatal("t on the unread stub must stage t:t1")
 	}
 	ops, _ := m.view.StagedOps()
 	if got := ops["t:t1"]; len(got) != 1 || got[0] != (core.TagOp{Tag: "unread", Add: false}) {
-		t.Fatalf("r on the unread stub must stage -unread for the thread: %v", got)
+		t.Fatalf("t on the unread stub must stage -unread for the thread: %v", got)
 	}
 }
 
@@ -455,16 +457,16 @@ func TestStageToggleRead(t *testing.T) {
 	if hasTag(row.Msg.Tags, "unread") {
 		t.Fatalf("fixture: cursor message must be read, got %v", row.Msg.Tags)
 	}
-	m = press(t, m, "r")
+	m = press(t, m, "t")
 	// auto-advance: the cursor moved to the next row; the staged row is
 	// the one under the previous cursor
 	if m.CursorIndex() != 1 {
-		t.Fatalf("r must advance the cursor one row, got %d", m.CursorIndex())
+		t.Fatalf("t must advance the cursor one row, got %d", m.CursorIndex())
 	}
 	m = press(t, m, "k")
 	row, _ = m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "unread") {
-		t.Fatalf("r must stage +unread: staged=%v tags=%v", row.Staged, row.StagedTags)
+		t.Fatalf("t must stage +unread: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
 	if hasTag(row.Msg.Tags, "unread") {
 		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
@@ -473,7 +475,7 @@ func TestStageToggleRead(t *testing.T) {
 	if out := m.View().Content; !strings.Contains(out, "*N") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
-	m = press(t, m, "r")
+	m = press(t, m, "t")
 	m = press(t, m, "k")
 	row, _ = m.view.CursorRow()
 	if row.Staged {
@@ -502,7 +504,7 @@ func TestUndoStaged(t *testing.T) {
 	m := model()
 	m = press(t, m, "a") // stage +archive on row 0, auto-advance to row 1
 	m = press(t, m, "k") // back to the staged row
-	m = press(t, m, "r") // stage +unread on row 0, advance again
+	m = press(t, m, "t") // stage +unread on row 0, advance again
 	m = press(t, m, "k") // back to the staged row
 	row, _ := m.view.CursorRow()
 	if !row.Staged || len(row.StagedTags) != 2 {
@@ -608,11 +610,11 @@ func TestTagActionMapsToConfigTag(t *testing.T) {
 func TestStageToggleReadRemoves(t *testing.T) {
 	m := model()
 	m.view.SetCursor("a")
-	m = press(t, m, "r")
+	m = press(t, m, "t")
 	ops, _ := m.view.StagedOps()
 	got := ops["a"]
 	if len(got) != 1 || got[0] != (core.TagOp{Tag: "unread", Add: false}) {
-		t.Fatalf("r on the unread message must stage -unread: %v", got)
+		t.Fatalf("t on the unread message must stage -unread: %v", got)
 	}
 }
 
@@ -837,7 +839,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 		}})
 		m = next.(Model)
 	})
-	press(t, m, "o")
+	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
@@ -982,8 +984,9 @@ func rowsModel(n int) Model {
 	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
-// openPager presses "o" with an open handler that injects the loaded
-// loadedLines renders a message set the way the app's open job does:
+// openPager presses the open key with an open handler that injects the
+// loaded lines as a bus event. loadedLines renders a message set the
+// way the app's open job does:
 // handlers publish the same ThreadLoaded the app would (the model
 // attaches lines, it never renders).
 func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
@@ -1007,7 +1010,7 @@ func openPager(t *testing.T, m Model, path string) Model {
 		}})
 		m = next.(Model)
 	})
-	press(t, m, "o")
+	press(t, m, "enter")
 	return m
 }
 
@@ -1047,7 +1050,7 @@ func TestPagerKeyOnlyActiveInPager(t *testing.T) {
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	if m.mode != "pager" || m.pager == nil {
-		t.Fatal("o must open the pager")
+		t.Fatal("enter must open the pager")
 	}
 	cur := m.CursorIndex()
 	m = press(t, m, "j")
@@ -1122,7 +1125,7 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	})})
 	// q is bound only in the pager context: in index mode it must be a
 	// no-op (no quit, no back), in pager mode it returns to index
-	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "back"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "back"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	m = next.(Model)
@@ -1134,7 +1137,7 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
-		t.Fatalf("o must open the pager, mode=%q", m.mode)
+		t.Fatalf("enter must open the pager, mode=%q", m.mode)
 	}
 	m = press(t, m, "q")
 	if m.mode != "index" {
@@ -1151,7 +1154,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 	// the emacs pager binds q to quit: in pager mode the key exits the
 	// app (the spec's "quit in the pager exits the app; back returns to
 	// the index - both bound")
-	m := New(view, nil, map[string]map[string]string{"index": {"o": "open"}, "pager": {"q": "quit"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "quit"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
@@ -1189,7 +1192,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 		}})
 		m = next.(Model)
 	})
-	press(t, m, "o") // the handler rebinds m with the loaded pager
+	press(t, m, "enter") // the handler rebinds m with the loaded pager
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
@@ -1201,7 +1204,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	if m.mode != "index" {
 		t.Fatalf("back must return to index, mode=%q", m.mode)
 	}
-	press(t, m, "o") // re-open the same thread - the guard skips re-render
+	press(t, m, "enter") // re-open the same thread - the guard skips re-render
 	if m.mode != "pager" {
 		t.Fatalf("re-open must switch to pager, mode=%q", m.mode)
 	}
@@ -1224,7 +1227,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 		}})
 		m = next.(Model)
 	})
-	press(t, m, "o")
+	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
@@ -1234,7 +1237,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	if m.pager.vp.width != 40 || m.pager.vp.height != 8 {
 		t.Fatalf("resize in index mode must re-size the pager window: %dx%d", m.pager.vp.width, m.pager.vp.height)
 	}
-	press(t, m, "o") // re-open the same thread - render happens at the new width
+	press(t, m, "enter") // re-open the same thread - render happens at the new width
 	if m.mode != "pager" {
 		t.Fatalf("re-open must switch to pager, mode=%q", m.mode)
 	}
@@ -1274,7 +1277,15 @@ func TestArrowKeysMoveCursor(t *testing.T) {
 }
 
 func TestArrowKeysScrollPager(t *testing.T) {
-	m := model()
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, map[string]map[string]string{
+		"index": {"enter": "open"},
+		"pager": {"up": "scroll-up", "down": "scroll-down", "q": "back"},
+	}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	m = pressType(t, m, tea.KeyDown)
@@ -1419,7 +1430,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 		}})
 		m = next.(Model)
 	})
-	press(t, m, "o")
+	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("a parse failure must open the pager with an error line, mode=%q", m.mode)
 	}
@@ -1436,7 +1447,7 @@ func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
 		m = next.(Model)
 	})
-	m = press(t, m, "o")
+	m = press(t, m, "enter")
 	if m.mode != "index" {
 		t.Fatalf("a failed load must stay in index, mode=%q", m.mode)
 	}
@@ -1501,13 +1512,13 @@ func TestReplyKeyOpensDialogue(t *testing.T) {
 	// the model() fixture view has a cursor message at row 0 (message
 	// "a" of thread t1)
 	m := model()
-	m = press(t, m, "R")
+	m = press(t, m, "r")
 	if got != "reply" {
-		t.Fatalf("R must open a reply, got %q", got)
+		t.Fatalf("r must open a reply, got %q", got)
 	}
-	m = press(t, m, "F")
+	m = press(t, m, "f")
 	if got != "forward" {
-		t.Fatalf("F must open a forward, got %q", got)
+		t.Fatalf("f must open a forward, got %q", got)
 	}
 	m = press(t, m, "m")
 	if got != "compose" {
@@ -1720,13 +1731,58 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0].Name != "att.txt" {
 		t.Fatalf("attachments = %+v", m.tabs[0].Attachments)
 	}
-	// form cursor to the attachment slot (slot 4), then d detaches
-	for i := 0; i < 4; i++ {
+	// form cursor to the attachment slot (slot 5), then d detaches
+	for i := 0; i < 5; i++ {
 		m = press(t, m, "j")
 	}
 	m = press(t, m, "d")
 	if len(m.tabs[0].Attachments) != 0 {
 		t.Fatalf("d must detach the cursor attachment: %+v", m.tabs[0].Attachments)
+	}
+}
+
+// TestFieldEditFrom pins the mutt compose field keys: f opens the From
+// prompt pre-filled with the current address, typing appends, enter
+// applies; esc cancels without touching the state.
+func TestFieldEditFrom(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "f")
+	if m.prompt == nil || m.prompt.field != "from" {
+		t.Fatalf("f must open the From field prompt: %+v", m.prompt)
+	}
+	if m.prompt.input != "Bob <bob@example.com>" {
+		t.Fatalf("the From field must pre-fill: %q", m.prompt.input)
+	}
+	m = pressType(t, m, tea.KeyEsc)
+	if m.prompt != nil || m.tabs[0].From != "Bob <bob@example.com>" {
+		t.Fatalf("esc must cancel the field edit: prompt=%v From=%q", m.prompt != nil, m.tabs[0].From)
+	}
+	m = press(t, m, "f")
+	m = press(t, m, "x") // typing appends to the pre-filled input
+	m = pressType(t, m, '\r')
+	if m.prompt != nil {
+		t.Fatal("enter must close the field prompt")
+	}
+	if m.tabs[0].From != "Bob <bob@example.com>x" {
+		t.Fatalf("From = %q", m.tabs[0].From)
+	}
+}
+
+// TestFieldEditToSplitsAddrs pins the To editor: t pre-fills the list,
+// a comma entry splits through the shared SplitAddrs helper (DRY with
+// the editor buffer parse).
+func TestFieldEditToSplitsAddrs(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "t")
+	if m.prompt == nil || m.prompt.input != "a@b.c" {
+		t.Fatalf("t must pre-fill the To list: %+v", m.prompt)
+	}
+	for _, r := range ", d@e.f" {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, '\r')
+	if len(m.tabs[0].To) != 2 || m.tabs[0].To[0] != "a@b.c" || m.tabs[0].To[1] != "d@e.f" {
+		t.Fatalf("To = %v", m.tabs[0].To)
 	}
 }
 

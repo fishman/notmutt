@@ -8,8 +8,8 @@ import (
 	"notmutt/core"
 )
 
-// composeForm is one form line with its cursor slot: 0-3 =
-// From/To/Cc/Subject, 4+i = attachment i, -1 = separator (never
+// composeForm is one form line with its cursor slot: 0 = account,
+// 1-4 = From/To/Cc/Subject, 5+i = attachment i, -1 = separator (never
 // highlighted).
 type composeForm struct {
 	slot int
@@ -66,7 +66,7 @@ func (m *Model) renderCompose() string {
 	case st.Phase == compose.PhaseAborting:
 		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
 	case m.prompt != nil:
-		b.WriteString(padRow("attach path: "+core.SanitizeControls(m.prompt.input), m.width, m.styles.Indicator))
+		b.WriteString(padRow(core.SanitizeControls(m.prompt.label+m.prompt.input), m.width, m.styles.Indicator))
 	default:
 		b.WriteString(m.keyhint())
 	}
@@ -75,9 +75,11 @@ func (m *Model) renderCompose() string {
 	return b.String()
 }
 
-// composeForm renders the form rows: From/To/Cc/Subject, the
-// attachment rows, separators. Address lists cap at two display rows
-// (alignment never shifts; "+N more" names the overflow).
+// composeForm renders the form rows: account/From/To/Cc/Subject on
+// their own lines (the account selectable separately from the From
+// address), the attachment rows, separators. Address lists cap at two
+// display rows (alignment never shifts; "+N more" names the
+// overflow).
 func (m *Model) composeForm(st compose.State) []composeForm {
 	capList := func(addrs []string) string {
 		if len(addrs) == 0 {
@@ -89,10 +91,11 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		return strings.Join(addrs[:2], ", ") + fmt.Sprintf(", +%d more", len(addrs)-2)
 	}
 	rows := []composeForm{
-		{slot: 0, text: fmt.Sprintf("From: %s  [%s]", st.From, st.Account)},
-		{slot: 1, text: "To: " + capList(st.To)},
-		{slot: 2, text: "Cc: " + capList(st.Cc)},
-		{slot: 3, text: "Subject: " + st.Subject},
+		{slot: 0, text: "Account: " + st.Account},
+		{slot: 1, text: "From: " + st.From},
+		{slot: 2, text: "To: " + capList(st.To)},
+		{slot: 3, text: "Cc: " + capList(st.Cc)},
+		{slot: 4, text: "Subject: " + st.Subject},
 		{slot: -1, text: "---"},
 	}
 	for i, a := range st.Attachments {
@@ -100,7 +103,7 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
-		rows = append(rows, composeForm{slot: 4 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
+		rows = append(rows, composeForm{slot: 5 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "---"})
 	// the form rows render mail-derived text (Subject/To/Cc from the

@@ -104,7 +104,7 @@ func TestConfigClonesBindings(t *testing.T) {
 	got := st.Config().Bindings["index"]
 	got["r"] = "mutated"
 	got["x"] = "archive"
-	if st.Config().Bindings["index"]["r"] != "toggle-read" {
+	if st.Config().Bindings["index"]["r"] != "reply" {
 		t.Fatal("Config() must deep-clone the inner Bindings map")
 	}
 	if _, ok := st.Config().Bindings["index"]["x"]; ok {

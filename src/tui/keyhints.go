@@ -66,6 +66,52 @@ func (m Model) keyhintBuild() string {
 	return keyhintRow(continuations, m.width)
 }
 
+// keyFor finds the alphabetically-first key bound to an action (single
+// keys and chains both count) - the inverse of the dispatch table.
+// Deterministic: map iteration never drives output.
+func keyFor(km map[string]string, action string) string {
+	keys := make([]string, 0, len(km))
+	for k := range km {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if km[k] == action {
+			return k
+		}
+	}
+	return ""
+}
+
+// previewHint derives the popup's hint row from the binding data: the
+// scroll keys from the pager map, the open key from the index map the
+// popup sits over, the close key from the pager's back action (R9).
+func (m Model) previewHint() string {
+	pm := m.bindings["pager"]
+	var parts []string
+	keys := make([]string, 0, len(pm))
+	for k := range pm {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	scroll := make([]string, 0, 2)
+	for _, k := range keys {
+		if a := pm[k]; a == "scroll-up" || a == "scroll-down" {
+			scroll = append(scroll, k)
+		}
+	}
+	if len(scroll) > 0 {
+		parts = append(parts, strings.Join(scroll, "/")+" scroll")
+	}
+	if o := keyFor(m.bindings["index"], "open"); o != "" {
+		parts = append(parts, o+" open")
+	}
+	if q := keyFor(pm, "back"); q != "" {
+		parts = append(parts, q+" close")
+	}
+	return strings.Join(parts, "  ")
+}
+
 // renderHelp is the ? overlay: the active context's bindings as
 // "key action" rows (single keys and chains, sorted) with a close
 // hint. Any keypress closes it - the help check runs before

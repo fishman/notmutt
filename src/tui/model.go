@@ -40,6 +40,7 @@ var Actions = map[string]map[string]bool{
 		"cursor-down": true, "cursor-up": true,
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
+		"half-page-down": true, "half-page-up": true,
 		"open": true, "preview": true, "quit": true, "undo": true, "apply": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
@@ -57,6 +58,7 @@ var Actions = map[string]map[string]bool{
 	"compose": {
 		"form-down": true, "form-up": true,
 		"edit": true, "attach": true, "detach": true,
+		"edit-from": true, "edit-to": true, "edit-subject": true,
 		"account": true, "signature": true,
 		"send": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
@@ -153,8 +155,8 @@ type Model struct {
 	// re-attaches it (spec section 5: the dialogue IS the tab).
 	tabs   []compose.State
 	tabIdx int
-	// formIdx is the compose form cursor slot: 0-3 = From/To/Cc/
-	// Subject, 4+i = attachment i (d detaches there).
+	// formIdx is the compose form cursor slot: 0 = account,
+	// 1-4 = From/To/Cc/Subject, 5+i = attachment i (d detaches there).
 	formIdx int
 	// fuzzy is the selector popup (account/signature); non-nil
 	// renders the popup frame and captures the fuzzy context.
@@ -171,9 +173,10 @@ type Model struct {
 	preview       bool
 	previewThread string
 	previewTitle  string
-	// prompt is the attach path input row; non-nil captures the
-	// prompt keys and replaces the compose keyhint row.
-	prompt *pathPrompt
+	// prompt is the compose input row: the attach path prompt and the
+	// inline field editors (edit-from/to/subject); non-nil captures
+	// the prompt keys and replaces the compose keyhint row.
+	prompt *formPrompt
 	// opened tracks every attached dialogue's TabID: the bus's
 	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
 	// closed dialogue can never resurrect on a later keypress.
@@ -505,15 +508,19 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "half-page-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageDown()
-			deferPaint()
-			deferred = true
+		} else if m.mode == "index" {
+			m.moveCursor(m.pageRows() / 2)
 		}
+		deferPaint()
+		deferred = true
 	case "half-page-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageUp()
-			deferPaint()
-			deferred = true
+		} else if m.mode == "index" {
+			m.moveCursor(-(m.pageRows() / 2))
 		}
+		deferPaint()
+		deferred = true
 	case "scroll-top":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollTop()
@@ -547,7 +554,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.composeTab().Phase = compose.PhaseEditing
 		}
 		m.formIdx++
-		if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
+		if max := 5 + len(m.composeTab().Attachments); m.formIdx > max {
 			m.formIdx = max
 		}
 		deferPaint()
@@ -577,14 +584,34 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
-			m.prompt = &pathPrompt{}
+			m.prompt = &formPrompt{kind: "attach", label: "attach path: "}
 		}
 	case "detach":
 		t := m.composeTab()
 		if t.Phase != compose.PhaseSending {
-			if i := m.formIdx - 4; i >= 0 && i < len(t.Attachments) {
+			if i := m.formIdx - 5; i >= 0 && i < len(t.Attachments) {
 				t.Attachments = slices.Delete(t.Attachments, i, i+1)
 			}
+		}
+	case "edit-to", "edit-subject", "edit-from":
+		// the mutt field editors: t/s/f open an inline prompt
+		// prefilled with the field's current value (the compose
+		// body stays on e and the $EDITOR buffer)
+		if m.composeTab().Phase != compose.PhaseSending {
+			if m.composeTab().Phase == compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseEditing
+			}
+			st := m.composeTab()
+			f := &formPrompt{kind: "field", field: strings.TrimPrefix(action, "edit-")}
+			switch f.field {
+			case "from":
+				f.label, f.input = "From: ", st.From
+			case "subject":
+				f.label, f.input = "Subject: ", st.Subject
+			case "to":
+				f.label, f.input = "To: ", strings.Join(st.To, ", ")
+			}
+			m.prompt = f
 		}
 	case "account":
 		m.openPicker("account")
@@ -814,12 +841,13 @@ func (m *Model) previewCursorThread() {
 }
 
 // previewKey drives the popup: the pager scroll actions scroll the
-// box, o promotes to a full open, anything else closes. Scrolls defer
-// their paint like pager navigation. The promotion keeps the loaded
-// pager (content and scroll position survive via the reload guard);
-// an in-flight load rebuilds fresh instead.
+// box, the index open key promotes to a full open, anything else
+// closes. Scrolls defer their paint like pager navigation. The
+// promotion keeps the loaded pager (content and scroll position
+// survive via the reload guard); an in-flight load rebuilds fresh
+// instead.
 func (m Model) previewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.Text == "o" {
+	if actionForKey(msg, m.bindings["index"]) == "open" {
 		tid := m.previewThread
 		m.preview, m.previewThread, m.previewTitle = false, "", ""
 		if len(m.pager.lines) > 0 {
@@ -1506,7 +1534,7 @@ func (m Model) overlayPreview(frame string) string {
 	for _, c := range content {
 		rows = append(rows, padRowSGR(edge.open+g.BorderV+c+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
 	}
-	rows = append(rows, padRowSGR(edge.open+g.BorderV+sg.normal.open+"j/k scroll  o open  q close"+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
+	rows = append(rows, padRowSGR(edge.open+g.BorderV+sg.normal.open+m.previewHint()+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
 	rows = append(rows, padRowSGR(g.BorderBL+hdash+g.BorderBR, m.width, edge))
 	copy(lines[top:top+boxH], rows)
 	return strings.Join(lines, "\n")
@@ -1548,20 +1576,39 @@ func (m Model) statusData() statusData {
 	return d
 }
 
-// pathPrompt is the attach path input row.
-type pathPrompt struct {
+// formPrompt is one compose input row: the attach path prompt (kind
+// "attach") and the inline field editors (kind "field", field names
+// the dialogue field: from/to/subject). The label is the rendered
+// prefix; the input the current text.
+type formPrompt struct {
+	kind  string // "attach" | "field"
+	field string // field prompt: from/to/subject
+	label string // rendered prefix ("attach path: ", "From: ", ...)
 	input string
 }
 
 // promptKey captures the prompt keys: printable text appends,
-// backspace pops, enter resolves (invalid paths keep the prompt
-// open), esc cancels. The prompt only exists while a dialogue is
-// attached (the attach action is compose-context), so the direct
-// index is safe.
+// backspace pops, enter resolves (attach: invalid paths keep the
+// prompt open; field: the value replaces the dialogue field), esc
+// cancels. The prompt only exists while a dialogue is attached (the
+// compose-context actions), so the direct index is safe.
 func (m *Model) promptKey(msg tea.KeyPressMsg) bool {
 	p := m.prompt
 	switch {
 	case msg.String() == "enter":
+		if p.kind == "field" {
+			st := &m.tabs[m.tabIdx-1]
+			switch p.field {
+			case "from":
+				st.From = strings.TrimSpace(p.input)
+			case "subject":
+				st.Subject = strings.TrimSpace(p.input)
+			case "to":
+				st.To = compose.SplitAddrs(p.input)
+			}
+			m.prompt = nil
+			return true
+		}
 		path := compose.ExpandHome(strings.TrimSpace(p.input))
 		if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
 			m.prompt = nil

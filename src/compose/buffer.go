@@ -35,6 +35,19 @@ func (s *State) BuildBuffer() string {
 	return b.String()
 }
 
+// SplitAddrs splits an address list on commas and drops blanks - the
+// one canonical list parse, shared by the editor buffer and the
+// compose field editors (DRY).
+func SplitAddrs(s string) []string {
+	var out []string
+	for _, a := range strings.Split(s, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // ParseBuffer parses the editor buffer back into the fields (spec
 // section 7): headers up to the first blank line, the rest the body.
 // CRLF line endings (vim fileformat=dos) normalize to LF at entry - a
@@ -57,11 +70,7 @@ func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc []string, subject
 		var out []string
 		for _, l := range strings.Split(head, "\n") {
 			if v, ok := strings.CutPrefix(l, pref); ok {
-				for _, a := range strings.Split(v, ",") {
-					if a = strings.TrimSpace(a); a != "" {
-						out = append(out, a)
-					}
-				}
+				out = append(out, SplitAddrs(v)...)
 			}
 		}
 		return out

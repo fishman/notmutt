@@ -501,21 +501,28 @@ func (c Config) AccountTags() map[string]bool {
 	return set
 }
 
-// vimScheme is the R9 default key scheme: mutt-style movement, the
-// classic index keys, pager scroll keys. Declarative data, never code.
+// vimScheme is the R9 default key scheme: the mutt key map
+// (muttrc/base.bindings + base.macros are the reference - the
+// mutt-exact keys, client-only actions on keys mutt leaves free).
+// Declarative data, never code.
 var vimScheme = map[string]map[string]string{
 	"index": {
-		"j": "cursor-down", "k": "cursor-up", "o": "open", "p": "preview", "q": "quit",
-		"r": "toggle-read", "a": "archive", "d": "delete",
+		"j": "cursor-down", "k": "cursor-up",
+		"enter": "open", "q": "quit",
+		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
+		"t": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"y": "spam", "p": "pending",
+		"P": "preview",
+		"g g": "cursor-top", "G": "cursor-bottom", "g r": "reply-all",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"pgdown": "page-down", "pgup": "page-up",
-		"m": "compose", "R": "reply", "F": "forward",
-		"g g": "cursor-top", "g r": "reply-all",
-		"?": "help",
 		"[": "tab-prev", "]": "tab-next",
+		"?": "help",
 	},
 	"pager": {
 		"j": "scroll-down", "k": "scroll-up",
+		"space": "page-down",
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
@@ -525,6 +532,7 @@ var vimScheme = map[string]map[string]string{
 	},
 	"compose": {
 		"j": "form-down", "k": "form-up",
+		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
@@ -541,11 +549,14 @@ var vimScheme = map[string]map[string]string{
 // rest scheme-neutral (open, tag actions, undo, apply, quit).
 var emacsScheme = map[string]map[string]string{
 	"index": {
-		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up", "o": "open", "p": "preview",
-		"q": "quit", "r": "toggle-read", "a": "archive", "d": "delete",
+		"ctrl+n": "cursor-down", "ctrl+p": "cursor-up",
+		"enter": "open", "q": "quit",
+		"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
+		"t": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
+		"y": "spam", "p": "pending",
+		"P": "preview",
 		"pgdown": "page-down", "pgup": "page-up",
-		"m": "compose", "R": "reply", "F": "forward",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help",
 	},
@@ -559,6 +570,7 @@ var emacsScheme = map[string]map[string]string{
 	},
 	"compose": {
 		"ctrl+n": "form-down", "ctrl+p": "form-up",
+		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
@@ -628,7 +640,7 @@ func Default() Config {
 				ShowIcons: true,
 				Icons: map[string]string{
 					"attachment": "📎", "archive": "📦", "deleted": "🗑",
-					"draft": "✏️", "spam": "🚫", "pending": "⏰", "inbox": "📥",
+					"draft": "✏️", "sent": "📤", "spam": "🚫", "pending": "⏰", "inbox": "📥",
 					"unread": "✉", "xolo": "💼", "work": "🏢",
 					"receipt": "🧾", "important": "⭐", "todo": "✅",
 					"later": "⏳", "personal": "👤", "cfp": "🎤",
@@ -653,6 +665,8 @@ func Default() Config {
 			"toggle-read": "unread",
 			"archive":     "archive",
 			"delete":      "deleted",
+			"spam":        "spam",
+			"pending":     "pending",
 		},
 		// the reference mail setup (muttrc): one account per maildir
 		// root, each mapping to its folder tag by name
@@ -692,25 +706,33 @@ func defaultTheme() Theme {
 		Default: "dark",
 		Variants: map[string]StyleTable{
 			"dark": {
-				// the onedark port: bar and app background share the theme
-				// black; each statusline pill carries its own color
-				Normal:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
-				Indicator: Style{Fg: "#2d3139", Bg: "base0A"},
-				Status:    Style{Fg: "#f8f8f8", Bg: "#2d3139"},
-				View:      Style{Fg: "#2d3139", Bg: "base0B"},
-				Count:     Style{Fg: "#2d3139", Bg: "base0A"},
-				Account:   Style{Fg: "#2d3139", Bg: "base0D"},
-				Progress:  Style{Fg: "#2d3139", Bg: "base0D"},
+				// the onedark port (muttrc/theme/onedark.muttrc): bg
+				// base00, fg base05, the status bar on base01, the
+				// statusline pills base-on-accent (mutt's progress
+				// pattern)
+				Normal:    Style{Fg: "base05", Bg: "base00"},
+				Indicator: Style{Fg: "base00", Bg: "base0A"},
+				Status:    Style{Fg: "base05", Bg: "base01"},
+				View:      Style{Fg: "base00", Bg: "base0B"},
+				Count:     Style{Fg: "base00", Bg: "base0A"},
+				Account:   Style{Fg: "base00", Bg: "base0D"},
+				Progress:  Style{Fg: "base00", Bg: "base0D"},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},
 					Flags: Style{Fg: "base08"}, Staged: Style{Fg: "base04", Attrs: []string{"bold"}},
 					Ghost: Style{Fg: "base03"},
 					Tag: TagStyleTable{
-						Default: Style{Fg: "base0E"},
+						// the base.colors tag markers (muttrc/base.colors):
+						// a color per hard tag, inbox red-on-light
+						Default: Style{Fg: "base0B"},
 						Tags: map[string]Style{
-							"inbox":  {Fg: "base0B"},
-							"unread": {Fg: "base08"},
+							"deleted": {Fg: "base08"},
+							"archive": {Fg: "base0B"},
+							"spam":    {Fg: "base0A"},
+							"pending": {Fg: "base0E"},
+							"inbox":   {Fg: "base08", Bg: "base07"},
+							"unread":  {Fg: "base0B"},
 						},
 					},
 				},

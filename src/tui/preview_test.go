@@ -18,7 +18,7 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	m = press(t, m, "p")
+	m = press(t, m, "P")
 	if !m.preview || m.mode != "index" {
 		t.Fatalf("p must open the preview popup over the index, preview=%v mode=%q", m.preview, m.mode)
 	}
@@ -28,7 +28,7 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
 		Lines: []core.Line{{Kind: core.LineBody, Text: "body line"}}})
 	out := stripANSI(m.View().Content)
-	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  o open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
+	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  enter open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("preview box missing %q:\n%s", want, out)
 		}
@@ -47,7 +47,7 @@ func TestPreviewScrollsAndCloses(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	m = press(t, m, "p")
+	m = press(t, m, "P")
 	lines := make([]core.Line, 40)
 	for i := range lines {
 		lines[i] = core.Line{Kind: core.LineBody, Text: "line"}
@@ -72,10 +72,10 @@ func TestPreviewScrollsAndCloses(t *testing.T) {
 	}
 }
 
-// TestPreviewOpensFull pins the promotion: o re-opens the same thread
-// for real (the seam sees preview=false - the app marks it read), the
-// pager resizes to the full frame, and the frame keeps its height
-// invariant.
+// TestPreviewOpensFull pins the promotion: the open key re-opens the
+// same thread for real (the seam sees preview=false - the app marks it
+// read), the pager resizes to the full frame, and the frame keeps its
+// height invariant.
 func TestPreviewOpensFull(t *testing.T) {
 	var calls []string
 	SetOpenHandler(func(threadID string, preview bool) {
@@ -85,18 +85,18 @@ func TestPreviewOpensFull(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
-	m = press(t, m, "p")
+	m = press(t, m, "P")
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
-	m = press(t, m, "o")
+	m = press(t, m, "enter")
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Lines: lines})
 	if m.preview || m.previewThread != "" {
-		t.Fatalf("o must promote the preview to a full open, preview=%v thread=%q", m.preview, m.previewThread)
+		t.Fatalf("enter must promote the preview to a full open, preview=%v thread=%q", m.preview, m.previewThread)
 	}
 	if m.mode != "pager" {
-		t.Fatalf("o must open the pager, mode=%q", m.mode)
+		t.Fatalf("enter must open the pager, mode=%q", m.mode)
 	}
 	if len(calls) != 2 || calls[0] != "t1:true" || calls[1] != "t1:false" {
-		t.Fatalf("p must preview then o must open: %v", calls)
+		t.Fatalf("P must preview then enter must open: %v", calls)
 	}
 	out := m.View().Content
 	if got := strings.Count(out, "\n") + 1; got != m.height {
@@ -111,7 +111,7 @@ func TestPreviewStaleReplyDrops(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	m = press(t, m, "p") // fetch in flight
+	m = press(t, m, "P") // fetch in flight
 	m = press(t, m, "q") // closed before the reply lands
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true})
 	if m.mode != "index" || m.preview || m.pager != nil {
@@ -127,7 +127,7 @@ func TestPreviewTargetWinsOverRacingOpen(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	m = press(t, m, "p") // preview fetch in flight
+	m = press(t, m, "P") // preview fetch in flight
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t2", Lines: lines})
 	if m.mode != "pager" {

@@ -152,6 +152,50 @@ func TestValidateTagGroup(t *testing.T) {
 	}
 }
 
+func TestLoadSendDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.Send.Command != "msmtp" || !slices.Equal(cfg.Send.Args, []string{"--read-envelope-from"}) {
+		t.Fatalf("default send = %+v", cfg.Send)
+	}
+}
+
+func TestSendOverrides(t *testing.T) {
+	cfg, err := Load(write(t, `
+[send]
+command = "stub-send"
+args = ["-v"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Send.Command != "stub-send" || !slices.Equal(cfg.Send.Args, []string{"-v"}) {
+		t.Fatalf("send overrides = %+v", cfg.Send)
+	}
+}
+
+func TestValidateSendCommand(t *testing.T) {
+	_, err := Load(write(t, "\n[send]\ncommand = \"\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "send.command") {
+		t.Fatalf("want send.command error, got %v", err)
+	}
+}
+
+func TestAccountSendFields(t *testing.T) {
+	cfg, err := Load(write(t, `
+[accounts.gmail]
+from = "Reza <reza@example.com>"
+sent_folder = "/home/me/Mail/gmail/Sent"
+default_signature = "gmail"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Accounts["gmail"]
+	if a.From != "Reza <reza@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
+		t.Fatalf("account send fields = %+v", a)
+	}
+}
+
 func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	want := map[string]string{
@@ -159,6 +203,8 @@ func TestDefaultBindings(t *testing.T) {
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
+		"m": "compose", "R": "reply", "F": "forward",
+		"[": "tab-prev", "]": "tab-next",
 	}
 	if !maps.Equal(cfg.Bindings["index"], want) {
 		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
@@ -169,9 +215,27 @@ func TestDefaultBindings(t *testing.T) {
 		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
+		"[": "tab-prev", "]": "tab-next",
 	}
 	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
 		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
+	}
+	wantCompose := map[string]string{
+		"j": "form-down", "k": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	}
+	if !maps.Equal(cfg.Bindings["compose"], wantCompose) {
+		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)
+	}
+	wantFuzzy := map[string]string{
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+	}
+	if !maps.Equal(cfg.Bindings["fuzzy"], wantFuzzy) {
+		t.Fatalf("default fuzzy bindings = %v, want %v", cfg.Bindings["fuzzy"], wantFuzzy)
 	}
 }
 
@@ -189,6 +253,9 @@ func TestKeymapSchemes(t *testing.T) {
 	}
 	if cfg.Bindings["index"]["j"] != "" {
 		t.Fatalf("emacs scheme must not carry vim keys: %v", cfg.Bindings["index"])
+	}
+	if cfg.Bindings["compose"]["ctrl+n"] != "form-down" {
+		t.Fatalf("emacs compose movement missing: %v", cfg.Bindings["compose"])
 	}
 }
 

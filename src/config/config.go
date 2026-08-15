@@ -19,6 +19,7 @@ type Config struct {
 	Bindings   map[string]map[string]string `toml:"bindings"`
 	TagActions map[string]string            `toml:"tag-actions"`
 	Accounts   map[string]Account           `toml:"accounts"`
+	Send       Send                         `toml:"send"`
 	Palette    Palette                      `toml:"palette"`
 	Theme      Theme                        `toml:"theme"`
 }
@@ -452,6 +453,15 @@ type View struct {
 	Threads bool   `toml:"threads"`
 }
 
+// Send is the send transport argv (R4): ONE configurable command,
+// tokenized at load, exec'd as argv (F4). The default reads the
+// envelope sender from the message's own From header, so msmtp's
+// account table resolves per message - the client never sees it.
+type Send struct {
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
+}
+
 // Account is one mail account: the section key is the account name, the
 // folder prefix is its folder space in the maildir (R2). The account
 // tag in notmuch is the folder prefix - the muttrc folder:/^<folder>\//
@@ -460,7 +470,10 @@ type View struct {
 // pointer distinguishes unset from an explicitly empty value, which is
 // a load error.
 type Account struct {
-	Folder *string `toml:"folder"`
+	Folder           *string `toml:"folder"`
+	From             string  `toml:"from"`
+	SentFolder       string  `toml:"sent_folder"`
+	DefaultSignature string  `toml:"default_signature"`
 }
 
 func (a Account) Tag(name string) string {
@@ -490,6 +503,8 @@ var vimScheme = map[string]map[string]string{
 		"r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
+		"m": "compose", "R": "reply", "F": "forward",
+		"[": "tab-prev", "]": "tab-next",
 	},
 	"pager": {
 		"j": "scroll-down", "k": "scroll-up",
@@ -497,6 +512,18 @@ var vimScheme = map[string]map[string]string{
 		"pgdown": "page-down", "pgup": "page-up",
 		"g": "scroll-top", "G": "scroll-bottom",
 		"q": "back",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"compose": {
+		"j": "form-down", "k": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"fuzzy": {
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
 	},
 }
 
@@ -508,12 +535,26 @@ var emacsScheme = map[string]map[string]string{
 		"q": "quit", "r": "toggle-read", "a": "archive", "d": "delete",
 		"u": "undo", "$": "apply",
 		"pgdown": "page-down", "pgup": "page-up",
+		"m": "compose", "R": "reply", "F": "forward",
+		"[": "tab-prev", "]": "tab-next",
 	},
 	"pager": {
 		"ctrl+n": "scroll-down", "ctrl+p": "scroll-up",
 		"ctrl+v": "page-down", "alt+v": "page-up",
 		"pgdown": "page-down", "pgup": "page-up",
 		"ctrl+g": "back", "q": "quit",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"compose": {
+		"ctrl+n": "form-down", "ctrl+p": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"fuzzy": {
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
 	},
 }
 
@@ -602,6 +643,10 @@ func Default() Config {
 		// root, each mapping to its folder tag by name
 		Accounts: map[string]Account{
 			"gmail": {}, "jelveh": {}, "toptal": {}, "dynamia": {},
+		},
+		Send: Send{
+			Command: "msmtp",
+			Args:    []string{"--read-envelope-from"},
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
@@ -799,6 +844,9 @@ func validate(cfg Config) error {
 	g := cfg.UI.Glyphs
 	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
+	}
+	if strings.TrimSpace(cfg.Send.Command) == "" {
+		return fmt.Errorf("send.command: must not be empty")
 	}
 	for name, a := range cfg.Accounts {
 		if a.Folder != nil && strings.TrimSpace(*a.Folder) == "" {

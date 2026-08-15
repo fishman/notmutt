@@ -113,7 +113,12 @@ func Run() error {
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI))
+	// WithFPS(120) aligns the renderer's write tick with the model's 8ms
+	// paint cadence (ShouldRender gate): at the 60fps default a paint waits
+	// up to 16.6ms for the next write tick, and the release-settle paint
+	// lands a frame late. Idle ticks are free (the renderer skips unchanged
+	// frames), so the higher rate costs nothing when nothing moves.
+	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), tea.WithFPS(120))
 	go func() {
 		<-ctx.Done()
 		prog.Quit()

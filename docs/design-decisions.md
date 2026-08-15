@@ -24,16 +24,30 @@ written independently. Every mutation goes through notmuch; a read that
 finds the cache stale re-syncs from notmuch (startup is O(changed), a
 full walk only on cache miss or revision mismatch).
 
-## 3. CLI over cgo (R1, 2026-08-14)
+## 3. CLI over cgo (R1, 2026-08-14, updated 2026-08-16)
 
 Decision: the notmuch CLI is the runtime backend; go.notmuch (cgo) is
-compiled and measured but not the default. Measured on the 33k-thread
-inbox: CLI full walk 1.5s vs the binding's 8.7s (~230us per-message row -
-the per-message iterator overhead). The batch-iteration work in
-go.notmuch stays dropped until the binding closes the gap. The CLI's
-write-at-end JSON wall (measured 1.4s) is mitigated by the two-step
-fill, not by chunk streaming - json0 is unsupported, so the parse
-buffers; chunk slicing alone cannot make the first paint early.
+compiled and measured but not the default (the flip is a separate
+decision - the batched walk only closes the speed gap). Measured on the
+inbox (33k mails / 32952 threads, NOTMUCH_BENCH=1):
+
+| operation | CLI | cgo (per-message) | cgo (batched walk) |
+|---|---|---|---|
+| peek (50) | 16ms | - | 11ms |
+| full walk | 1.58s | 8.7s | 1.65s |
+| thread fetch | 18ms | - | 8ms |
+
+The 8.7s was the per-message iterator overhead (~230us per row); the
+batched walk keeps the query and threads iterator alive in C across
+chunks and packs per-thread summaries into one buffer per boundary
+crossing (ThreadsWalk in the vendored binding), so the per-thread
+header-cache reads amortize C-side exactly like `notmuch search` does.
+Both backends emit identical per-thread summaries (thread id, newest
+date, authors, subject, tags), so the merge path is shared; per-message
+data still comes from Thread, on open only. The CLI's write-at-end JSON
+wall (measured 1.4s) is mitigated by the two-step fill, not by chunk
+streaming - json0 is unsupported, so the parse buffers; chunk slicing
+alone cannot make the first paint early.
 
 ## 4. Mail parsing/composition: go-message (R6, 2026-08-14)
 

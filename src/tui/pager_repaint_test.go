@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"notmutt/config"
@@ -178,5 +179,104 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	// the stale rows on screen
 	if strings.Contains(emitted, "\x1b[J") {
 		t.Fatalf("the diff must not clear to end of display (the status-at-top bug):\n%s", show(emitted))
+	}
+}
+
+// TestPagerLazyLargeDoc pins the lazy-styling contract on a document
+// much larger than the window (500 lines vs a 22-line window; the
+// pre-fix style() pass re-styled the whole document on every resize -
+// the 385ms stall): setSize styles only the visible band plus a
+// margin, a same-width resize extends the band without re-styling old
+// lines, a width or theme change restyles only the band, and scrolls
+// into unstyled regions render the right lines.
+func TestPagerLazyLargeDoc(t *testing.T) {
+	cfg := config.Default()
+	st := ResolveStyles(cfg.Theme, cfg.Palette)
+
+	lines := make([]mail.Line, 500)
+	for i := range lines {
+		lines[i] = mail.Line{Kind: mail.LineBody, Text: fmt.Sprintf("line %d of the large thread body", i)}
+	}
+	p := newPager("t1", lines)
+
+	styled := func() int {
+		n := 0
+		for _, s := range p.styled {
+			if s != "" {
+				n++
+			}
+		}
+		return n
+	}
+	want := func(offset, height, width int) string {
+		var b strings.Builder
+		for i := offset; i < offset+height; i++ {
+			if i > offset {
+				b.WriteByte('\n')
+			}
+			if i < len(lines) {
+				b.WriteString(padCellsRight(fmt.Sprintf("line %d of the large thread body", i), width))
+			} else {
+				b.WriteString(strings.Repeat(" ", width))
+			}
+		}
+		return b.String()
+	}
+	assert := func(offset, height, width, wantStyled int) {
+		t.Helper()
+		// styling is lazy at render time: the render styles the band,
+		// then the cache count must reflect only that band
+		got := stripANSI(p.render())
+		if n := styled(); n != wantStyled {
+			t.Fatalf("styled lines = %d, want %d", n, wantStyled)
+		}
+		if got != want(offset, height, width) {
+			t.Fatalf("window content mismatch at offset %d x %d:\n%s\nvs:\n%s",
+				offset, height, show(got), show(want(offset, height, width)))
+		}
+	}
+
+	p.setSize(80, 22, st)
+	// the band is window + 2*margin (42), never the 500-line document
+	assert(0, 22, 80, 42)
+
+	// a same-width resize (height only) extends the band by the 8 new
+	// lines; the 42 old lines are not re-styled
+	p.setSize(80, 30, st)
+	assert(0, 30, 80, 50)
+
+	// a width change invalidates the cache and restyles only the band
+	p.setSize(100, 30, st)
+	assert(0, 30, 100, 50)
+
+	// a scroll into an unstyled region styles only the band it enters
+	p.scrollDown(250)
+	assert(250, 30, 100, 120)
+	p.scrollBottom()
+	assert(470, 30, 100, 170)
+	p.scrollUp(10)
+	assert(460, 30, 100, 180)
+	p.scrollUp(10)
+	assert(450, 30, 100, 190)
+
+	// a height shrink keeps the band inside the styled range: nothing
+	// restyles
+	p.setSize(100, 25, st)
+	assert(450, 25, 100, 190)
+
+	// a theme switch (a different style set) invalidates like a width
+	// change: the band restyles at the new colors
+	st2 := DefaultStyles()
+	st2.Pager.Quoted[0] = st2.Pager.Quoted[0].Foreground(lipgloss.Color("#ff0000"))
+	st2.sgr = sgrSetOf(st2)
+	p.setSize(100, 25, st2)
+	assert(450, 25, 100, 65)
+	// a jump to the tail styles the tail band on demand and renders the
+	// document's last line
+	p.scrollBottom()
+	assert(475, 25, 100, 70)
+	last := strings.Split(stripANSI(p.render()), "\n")[24]
+	if last != padCellsRight("line 499 of the large thread body", 100) {
+		t.Fatalf("bottom window must end at the document tail: %q", last)
 	}
 }

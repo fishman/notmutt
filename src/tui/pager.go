@@ -12,20 +12,26 @@ import (
 // the offset one line, so every press changes every visible line and
 // the renderer repaints the whole window - no read-position indicator
 // whose style-only change the diff can drop (the pre-glow model that
-// made the first press render nothing). Content is styled once per
-// open/resize (style), never on the repaint path - the TUI repaints on
-// every event, so per-frame re-styling would throw away the work 5+
-// times per second. The content is bounded (one thread), so the window
-// owns the scroll state (the index stays windowed - 129k rows must
-// never flatten). Long lines are truncated to the window width, never
-// wrapped (R11 alignment; the truncation is a pinned limitation,
+// made the first press render nothing). Content is styled LAZILY: only
+// the visible window plus a margin above and below (ensureStyled),
+// never the whole document - the old style() pass re-styled 20k lines
+// on every resize (the 385ms resize stall). Styled lines stay cached;
+// a scroll into an unstyled region styles it on demand, and a resize
+// or theme switch (the width/styleKey invalidation) re-styles only the
+// window at the new width. The content is bounded (one thread), so the
+// window owns the scroll state (the index stays windowed - 129k rows
+// must never flatten). Long lines are truncated to the window width,
+// never wrapped (R11 alignment; the truncation is a pinned limitation,
 // wrapping is future work).
 type pager struct {
-	threadID string
-	lines    []mail.Line
-	vp       pagerViewport
-	width    int
-	st       Styles
+	threadID   string
+	lines      []mail.Line
+	styled     []string // styled text per line; "" = not styled yet
+	styleKey   string   // the style set the cache was built with (sgr opens)
+	width      int
+	styleWidth int // the width the cache was styled at (0 = none)
+	st         Styles
+	vp         pagerViewport
 }
 
 func newPager(threadID string, lines []mail.Line) *pager {
@@ -36,46 +42,73 @@ func (p *pager) setSize(w, h int, st Styles) {
 	p.width = w
 	p.st = st
 	p.vp.setSize(w, h)
-	p.style(st)
+	// the styled cache is width- and style-dependent: a resize or a
+	// theme switch invalidates it; ensureStyled re-styles only the
+	// visible window (same-width resizes and height changes keep the
+	// cached range untouched)
+	if key := st.sgr.pagerKey; w != p.styleWidth || key != p.styleKey {
+		p.styleWidth, p.styleKey = w, key
+		clear(p.styled)
+	}
+	p.ensureStyled()
 }
 
-// style maps the structured lines to styled text once per load (open
-// or resize) and hands it to the window: subject -> header, from/date
-// -> hdrdefault, body -> quotedN by depth, signature -> signature,
-// attachment -> attachment, error -> error. Every line pads to the
-// window width with its own style (the R11 slot-reservation rule -
-// alignment never shifts per line). The styles' SGR fragments are
-// precomputed (st.sgr), so a line is plain string joins, never a
-// Style.Render per line.
-func (p *pager) style(st Styles) {
-	sg := st.sgr
-	var b strings.Builder
-	for _, l := range p.lines {
-		var g sgr
-		switch l.Kind {
-		case mail.LineSubject:
-			g = sg.pagerHdr
-		case mail.LineHeader:
-			g = sg.pagerDef
-		case mail.LineBody:
-			g = sg.pagerQuoted[l.Quoted]
-		case mail.LineSignature:
-			g = sg.pagerSig
-		case mail.LineAttachment:
-			g = sg.pagerAtt
-		case mail.LineError:
-			g = sg.pagerErr
-		default:
-			g = sg.normal
-		}
-		text := g.render(l.Text)
-		if p.width > 0 {
-			text = padRowSGR(text, p.width, g)
-		}
-		b.WriteString(text)
-		b.WriteByte('\n')
+// ensureStyled styles the visible window plus a margin above and
+// below, so small scroll movements never touch the styled lines; lines
+// outside the range stay unstyled until scrolled into it. The styled
+// slice doubles as the viewport's content, so the clamp and window
+// math see the full document.
+func (p *pager) ensureStyled() {
+	if len(p.styled) != len(p.lines) {
+		p.styled = make([]string, len(p.lines))
 	}
-	p.vp.SetContent(b.String())
+	first := p.vp.offset - pagerStyleMargin
+	if first < 0 {
+		first = 0
+	}
+	last := p.vp.offset + p.vp.height + pagerStyleMargin
+	if last > len(p.lines) {
+		last = len(p.lines)
+	}
+	for i := first; i < last; i++ {
+		if p.styled[i] == "" {
+			p.styled[i] = p.styleLine(p.lines[i])
+		}
+	}
+	p.vp.lines = p.styled
+}
+
+// styleLine maps one structured line to styled text: subject ->
+// header, from/date -> hdrdefault, body -> quotedN by depth,
+// signature -> signature, attachment -> attachment, error -> error.
+// Every line pads to the window width with its own style (the R11
+// slot-reservation rule - alignment never shifts per line). The
+// styles' SGR fragments are precomputed (p.st.sgr), so a line is
+// plain string joins, never a Style.Render.
+func (p *pager) styleLine(l mail.Line) string {
+	sg := p.st.sgr
+	var g sgr
+	switch l.Kind {
+	case mail.LineSubject:
+		g = sg.pagerHdr
+	case mail.LineHeader:
+		g = sg.pagerDef
+	case mail.LineBody:
+		g = sg.pagerQuoted[l.Quoted]
+	case mail.LineSignature:
+		g = sg.pagerSig
+	case mail.LineAttachment:
+		g = sg.pagerAtt
+	case mail.LineError:
+		g = sg.pagerErr
+	default:
+		g = sg.normal
+	}
+	text := g.render(l.Text)
+	if p.width > 0 {
+		text = padRowSGR(text, p.width, g)
+	}
+	return text
 }
 
 // scrollDown/scrollUp move the window by n lines (j / k / a count).
@@ -116,6 +149,7 @@ func (p *pager) scrollBottom() {
 // the bottom (the R11 slot-reservation rule applied to the frame
 // itself).
 func (p *pager) render() string {
+	p.ensureStyled()
 	win := p.vp.window()
 	if p.width == 0 {
 		win = nil
@@ -145,16 +179,6 @@ func (v *pagerViewport) setSize(w, h int) {
 		h = 0
 	}
 	v.width, v.height = w, h
-	v.clamp()
-}
-
-// SetContent replaces the window's lines (render output, already
-// styled and width-padded).
-func (v *pagerViewport) SetContent(s string) {
-	v.lines = strings.Split(s, "\n")
-	if n := len(v.lines); n > 0 && v.lines[n-1] == "" {
-		v.lines = v.lines[:n-1]
-	}
 	v.clamp()
 }
 

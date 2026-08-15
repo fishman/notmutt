@@ -91,34 +91,35 @@ func (g sgr) render(text string) string {
 
 // sgrSet precomputes the SGR fragments of the render hot paths.
 type sgrSet struct {
-	normal, indicator, ghost               sgr
-	stagedNormal, stagedIndicator, stagedGhost sgr
+	normal, indicator, ghost                     sgr
+	stagedNormal, stagedIndicator, stagedGhost   sgr
 	number, flags, date, author, subject, staged sgr
-	tag        func(name string) sgr
-	pagerHdr   sgr
-	pagerDef   sgr
-	pagerSig   sgr
-	pagerAtt   sgr
-	pagerErr   sgr
-	pagerQuoted [6]sgr
+	tag                                          func(name string) sgr
+	pagerHdr                                     sgr
+	pagerDef                                     sgr
+	pagerSig                                     sgr
+	pagerAtt                                     sgr
+	pagerErr                                     sgr
+	pagerQuoted                                  [6]sgr
+	pagerKey                                     string // fingerprint of the pager-relevant opens (styleKey)
 }
 
 func sgrSetOf(st Styles) sgrSet {
 	tagStyle := st.Index.Tag
 	cache := make(map[string]sgr)
-	return sgrSet{
+	sg := sgrSet{
 		normal:          sgrOf(st.Normal),
 		indicator:       sgrOf(st.Indicator),
 		ghost:           sgrOf(st.Index.Ghost),
 		stagedNormal:    sgrOf(st.Index.Staged.Inherit(st.Normal)),
 		stagedIndicator: sgrOf(st.Index.Staged.Inherit(st.Indicator)),
 		stagedGhost:     sgrOf(st.Index.Staged.Inherit(st.Index.Ghost)),
-		number:  sgrOf(st.Index.Number),
-		flags:   sgrOf(st.Index.Flags),
-		date:    sgrOf(st.Index.Date),
-		author:  sgrOf(st.Index.Author),
-		subject: sgrOf(st.Index.Subject),
-		staged:  sgrOf(st.Index.Staged),
+		number:          sgrOf(st.Index.Number),
+		flags:           sgrOf(st.Index.Flags),
+		date:            sgrOf(st.Index.Date),
+		author:          sgrOf(st.Index.Author),
+		subject:         sgrOf(st.Index.Subject),
+		staged:          sgrOf(st.Index.Staged),
 		tag: func(name string) sgr {
 			if g, ok := cache[name]; ok {
 				return g
@@ -127,13 +128,23 @@ func sgrSetOf(st Styles) sgrSet {
 			cache[name] = g
 			return g
 		},
-		pagerHdr:     sgrOf(st.Pager.Header),
-		pagerDef:     sgrOf(st.Pager.HdrDefault),
-		pagerSig:     sgrOf(st.Pager.Signature),
-		pagerAtt:     sgrOf(st.Pager.Attachment),
-		pagerErr:     sgrOf(st.Error),
-		pagerQuoted:  [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
+		pagerHdr:    sgrOf(st.Pager.Header),
+		pagerDef:    sgrOf(st.Pager.HdrDefault),
+		pagerSig:    sgrOf(st.Pager.Signature),
+		pagerAtt:    sgrOf(st.Pager.Attachment),
+		pagerErr:    sgrOf(st.Error),
+		pagerQuoted: [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
 	}
+	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr}
+	opens = append(opens, sg.pagerQuoted[:]...)
+	key := make([]string, len(opens))
+	for i, g := range opens {
+		key[i] = g.open
+	}
+	// the join separator is a byte that can never appear in an SGR
+	// sequence, so keys cannot collide
+	sg.pagerKey = strings.Join(key, "\x00")
+	return sg
 }
 
 func DefaultStyles() Styles {

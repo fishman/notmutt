@@ -31,4 +31,8 @@ const (
 	// defaultStatusWidth is the width the width-less statusLine variant
 	// renders at (tests and callers without a window size).
 	defaultStatusWidth = 80
+	// pagerStyleMargin is the styled band the pager keeps around the
+	// visible window; small scroll steps stay inside it and never touch
+	// the styling pass.
+	pagerStyleMargin = 20
 )

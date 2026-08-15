@@ -28,6 +28,12 @@ type View struct {
 	stagedGen uint64
 	rows      []Row // memoized flatten; rebuilt only when dirty
 	dirty     bool
+	// mergeDepth/mergeDirty gate the dirty-mark during refresh fills
+	// (BeginMerge/EndMerge): merges inside an open batch never mark
+	// dirty individually, so the flatten stays stable across the
+	// intermediate keypresses and rebuilds once per batch end.
+	mergeDepth int
+	mergeDirty bool
 }
 
 func NewView(name, query string) *View {
@@ -191,7 +197,38 @@ func (v *View) MergeThreads(threads []*Thread) {
 	// the view query), so restore the sorted invariant the next diff
 	// depends on.
 	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
-	v.dirty = true
+	if v.mergeDepth > 0 {
+		v.mergeDirty = true
+	} else {
+		v.dirty = true
+	}
+}
+
+// BeginMerge opens a merge-batching window: MergeThreads calls inside
+// it do not mark the view dirty, so Rows() keeps returning the last
+// flatten across the intermediate keypresses of a refresh fill.
+// EndMerge marks dirty once if any merge ran inside, so the flatten
+// rebuilds once per batch end. No-op when no batch is open: single
+// merges (tests, tag ops) keep their immediate dirty-mark. The depth
+// counter makes nested windows safe; an EndMerge without a matching
+// BeginMerge is a no-op.
+func (v *View) BeginMerge() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.mergeDepth++
+}
+
+func (v *View) EndMerge() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.mergeDepth == 0 {
+		return
+	}
+	v.mergeDepth--
+	if v.mergeDepth == 0 && v.mergeDirty {
+		v.dirty = true
+		v.mergeDirty = false
+	}
 }
 
 // reconcileMsg copies snapshot fields from the fresh message onto the

@@ -216,13 +216,19 @@ func (r *refresher) fullReload() {
 
 // paint publishes the fill progress and the diff after a merge; the
 // bar's total comes from the count query (or the batch when it failed).
+// The merge runs inside a BeginMerge/EndMerge batch, so the view's
+// dirty-mark lands once per emitted chunk: the flatten rebuilds once
+// per batch end, never per intermediate keypress (the refresh window
+// of the held-key lag round).
 func (r *refresher) paint(total, done int) {
 	if total <= 0 {
 		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: done})
 	} else {
 		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
 	}
+	r.view.BeginMerge()
 	r.view.MergeThreads(r.snapshot)
+	r.view.EndMerge()
 	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 

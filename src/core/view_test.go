@@ -460,3 +460,78 @@ func TestRowsMemoized(t *testing.T) {
 		t.Fatal("clean reads must hit the cache")
 	}
 }
+
+// TestMergeBatchDefersDirty pins the FIX3 batching contract: merges
+// inside an open BeginMerge window do not mark the view dirty, so the
+// row model stays stable across the intermediate keypresses of a
+// refresh fill; EndMerge marks dirty once, so the flatten rebuilds
+// exactly once per batch end with the merged content.
+func TestMergeBatchDefersDirty(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100)})})
+	r1 := v.Rows()
+	if len(r1) != 1 {
+		t.Fatalf("want 1 row, got %d", len(r1))
+	}
+	v.BeginMerge()
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100), msg("b", 200, "a")})})
+	// the batch is still open: Rows must return the cached flatten, not
+	// rebuild the merged state
+	r2 := v.Rows()
+	if len(r2) != 1 || &r1[0] != &r2[0] {
+		t.Fatal("merges inside a batch must not rebuild the row model")
+	}
+	v.EndMerge()
+	r3 := v.Rows()
+	if &r1[0] == &r3[0] {
+		t.Fatal("EndMerge must mark dirty once after a batched merge")
+	}
+	if len(r3) != 2 {
+		t.Fatalf("EndMerge must rebuild with the merged content, got %d rows", len(r3))
+	}
+}
+
+// TestEndMergeWithoutMergesNotDirty pins the batching edge: a batch
+// that never merged must not mark the view dirty.
+func TestEndMergeWithoutMergesNotDirty(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100)})})
+	r1 := v.Rows()
+	v.BeginMerge()
+	v.EndMerge()
+	if r2 := v.Rows(); &r1[0] != &r2[0] {
+		t.Fatal("EndMerge without merges must not mark dirty")
+	}
+}
+
+// TestMergeBatchNestedAndUnbalanced pins the depth-counter edges: a
+// nested window defers the dirty-mark to the outer close, and an
+// EndMerge without an open batch is a no-op that cannot corrupt the
+// flag.
+func TestMergeBatchNestedAndUnbalanced(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100)})})
+	r1 := v.Rows()
+	v.EndMerge() // no open batch: must be a no-op
+	v.BeginMerge()
+	v.BeginMerge() // nested window
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})})
+	v.EndMerge() // inner close: the outer batch is still open
+	if r2 := v.Rows(); &r1[0] != &r2[0] {
+		t.Fatal("inner EndMerge must not mark dirty while the outer batch is open")
+	}
+	v.EndMerge() // outer close: dirty lands once
+	r3 := v.Rows()
+	if &r1[0] == &r3[0] {
+		t.Fatal("outer EndMerge must mark dirty")
+	}
+	if len(r3) != 3 { // ghost root + a + b (no references)
+		t.Fatalf("rows must show the merged content, got %d", len(r3))
+	}
+	// an unbalanced extra EndMerge after the close is a no-op
+	v.EndMerge()
+	r4 := v.Rows()
+	if &r3[0] != &r4[0] {
+		t.Fatal("EndMerge without an open batch must not mark dirty")
+	}
+}

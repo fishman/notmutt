@@ -4,7 +4,6 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"github.com/mattn/go-runewidth"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -60,7 +59,7 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 		// the backstop when a future segment overruns. Its footprint is
 		// content + two inner gaps + the bar gap before it.
 		fixed := groupWidth(left)
-		budget := width - fixed - groupWidth(right) - 3*runewidth.StringWidth(pillGap)
+		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
 		if budget > 0 {
 			left = append(left, legendSegment(d.legend, budget))
 		}
@@ -83,10 +82,9 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 	row, rowWidth := composeGroup(left, st)
 	if rightWidth := groupWidth(right); rightWidth > 0 {
 		rr, _ := composeGroup(right, st)
-		if pad := width - rowWidth - rightWidth; pad > 0 {
-			row += st.Status.Render(strings.Repeat(" ", pad))
-		}
-		row += rr
+		// lipgloss places the right group: right-aligned in the leftover
+		// width, the gap padded in the status background (R11)
+		row += st.Status.Width(width - rowWidth).Align(lipgloss.Right).Render(rr)
 		return row
 	}
 	if pad := width - rowWidth; pad > 0 {
@@ -117,16 +115,17 @@ func pickLowest(left, right []statusSegment) (from, idx int) {
 }
 
 // groupWidth is a pill run's visible width: each segment's content
-// plus its two inner gaps, and a bar gap between pills.
+// plus its two inner gaps, and a bar gap between pills (measured by
+// lipgloss, SGR-aware).
 func groupWidth(segs []statusSegment) int {
 	if len(segs) == 0 {
 		return 0
 	}
 	w := 0
 	for _, s := range segs {
-		w += runewidth.StringWidth(stripANSI(s.content)) + 2*runewidth.StringWidth(pillGap)
+		w += lipgloss.Width(s.content) + 2*lipgloss.Width(pillGap)
 	}
-	return w + (len(segs)-1)*runewidth.StringWidth(pillGap)
+	return w + (len(segs)-1)*lipgloss.Width(pillGap)
 }
 
 const pillGap = " "
@@ -146,7 +145,7 @@ func composeGroup(segs []statusSegment, st Styles) (string, int) {
 		cur := segmentStyle(s, st)
 		b.WriteString(cur.Render(pillGap + s.content + pillGap))
 	}
-	return b.String(), runewidth.StringWidth(stripANSI(b.String()))
+	return b.String(), lipgloss.Width(b.String())
 }
 
 // segmentStyle resolves a segment's zero style to the status style.

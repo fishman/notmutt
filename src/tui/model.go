@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/lipgloss"
 
 	"notmutt/compose"
 	"notmutt/config"
@@ -1525,12 +1526,15 @@ func (m Model) render() string {
 }
 
 // overlayPreview splices the preview popup over the index frame: a
-// bordered box (title, pager content, hint) whose rows replace WHOLE
-// frame lines, so the splice never cuts an SGR sequence. The pager is
-// sized to the box's content area (pagerSize), so its lines fit the
-// box exactly; before the load lands the empty pager renders blank
-// content rows. A terminal too small for the box (height < 10) leaves
-// the frame untouched.
+// lipgloss-bordered box (title, pager content, hint) whose rows
+// replace WHOLE frame lines, so the splice never cuts an SGR
+// sequence. The pager is sized to the box's content area (pagerSize),
+// so its lines fit the box exactly; before the load lands the empty
+// pager renders blank content rows. The border glyphs are config data
+// (R11); the border colors derive from the theme - the indicator's fg
+// on the frame background, the border style the sgr set precomputes.
+// A terminal too small for the box (height < 10) leaves the frame
+// untouched.
 func (m Model) overlayPreview(frame string) string {
 	if !m.preview {
 		return frame
@@ -1566,19 +1570,30 @@ func (m Model) overlayPreview(frame string) string {
 	if m.pager != nil {
 		copy(content, strings.Split(m.pager.render(), "\n"))
 	}
+	// the box is one lipgloss style: config border glyphs, the
+	// indicator's fg on the frame background, the box's content width.
+	// The title and hint are interior lines, pre-styled (the box's own
+	// styling never touches the pager lines - they carry their SGR
+	// already); both truncate to the inner width, so no line exceeds it
+	// and the box never word-wraps to a different height.
+	inner := boxW - 2
+	body := sg.border.render(truncCells(m.previewTitle, inner)) + "\n" +
+		strings.Join(content, "\n") + "\n" +
+		sg.normal.render(truncCells(m.previewHint(), inner))
+	box := m.styles.Normal.
+		Border(lipgloss.Border{
+			TopLeft: g.BorderTL, Top: g.BorderH, TopRight: g.BorderTR,
+			Left: g.BorderV, Right: g.BorderV,
+			BottomLeft: g.BorderBL, Bottom: g.BorderH, BottomRight: g.BorderBR,
+		}).
+		BorderForeground(m.styles.Indicator.GetBackground()).
+		BorderBackground(m.styles.Normal.GetBackground()).
+		Width(inner).
+		Render(body)
 	rows := make([]string, 0, boxH)
-	edge := sg.border
-	hdash := strings.Repeat(g.BorderH, boxW-2)
-	rows = append(rows, padRowSGR(g.BorderTL+hdash+g.BorderTR, m.width, edge))
-	rows = append(rows, padRowSGR(m.previewTitle, m.width, edge))
-	// the side glyphs are border too - the box is one style all
-	// around (the indicator's fg, no fill); only the content keeps
-	// its own styling
-	for _, c := range content {
-		rows = append(rows, padRowSGR(edge.open+g.BorderV+c+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
+	for _, line := range strings.Split(box, "\n") {
+		rows = append(rows, padRowSGR(line, m.width, sg.normal))
 	}
-	rows = append(rows, padRowSGR(edge.open+g.BorderV+sg.normal.open+m.previewHint()+edge.open+g.BorderV+"\x1b[0m", m.width, sg.normal))
-	rows = append(rows, padRowSGR(g.BorderBL+hdash+g.BorderBR, m.width, edge))
 	copy(lines[top:top+boxH], rows)
 	return strings.Join(lines, "\n")
 }

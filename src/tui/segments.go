@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/mattn/go-runewidth"
+	"github.com/charmbracelet/lipgloss"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -49,7 +49,7 @@ func legendSegment(legend string, budget int) statusSegment {
 // progressSegment is the job progress region (R15).
 func progressSegment(ui config.UI, p core.Progress, st Styles) statusSegment {
 	label := fmt.Sprintf("%s %d/%d", p.Job, p.Done, p.Total)
-	fill := progressWidth - runewidth.StringWidth(label) - 1
+	fill := progressWidth - lipgloss.Width(label) - 1
 	if fill < 0 {
 		fill = 0
 	}

@@ -9,18 +9,21 @@ import (
 )
 
 // composeForm is one form line with its cursor slot: 0 = account,
-// 1-4 = From/To/Cc/Subject, 5+i = attachment i, -1 = separator (never
-// highlighted).
+// 1 = From, 2 = To, 3 = Cc, 4 = Bcc, 5 = Subject, 6 = Reply-To,
+// 7 = Security, 8+i = attachment i, -1 = static row (Fcc, dividers,
+// content-type - never highlighted).
 type composeForm struct {
 	slot int
 	text string
 }
 
-// renderCompose builds the attached dialogue frame (spec section 5):
-// the form rows, the attachment rows, the preview pane filling the
-// rest, the keyhint and status rows. The frame is ALWAYS exactly
-// m.height lines - the frame discipline applies to the compose
-// surface like everywhere else.
+// renderCompose builds the attached dialogue frame (spec section 5,
+// the mutt layout): the keyhint on the first line, the form rows (the
+// sender info, the Security divider, the content-type entry and the
+// attachments), the preview pane (the pager widget) filling the rest,
+// the status line on the last. The frame is ALWAYS exactly m.height
+// lines - the frame discipline applies to the compose surface like
+// everywhere else.
 func (m *Model) renderCompose() string {
 	if m.fuzzy != nil {
 		return m.renderFuzzy()
@@ -30,6 +33,19 @@ func (m *Model) renderCompose() string {
 	if rows < 1 {
 		rows = 1
 	}
+	var b strings.Builder
+	// the abort confirm and the attach prompt swap the keyhint row
+	// 1:1 (the frame height invariant); the prompt shows the typed
+	// path - pasted text can carry ESC, sanitized at render (F1)
+	switch {
+	case st.Phase == compose.PhaseAborting:
+		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
+	case m.prompt != nil:
+		b.WriteString(padRow(core.SanitizeControls(m.prompt.label+m.prompt.input), m.width, m.styles.Indicator))
+	default:
+		b.WriteString(m.keyhint())
+	}
+	b.WriteByte('\n')
 	form := m.composeForm(st)
 	// the form is a viewport (the pager widget): when the rows outgrow
 	// the frame, the window scrolls with the cursor (formIdx). The
@@ -50,7 +66,6 @@ func (m *Model) renderCompose() string {
 	if r := formRowOf(form, m.formIdx); r >= 0 {
 		m.formView.ensureVisible(r)
 	}
-	var b strings.Builder
 	vis := m.formView.window()
 	for i, text := range vis {
 		outer := m.styles.Normal
@@ -62,43 +77,59 @@ func (m *Model) renderCompose() string {
 	}
 	previewRows := rows - formRows
 	if previewRows > 0 {
-		var preview string
-		switch {
-		case st.Phase == compose.PhaseFailed:
-			preview = "send failed:\n" + st.Output
-		default:
-			preview = compose.BodyWithSig(st.Body, st.SignatureBody)
-		}
-		lines := strings.Split(core.SanitizeControls(preview), "\n")
-		for i := 0; i < previewRows; i++ {
-			line := ""
-			if i < len(lines) {
-				line = lines[i]
-			}
-			b.WriteString(padRow(line, m.width, m.styles.Normal))
-			b.WriteByte('\n')
-		}
+		m.syncPreviewPager(st)
+		m.previewPager.setSize(m.width, previewRows, m.styles)
+		b.WriteString(m.previewPager.render())
+		b.WriteByte('\n')
 	}
-	// the abort confirm and the attach prompt swap the keyhint row
-	// 1:1 (the frame height invariant); the prompt shows the typed
-	// path - pasted text can carry ESC, sanitized at render (F1)
-	switch {
-	case st.Phase == compose.PhaseAborting:
-		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
-	case m.prompt != nil:
-		b.WriteString(padRow(core.SanitizeControls(m.prompt.label+m.prompt.input), m.width, m.styles.Indicator))
-	default:
-		b.WriteString(m.keyhint())
-	}
-	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(m.styles, m.ui))
 	return b.String()
 }
 
-// composeForm renders the form rows: account/From/To/Cc/Subject on
-// their own lines (the account selectable separately from the From
-// address), the attachment rows, separators. Address lists cap at two
-// display rows (alignment never shifts; "+N more" names the
+// syncPreviewPager rebuilds the preview pager only when the rendered
+// content changes (body/signature edits, a send failure); the scroll
+// position survives otherwise. The pager INSTANCE is stable - render
+// runs on a value copy of the model, so a reassignment here would be
+// lost; the in-place rebuild (lines + styled + offset) survives, and
+// the next setSize re-styles the window.
+func (m *Model) syncPreviewPager(st compose.State) {
+	content := compose.BodyWithSig(st.Body, st.SignatureBody)
+	if st.Phase == compose.PhaseFailed {
+		content = "send failed:\n" + st.Output
+	}
+	if content != m.previewContent {
+		m.previewContent = content
+		m.previewPager.lines = previewLinesOf(content)
+		m.previewPager.styled = nil
+		m.previewPager.vp.offset = 0
+	}
+}
+
+// previewLinesOf converts the compose content to pager lines: body
+// lines, the "-- " marker and everything after it as signature. The
+// F1 sanitize runs here - the compose body is editor text, not the
+// mail path's pre-sanitized lines.
+func previewLinesOf(content string) []core.Line {
+	var lines []core.Line
+	sig := false
+	for _, l := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
+		if l == "-- " {
+			sig = true
+		}
+		kind := core.LineBody
+		if sig {
+			kind = core.LineSignature
+		}
+		lines = append(lines, core.Line{Text: core.SanitizeControls(l), Kind: kind})
+	}
+	return lines
+}
+
+// composeForm renders the form rows: the sender info (account, From,
+// To, Cc, Bcc, Subject, Reply-To, Fcc - Fcc static, set from the
+// account), the Security row, the content-type entry (derived from
+// the body), the attachment rows, separators. Address lists cap at
+// two display rows (alignment never shifts; "+N more" names the
 // overflow).
 func (m *Model) composeForm(st compose.State) []composeForm {
 	capList := func(addrs []string) string {
@@ -115,15 +146,20 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		{slot: 1, text: "From: " + st.From},
 		{slot: 2, text: "To: " + capList(st.To)},
 		{slot: 3, text: "Cc: " + capList(st.Cc)},
-		{slot: 4, text: "Subject: " + st.Subject},
+		{slot: 4, text: "Bcc: " + capList(st.Bcc)},
+		{slot: 5, text: "Subject: " + st.Subject},
+		{slot: 6, text: "Reply-To: " + capList(st.ReplyTo)},
+		{slot: -1, text: "Fcc: " + st.Fcc},
+		{slot: 7, text: "Security: " + st.Security.String()},
 		{slot: -1, text: "---"},
+		{slot: -1, text: "[ ] " + compose.ContentTypeOf(st.Body)},
 	}
 	for i, a := range st.Attachments {
 		if i >= 3 {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
-		rows = append(rows, composeForm{slot: 5 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
+		rows = append(rows, composeForm{slot: 8 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "---"})
 	// the form rows render mail-derived text (Subject/To/Cc from the

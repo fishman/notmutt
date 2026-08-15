@@ -60,6 +60,10 @@ var Actions = map[string]map[string]bool{
 	},
 	"compose": {
 		"form-down": true, "form-up": true,
+		"scroll-down": true, "scroll-up": true,
+		"page-down": true, "page-up": true,
+		"half-page-down": true, "half-page-up": true,
+		"scroll-top": true, "scroll-bottom": true,
 		"edit": true, "attach": true, "detach": true,
 		"edit-from": true, "edit-to": true, "edit-subject": true,
 		"account": true, "signature": true,
@@ -159,13 +163,20 @@ type Model struct {
 	tabs   []compose.State
 	tabIdx int
 	// formIdx is the compose form cursor slot: 0 = account,
-	// 1-4 = From/To/Cc/Subject, 5+i = attachment i (d detaches there).
+	// 1 = From, 2 = To, 3 = Cc, 4 = Bcc, 5 = Subject, 6 = Reply-To,
+	// 7 = Security, 8+i = attachment i (d detaches there).
 	formIdx int
 	// formView scrolls the compose form (the pager widget): when the
 	// rows outgrow the frame, the window follows the cursor. A pointer
 	// like the layers - the program holds the model by value, so
 	// render-time writes persist only through reference fields.
 	formView *viewport
+	// previewPager is the compose preview pane (the pager widget, the
+	// same component as the mail pager); previewContent is its rendered
+	// input cache - syncPreviewPager rebuilds only when the content
+	// changes, so scroll position survives edits and tab switches.
+	previewPager   *pager
+	previewContent string
 	// fuzzy is the selector popup (account/signature); non-nil
 	// renders the popup frame and captures the fuzzy context.
 	fuzzy *fuzzy
@@ -214,7 +225,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, formView: &viewport{}, styleVer: 1}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), styleVer: 1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -546,18 +557,28 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "scroll-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollDown(n)
-			deferPaint()
-			deferred = true
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.scrollDown(n)
+		} else {
+			break
 		}
+		deferPaint()
+		deferred = true
 	case "scroll-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollUp(n)
-			deferPaint()
-			deferred = true
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.scrollUp(n)
+		} else {
+			break
 		}
+		deferPaint()
+		deferred = true
 	case "page-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.pageDown()
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.pageDown()
 		} else if m.mode == "index" {
 			m.moveCursor(m.pageRows())
 		}
@@ -566,6 +587,8 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "page-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.pageUp()
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.pageUp()
 		} else if m.mode == "index" {
 			m.moveCursor(-m.pageRows())
 		}
@@ -574,6 +597,8 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "half-page-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageDown()
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.halfPageDown()
 		} else if m.mode == "index" {
 			m.moveCursor(m.pageRows() / 2)
 		}
@@ -582,6 +607,8 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "half-page-up":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.halfPageUp()
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.halfPageUp()
 		} else if m.mode == "index" {
 			m.moveCursor(-(m.pageRows() / 2))
 		}
@@ -592,10 +619,18 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.pager.scrollTop()
 			deferPaint()
 			deferred = true
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.scrollTop()
+			deferPaint()
+			deferred = true
 		}
 	case "scroll-bottom":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollBottom()
+			deferPaint()
+			deferred = true
+		} else if m.mode == "compose" && m.previewPager != nil {
+			m.previewPager.scrollBottom()
 			deferPaint()
 			deferred = true
 		}
@@ -620,7 +655,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.composeTab().Phase = compose.PhaseEditing
 		}
 		m.formIdx++
-		if max := 5 + len(m.composeTab().Attachments); m.formIdx > max {
+		if max := 8 + len(m.composeTab().Attachments); m.formIdx > max {
 			m.formIdx = max
 		}
 		deferPaint()
@@ -633,11 +668,34 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		deferred = true
 	case "edit":
 		// an in-flight edit's result is discarded when the send
-		// completes - gate it like attach/detach
-		if m.composeTab().Phase != compose.PhaseSending {
-			if m.composeTab().Phase == compose.PhaseFailed {
-				m.composeTab().Phase = compose.PhaseEditing
+		// completes - gate it like attach/detach. Slot-aware: the
+		// account, the address fields and the security cycle have
+		// their own editors; From/To/Subject/attachments keep the
+		// body editor (t/s/f already cover the named fields).
+		if m.composeTab().Phase == compose.PhaseSending {
+			break
+		}
+		if m.composeTab().Phase == compose.PhaseFailed {
+			m.composeTab().Phase = compose.PhaseEditing
+		}
+		switch m.formIdx {
+		case 0:
+			m.openPicker("account")
+		case 3, 4, 6:
+			f := &formPrompt{kind: "field", field: map[int]string{3: "cc", 4: "bcc", 6: "replyto"}[m.formIdx]}
+			switch f.field {
+			case "cc":
+				f.label, f.input = "Cc: ", strings.Join(m.composeTab().Cc, ", ")
+			case "bcc":
+				f.label, f.input = "Bcc: ", strings.Join(m.composeTab().Bcc, ", ")
+			case "replyto":
+				f.label, f.input = "Reply-To: ", strings.Join(m.composeTab().ReplyTo, ", ")
 			}
+			m.prompt = f
+		case 7:
+			m.composeTab().Security = m.composeTab().Security.Next()
+		default:
+			// From/To/Subject/attachments: the body editor
 			st := *m.composeTab()
 			tabID := st.ID
 			path, err := writeEditorBuffer(st)
@@ -655,7 +713,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "detach":
 		t := m.composeTab()
 		if t.Phase != compose.PhaseSending {
-			if i := m.formIdx - 5; i >= 0 && i < len(t.Attachments) {
+			if i := m.formIdx - 8; i >= 0 && i < len(t.Attachments) {
 				t.Attachments = slices.Delete(t.Attachments, i, i+1)
 			}
 		}
@@ -857,6 +915,7 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	st := compose.FromEvent(e)
 	m.tabs = append(m.tabs, *st)
 	m.tabIdx = len(m.tabs)
+	m.formIdx = 0 // a fresh dialogue never inherits a stale-high slot
 	m.attachTab()
 }
 
@@ -1705,6 +1764,12 @@ func (m *Model) promptKey(msg tea.KeyPressMsg) tea.Cmd {
 			st.Subject = input
 		case "to":
 			st.To = compose.SplitAddrs(input)
+		case "cc":
+			st.Cc = compose.SplitAddrs(input)
+		case "bcc":
+			st.Bcc = compose.SplitAddrs(input)
+		case "replyto":
+			st.ReplyTo = compose.SplitAddrs(input)
 		}
 		m.prompt = nil
 	case msg.String() == "esc":

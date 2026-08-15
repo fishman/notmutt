@@ -1725,8 +1725,8 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0].Name != "att.txt" {
 		t.Fatalf("attachments = %+v", m.tabs[0].Attachments)
 	}
-	// form cursor to the attachment slot (slot 5), then d detaches
-	for i := 0; i < 5; i++ {
+	// form cursor to the attachment slot (slot 8), then d detaches
+	for i := 0; i < 8; i++ {
 		m = press(t, m, "j")
 	}
 	m = press(t, m, "d")
@@ -1851,6 +1851,7 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 
 func TestEditorEditArmsExec(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
+	m.formIdx = 1 // slot 0 is the account picker; From keeps the editor
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
 	if cmd == nil {
 		t.Fatal("e must return an exec command")
@@ -2230,5 +2231,123 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 	m = next.(Model)
 	if m.prompt != nil {
 		t.Fatalf("a stale result must not resurrect the prompt: %+v", m.prompt)
+	}
+}
+
+// TestComposeFrameMuttLayout pins the mutt frame: the keyhint on the
+// first line, the sender-info rows (Bcc, Reply-To, Fcc), the Security
+// divider, the content-type entry, and the prompt swapping line 0.
+func TestComposeFrameMuttLayout(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	frame := m.render()
+	lines := strings.Split(frame, "\n")
+	if !strings.Contains(stripANSI(lines[0]), "a attach") {
+		t.Fatalf("line 0 must be the keyhint: %q", stripANSI(lines[0]))
+	}
+	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "[ ] text/plain"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("the frame must show %q:\n%s", want, frame)
+		}
+	}
+	// the prompt row swaps line 0 1:1 (the frame height invariant)
+	m = press(t, m, "a")
+	frame = m.render()
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[0]), "attach path:") {
+		t.Fatalf("the attach prompt must occupy line 0: %q", stripANSI(strings.Split(frame, "\n")[0]))
+	}
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the prompt frame must still be exactly 24 lines, got %d", got)
+	}
+}
+
+// TestComposeSlotEditFieldPrompts pins the slot-aware e: slot 3/4/6
+// open the Cc/Bcc/Reply-To prompts, enter splits the addresses into
+// the dialogue state.
+func TestComposeSlotEditFieldPrompts(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	for _, tc := range []struct {
+		slot  int
+		field string
+		label string
+	}{
+		{3, "cc", "Cc: "},
+		{4, "bcc", "Bcc: "},
+		{6, "replyto", "Reply-To: "},
+	} {
+		m.formIdx = tc.slot
+		m = press(t, m, "e")
+		if m.prompt == nil || m.prompt.kind != "field" || m.prompt.field != tc.field {
+			t.Fatalf("slot %d must open the %s prompt: %+v", tc.slot, tc.field, m.prompt)
+		}
+		if m.prompt.label != tc.label {
+			t.Fatalf("slot %d prompt label = %q, want %q", tc.slot, m.prompt.label, tc.label)
+		}
+		m = press(t, m, "x@y.z, q@w.e")
+		m = press(t, m, "enter")
+		if m.prompt != nil {
+			t.Fatal("enter must close the prompt")
+		}
+	}
+	st := m.tabs[0]
+	if len(st.Cc) != 2 || st.Cc[0] != "x@y.z" || st.Cc[1] != "q@w.e" {
+		t.Fatalf("Cc = %v", st.Cc)
+	}
+	if len(st.Bcc) != 2 || st.Bcc[0] != "x@y.z" || st.Bcc[1] != "q@w.e" {
+		t.Fatalf("Bcc = %v", st.Bcc)
+	}
+	if len(st.ReplyTo) != 2 || st.ReplyTo[0] != "x@y.z" || st.ReplyTo[1] != "q@w.e" {
+		t.Fatalf("Reply-To = %v", st.ReplyTo)
+	}
+}
+
+// TestComposeSlotEditSecurityCycle pins the slot-7 e: the security
+// flag cycles none -> sign -> encrypt -> sign+encrypt -> none.
+func TestComposeSlotEditSecurityCycle(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.formIdx = 7
+	want := []compose.Security{compose.SecuritySign, compose.SecurityEncrypt, compose.SecuritySignEncrypt, compose.SecurityNone}
+	for _, w := range want {
+		m = press(t, m, "e")
+		if m.tabs[0].Security != w {
+			t.Fatalf("security = %v, want %v", m.tabs[0].Security, w)
+		}
+	}
+}
+
+// TestComposePreviewScrolls pins the preview pager: ctrl+d scrolls
+// the compose preview (built on render), ctrl+u returns.
+func TestComposePreviewScrolls(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Body = strings.Repeat("line\n", 200)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m.render() // the preview pager builds at render (syncPreviewPager)
+	if m.previewPager == nil || len(m.previewPager.lines) < 200 {
+		t.Fatalf("the preview pager must hold the body lines: %d", len(m.previewPager.lines))
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if m.previewPager.vp.offset <= 0 {
+		t.Fatal("ctrl+d must scroll the compose preview")
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if m.previewPager.vp.offset != 0 {
+		t.Fatalf("ctrl+u must scroll back, offset=%d", m.previewPager.vp.offset)
+	}
+}
+
+// TestComposeContentTypeRow pins the derived content-type entry: a
+// markdown body renders text/markdown in the form row.
+func TestComposeContentTypeRow(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Body = "# t\n\n- x\n"
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	frame := m.render()
+	if !strings.Contains(frame, "[ ] text/markdown") {
+		t.Fatalf("the content-type row must show text/markdown:\n%s", frame)
 	}
 }

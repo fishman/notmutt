@@ -235,6 +235,8 @@ func TestDefaultBindings(t *testing.T) {
 	}
 	wantCompose := map[string]string{
 		"j": "form-down", "k": "form-up",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
+		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
@@ -271,6 +273,10 @@ func TestKeymapSchemes(t *testing.T) {
 	}
 	if cfg.Bindings["compose"]["ctrl+n"] != "form-down" {
 		t.Fatalf("emacs compose movement missing: %v", cfg.Bindings["compose"])
+	}
+	if cfg.Bindings["compose"]["ctrl+v"] != "page-down" ||
+		cfg.Bindings["compose"]["alt+v"] != "page-up" {
+		t.Fatalf("emacs compose scroll keys missing: %v", cfg.Bindings["compose"])
 	}
 }
 

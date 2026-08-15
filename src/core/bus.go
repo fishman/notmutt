@@ -115,22 +115,22 @@ type ViewDiff struct{ View string }
 // attaches the dialogue. Mode is one of "compose" | "reply" |
 // "reply-all" | "forward".
 type ComposeOpened struct {
-	TabID       string
-	Mode        string
-	Account     string
-	From        string
-	To, Cc      []string
+	TabID        string
+	Mode         string
+	Account      string
+	From         string
+	To, Cc       []string
 	Bcc, ReplyTo []string
-	Subject     string
-	Body        string
-	Fcc         string
-	Security    string
-	Attachments []ComposeAttachment
-	Signature   string
-	SigContent  string
-	MessageID   string
-	References  []string
-	OriginalID  string
+	Subject      string
+	Body         string
+	Fcc          string
+	Security     string
+	Attachments  []ComposeAttachment
+	Signature    string
+	SigContent   string
+	MessageID    string
+	References   []string
+	OriginalID   string
 }
 
 // ComposeAttachment is the bus contract's attachment shape (core stays

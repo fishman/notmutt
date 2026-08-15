@@ -158,12 +158,20 @@ type Model struct {
 	// formIdx is the compose form cursor slot: 0 = account,
 	// 1-4 = From/To/Cc/Subject, 5+i = attachment i (d detaches there).
 	formIdx int
+	// formView scrolls the compose form (the pager widget): when the
+	// rows outgrow the frame, the window follows the cursor. A pointer
+	// like the layers - the program holds the model by value, so
+	// render-time writes persist only through reference fields.
+	formView *viewport
 	// fuzzy is the selector popup (account/signature); non-nil
 	// renders the popup frame and captures the fuzzy context.
 	fuzzy *fuzzy
-	// help is the ? overlay: any keypress closes it (the check runs
-	// before dispatch, so the closing key never fires).
-	help bool
+	// help is the ? overlay (a viewport over the binding rows - the
+	// pager widget): the pager scroll keys navigate it, any other
+	// keypress closes it (the check runs before dispatch, so the
+	// closing key never fires).
+	help     bool
+	helpView viewport
 	// preview is the preview popup (the p key): the thread loads
 	// WITHOUT the read-marking, the box overlays the index, and the
 	// cursor stays put. previewThread is the load's guard - a stale
@@ -203,7 +211,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, styleVer: 1}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, formView: &viewport{}, styleVer: 1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -244,6 +252,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			w, h := m.pagerSize()
 			m.pager.setSize(w, h, m.styles)
 		}
+		if m.help {
+			h := m.height - 3
+			if h < 1 {
+				h = 1
+			}
+			m.helpView.setSize(m.width, h)
+		}
 	case tea.KeyPressMsg:
 		if m.prompt != nil {
 			m.promptKey(msg)
@@ -254,8 +269,30 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.help {
-			// any key closes the help overlay without firing
-			m.help = false
+			// the help surface borrows the pager keys (neomutt renders
+			// the help page in a pager): the scroll keys drive the
+			// help's viewport, anything else closes without firing
+			switch actionForKey(msg, m.bindings["pager"]) {
+			case "scroll-down":
+				m.helpView.scrollDown(1)
+			case "scroll-up":
+				m.helpView.scrollUp(1)
+			case "scroll-top":
+				m.helpView.scrollTop()
+			case "scroll-bottom":
+				m.helpView.scrollBottom()
+			case "page-down":
+				m.helpView.pageDown()
+			case "page-up":
+				m.helpView.pageUp()
+			case "half-page-down":
+				m.helpView.halfPageDown()
+			case "half-page-up":
+				m.helpView.halfPageUp()
+			default:
+				m.help = false
+				m.helpView = viewport{}
+			}
 			return m, nil
 		}
 		if m.preview {
@@ -644,6 +681,12 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "help":
 		m.help = true
+		h := m.height - 3
+		if h < 1 {
+			h = 1
+		}
+		m.helpView.setLines(m.helpRows())
+		m.helpView.setSize(m.width, h)
 	default:
 		// staged tag ops (and undo) advance the cursor one row -
 		// the next keypress acts on the next message (mutt's

@@ -43,7 +43,7 @@ func TestCursorMovePartialRepaint(t *testing.T) {
 	st := config.NewStore(config.Default())
 	out := &recorder{}
 	prog := tea.NewProgram(
-		New(view, bus.Subscribe(), testBindings, testTagActions, bus, st, config.Default().UI),
+		New(view, bus.Subscribe(), testBindings(), testTagActions(), bus, st, config.Default().UI),
 		tea.WithOutput(out),
 		tea.WithInput(strings.NewReader("")),
 		// without a TTY, Run() sizes itself 0x0 and its own resizeMsg

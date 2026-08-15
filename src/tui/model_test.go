@@ -21,67 +21,35 @@ import (
 	"notmutt/mail"
 )
 
-var testKeys = map[string]string{
-	"j": "cursor-down", "k": "cursor-up",
-	"enter": "open", "P": "preview", "q": "quit",
-	"r": "reply", "R": "reply-all", "f": "forward", "m": "compose",
-	"t": "toggle-read", "a": "archive", "d": "delete",
-	"u": "undo", "$": "apply",
-	"y": "spam", "p": "pending",
-	"[": "tab-prev", "]": "tab-next",
-	// the arrow and G keys come from the user config overlay (the
-	// defaults are untouched); the test table mirrors the live config
-	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
-	// multi-key chains are data like single keys (space-joined);
-	// "?" opens the help overlay (index context)
-	"g g": "cursor-top", "g r": "reply-all",
-	"?": "help",
-}
-
 // statusMarker is the unstyled view+count boundary on the status row:
 // the view pill, the bar gap, and the count pill.
 func statusMarker(count string) string {
 	return "inbox" + strings.Repeat(pillGap, 3) + count
 }
 
-var testTagActions = map[string]string{
-	"toggle-read": "unread",
-	"archive":     "archive",
-	"delete":      "deleted",
+// testBindings is the per-context binding table (R9): the mutt scheme
+// from the embedded base config (config.Default derives it), plus the
+// live config's arrow-key overlay - the test table mirrors the user
+// config exactly, so a scheme change propagates to the tests.
+func testBindings() map[string]map[string]string {
+	km := config.Default().Bindings
+	km["index"]["up"] = "cursor-up"
+	km["index"]["down"] = "cursor-down"
+	km["pager"]["up"] = "scroll-up"
+	km["pager"]["down"] = "scroll-down"
+	return km
 }
 
-// testBindings is the per-context binding table (R9): the index context
-// carries the staging keys, the pager context the scroll keys, the
-// compose context the dialogue keys, the fuzzy context the picker keys.
-var testBindings = map[string]map[string]string{
-	"index": testKeys,
-	"pager": {
-		"j": "scroll-down", "k": "scroll-up",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"g": "scroll-top", "G": "scroll-bottom",
-		"q": "back",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"compose": {
-		"j": "form-down", "k": "form-up",
-		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
-		"?": "help",
-	},
-	"fuzzy": {
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-	},
+// testTagActions mirrors the embedded base config's tag actions.
+func testTagActions() map[string]string {
+	return config.Default().TagActions
 }
 
 // TestActionsCoverComposeAndFuzzy pins the action vocabulary: the
 // compose and fuzzy contexts exist in the builtin table, and the tab
 // actions are bound in every tabbed context (R4 tabs).
 func TestActionsCoverComposeAndFuzzy(t *testing.T) {
+	km := testBindings()
 	for _, ctx := range []string{"compose", "fuzzy"} {
 		if len(Actions[ctx]) == 0 {
 			t.Fatalf("Actions[%q] must cover the context", ctx)
@@ -97,7 +65,7 @@ func TestActionsCoverComposeAndFuzzy(t *testing.T) {
 		if !Actions[ctx]["help"] {
 			t.Errorf("Actions[%q] must define help", ctx)
 		}
-		if testBindings[ctx]["?"] != "help" {
+		if km[ctx]["?"] != "help" {
 			t.Errorf("bindings[%q] must bind ? to help", ctx)
 		}
 	}
@@ -163,7 +131,9 @@ func TestChainExpires(t *testing.T) {
 }
 
 // TestHelpListsBindings pins the ? overlay: a full-frame binding list
-// for the active context, closed by any keypress without firing it.
+// for the active context - the neomutt help columns over a viewport
+// (the pager widget), scrolled by the pager keys, closed by any other
+// keypress without firing it.
 func TestHelpListsBindings(t *testing.T) {
 	m := model()
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -177,10 +147,30 @@ func TestHelpListsBindings(t *testing.T) {
 	if !strings.Contains(clean, "help: index bindings") {
 		t.Fatalf("the help must title the context:\n%s", clean)
 	}
-	if !strings.Contains(clean, "j cursor-down") || !strings.Contains(clean, "g r reply-all") {
-		t.Fatalf("the help must list the bindings:\n%s", clean)
+	// the neomutt help columns (help.c): key, function, description.
+	// The columns pad to their widest entry (the fixed two-space gap
+	// stays): the widest row aligns exactly, descriptions are
+	// padding-robust by position
+	if !strings.Contains(clean, "ctrl+d  half-page-down  Scroll down half a page") ||
+		!strings.Contains(clean, "Move the cursor down") ||
+		!strings.Contains(clean, "Reply to all recipients") {
+		t.Fatalf("the help must list the bindings with descriptions:\n%s", clean)
 	}
-	m = press(t, m, "j")
+	// the footer derives from the pager binding data (the surface
+	// borrows the pager keys)
+	if !strings.Contains(clean, "down/j/k/up scroll  q closes  ? help") {
+		t.Fatalf("the help footer must derive from the bindings:\n%s", clean)
+	}
+	// G scrolls the help to the bottom (a viewport like the mail
+	// pager): the t row is past the first frame (26 index rows in a
+	// 21-row window)
+	m = press(t, m, "G")
+	clean = stripANSI(m.render())
+	if !strings.Contains(clean, "apply tag unread") {
+		t.Fatalf("the help must scroll to the tag action rows:\n%s", clean)
+	}
+	// a non-pager key closes; a pager key (j) scrolls instead
+	m = press(t, m, "x")
 	if m.help {
 		t.Fatal("a keypress must close the help")
 	}
@@ -270,7 +260,7 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -281,7 +271,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 func press(t *testing.T, m tea.Model, key string) Model {
@@ -307,7 +297,7 @@ func stubModel() Model {
 		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
 		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
 	})
-	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
@@ -382,7 +372,7 @@ func TestCountedG(t *testing.T) {
 		}))
 	}
 	view.MergeThreads(threads)
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "1")
 	m = press(t, m, "2")
 	m = press(t, m, "g")
@@ -549,7 +539,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -577,7 +567,7 @@ func TestRebinding(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
-	m := New(view, nil, map[string]map[string]string{"index": {"x": "archive"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"x": "archive"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m = press(t, m, "x")
 	row, _ := m.view.CursorRow()
 	if !row.Staged || !hasTag(row.StagedTags, "archive") {
@@ -650,7 +640,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	out := m.View().Content
 	// the model's own cursor highlight (indicator style SGR) is not a
@@ -705,7 +695,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View().Content, "refresh 1/5") {
@@ -720,7 +710,7 @@ func TestProgressBarEmptyView(t *testing.T) {
 // literal "empty" text never appears.
 func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
 	out := m.View().Content
 	if strings.Contains(out, "empty") {
@@ -730,7 +720,9 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	if !strings.Contains(strip, statusMarker("0")) {
 		t.Fatalf("idle empty view must still render the status line:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
+	// the hint row truncates at the frame width (a row is a hint, not
+	// a table), so the check anchors on the sorted row's head
+	if si, sh := strings.Index(strip, "$ apply"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	if !strings.Contains(out, "229;192;123") {
@@ -753,17 +745,17 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 // drops the hint row).
 func TestProgressBarEmptyViewHints(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	strip := stripANSI(m.View().Content)
 	if !strings.Contains(strip, "refresh 1/5") {
 		t.Fatalf("empty view must still render the status line:\n%s", strip)
 	}
-	if !strings.Contains(strip, "g g cursor-top") {
+	if !strings.Contains(strip, "$ apply") {
 		t.Fatalf("empty view must render the keyhint row:\n%s", strip)
 	}
-	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "$ apply"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 }
@@ -803,7 +795,7 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.width, m.height = 80, 24
 	if out := m.View().Content; strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
@@ -829,7 +821,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings, testTagActions, nil, st, cfg.UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.width, m.height = 80, 24
 	path := fixtureMsg(t, "body line\n")
 	SetOpenHandler(func(threadID string, preview bool) {
@@ -879,7 +871,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
@@ -928,7 +920,7 @@ func TestProgressBarPerView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 
 	// another view's fill publishes: the inbox bar stays off
@@ -981,7 +973,7 @@ func rowsModel(n int) Model {
 		}))
 	}
 	view.MergeThreads(threads)
-	return New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
 // openPager presses the open key with an open handler that injects the
@@ -1100,11 +1092,13 @@ func TestKeyhintRowInView(t *testing.T) {
 	m := model()
 	m.width, m.height = 160, 24
 	strip := stripANSI(m.View().Content)
-	if !strings.Contains(strip, "g g cursor-top") {
+	// the hint row truncates at the frame width, so the check anchors
+	// on the sorted row's head
+	if !strings.Contains(strip, "$ apply") {
 		t.Fatalf("index hint row missing:\n%s", strip)
 	}
 	status := statusMarker("2")
-	if si, sh := strings.Index(strip, "g g cursor-top"), strings.Index(strip, status); si < 0 || si > sh {
+	if si, sh := strings.Index(strip, "$ apply"), strings.Index(strip, status); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
@@ -1125,7 +1119,7 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	})})
 	// q is bound only in the pager context: in index mode it must be a
 	// no-op (no quit, no back), in pager mode it returns to index
-	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "back"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "back"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
 	m = next.(Model)
@@ -1154,7 +1148,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 	// the emacs pager binds q to quit: in pager mode the key exits the
 	// app (the spec's "quit in the pager exits the app; back returns to
 	// the index - both bound")
-	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "quit"}}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "quit"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
@@ -1285,7 +1279,7 @@ func TestArrowKeysScrollPager(t *testing.T) {
 	m := New(view, nil, map[string]map[string]string{
 		"index": {"enter": "open"},
 		"pager": {"up": "scroll-up", "down": "scroll-down", "q": "back"},
-	}, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	m = pressType(t, m, tea.KeyDown)
@@ -1565,7 +1559,7 @@ func TestSendResultSnapshotResolvesDroppedCompletion(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseSending
 
@@ -1601,7 +1595,7 @@ func TestSendResultSnapshotFailureKeepsDialogue(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseSending
 
@@ -1627,7 +1621,7 @@ func TestSendRetryClearsSnapshot(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseFailed
 	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "old failure"})
@@ -1651,7 +1645,7 @@ func TestComposeOpenedSnapshotAttachesOnce(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings, testTagActions, bus, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
 
 	// The open event drops: the channel is full when it publishes.
 	for i := 0; i < 64; i++ {

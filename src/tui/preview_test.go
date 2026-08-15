@@ -28,7 +28,9 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
 		Lines: []core.Line{{Kind: core.LineBody, Text: "body line"}}})
 	out := stripANSI(m.View().Content)
-	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  enter open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
+	// the scroll hint lists every pager scroll key, arrows included
+	// (the live config's arrow overlay is part of the fixture)
+	for _, want := range []string{m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("preview box missing %q:\n%s", want, out)
 		}

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -83,12 +84,9 @@ func keyFor(km map[string]string, action string) string {
 	return ""
 }
 
-// previewHint derives the popup's hint row from the binding data: the
-// scroll keys from the pager map, the open key from the index map the
-// popup sits over, the close key from the pager's back action (R9).
-func (m Model) previewHint() string {
-	pm := m.bindings["pager"]
-	var parts []string
+// scrollKeys returns the pager map's scroll-up/down keys sorted - the
+// shared hint derivation for the preview popup and the help dialog.
+func scrollKeys(pm map[string]string) []string {
 	keys := make([]string, 0, len(pm))
 	for k := range pm {
 		keys = append(keys, k)
@@ -100,8 +98,17 @@ func (m Model) previewHint() string {
 			scroll = append(scroll, k)
 		}
 	}
-	if len(scroll) > 0 {
-		parts = append(parts, strings.Join(scroll, "/")+" scroll")
+	return scroll
+}
+
+// previewHint derives the popup's hint row from the binding data: the
+// scroll keys from the pager map, the open key from the index map the
+// popup sits over, the close key from the pager's back action (R9).
+func (m Model) previewHint() string {
+	pm := m.bindings["pager"]
+	var parts []string
+	if s := scrollKeys(pm); len(s) > 0 {
+		parts = append(parts, strings.Join(s, "/")+" scroll")
 	}
 	if o := keyFor(m.bindings["index"], "open"); o != "" {
 		parts = append(parts, o+" open")
@@ -112,40 +119,92 @@ func (m Model) previewHint() string {
 	return strings.Join(parts, "  ")
 }
 
-// renderHelp is the ? overlay: the active context's bindings as
-// "key action" rows (single keys and chains, sorted) with a close
-// hint. Any keypress closes it - the help check runs before
-// dispatch, so the closing key never fires. The frame is always
-// exactly m.height lines, assembled like renderCompose (R11 slot
-// reservation).
+// renderHelp is the ? overlay: the active context's binding rows
+// (helpRows) through a viewport - the pager widget, the same scroll
+// surface the mail thread uses. The pager scroll keys navigate it,
+// any other keypress closes it (the check runs before dispatch, so
+// the closing key never fires). The frame is always exactly m.height
+// lines, assembled like renderCompose (R11 slot reservation).
 func (m Model) renderHelp() string {
-	sig := m.mode + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.height) + "|" + strconv.Itoa(m.styleVer)
+	sig := m.mode + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.helpView.height) + "|" + strconv.Itoa(m.helpView.offset) + "|" + strconv.Itoa(m.styleVer)
 	return m.helpLayer.get(sig, m.helpBuild)
 }
 
 func (m Model) helpBuild() string {
-	km := m.activeBindings()
-	rows := m.height - 2
-	if rows < 1 {
-		rows = 1
+	rows := m.helpView.window()
+	for len(rows) < m.helpView.height {
+		rows = append(rows, "")
 	}
-	title := "help: " + m.mode + " bindings"
-	body := make([]string, 0, rows)
-	body = append(body, title)
+	body := make([]string, 0, len(rows)+2)
+	body = append(body, "help: "+m.mode+" bindings")
+	body = append(body, rows...)
+	body = append(body, m.helpFooter())
+	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+}
+
+// helpRows is the active context's binding rows, three neomutt help
+// columns (neomutt/help.c): key, function, description, each
+// left-aligned at the data's widest entry, two spaces apart.
+func (m Model) helpRows() []string {
+	km := m.activeBindings()
+	descs := m.descriptions()
 	keys := make([]string, 0, len(km))
 	for k := range km {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
+	wk, wf := 0, 0
 	for _, k := range keys {
-		body = append(body, keyhintRow(map[string]string{k: km[k]}, m.width))
+		if len(k) > wk {
+			wk = len(k)
+		}
+		if a := km[k]; len(a) > wf {
+			wf = len(a)
+		}
 	}
-	if len(body) > rows {
-		body = body[:rows]
+	rows := make([]string, 0, len(keys))
+	for _, k := range keys {
+		row := fmt.Sprintf("%-*s  %-*s  %s", wk, k, wf, km[k], actionDesc(descs, m.tagActions, km[k]))
+		rows = append(rows, truncCells(row, m.width))
 	}
-	for len(body) < rows {
-		body = append(body, "")
+	return rows
+}
+
+// helpFooter derives the dialog's hint row from the pager binding data
+// (the surface borrows the pager keys): the scroll keys, the close
+// key, the help key (R9 - the data answers).
+func (m Model) helpFooter() string {
+	pm := m.bindings["pager"]
+	var parts []string
+	if s := scrollKeys(pm); len(s) > 0 {
+		parts = append(parts, strings.Join(s, "/")+" scroll")
 	}
-	body = append(body, "? or any key closes")
-	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+	if q := keyFor(pm, "back"); q != "" {
+		parts = append(parts, q+" closes")
+	}
+	if q := keyFor(pm, "help"); q != "" {
+		parts = append(parts, q+" help")
+	}
+	return strings.Join(parts, "  ")
+}
+
+// descriptions is the help vocabulary from the config store (nil in
+// stores without one: the description falls back to the action).
+func (m Model) descriptions() map[string]string {
+	if m.st == nil {
+		return nil
+	}
+	return m.st.Config().Descriptions
+}
+
+// actionDesc is the help description for a bound action: the config's
+// one-line text, or a tag action's derived line (the tag IS the data).
+func actionDesc(descs, tagActions map[string]string, action string) string {
+	if d, ok := descs[action]; ok {
+		return d
+	}
+	if tag, ok := tagActions[action]; ok {
+		return "apply tag " + tag
+	}
+	return action
 }

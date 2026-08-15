@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"slices"
 	"strings"
 
 	"notmutt/core"
@@ -31,7 +30,7 @@ type pager struct {
 	width      int
 	styleWidth int // the width the cache was styled at (0 = none)
 	st         Styles
-	vp         pagerViewport
+	vp         viewport
 }
 
 func newPager(threadID string, lines []core.Line) *pager {
@@ -75,7 +74,7 @@ func (p *pager) ensureStyled() {
 			p.styled[i] = p.styleLine(p.lines[i])
 		}
 	}
-	p.vp.lines = p.styled
+	p.vp.setLines(p.styled)
 }
 
 // styleLine maps one structured line to styled text: subject ->
@@ -158,49 +157,4 @@ func (p *pager) render() string {
 		win = append(win, padRow("", p.width, p.st.Normal))
 	}
 	return strings.Join(win, "\n")
-}
-
-// pagerViewport is the pager's line-based window, hand-rolled like the
-// index windowing: the bubbles viewport package is not a dependency
-// (R7 supply-chain bar), and the pager needs only an offset into
-// styled lines - the movement logic lives on the pager.
-type pagerViewport struct {
-	lines  []string
-	offset int
-	width  int
-	height int
-}
-
-func (v *pagerViewport) setSize(w, h int) {
-	if w < 0 {
-		w = 0
-	}
-	if h < 0 {
-		h = 0
-	}
-	v.width, v.height = w, h
-	v.clamp()
-}
-
-// clamp keeps the offset inside [0, len-lines-height]; a window taller
-// than the content pins to the top.
-func (v *pagerViewport) clamp() {
-	if max := len(v.lines) - v.height; v.offset > max {
-		v.offset = max
-	}
-	if v.offset < 0 {
-		v.offset = 0
-	}
-}
-
-// window returns the visible line range as a copy: the pager's render
-// pads short content, and the copy keeps the padding out of the styled
-// lines (a later render must see the clean content, not an ever-growing
-// pile of blank rows).
-func (v *pagerViewport) window() []string {
-	last := v.offset + v.height
-	if last > len(v.lines) {
-		last = len(v.lines)
-	}
-	return slices.Clone(v.lines[v.offset:last])
 }

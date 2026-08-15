@@ -31,16 +31,36 @@ func (m *Model) renderCompose() string {
 		rows = 1
 	}
 	form := m.composeForm(st)
+	// the form is a viewport (the pager widget): when the rows outgrow
+	// the frame, the window scrolls with the cursor (formIdx). The
+	// frame discipline holds - the keyhint/status rows stay anchored.
+	texts := make([]string, len(form))
+	for i, f := range form {
+		texts[i] = f.text
+	}
+	m.formView.setLines(texts)
+	formRows := len(form)
+	if formRows > rows-1 {
+		formRows = rows - 1
+	}
+	if formRows < 1 {
+		formRows = 1
+	}
+	m.formView.setSize(m.width, formRows)
+	if r := formRowOf(form, m.formIdx); r >= 0 {
+		m.formView.ensureVisible(r)
+	}
 	var b strings.Builder
-	for _, f := range form {
+	vis := m.formView.window()
+	for i, text := range vis {
 		outer := m.styles.Normal
-		if f.slot == m.formIdx {
+		if form[m.formView.offset+i].slot == m.formIdx {
 			outer = m.styles.Indicator
 		}
-		b.WriteString(padRow(f.text, m.width, outer))
+		b.WriteString(padRow(text, m.width, outer))
 		b.WriteByte('\n')
 	}
-	previewRows := rows - len(form)
+	previewRows := rows - formRows
 	if previewRows > 0 {
 		var preview string
 		switch {
@@ -113,6 +133,18 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		rows[i].text = core.SanitizeControls(rows[i].text)
 	}
 	return rows
+}
+
+// formRowOf is the row index of the cursor slot (-1 when the slot has
+// no row, e.g. a hidden attachment past the "+N more" cap): the form
+// viewport's follow-cursor target.
+func formRowOf(form []composeForm, slot int) int {
+	for i, f := range form {
+		if f.slot == slot {
+			return i
+		}
+	}
+	return -1
 }
 
 // renderFuzzy builds the selector popup frame: the title, the ranked

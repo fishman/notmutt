@@ -111,7 +111,7 @@ func BenchmarkIndexRender(b *testing.B) {
 		}))
 	}
 	view.MergeThreads(ts)
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 120, 40
 	// one real move arms the cursor-id scan (the never-moved fallback
 	// resolves via the view's flattening CursorRow - the documented
@@ -139,7 +139,7 @@ func BenchmarkIndexRenderMiss(b *testing.B) {
 		}))
 	}
 	view.MergeThreads(ts)
-	m := New(view, nil, testBindings, testTagActions, nil, config.NewStore(config.Default()), config.Default().UI)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 120, 40
 	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
 	m = next.(Model)

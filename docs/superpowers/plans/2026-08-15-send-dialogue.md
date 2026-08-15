@@ -3427,6 +3427,536 @@ git commit -m "feat(app): wire compose dialogue open and send seams"
 
 ---
 
+### Task 15: Keybinding help (?) - queryable chains with expiry
+
+User requirement (mid-milestone, 2026-08-15): "add a ? to list keybindings. when designing keybindings, they should be stored in such a way that can be queried and listed easily. for example for multi keybindings, there should be way to show the list of chained commands when pressing the first one. there should also be a timeout to expire the chained bindings".
+
+Design: multi-key chains become DATA in the per-context binding maps - space-joined keys ("g g", "g r") sitting next to single keys, so the map is queryable by construction (iterate + sort: the help overlay, the keyhint row, and the armed-prefix continuation row all derive from it, R9). The hand-coded gg/gr logic in model.go (the digit block's ggPending, the counted-g jump, the gg/gr chain block) is REPLACED by a general prefix resolver with an expiry timeout. `?` opens a help overlay listing the active context's bindings; any key closes it.
+
+**Files:**
+- Modify: `src/config/config.go` (vimScheme/emacsScheme: chain keys + "?" -> "help")
+- Modify: `src/tui/model.go` (Actions: "help"; fields pendingPrefix/pendingAt/help replacing ggPending; chain resolver; dispatchAction extraction; help capture)
+- Modify: `src/tui/keyhints.go` (keyhint() method, renderHelp())
+- Modify: `src/tui/model_test.go` (testKeys + pager/compose testBindings additions, three new tests)
+
+- [ ] **Step 1: Write the failing tests**
+
+In `src/tui/model_test.go`:
+
+1. Add the chain keys and `?` to `testKeys` (the index table):
+
+```go
+var testKeys = map[string]string{
+	"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+	"r": "toggle-read", "a": "archive", "d": "delete",
+	"u": "undo", "$": "apply",
+	"m": "compose", "R": "reply", "F": "forward",
+	"[": "tab-prev", "]": "tab-next",
+	// the arrow and G keys come from the user config overlay (the
+	// defaults are untouched); the test table mirrors the live config
+	"up": "cursor-up", "down": "cursor-down", "G": "cursor-bottom",
+	// multi-key chains are data like single keys (space-joined);
+	// "?" opens the help overlay (index context)
+	"g g": "cursor-top", "g r": "reply-all",
+	"?": "help",
+}
+```
+
+2. Add `"?": "help",` to the `pager` and `compose` tables of `testBindings` (after the `"["`/`"]"` lines).
+
+3. Extend `TestActionsCoverComposeAndFuzzy` with a help-binding assertion (the overlay must be reachable in every tabbed context):
+
+```go
+func TestActionsCoverComposeAndFuzzy(t *testing.T) {
+	for _, ctx := range []string{"compose", "fuzzy"} {
+		...
+	}
+	// the help overlay (?) is bound and builtin in every tabbed context
+	for _, ctx := range []string{"index", "pager", "compose"} {
+		if !Actions[ctx]["help"] {
+			t.Errorf("Actions[%q] must define help", ctx)
+		}
+		if testBindings[ctx]["?"] != "help" {
+			t.Errorf("bindings[%q] must bind ? to help", ctx)
+		}
+	}
+}
+```
+
+4. Three new tests (append after TestActionsCoverComposeAndFuzzy):
+
+```go
+// TestChainDataCompletes pins the data-driven chain resolver: the
+// armed prefix is listed in the keyhint (queryable data, R9), and the
+// second key completes the chain into the bound action.
+func TestChainDataCompletes(t *testing.T) {
+	got := ""
+	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
+	defer SetReplyHandler(func(msg *core.Message, mode string) {})
+	m := model()
+	// g g completes as cursor-top (j moved the cursor down first)
+	m = press(t, m, "j")
+	m = press(t, m, "g")
+	m = press(t, m, "g")
+	if m.CursorIndex() != 0 {
+		t.Fatalf("g g must move the cursor to the top, idx=%d", m.CursorIndex())
+	}
+	// an armed prefix lists its continuations in the keyhint
+	m = press(t, m, "g")
+	frame := m.render()
+	clean := stripANSI(frame)
+	if !strings.Contains(clean, "g g cursor-top") || !strings.Contains(clean, "g r reply-all") {
+		t.Fatalf("the armed prefix must list its chains:\n%s", clean)
+	}
+	// g r completes as reply-all
+	m = press(t, m, "r")
+	if got != "reply-all" {
+		t.Fatalf("g r must open a reply-all, got %q", got)
+	}
+}
+
+// TestChainExpires pins the chain timeout: an expired prefix never
+// dispatches the stale completion - the next key acts on its own.
+func TestChainExpires(t *testing.T) {
+	old := chainTimeout
+	chainTimeout = 0
+	defer func() { chainTimeout = old }()
+	got := ""
+	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
+	defer SetReplyHandler(func(msg *core.Message, mode string) {})
+	m := model()
+	m = press(t, m, "g") // arms the prefix; the next press sees it expired
+	m = press(t, m, "r")
+	if got != "" {
+		t.Fatalf("an expired chain must not dispatch, got %q", got)
+	}
+}
+
+// TestHelpListsBindings pins the ? overlay: a full-frame binding list
+// for the active context, closed by any keypress without firing it.
+func TestHelpListsBindings(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "?")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the help frame must be exactly 24 lines, got %d", got)
+	}
+	clean := stripANSI(frame)
+	if !strings.Contains(clean, "help: index bindings") {
+		t.Fatalf("the help must title the context:\n%s", clean)
+	}
+	if !strings.Contains(clean, "j cursor-down") || !strings.Contains(clean, "g r reply-all") {
+		t.Fatalf("the help must list the bindings:\n%s", clean)
+	}
+	m = press(t, m, "j")
+	if m.help {
+		t.Fatal("a keypress must close the help")
+	}
+	if m.CursorIndex() != 0 {
+		t.Fatalf("the closing key must be consumed (cursor unmoved), idx=%d", m.CursorIndex())
+	}
+}
+
+// TestSendPhaseGuardNoDoubleSend pins the send gate (Task 14 quality
+// review note): while the job is in flight (PhaseSending) a second
+// send press must not launch a duplicate delivery. The detach/attach
+// gates share the same phase check - one test pins the mechanism.
+func TestSendPhaseGuardNoDoubleSend(t *testing.T) {
+	calls := 0
+	SetSendHandler(func(st compose.State) { calls++ })
+	defer SetSendHandler(func(st compose.State) {})
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "y")
+	m = press(t, m, "y")
+	if calls != 1 {
+		t.Fatalf("a second send press during PhaseSending must no-op, calls=%d", calls)
+	}
+}
+```
+
+- [ ] **Step 2: Run the tests to verify they fail**
+
+Run: `go test ./tui/ -run 'TestChainDataCompletes|TestChainExpires|TestHelpListsBindings|TestActionsCoverComposeAndFuzzy' -count=1`
+Expected: FAIL - no `pendingPrefix` field on Model, no `dispatchAction`/`keyhint`/`renderHelp` methods, no `help` action.
+
+- [ ] **Step 3: Implement**
+
+1. `src/config/config.go` - the schemes gain the chain keys and the help key. In `vimScheme` index:
+
+```go
+	"index": {
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+		"r": "toggle-read", "a": "archive", "d": "delete",
+		"u": "undo", "$": "apply",
+		"pgdown": "page-down", "pgup": "page-up",
+		"m": "compose", "R": "reply", "F": "forward",
+		"g g": "cursor-top", "g r": "reply-all",
+		"?": "help",
+		"[": "tab-prev", "]": "tab-next",
+	},
+```
+
+In `vimScheme` pager and compose, and in `emacsScheme` index, pager, and compose: add `"?": "help",` (after the `"["`/`"]"` lines; emacs index also keeps its `"R": "reply"` etc. - only the "?" line is added). fuzzy contexts get nothing - the picker captures keys.
+
+2. `src/tui/model.go`:
+
+a. In the `Actions` map, add `"help": true,` to the index, pager, and compose sets (after the `"tab-prev": true, "tab-next": true,` line in each).
+
+b. Replace the struct field block (currently ~lines 109-112):
+
+```go
+	// vim-style prefixes (R9 data-first): digit keys accumulate into
+	// count (a bound digit wins), and an unbound key can arm a
+	// multi-key chain (space-joined data keys - "g g", "g r") that
+	// expires after chainTimeout. Both engage only when the active
+	// context does NOT bind the key.
+	count         string
+	pendingPrefix string
+	pendingAt     time.Time
+```
+
+c. Add the `help` field next to `fuzzy` (~line 123):
+
+```go
+	// help is the ? overlay: any keypress closes it (the check runs
+	// before dispatch, so the closing key never fires).
+	help bool
+```
+
+d. Add near the top of the file (after the imports):
+
+```go
+// chainTimeout expires an armed multi-key prefix: a stray first key
+// never mis-sequences a later press. Tests shrink it to 0.
+var chainTimeout = time.Second
+```
+
+e. In the KeyPressMsg case, right after the `if m.fuzzy != nil` capture block, add the help check:
+
+```go
+		if m.help {
+			// any key closes the help overlay without firing
+			m.help = false
+			return m, nil
+		}
+```
+
+f. Replace the whole digit/gg block (currently the comment at ~line 171 through the `m.ggPending = false` at ~line 218) with the chain resolver:
+
+```go
+		// vim-style prefixes (R9 data-first): digits accumulate a
+		// count; an unbound key can arm a multi-key chain (space-
+		// joined data keys) that expires after chainTimeout. A bound
+		// key wins over the prefix - the prefix only engages on keys
+		// the context leaves unbound. A counted "g" keeps its jump
+		// semantic (12g = row 12) - the chain data never sees it.
+		r := msg.Text
+		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' {
+			m.pendingPrefix = ""
+			m.count += r
+			return m, nil
+		}
+		if km[r] == "" && r == "g" && m.count != "" {
+			// counted g: jump to the numbered row (consumes the
+			// count either way - an unusable count is a no-op)
+			n, _ := strconv.Atoi(m.count)
+			m.count = ""
+			m.pendingPrefix = ""
+			if m.mode == "index" && n > 0 {
+				m.gotoRow(n)
+			}
+			return m, nil
+		}
+		n := 1
+		if m.count != "" {
+			n, _ = strconv.Atoi(m.count)
+			m.count = ""
+		}
+		if m.pendingPrefix != "" {
+			// a chain is armed: the next key completes, extends, or
+			// kills it. An expired prefix dies like a dead key.
+			if time.Since(m.pendingAt) >= chainTimeout {
+				m.pendingPrefix = ""
+			} else {
+				cand := m.pendingPrefix + " " + r
+				m.pendingPrefix = ""
+				switch {
+				case r != "" && km[cand] != "":
+					return m.dispatchAction(km[cand], n)
+				case r != "" && chainContinuation(km, cand):
+					m.pendingPrefix = cand
+					m.pendingAt = time.Now()
+					return m, nil
+				}
+				// dead key (or a special key): the chain dies and
+				// the key dispatches normally below
+			}
+		} else if r != "" && km[r] == "" && chainContinuation(km, r) {
+			m.pendingPrefix = r
+			m.pendingAt = time.Now()
+			return m, nil
+		}
+```
+
+g. Replace the dispatch tail (the `switch action := actionForKey(msg, km); action { ... }` block with its 27 cases plus the default and the legend tail, currently ~lines 219-356) with:
+
+```go
+		return m.dispatchAction(actionForKey(msg, km), n)
+	}
+```
+
+That `}` closes the KeyPressMsg case (the whole switch statement around the previous block is removed with it - the `case tea.KeyReleaseMsg:` line and everything after stays). Then add the extracted method after the Update method's closing brace:
+
+```go
+// dispatchAction runs a bound action with its count, then the
+// legend-tick tail (the fall-through path). Actions with their own
+// cmds (quit, edit) return them directly. Multi-key chains resolve
+// here too - the chain machinery dispatches the completed chain's
+// action, and "?" opens the help overlay.
+func (m *Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
+	switch action {
+	case "cursor-down":
+		m.moveCursor(n)
+	case "cursor-up":
+		m.moveCursor(-n)
+	case "cursor-top":
+		m.cursorTop()
+	case "cursor-bottom":
+		m.cursorBottom()
+	case "open":
+		if m.mode == "index" {
+			m.openCursorThread()
+		}
+	case "quit":
+		return m, tea.Quit
+	case "undo":
+		if m.undo() {
+			m.moveCursor(1)
+		}
+	case "apply":
+		onApply()
+	case "scroll-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollDown(n)
+		}
+	case "scroll-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollUp(n)
+		}
+	case "page-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.pageDown()
+		} else if m.mode == "index" {
+			m.moveCursor(m.pageRows())
+		}
+	case "page-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.pageUp()
+		} else if m.mode == "index" {
+			m.moveCursor(-m.pageRows())
+		}
+	case "half-page-down":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.halfPageDown()
+		}
+	case "half-page-up":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.halfPageUp()
+		}
+	case "scroll-top":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollTop()
+		}
+	case "scroll-bottom":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollBottom()
+		}
+	case "back":
+		if m.mode == "pager" {
+			m.mode = "index"
+		}
+	case "reply":
+		m.openReply("reply")
+	case "reply-all":
+		m.openReply("reply-all")
+	case "forward":
+		m.openReply("forward")
+	case "compose":
+		m.openReply("compose")
+	case "tab-prev":
+		m.tabPrev()
+	case "tab-next":
+		m.tabNext()
+	case "form-down":
+		if m.composeTab().Phase == compose.PhaseAborting {
+			m.composeTab().Phase = compose.PhaseEditing
+		}
+		m.formIdx++
+		if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
+			m.formIdx = max
+		}
+	case "form-up":
+		if m.formIdx > 0 {
+			m.formIdx--
+		}
+	case "edit":
+		if m.composeTab().Phase == compose.PhaseFailed {
+			m.composeTab().Phase = compose.PhaseEditing
+		}
+		st := *m.composeTab()
+		tabID := st.ID
+		path, err := writeEditorBuffer(st)
+		if err != nil {
+			return m, nil
+		}
+		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+			return editorDoneMsg{err: err, path: path, tabID: tabID}
+		})
+	case "attach":
+		if m.composeTab().Phase != compose.PhaseSending {
+			m.prompt = &pathPrompt{}
+		}
+	case "detach":
+		t := m.composeTab()
+		if t.Phase != compose.PhaseSending {
+			if i := m.formIdx - 4; i >= 0 && i < len(t.Attachments) {
+				t.Attachments = slices.Delete(t.Attachments, i, i+1)
+			}
+		}
+	case "account":
+		m.openPicker("account")
+	case "signature":
+		m.openPicker("signature")
+	case "send":
+		// PhaseSending gates duplicate presses: one job in flight
+		// (the detach/attach gates protect the shared Attachments
+		// slice while sendJob's Assemble reads it)
+		if m.composeTab().Phase != compose.PhaseSending {
+			if m.composeTab().Phase != compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseSending
+			}
+			onSend(*m.composeTab())
+		}
+	case "abort":
+		st := m.composeTab()
+		if st.Phase == compose.PhaseAborting {
+			m.closeComposeTab(m.tabIdx - 1)
+		} else {
+			st.Phase = compose.PhaseAborting
+		}
+	case "help":
+		m.help = true
+	default:
+		// staged tag ops (and undo) advance the cursor one row -
+		// the next keypress acts on the next message (mutt's
+		// auto-advance). A no-op action (ghost row, unknown action)
+		// does not move.
+		if m.stage(action) {
+			m.moveCursor(1)
+		}
+	}
+	if m.legendPending && !m.legendTickOn {
+		m.legendTickOn = true
+		return m, legendTickCmd(m.legendMoves)
+	}
+	return m, nil
+}
+```
+
+IMPORTANT: the listing above matches the amended commit 4014546 verbatim (the extraction source). The extraction is a pure move: same cases, same order, same bodies, plus the two new cases ("reply-all" and "help") and the return-tail. Do NOT hand-adapt any case body - if the file has changed since 4014546, copy the CURRENT file's case bodies (the file wins).
+
+h. Replace the three `keyhintRow(m.bindings[m.mode], m.width)` calls in render() (currently lines ~943, ~973, ~1031) with `m.keyhint()`.
+
+3. `src/tui/keyhints.go` - add the keyhint() method and renderHelp() (the file already imports `sort` and `strings`):
+
+```go
+// keyhint is the context keyhint row, extended while a chain prefix
+// is armed: pressing "g" lists "g g cursor-top" and "g r
+// reply-all", so the user sees what the prefix can become (R9 - the
+// binding data answers, no hardcoded list).
+func (m Model) keyhint() string {
+	km := m.bindings[m.mode]
+	if km == nil {
+		km = m.bindings["index"]
+	}
+	if m.pendingPrefix == "" {
+		return keyhintRow(km, m.width)
+	}
+	continuations := map[string]string{}
+	for k, a := range km {
+		if k != m.pendingPrefix && strings.HasPrefix(k, m.pendingPrefix) {
+			continuations[k] = a
+		}
+	}
+	return keyhintRow(continuations, m.width)
+}
+
+// renderHelp is the ? overlay: the active context's bindings as
+// "key action" rows (single keys and chains, sorted) with a close
+// hint. Any keypress closes it - the help check runs before
+// dispatch, so the closing key never fires. The frame is always
+// exactly m.height lines, assembled like renderCompose (R11 slot
+// reservation).
+func (m Model) renderHelp() string {
+	km := m.bindings[m.mode]
+	if km == nil {
+		km = m.bindings["index"]
+	}
+	rows := m.height - 2
+	title := "help: " + m.mode + " bindings"
+	body := make([]string, 0, rows)
+	body = append(body, title)
+	keys := make([]string, 0, len(km))
+	for k := range km {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		body = append(body, keyhintRow(map[string]string{k: km[k]}, m.width))
+	}
+	if len(body) > rows {
+		body = body[:rows]
+	}
+	for len(body) < rows {
+		body = append(body, "")
+	}
+	body = append(body, "? or any key closes")
+	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+}
+```
+
+4. `src/tui/model.go` - add the chainContinuation helper (next to dispatchAction):
+
+```go
+// chainContinuation reports whether any binding key extends the
+// prefix: the prefix can still become a complete chain, so the key
+// arms instead of dispatching.
+func chainContinuation(km map[string]string, prefix string) bool {
+	for k := range km {
+		if k != prefix && strings.HasPrefix(k, prefix) {
+			return true
+		}
+	}
+	return false
+}
+```
+
+- [ ] **Step 4: Run the tests to verify they pass**
+
+Run: `go test ./... -count=1`
+Expected: PASS everywhere. Then `go vet ./...` (clean) and `go build -o notmutt .` (succeeds).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/config/config.go src/tui/model.go src/tui/keyhints.go src/tui/model_test.go
+git commit -m "feat(tui): help overlay and data-driven key chains"
+```
+
+---
+
 ## Self-review notes (run after the last task)
 
 - **Spec coverage:** account selection (detection chain Task 9, selection picker Task 13); async send with output kept (Task 10); fuzzy selector + signatures (Tasks 11, 13); compose dialogue in a new tab with dialogue/tab duality (Task 13); editor flow (Task 12); fcc + reindex (Task 10); In-Reply-To/References (Task 6); quoting with cap (Task 4); two-press abort (Task 13); config surface (Task 8); keybindings incl. g r chain (Tasks 1, 8, 13).

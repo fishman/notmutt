@@ -585,6 +585,16 @@ the spec must say why it serves notmutt, not cite it as authority.
 - `afew/MailMover.py` - per-account folder priority resolution.
 - `muttrc/notmuch/tags` + `muttrc/notmuch/post-new` + `muttrc/afew/config`
   - the live classification pipeline (R2 reference).
+- `matcha/` - production Go mail client with a gopher-lua plugin system.
+  Reference for R8's Lua layer ONLY (decision record 20 in
+  docs/design-decisions.md): one VM on the orchestrator goroutine,
+  Protect-then-log dispatch, lib-whitelist sandbox (no os/io/debug),
+  deferred side effects (the pending-* pattern - plugin API calls queue,
+  the orchestrator drains after the hook returns), per-plugin identity
+  threading, plugin-declared settings (out of the strict TOML load), and
+  plugin keybindings as a fallback layer under core bindings. The gaps
+  it leaves (inline render-path hooks with no deadline, no hot reload)
+  are notmutt's design constraints, not its defaults.
 
 ## Agent working rules (Claude Code and Pi both)
 

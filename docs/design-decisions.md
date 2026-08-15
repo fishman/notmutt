@@ -257,3 +257,74 @@ window (only the empty view pads to height), so the whole-line splice
 in the popup shrank to nothing over a short mailbox. The popup pads
 the list section before the keyhint/status tail, so the box always
 splices a full-height frame.
+
+## 20. Lua plugin integration: what matcha proves (2026-08-15)
+
+Source studied: matcha (floatpane) - a production Go mail client with a
+gopher-lua plugin system (`plugin/` package, `docs/Features/Plugins.md`,
+main.go orchestrator). The closest existing proof of R8's Lua-on-top
+model inside a Go mail client. The design is carried into notmutt's Lua
+layer on these points, with the gaps matcha leaves flagged below.
+
+1. One VM, one goroutine. matcha's plugin.Manager is explicitly not
+   concurrency-safe by design: every hook callback, keybinding, and API
+   call dispatches from the single orchestrator goroutine; there are no
+   locks. notmutt's Lua VM lives on the async core's event loop; the
+   TUI never calls into it (the R3/R4 channel discipline).
+2. Protect-then-log dispatch. Every callback runs with Protect: true;
+   an error logs and the NEXT callback still runs. Load errors log and
+   skip the plugin; a plugin counts as loaded only after a clean
+   DoFile. A throwing plugin degrades; it never kills the client.
+   Hooks chain in registration order; the one returning hook (body
+   render) threads output through the chain and ignores non-string
+   returns.
+3. Sandbox is a lib whitelist. SkipOpenLibs, then open only
+   package/base/table/string/math. No os/io/debug: no filesystem, no
+   exec. HTTP is the only capability, with hard limits: 10s timeout, 1
+   MB response cap (LimitReader), http/https schemes only.
+4. Deferred side effects (the pending-* pattern). Plugin API calls
+   never mutate UI or mail state directly: notify, set_compose_field,
+   mark_read, prompt, suppress_auto_read all SET pending values the
+   orchestrator drains after the hook returns and converts into its
+   own async commands ("the change is applied after the hook
+   returns"). notmutt's equivalent: plugin effects are BUS EVENTS -
+   the plugin job emits, the app consumes on the async channel, never
+   mid-render. suppress_auto_read is the one read-back value (a flag
+   consumed immediately after the email_viewed hook, not queued) -
+   the exact shape notmutt's open-reads suppression would take.
+5. Per-plugin identity threading. currentPlugin is set around load and
+   every callback (defer-restored), so every API binding knows its
+   caller: storage is per-plugin KV files (name validated
+   ^[a-zA-Z0-9_-]+$ - a path-traversal guard - 0700 dir, atomic
+   tmp+rename flush, the F5/F7 discipline); bindings and settings
+   record their plugin.
+6. Plugin-declared settings. matcha.settings({key={type,default,label,
+   description}}) at load + matcha.get_setting(): a plugin configures
+   itself inside its own file, so the core config schema never needs
+   unknown-key tolerance. Adopted: plugin settings stay OUT of the
+   strict TOML load (R8); a [plugins.<name>] TOML section is a load
+   error unless the plugin declares it via the settings API.
+7. Keybindings merge as a fallback layer. bind_key(key, area,
+   description, fn): plugin keys are a separate registry checked after
+   core bindings (core keys win, a plugin cannot shadow them), and the
+   descriptions merge into the derived help bar - R9's data-first rule
+   extended to plugin keys.
+
+Gaps matcha leaves open (design around these):
+
+- Render-path hooks run inline. email_body_render executes Lua inside
+  the view-render flow on the orchestrator goroutine; a busy-loop
+  plugin freezes the UI - only HTTP has timeouts, hook execution has
+  none. notmutt's body-render hooks run on the async core with the
+  reply threaded back (the R3 channel), with gopher-lua's
+  SetContext deadline (v1.1.2, unused by matcha) as the kill switch;
+  a render hook that exceeds its budget falls back to the un-hooked
+  render.
+- No hot reload. Plugins load at startup; edits need a restart. Fine
+  for the first Lua milestone; reload is a future knob.
+- Render hooks see mail content by design. matcha passes raw bodies
+  into Lua (email_body_render). notmutt keeps the R2 boundary: the
+  filter-engine Lua hooks (content-consuming) run in the filter job
+  in-process and never send content anywhere; the UI-side render hook
+  gets the already-rendered (sanitized, F1) display string plus a
+  preview-budgeted raw slice, never whole mail files (F6).

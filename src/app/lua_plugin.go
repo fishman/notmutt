@@ -77,6 +77,22 @@ func loadLuaPlugin(path string) {
 			return
 		}
 	}
+	// register_attach_command runs DURING DoFile (the reverse of the
+	// body_render read-after pattern): a plugin file calls it to add a
+	// command to the attach-command registry (R8).
+	vm.SetGlobal("register_attach_command", vm.NewFunction(func(L *lua.LState) int {
+		name := L.CheckString(1)
+		var argv []string
+		for i := 1; ; i++ {
+			v := L.CheckTable(2).RawGetInt(i)
+			if v == lua.LNil {
+				break
+			}
+			argv = append(argv, v.String())
+		}
+		registerAttachCommand(name, argv)
+		return 0
+	}))
 	if err := vm.DoFile(path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)
 		vm.Close()

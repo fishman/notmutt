@@ -22,6 +22,24 @@ func pluginDir(t *testing.T, files map[string]string) string {
 	return dir
 }
 
+// TestLuaRegisterAttachCommand pins the in-DoFile registration: a
+// plugin calling register_attach_command lands in the registry (R8).
+func TestLuaRegisterAttachCommand(t *testing.T) {
+	attachcmdsMu.Lock()
+	attachcmds = map[string][]string{}
+	attachcmdsMu.Unlock()
+
+	dir := pluginDir(t, map[string]string{"attach.lua": `
+register_attach_command("yazi", {"yazi", "--chooser-file"})
+`})
+	loadLuaPlugins(dir)
+
+	snap := attachCommandSnapshot()
+	if argv := snap["yazi"]; len(argv) != 2 || argv[0] != "yazi" || argv[1] != "--chooser-file" {
+		t.Fatalf("lua-registered command = %+v", snap)
+	}
+}
+
 // TestLuaBodyRenderTransforms pins the end-to-end adapter: a plugin's
 // body_render runs on the open job and its output rides ThreadLoaded to
 // the TUI (decision record 20's adapter shape, this time through Lua).

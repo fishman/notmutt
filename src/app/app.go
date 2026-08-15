@@ -95,6 +95,12 @@ func Run() error {
 	// builds run the no-op stub. Loaded before any open can fire.
 	loadLuaPlugins(filepath.Join(filepath.Dir(configPath()), "lua"))
 
+	// attach commands: config tables register first, then Lua plugin
+	// registrations (later, per-plugin load order) - both land in the
+	// registry; the TUI reads it through the seam
+	loadConfigAttachCommands(cfg)
+	tui.SetAttachCommandSource(func() map[string][]string { return attachCommandSnapshot() })
+
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches
 	// the tab

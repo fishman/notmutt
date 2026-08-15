@@ -48,3 +48,14 @@ var sigDir string
 func SetSignaturesDir(dir string) {
 	sigDir = dir
 }
+
+// attachCommands is the attach-command registry seam (R8): the app
+// wires it with SetAttachCommandSource; nil map = no commands.
+// Read-only after wiring.
+var attachCommands = func() map[string][]string { return nil }
+
+func SetAttachCommandSource(fn func() map[string][]string) {
+	if fn != nil {
+		attachCommands = fn
+	}
+}

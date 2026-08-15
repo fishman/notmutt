@@ -1,5 +1,3 @@
-//go:build notmuchcgo
-
 package notmuch
 
 import (

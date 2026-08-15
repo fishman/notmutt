@@ -15,8 +15,19 @@ type Message = core.Message
 // TagOp is the core type; the alias keeps the Backend interface text short.
 type TagOp = core.TagOp
 
-// Backend is the notmuch access boundary. M1 ships the CLI backend; the
-// cgo backend implements the same interface for the benchmark (task 13).
+// firstChunk is the initial fill chunk: 100 threads land fast so the
+// first paint is near-instant, then the fill continues in steadyChunk
+// batches (big merges, few paints). The cadence is a backend contract -
+// the refresh merges and paints whatever chunk arrives (the
+// render-batching requirement: a full-result first chunk stalls the
+// first paint).
+const (
+	firstChunk  = 100
+	steadyChunk = 5000
+)
+
+// Backend is the notmuch access boundary. cgo is the runtime backend;
+// the CLI backend is the -tags cli escape hatch (decision record 3).
 //
 // Query is THE ingestion interface: one call walks the whole query
 // result and hands it to emit in bounded chunks (the page cadence:

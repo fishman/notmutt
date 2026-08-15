@@ -1,10 +1,9 @@
-//go:build notmuchcgo
-
 package notmuch
 
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strings"
 
 	nm "github.com/fishman/go.notmuch"
@@ -14,8 +13,9 @@ import (
 
 // CGOBackend wraps github.com/fishman/go.notmuch (fishman fork of zenhack's
 // go.notmuch, vendored; the upstream contrib/go bindings lack Revision and
-// were dormant 2018-2026). It exists only for the benchmark; the CLI backend
-// stays the default unless cgo demonstrably wins (SECURITY.md F10).
+// were dormant 2018-2026). Runtime default: the batched walk closed the gap
+// to the CLI (decision record 3); the CLI backend stays reachable behind
+// -tags cli (SECURITY.md F10).
 type CGOBackend struct {
 	db *nm.DB
 }
@@ -23,6 +23,15 @@ type CGOBackend struct {
 func NewCGO() *CGOBackend { return &CGOBackend{} }
 
 func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
+	if dbPath == "" {
+		// argv-only (F4): the config's database.path, resolved once at
+		// open; the DB handle stays open for the process lifetime.
+		out, err := exec.CommandContext(ctx, "notmuch", "config", "get", "database.path").Output()
+		if err != nil {
+			return fmt.Errorf("notmuch open: resolve database.path: %w", err)
+		}
+		dbPath = strings.TrimSpace(string(out))
+	}
 	db, err := nm.Open(dbPath, nm.DBReadOnly)
 	if err != nil {
 		return fmt.Errorf("notmuch open: %w", err)
@@ -160,12 +169,55 @@ func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 	return msgs, nil
 }
 
+// Tag writes through a transient read-write reopen: the handle stays
+// read-only for the fill (reads never hold notmuch's write lock), and
+// the write lock is held only for the op - the CLI backend's lock
+// footprint, so concurrent `notmuch new`/`notmuch tag` elsewhere keep
+// working. The whole op is one atomic transaction, like `notmuch tag`.
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
-	return fmt.Errorf("notmuch tag: unsupported (read-only handle)")
+	if b.db == nil {
+		return fmt.Errorf("notmuch tag: database not open")
+	}
+	if err := b.db.Reopen(nm.DBReadWrite); err != nil {
+		return fmt.Errorf("notmuch tag: %w", err)
+	}
+	defer b.db.Reopen(nm.DBReadOnly)
+	var opErr error
+	b.db.Atomic(func(db *nm.DB) {
+		q := db.NewQuery(query)
+		defer q.Close()
+		msgs, err := q.Messages()
+		if err != nil {
+			opErr = fmt.Errorf("notmuch tag: %w", err)
+			return
+		}
+		defer msgs.Close()
+		for m := range msgs.All() {
+			if ctx.Err() != nil {
+				opErr = ctx.Err()
+				return
+			}
+			for _, op := range ops {
+				if op.Add {
+					if err := m.AddTag(op.Tag); err != nil {
+						opErr = fmt.Errorf("notmuch tag: %w", err)
+						return
+					}
+				} else if err := m.RemoveTag(op.Tag); err != nil {
+					opErr = fmt.Errorf("notmuch tag: %w", err)
+					return
+				}
+			}
+		}
+		if err := msgs.Err(); err != nil {
+			opErr = fmt.Errorf("notmuch tag: %w", err)
+		}
+	})
+	return opErr
 }
 
 func (b *CGOBackend) New(ctx context.Context) error {
-	return fmt.Errorf("notmuch new: unsupported (read-only handle)")
+	return fmt.Errorf("notmuch new: unsupported (run `notmuch new` outside the client)")
 }
 
 func tagsOf(m *nm.Message) []string {

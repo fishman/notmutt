@@ -33,13 +33,18 @@ func Run() error {
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
 	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
 	st.Subscribe("theme", func() { bus.Publish(core.ConfigChanged{Section: "theme"}) })
-	worker := notmuch.NewWorker(bus, notmuch.NewCLI(), lockBudget)
+	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go worker.Start(ctx)
 
 	// DB open check plus per-view query validation (spec section 3:
-	// notmuch dry run for every view query)
+	// notmuch dry run for every view query). The empty path resolves
+	// inside the backend via `notmuch config get database.path`
+	// (argv-only, F4); the handle stays open for the process lifetime.
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
+		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
+	}
 	for name, v := range cfg.Views {
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: v.Query, Limit: 1})
 		if err != nil || rpl.Err != nil {

@@ -49,7 +49,7 @@ github.com/emersion/go-message/textproto
 # github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f
 ## explicit; go 1.16
 github.com/erikgeiser/coninput
-# github.com/fishman/go.notmuch v0.0.0-20260814090000-000000000000 => ../notmuch/bindings/go.notmuch
+# github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928 => ../notmuch/bindings/go.notmuch
 ## explicit; go 1.23
 github.com/fishman/go.notmuch
 # github.com/lucasb-eyer/go-colorful v1.4.0

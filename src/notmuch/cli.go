@@ -1,3 +1,5 @@
+//go:build cli
+
 package notmuch
 
 import (
@@ -47,17 +49,6 @@ type searchItem struct {
 	Subject   string   `json:"subject"`
 	Tags      []string `json:"tags"`
 }
-
-// firstChunk is the initial fill chunk: 100 threads land fast so the
-// first paint is near-instant, then the fill continues in steadyChunk
-// batches (big merges, few paints). The cadence is a backend contract -
-// the refresh merges and paints whatever chunk arrives (the
-// render-batching requirement: a full-result first chunk stalls the
-// first paint).
-const (
-	firstChunk  = 100
-	steadyChunk = 5000
-)
 
 // Query walks the whole result in one call: one `notmuch search`
 // subprocess, one summary per thread (thread id, date, authors,

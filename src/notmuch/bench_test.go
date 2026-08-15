@@ -1,4 +1,4 @@
-//go:build notmuchcgo
+//go:build cli
 
 package notmuch
 
@@ -11,9 +11,9 @@ import (
 	"notmutt/core"
 )
 
-// Run: NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v
-// Requires notmuch dev headers on the default include/link paths (task 13;
-// the binding links plain -lnotmuch, no pkg-config). Prints a comparison report.
+// Run: NOTMUCH_BENCH=1 go test -tags cli ./notmuch/ -run TestBench -v
+// Requires notmuch dev headers on the default include/link paths (the
+// binding links plain -lnotmuch, no pkg-config). Prints a comparison report.
 func TestBench(t *testing.T) {
 	if os.Getenv("NOTMUCH_BENCH") == "" {
 		t.Skip("set NOTMUCH_BENCH=1 to run")

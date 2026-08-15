@@ -22,9 +22,12 @@ func TestSoak(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	worker := notmuch.NewWorker(core.NewBus(), notmuch.NewCLI(), 10*time.Second)
+	worker := notmuch.NewWorker(core.NewBus(), notmuch.New(), 10*time.Second)
 	go worker.Start(ctx)
 	defer worker.Call(notmuch.Action{Kind: notmuch.ActClose})
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
+		t.Fatalf("open: %v %v", err, rpl.Err)
+	}
 
 	const scratch = "notmutt-soak"
 	// failure-path cleanup: remove the scratch tag from anything carrying it
@@ -104,9 +107,12 @@ func TestSoakStagedApply(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	worker := notmuch.NewWorker(core.NewBus(), notmuch.NewCLI(), 10*time.Second)
+	worker := notmuch.NewWorker(core.NewBus(), notmuch.New(), 10*time.Second)
 	go worker.Start(ctx)
 	defer worker.Call(notmuch.Action{Kind: notmuch.ActClose})
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
+		t.Fatalf("open: %v %v", err, rpl.Err)
+	}
 
 	groups := config.Default().TagGroupList()
 	view := core.NewView("inbox", "tag:inbox")

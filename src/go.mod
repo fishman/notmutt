@@ -10,7 +10,7 @@ require (
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/emersion/go-message v0.18.2
-	github.com/fishman/go.notmuch v0.0.0-20260814090000-000000000000
+	github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/muesli/termenv v0.15.2
 	github.com/yuin/gopher-lua v1.1.2

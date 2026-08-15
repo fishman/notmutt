@@ -13,7 +13,6 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
-	"notmutt/mail"
 )
 
 // chainTimeout expires an armed multi-key prefix: a stray first key
@@ -685,15 +684,17 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 	}
 }
 
-// onThreadLoaded fills the pager from the worker's thread messages and
-// switches to pager mode. A failed load falls back to index and drops
-// the pager (a stale pager would serve old content on a later reload).
-// The thread-id guard makes a repeated load of the already-open thread
-// a no-op (idempotent handler): content and scroll position survive.
-// A PREVIEW reply only fills the box when the model still targets that
-// thread - a stale preview (closed or re-targeted meanwhile) drops
-// silently - and the index surface stays put (mode is re-forced to
-// index in case a racing full-open reply flipped it meanwhile).
+// onThreadLoaded attaches the open job's render lines to the pager and
+// switches to pager mode. Rendering and the render transforms already
+// happened on the async open job - the model only attaches. A failed
+// load falls back to index and drops the pager (a stale pager would
+// serve old content on a later reload). The thread-id guard makes a
+// repeated load of the already-open thread a no-op (idempotent
+// handler): content and scroll position survive. A PREVIEW reply only
+// fills the box when the model still targets that thread - a stale
+// preview (closed or re-targeted meanwhile) drops silently - and the
+// index surface stays put (mode is re-forced to index in case a racing
+// full-open reply flipped it meanwhile).
 func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	if e.Preview {
 		if m.preview && e.ThreadID == m.previewThread {
@@ -703,12 +704,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 				return
 			}
 			if e.ThreadID != pagerThreadID(m.pager) {
-				lines, err := mail.RenderThread(e.Msgs)
-				if err != nil {
-					m.closePreview()
-					return
-				}
-				m.pager = newPager(e.ThreadID, lines)
+				m.pager = newPager(e.ThreadID, e.Lines)
 				w, h := m.pagerSize()
 				m.pager.setSize(w, h, m.styles)
 			}
@@ -720,12 +716,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		return
 	}
 	if e.ThreadID != pagerThreadID(m.pager) {
-		lines, err := mail.RenderThread(e.Msgs)
-		if err != nil {
-			m.mode, m.pager = "index", nil
-			return
-		}
-		m.pager = newPager(e.ThreadID, lines)
+		m.pager = newPager(e.ThreadID, e.Lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()

@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"notmutt/mail"
+	"notmutt/core"
 )
 
 // pager holds the open thread's render lines and the scroll window.
@@ -25,7 +25,7 @@ import (
 // wrapping is future work).
 type pager struct {
 	threadID   string
-	lines      []mail.Line
+	lines      []core.Line
 	styled     []string // styled text per line; "" = not styled yet
 	styleKey   string   // the style set the cache was built with (sgr opens)
 	width      int
@@ -34,7 +34,7 @@ type pager struct {
 	vp         pagerViewport
 }
 
-func newPager(threadID string, lines []mail.Line) *pager {
+func newPager(threadID string, lines []core.Line) *pager {
 	return &pager{threadID: threadID, lines: lines}
 }
 
@@ -85,21 +85,21 @@ func (p *pager) ensureStyled() {
 // slot-reservation rule - alignment never shifts per line). The
 // styles' SGR fragments are precomputed (p.st.sgr), so a line is
 // plain string joins, never a Style.Render.
-func (p *pager) styleLine(l mail.Line) string {
+func (p *pager) styleLine(l core.Line) string {
 	sg := p.st.sgr
 	var g sgr
 	switch l.Kind {
-	case mail.LineSubject:
+	case core.LineSubject:
 		g = sg.pagerHdr
-	case mail.LineHeader:
+	case core.LineHeader:
 		g = sg.pagerDef
-	case mail.LineBody:
+	case core.LineBody:
 		g = sg.pagerQuoted[l.Quoted]
-	case mail.LineSignature:
+	case core.LineSignature:
 		g = sg.pagerSig
-	case mail.LineAttachment:
+	case core.LineAttachment:
 		g = sg.pagerAtt
-	case mail.LineError:
+	case core.LineError:
 		g = sg.pagerErr
 	default:
 		g = sg.normal

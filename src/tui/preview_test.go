@@ -25,9 +25,8 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	if m.previewThread != "t1" || m.previewTitle == "" {
 		t.Fatalf("preview target missing: thread=%q title=%q", m.previewThread, m.previewTitle)
 	}
-	path := fixtureMsg(t, "body line\n")
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
-		Msgs: []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}})
+		Lines: []core.Line{{Kind: core.LineBody, Text: "body line"}}})
 	out := stripANSI(m.View().Content)
 	for _, want := range []string{m.previewTitle, "body line", "j/k scroll  o open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
 		if !strings.Contains(out, want) {
@@ -48,10 +47,12 @@ func TestPreviewScrollsAndCloses(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	path := fixtureMsg(t, strings.Repeat("line\n", 40))
 	m = press(t, m, "p")
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
-		Msgs: []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}})
+	lines := make([]core.Line, 40)
+	for i := range lines {
+		lines[i] = core.Line{Kind: core.LineBody, Text: "line"}
+	}
+	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
 	if m.pager == nil {
 		t.Fatal("preview must hold a pager")
 	}
@@ -83,12 +84,11 @@ func TestPreviewOpensFull(t *testing.T) {
 	defer SetOpenHandler(func(threadID string, preview bool) {})
 	m := model()
 	m.width, m.height = 80, 24
-	path := fixtureMsg(t, "body line\n")
-	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
 	m = press(t, m, "p")
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Msgs: msgs})
+	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
 	m = press(t, m, "o")
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Msgs: msgs})
+	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Lines: lines})
 	if m.preview || m.previewThread != "" {
 		t.Fatalf("o must promote the preview to a full open, preview=%v thread=%q", m.preview, m.previewThread)
 	}
@@ -128,16 +128,12 @@ func TestPreviewTargetWinsOverRacingOpen(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
 	m = press(t, m, "p") // preview fetch in flight
-	path := fixtureMsg(t, "body line\n")
-	m = pressEvent(t, m, core.ThreadLoaded{
-		ThreadID: "t2", Msgs: []core.Message{{ID: "x", ThreadID: "t2", Paths: []string{path}}},
-	})
+	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
+	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t2", Lines: lines})
 	if m.mode != "pager" {
 		t.Fatalf("the racing open reply must open its pager first, mode=%q", m.mode)
 	}
-	m = pressEvent(t, m, core.ThreadLoaded{
-		ThreadID: "t1", Preview: true, Msgs: []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
-	})
+	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
 	if m.mode != "index" || !m.preview || m.previewThread != "t1" {
 		t.Fatalf("the preview target must win, mode=%q preview=%v thread=%q", m.mode, m.preview, m.previewThread)
 	}

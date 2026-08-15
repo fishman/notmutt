@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 	"notmutt/notmuch"
 	"notmutt/tui"
 )
@@ -67,10 +69,11 @@ func Run() error {
 	})
 
 	// open: the worker loads the thread's messages (headers + paths,
-	// ActThread), the TUI parses the files into the pager on the
-	// ThreadLoaded event (R13 two-step - content loads on open only).
-	// The preview variant (the p key) skips the read-marking; the TUI
-	// keeps the index surface for the popup.
+	// ActThread), the open job renders the files and runs the render
+	// transforms, and the TUI attaches the lines on ThreadLoaded (R13
+	// two-step - content loads on open only). The preview variant (the
+	// p key) skips the read-marking; the TUI keeps the index surface
+	// for the popup.
 	tui.SetOpenHandler(func(threadID string, preview bool) {
 		go openThread(worker, bus, threadID, preview)
 	})
@@ -118,12 +121,57 @@ func Run() error {
 	return err
 }
 
-// openThread loads a thread through the worker and publishes
-// ThreadLoaded (R13 two-step: content loads on open only). A full open
-// (preview=false) marks the thread read with an ActTag -unread (R1 -
-// read is a tag; the refresh cycle reconciles it into the view). The
-// tag failure keeps the thread open - the fetch already succeeded -
-// and surfaces as a JobError.
+// BodyRenderHook is the render-transform boundary (R8's Lua layer
+// registers adapters here, decision record 20): a transform on the
+// thread's rendered lines, run on the async open job under the chain
+// deadline. It sees F1-clean plain text (pre-styling), never raw mail.
+type BodyRenderHook func(ctx context.Context, lines []core.Line) ([]core.Line, error)
+
+var renderHooks []BodyRenderHook
+
+// renderHookBudget bounds one transform chain. A hook that exceeds it
+// drops its output and the render falls back to the un-hooked lines -
+// the pager never blocks on a plugin (the matcha freeze gap this
+// fixes). The context carries the deadline: a gopher-lua adapter can
+// wire it to SetContext as the kill switch.
+var renderHookBudget = time.Second
+
+// RegisterBodyRenderHook registers a thread-render transform. The
+// round trip is free with no hooks registered: applyBodyRenderHooks is
+// a no-op, and openThread's hot path never touches a context.
+func RegisterBodyRenderHook(fn BodyRenderHook) {
+	renderHooks = append(renderHooks, fn)
+}
+
+// applyBodyRenderHooks runs the registered transforms in order under
+// one chain deadline. A hook that errors or overruns the budget stops
+// the chain and falls back to the lines it received - the last good
+// render wins (F6: only the error is logged, never content).
+func applyBodyRenderHooks(lines []core.Line) []core.Line {
+	if len(renderHooks) == 0 {
+		return lines
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), renderHookBudget)
+	defer cancel()
+	for _, h := range renderHooks {
+		out, err := h(ctx, lines)
+		if err != nil {
+			log.Printf("body render hook: %v", err)
+			return lines
+		}
+		lines = out
+	}
+	return lines
+}
+
+// openThread loads a thread through the worker, renders it, and
+// publishes ThreadLoaded with the render lines (R13 two-step: content
+// loads on open only; the render + transforms run here on the async
+// job, never on the TUI's event path). A full open (preview=false)
+// marks the thread read with an ActTag -unread (R1 - read is a tag;
+// the refresh cycle reconciles it into the view). The tag failure
+// keeps the thread open - the fetch already succeeded - and surfaces
+// as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
@@ -134,7 +182,13 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Msgs: rpl.Msgs})
+	lines, err := mail.RenderThread(rpl.Msgs)
+	if err != nil {
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
+		return
+	}
+	lines = applyBodyRenderHooks(lines)
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Lines: lines})
 	if !preview {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,

@@ -24,7 +24,7 @@ func fixture(t *testing.T, body string) string {
 	return p
 }
 
-func joinText(lines []Line) string {
+func joinText(lines []core.Line) string {
 	var b strings.Builder
 	for _, l := range lines {
 		b.WriteString(l.Text)

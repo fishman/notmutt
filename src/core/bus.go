@@ -146,17 +146,20 @@ type SendResult struct {
 	Err    error
 }
 
-// ThreadLoaded carries the open thread's messages (headers + file
-// paths) from the worker to the TUI (R13 two-step: content loads on
-// open only). Err names a failed worker call; the TUI falls back to
-// index mode. Preview marks the preview fetch (the p key): the load
+// ThreadLoaded carries the open thread's rendered lines from the open
+// job to the TUI (R13 two-step: content loads on open only). The app
+// renders the worker's messages and runs the registered render
+// transforms (decision record 20 - hooks run on the async core with a
+// deadline, never inline) before publishing; the TUI only attaches the
+// lines. Err names a failed worker call or render; the TUI falls back
+// to index mode. Preview marks the preview fetch (the p key): the load
 // did NOT mark the thread read, and the TUI shows the popup instead of
 // switching to the pager - a stale preview reply (closed or
 // re-targeted meanwhile) drops in onThreadLoaded.
 type ThreadLoaded struct {
 	ThreadID string
 	Preview  bool
-	Msgs     []Message
+	Lines    []Line
 	Err      error
 }
 

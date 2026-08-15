@@ -18,6 +18,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 )
 
 var testKeys = map[string]string{
@@ -832,7 +833,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
-			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
 		m = next.(Model)
 	})
@@ -982,6 +983,18 @@ func rowsModel(n int) Model {
 }
 
 // openPager presses "o" with an open handler that injects the loaded
+// loadedLines renders a message set the way the app's open job does:
+// handlers publish the same ThreadLoaded the app would (the model
+// attaches lines, it never renders).
+func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
+	t.Helper()
+	lines, err := mail.RenderThread(msgs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lines
+}
+
 // thread as a bus event, mirroring the app's worker publish path. The
 // handler updates the model synchronously, so the returned model
 // carries the pager state.
@@ -990,7 +1003,7 @@ func openPager(t *testing.T, m Model, path string) Model {
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
-			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
 		m = next.(Model)
 	})
@@ -1172,7 +1185,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
-			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
 		m = next.(Model)
 	})
@@ -1207,7 +1220,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
-			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}},
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
 		m = next.(Model)
 	})
@@ -1402,7 +1415,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
-			Msgs:     []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}},
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}}),
 		}})
 		m = next.(Model)
 	})
@@ -1413,19 +1426,6 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 	out := stripANSI(m.View().Content)
 	if !strings.Contains(out, "failed to parse message") {
 		t.Fatalf("error line missing:\n%s", out)
-	}
-}
-
-func TestThreadLoadedEmptyFallsBackToIndex(t *testing.T) {
-	m := model()
-	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string, preview bool) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID}})
-		m = next.(Model)
-	})
-	press(t, m, "o")
-	if m.mode != "index" || m.pager != nil {
-		t.Fatalf("an empty thread reply must stay in index, mode=%q pager=%v", m.mode, m.pager != nil)
 	}
 }
 

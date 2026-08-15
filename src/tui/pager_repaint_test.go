@@ -12,7 +12,7 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 
 	"notmutt/config"
-	"notmutt/mail"
+	"notmutt/core"
 )
 
 // harness drives the vendored uv.TerminalRenderer exactly like
@@ -73,20 +73,20 @@ func maxRow(s string) int {
 	return max
 }
 
-func pagerFrames(t *testing.T) (mail.Line, []mail.Line) {
+func pagerFrames(t *testing.T) (core.Line, []core.Line) {
 	t.Helper()
-	lines := []mail.Line{
-		{Kind: mail.LineSubject, Text: "Subject: hello world this is a long subject line for the pager"},
-		{Kind: mail.LineHeader, Text: "From: Alice <alice@example.com>"},
-		{Kind: mail.LineHeader, Text: "Date: 2026-08-15 10:00"},
-		{Kind: mail.LineHeader, Text: "To: Bob <bob@example.com>"},
+	lines := []core.Line{
+		{Kind: core.LineSubject, Text: "Subject: hello world this is a long subject line for the pager"},
+		{Kind: core.LineHeader, Text: "From: Alice <alice@example.com>"},
+		{Kind: core.LineHeader, Text: "Date: 2026-08-15 10:00"},
+		{Kind: core.LineHeader, Text: "To: Bob <bob@example.com>"},
 	}
 	for i := 0; i < 30; i++ {
-		lines = append(lines, mail.Line{Kind: mail.LineBody, Text: fmt.Sprintf("body line %d with some words to fill the width", i)})
+		lines = append(lines, core.Line{Kind: core.LineBody, Text: fmt.Sprintf("body line %d with some words to fill the width", i)})
 	}
-	lines = append(lines, mail.Line{Kind: mail.LineSignature, Text: "-- "})
-	lines = append(lines, mail.Line{Kind: mail.LineSignature, Text: "Alice"})
-	return mail.Line{}, lines
+	lines = append(lines, core.Line{Kind: core.LineSignature, Text: "-- "})
+	lines = append(lines, core.Line{Kind: core.LineSignature, Text: "Alice"})
+	return core.Line{}, lines
 }
 
 func pagerFrame(p *pager, km map[string]string, st Styles, ui config.UI, d statusData) string {
@@ -193,9 +193,9 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
 
-	lines := make([]mail.Line, 500)
+	lines := make([]core.Line, 500)
 	for i := range lines {
-		lines[i] = mail.Line{Kind: mail.LineBody, Text: fmt.Sprintf("line %d of the large thread body", i)}
+		lines[i] = core.Line{Kind: core.LineBody, Text: fmt.Sprintf("line %d of the large thread body", i)}
 	}
 	p := newPager("t1", lines)
 

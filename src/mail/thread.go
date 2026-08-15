@@ -25,51 +25,31 @@ import (
 // truncated marker. 8 MiB covers any realistic single part.
 const maxPartBytes = 8 << 20
 
-// LineKind identifies the render line's style class (the pager maps
-// kinds to the theme styles).
-type LineKind int
-
-const (
-	LineSubject LineKind = iota
-	LineHeader
-	LineBody
-	LineSignature
-	LineAttachment
-	LineError
-)
-
-// Line is one pager render line: the text plus the style kind. All
-// text has been stripped of C0/DEL/C1 control chars before it leaves
-// this package (F1) - the TUI never sees raw mail content.
-type Line struct {
-	Text   string
-	Kind   LineKind
-	Quoted int // LineBody only, 0..5 (capped)
-}
-
 // RenderThread parses each message's file and produces the pager's
-// render lines: per message a header block (subject, from/date), then
-// the body with quoted levels and signature, then attachment lines.
-// A per-message failure (no path, unreadable file, unparseable mail)
-// becomes an error line so the rest of the thread stays readable -
-// mutt-style partial content. RenderThread errors only when the input
-// is empty: then there is nothing to show at all.
-func RenderThread(msgs []core.Message) ([]Line, error) {
+// render lines (the Line type lives in core - the open job ships them
+// to the TUI in the ThreadLoaded event): per message a header block
+// (subject, from/date), then the body with quoted levels and signature,
+// then attachment lines. A per-message failure (no path, unreadable
+// file, unparseable mail) becomes an error line so the rest of the
+// thread stays readable - mutt-style partial content. RenderThread
+// errors only when the input is empty: then there is nothing to show
+// at all.
+func RenderThread(msgs []core.Message) ([]core.Line, error) {
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("no messages in thread")
 	}
-	var lines []Line
+	var lines []core.Line
 	for i, m := range msgs {
 		if i > 0 {
-			lines = append(lines, Line{})
+			lines = append(lines, core.Line{})
 		}
 		if len(m.Paths) == 0 {
-			lines = append(lines, Line{Text: core.SanitizeControls(fmt.Sprintf("message %s: no path", m.ID)), Kind: LineError})
+			lines = append(lines, core.Line{Text: core.SanitizeControls(fmt.Sprintf("message %s: no path", m.ID)), Kind: core.LineError})
 			continue
 		}
 		parsed, err := ParseMessage(m.Paths[0])
 		if err != nil {
-			lines = append(lines, Line{Text: core.SanitizeControls(fmt.Sprintf("failed to parse message: %v", err)), Kind: LineError})
+			lines = append(lines, core.Line{Text: core.SanitizeControls(fmt.Sprintf("failed to parse message: %v", err)), Kind: core.LineError})
 			continue
 		}
 		lines = append(lines, renderMessage(parsed)...)
@@ -205,17 +185,17 @@ func splitBody(text string) []Part {
 	return parts
 }
 
-func renderMessage(m *Message) []Line {
-	var lines []Line
-	add := func(text string, kind LineKind, quoted int) {
-		lines = append(lines, Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
+func renderMessage(m *Message) []core.Line {
+	var lines []core.Line
+	add := func(text string, kind core.LineKind, quoted int) {
+		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
-	add(m.Subject, LineSubject, 0)
-	add(m.From+"  "+m.Date, LineHeader, 0)
+	add(m.Subject, core.LineSubject, 0)
+	add(m.From+"  "+m.Date, core.LineHeader, 0)
 	for _, p := range m.Parts {
-		kind := LineBody
+		kind := core.LineBody
 		if p.Signature {
-			kind = LineSignature
+			kind = core.LineSignature
 		}
 		add(p.Body, kind, p.Quoted)
 	}
@@ -224,7 +204,7 @@ func renderMessage(m *Message) []Line {
 		if a.Truncated {
 			line = fmt.Sprintf("attachment: %s (truncated, >%d bytes)", a.Name, maxPartBytes)
 		}
-		add(line, LineAttachment, 0)
+		add(line, core.LineAttachment, 0)
 	}
 	return lines
 }

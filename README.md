@@ -15,6 +15,11 @@ runtime backend (measured 1.5s full walk vs the cgo binding's 8.7s on a
 33k-thread inbox); the index is a materialized bbolt cache keyed by
 notmuch's revision.
 
+Keybindings: `o` opens a thread (marks it read), `p` previews it in a
+popup over the index without marking it read, `$` applies staged tag
+ops, `u` undoes them. The binding map is declarative per context; the
+help overlay (`?`) derives from it.
+
 ## Rendering
 
 BubbleTea v2 re-renders the whole frame on every message, which is where

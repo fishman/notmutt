@@ -229,3 +229,31 @@ go.notmuch fork is vendored and pinned by replace, never fetched from
 the proxy. Spec/doc commits carry the AI-assisted trailer; code is
 reviewed like any other contribution, with tests proving the edge
 cases.
+
+## 19. Preview popup vs open-reads (2026-08-15)
+
+Decision: two surfaces with different read semantics. `p` (preview)
+opens a popup over the index that does NOT mark the thread read - the
+index mode stays put, the box borrows the pager surface (scroll keys
+are the pager bindings, R9 data-first: activeBindings flips to the
+pager map while the popup is open, so the keyhint derives the same
+way). `o` (open) is the full pager AND tags the thread -unread (R1:
+read is a tag, the refresh cycle reconciles it into the view).
+
+The async shape: the preview fetch is a regular ActThread with a
+Preview flag on the ThreadLoaded reply. The model drops a preview
+reply that no longer targets the armed popup (closed or re-targeted
+meanwhile) - a stale reply can never force a full open. The preview
+target's reply re-asserts the popup over a racing full-open reply
+(FIFO ordering). `o` inside the popup promotes it: the pager keeps
+content and scroll position (the idempotent reload guard treats the
+already-loaded thread as a no-op) and re-sizes to the full frame; an
+empty in-flight preview rebuilds fresh. Failed preview loads close
+the box silently; a failed mark-read on open publishes a JobError and
+keeps the thread open.
+
+Found by test: index mode renders short lists shorter than the
+window (only the empty view pads to height), so the whole-line splice
+in the popup shrank to nothing over a short mailbox. The popup pads
+the list section before the keyhint/status tail, so the box always
+splices a full-height frame.

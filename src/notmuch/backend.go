@@ -28,10 +28,10 @@ type TagOp = core.TagOp
 //     thread (DB-side thread fields; the CLI has no content-free
 //     per-message dump - show opens files, so it exists only for the
 //     open path);
-//   - cgo: the native batch - the in-process threads iterator, each
-//     thread's messages mapped directly into core.Message from the DB
-//     header cache (ids, references, from, subject, date, tags), zero
-//     subprocesses.
+//   - cgo: one native batch per chunk - the in-process threads
+//     iterator packs per-thread summaries (thread id, date, authors,
+//     subject, tags from the Xapian header cache) into one buffer per
+//     crossing, zero subprocesses, zero file opens.
 //
 // limit stops the walk after N threads (0 = all; the startup validation
 // probes each view query with 1). emit returning false stops the walk

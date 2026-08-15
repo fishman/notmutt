@@ -29,11 +29,21 @@ func TestCGOSmoke(t *testing.T) {
 	}
 	n := 0
 	err = b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
-		n += len(chunk)
+		for _, m := range chunk {
+			// batched summaries are CLI-shaped stubs: thread-level
+			// fields only, no message ids, paths, or references
+			if m.ID != "" || m.Paths != nil || m.References != nil || m.ThreadID == "" || m.Timestamp == 0 {
+				t.Fatalf("row is not a summary stub: %+v", m)
+			}
+			n++
+		}
 		return true
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("got %d messages, rev %d (counts only, no content)", n, rev)
+	if n != 10 {
+		t.Fatalf("limit must bound the walk to 10 threads, got %d", n)
+	}
+	t.Logf("got %d thread summaries, rev %d (counts only, no content)", n, rev)
 }

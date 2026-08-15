@@ -40,7 +40,7 @@ func TestBench(t *testing.T) {
 			t.Logf("%-30s ERROR %v", name, err)
 			return
 		}
-		t.Logf("%-30s %8s  (%d msgs)", name, time.Since(t0).Round(time.Millisecond), n)
+		t.Logf("%-30s %8s  (%d rows)", name, time.Since(t0).Round(time.Millisecond), n)
 	}
 
 	collect := func(b Backend, q string, limit int) (int, error) {

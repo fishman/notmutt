@@ -47,74 +47,50 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.db.Revision()
 }
 
-// Query walks the whole result as the native batch: the in-process
-// threads iterator, each thread's messages mapped directly into
-// core.Message from the DB header cache (ids, references, from, subject,
-// date, tags - zero subprocesses, zero file opens), emitted in chunks
-// at thread boundaries (a thread never straddles a chunk, so the merge
-// sees every thread at most once). The walk is naturally progressive:
-// no write-at-end wall, unlike the CLI's single `notmuch search` call.
+// Query walks the result as one native batch per chunk: the walk's C
+// iterator stays alive across chunks, each pack crossing the boundary
+// once (the CLI's bulk-JSON emit, in-process: the per-thread
+// header-cache reads amortize C-side, zero file opens). The rows are
+// the same stub data the CLI emits - thread id, newest date, authors,
+// subject, tags - so the merge path is shared; per-message data comes
+// from Thread, on open only. Chunk cadence: firstChunk then
+// steadyChunk. limit counts threads, like `notmuch search --limit`.
 func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch search: database not open")
 	}
-	q := b.db.NewQuery(query)
-	defer q.Close()
-	q.SetSortScheme(nm.SORT_NEWEST_FIRST)
-	threads, err := q.Threads()
+	w, err := b.db.NewThreadsWalk(query, limit)
 	if err != nil {
 		return fmt.Errorf("notmuch search: %w", err)
 	}
-	defer threads.Close()
-	var chunk []core.Message
-	flush := func() bool {
-		if len(chunk) == 0 || emit == nil {
-			return true
-		}
-		if !emit(chunk) {
-			return false
-		}
-		chunk = nil
-		return true
-	}
-	nthreads := 0
+	defer w.Close()
 	size := firstChunk
-	for t := range threads.All() {
+	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if limit > 0 && nthreads >= limit {
-			break
-		}
-		nthreads++
-		msgs := t.Messages()
-		for m := range msgs.All() {
-			chunk = append(chunk, core.Message{
-				ID:         m.ID(),
-				ThreadID:   m.ThreadID(),
-				Timestamp:  m.Date().Unix(),
-				Author:     m.Header("from"),
-				Subject:    m.Header("subject"),
-				Tags:       tagsOf(m),
-				Paths:      pathsOf(m),
-				References: refsOf(m),
-			})
-		}
-		if err := msgs.Err(); err != nil {
+		summaries, done, err := w.Next(size)
+		if err != nil {
 			return fmt.Errorf("notmuch search: %w", err)
 		}
-		msgs.Close()
-		if len(chunk) >= size {
-			if !flush() {
-				return nil
-			}
-			size = steadyChunk
+		if done {
+			return nil
 		}
+		rows := make([]core.Message, 0, len(summaries))
+		for _, s := range summaries {
+			rows = append(rows, core.Message{
+				ThreadID:  s.ThreadID,
+				Timestamp: s.Timestamp,
+				Author:    s.Authors,
+				Subject:   s.Subject,
+				Tags:      s.Tags,
+			})
+		}
+		if emit != nil && !emit(rows) {
+			return nil
+		}
+		size = steadyChunk
 	}
-	if !flush() {
-		return nil
-	}
-	return nil
 }
 
 // refsOf parses the message's reference chain out of the DB header
@@ -145,13 +121,43 @@ func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {
 	return int(n), nil
 }
 
+// Thread fetches one thread's messages with the per-message iterators
+// - real ids, paths, and reference chains for the pager tree. A thread
+// is a handful of messages, so the per-message boundary crossings are
+// negligible here; only the query path is batched.
 func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
+	if b.db == nil {
+		return nil, fmt.Errorf("notmuch show: database not open")
+	}
+	q := b.db.NewQuery("thread:" + threadID)
+	defer q.Close()
+	q.SetSortScheme(nm.SORT_NEWEST_FIRST)
+	threads, err := q.Threads()
+	if err != nil {
+		return nil, fmt.Errorf("notmuch show: %w", err)
+	}
+	defer threads.Close()
 	var msgs []core.Message
-	err := b.Query(ctx, "thread:"+threadID, 0, func(chunk []core.Message) bool {
-		msgs = append(msgs, chunk...)
-		return true
-	})
-	return msgs, err
+	for t := range threads.All() {
+		it := t.Messages()
+		for m := range it.All() {
+			msgs = append(msgs, core.Message{
+				ID:         m.ID(),
+				ThreadID:   m.ThreadID(),
+				Timestamp:  m.Date().Unix(),
+				Author:     m.Header("from"),
+				Subject:    m.Header("subject"),
+				Tags:       tagsOf(m),
+				Paths:      pathsOf(m),
+				References: refsOf(m),
+			})
+		}
+		if err := it.Err(); err != nil {
+			return nil, fmt.Errorf("notmuch show: %w", err)
+		}
+		it.Close()
+	}
+	return msgs, nil
 }
 
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {

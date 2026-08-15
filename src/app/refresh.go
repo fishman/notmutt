@@ -65,9 +65,8 @@ func (r *refresher) cycle() {
 		return
 	}
 	// The changed set IS the merge input: search summaries (thread-level
-	// index data) need no further fetch, and per-message rows (cgo) build
-	// real trees from references. No show in the refresh path - content
-	// loads only on open (R13).
+	// index data), the same shape from both backends. No show in the
+	// refresh path - content loads only on open (R13).
 	page := groupThreads(msgs)
 	sortThreads(page)
 	if len(page) > 0 {
@@ -147,9 +146,9 @@ const firstLoadRows = 100
 // the result and emits chunks - no offset paging: every paged offset
 // call re-walks the notmuch mset, measured ~40s for 33 pages of a
 // 33k-thread inbox against ~5s for one call). The chunk IS the index
-// read: content-free, DB-side data (thread summaries on the CLI,
-// per-message DB-header rows on cgo), zero file opens - the whole list
-// loads in seconds (per-thread show round trips were the load wall).
+// read: content-free, DB-side data (thread summaries, the same shape
+// from both backends), zero file opens - the whole list loads in
+// seconds (per-thread show round trips were the load wall).
 // Message content is step two, on open only (R13). Each chunk merges
 // in as it lands (R3 progressive fill): progress then ViewDiff, so the
 // paint tracks the walk (the backend emits the first 100 fast, then
@@ -232,10 +231,9 @@ func (r *refresher) paint(total, done int) {
 	r.bus.Publish(core.ViewDiff{View: r.view.Name})
 }
 
-// groupThreads groups a page into one thread per thread id: the CLI
-// page's search summaries become stub threads (one summary row each -
-// the index row), the cgo page's per-message rows become real threads
-// (the tree builds from references).
+// groupThreads groups a page into one thread per thread id: the search
+// summaries become stub threads (one summary row each - the index
+// row), from both backends.
 func groupThreads(msgs []core.Message) []*core.Thread {
 	byID := map[string][]*core.Message{}
 	for i := range msgs {

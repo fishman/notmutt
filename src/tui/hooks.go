@@ -1,5 +1,10 @@
 package tui
 
+import (
+	"notmutt/compose"
+	"notmutt/core"
+)
+
 // onApply is the apply seam: the app wires it with SetApplyHandler; the
 // default is a no-op so the model works in tests.
 var onApply = func() {}
@@ -16,4 +21,29 @@ var onOpen = func(threadID string) {}
 
 func SetOpenHandler(fn func(string)) {
 	onOpen = fn
+}
+
+// onReply is the reply seam: the app builds the prefill (account
+// detection, parsing) and publishes ComposeOpened; msg is nil for a
+// blank compose.
+var onReply = func(msg *core.Message, mode string) {}
+
+func SetReplyHandler(fn func(*core.Message, string)) {
+	onReply = fn
+}
+
+// onSend is the send seam: the app runs the send job (transport, fcc,
+// tags) and publishes SendResult.
+var onSend = func(st compose.State) {}
+
+func SetSendHandler(fn func(compose.State)) {
+	onSend = fn
+}
+
+// sigDir is the signatures root (spec section 9); the app resolves it
+// from the config path, the tests set it directly.
+var sigDir string
+
+func SetSignaturesDir(dir string) {
+	sigDir = dir
 }

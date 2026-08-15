@@ -52,16 +52,6 @@ func TestFuzzyMoveAndSelect(t *testing.T) {
 	}
 }
 
-func TestFuzzySetQueryResetsSelection(t *testing.T) {
-	f := newFuzzy("signature", "signature:", []string{"a", "b"})
-	f.move(1)
-	f.setQuery("a")
-	// narrowing below the old sel must land on the top match, not ("", false)
-	if entry, ok := f.selected(); !ok || entry != "a" {
-		t.Fatalf("narrowed select = %q %v", entry, ok)
-	}
-}
-
 func TestFuzzyEmptyFilterNoPanic(t *testing.T) {
 	f := newFuzzy("account", "account:", []string{"a", "b"})
 	f.query = "zzz"

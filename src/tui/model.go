@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -8,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/mail"
@@ -107,6 +110,22 @@ type Model struct {
 	// engage only when the active context does NOT bind the key.
 	count     string
 	ggPending bool
+	// compose tabs: the dialogue stack (R4). tabIdx 0 = the mail
+	// surface (index/pager); tabIdx > 0 = tabs[tabIdx-1] attached as
+	// the compose dialogue. Stepping off a dialogue parks it - state
+	// intact - while the mail surface keeps working; stepping back
+	// re-attaches it (spec section 5: the dialogue IS the tab).
+	tabs   []compose.State
+	tabIdx int
+	// formIdx is the compose form cursor slot: 0-3 = From/To/Cc/
+	// Subject, 4+i = attachment i (d detaches there).
+	formIdx int
+	// fuzzy is the selector popup (account/signature); non-nil
+	// renders the popup frame and captures the fuzzy context.
+	fuzzy *fuzzy
+	// prompt is the attach path input row; non-nil captures the
+	// prompt keys and replaces the compose keyhint row.
+	prompt *pathPrompt
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
@@ -138,6 +157,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pager.setSize(m.width, m.height-2, m.styles)
 		}
 	case tea.KeyPressMsg:
+		if m.prompt != nil {
+			m.promptKey(msg)
+			return m, nil
+		}
+		if m.fuzzy != nil {
+			m.fuzzyKey(msg, m.bindings["fuzzy"])
+			return m, nil
+		}
 		km := m.bindings[m.mode]
 		if km == nil {
 			km = m.bindings["index"]
@@ -177,6 +204,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.count != "" {
 			n, _ = strconv.Atoi(m.count)
 			m.count = ""
+		}
+		if m.ggPending {
+			// the g-prefix chain: gg = top (above), g r = reply-all.
+			// Any other next key consumes the chain and dispatches
+			// normally.
+			m.ggPending = false
+			if r == "r" && (m.mode == "index" || m.mode == "pager") {
+				m.openReply("reply-all")
+				return m, nil
+			}
 		}
 		m.ggPending = false
 		switch action := actionForKey(msg, km); action {
@@ -240,6 +277,64 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.mode == "pager" {
 				m.mode = "index"
 			}
+		case "reply":
+			m.openReply("reply")
+		case "forward":
+			m.openReply("forward")
+		case "compose":
+			m.openReply("compose")
+		case "tab-prev":
+			m.tabPrev()
+		case "tab-next":
+			m.tabNext()
+		case "form-down":
+			if m.composeTab().Phase == compose.PhaseAborting {
+				m.composeTab().Phase = compose.PhaseEditing
+			}
+			m.formIdx++
+			if max := 4 + len(m.composeTab().Attachments); m.formIdx > max {
+				m.formIdx = max
+			}
+		case "form-up":
+			if m.formIdx > 0 {
+				m.formIdx--
+			}
+		case "edit":
+			if m.composeTab().Phase == compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseEditing
+			}
+			st := *m.composeTab()
+			tabID := st.ID
+			path, err := writeEditorBuffer(st)
+			if err != nil {
+				return m, nil
+			}
+			return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+				return editorDoneMsg{err: err, path: path, tabID: tabID}
+			})
+		case "attach":
+			m.prompt = &pathPrompt{}
+		case "detach":
+			t := m.composeTab()
+			if i := m.formIdx - 4; i >= 0 && i < len(t.Attachments) {
+				t.Attachments = slices.Delete(t.Attachments, i, i+1)
+			}
+		case "account":
+			m.openPicker("account")
+		case "signature":
+			m.openPicker("signature")
+		case "send":
+			if m.composeTab().Phase != compose.PhaseFailed {
+				m.composeTab().Phase = compose.PhaseSending
+			}
+			onSend(*m.composeTab())
+		case "abort":
+			st := m.composeTab()
+			if st.Phase == compose.PhaseAborting {
+				m.closeComposeTab(m.tabIdx - 1)
+			} else {
+				st.Phase = compose.PhaseAborting
+			}
 		default:
 			// staged tag ops (and undo) advance the cursor one row -
 			// the next keypress acts on the next message (mutt's
@@ -263,6 +358,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.legendPending = false
 			m.legendTickOn = false
 		}
+		return m, nil
+	case editorDoneMsg:
+		if msg.err == nil {
+			for i := range m.tabs {
+				if m.tabs[i].ID == msg.tabID {
+					if st, err := applyEditorResult(m.tabs[i], msg.path); err == nil {
+						m.tabs[i] = st
+					}
+					break
+				}
+			}
+		}
+		os.Remove(msg.path)
 		return m, nil
 	case legendTick:
 		// fallback for terminals without release reporting: the tick
@@ -296,6 +404,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case core.ThreadLoaded:
 			m.onThreadLoaded(e)
+		case core.ComposeOpened:
+			st := compose.FromEvent(e)
+			m.tabs = append(m.tabs, *st)
+			m.tabIdx = len(m.tabs)
+			m.attachTab()
+		case core.SendResult:
+			for i := range m.tabs {
+				if m.tabs[i].ID == e.TabID {
+					if e.OK {
+						m.closeComposeTab(i)
+					} else {
+						m.tabs[i].Phase = compose.PhaseFailed
+						m.tabs[i].Output = e.Output
+						if e.Err != nil && m.tabs[i].Output == "" {
+							m.tabs[i].Output = e.Err.Error()
+						}
+					}
+					break
+				}
+			}
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
@@ -806,6 +934,9 @@ func (m Model) View() tea.View {
 // and shifts every line - the diff then matches nothing and the whole page
 // repaints on every keypress.
 func (m Model) render() string {
+	if m.mode == "compose" {
+		return m.renderCompose()
+	}
 	if m.mode == "pager" && m.pager != nil {
 		var b strings.Builder
 		b.WriteString(m.pager.render())
@@ -915,6 +1046,10 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 // the index cursor is hidden). The cursor resolution is the cached-row
 // scan, never a view flatten.
 func (m Model) statusData() statusData {
+	if m.mode == "compose" {
+		st := m.tabs[m.tabIdx-1]
+		return statusData{view: "compose", visible: len(m.tabs), account: st.Account}
+	}
 	d := statusData{view: m.view.Name, visible: len(m.rows), on: m.progressOn}
 	if m.progressOn {
 		p := m.progress
@@ -926,4 +1061,203 @@ func (m Model) statusData() statusData {
 	d.legend = m.legend
 	d.account = m.account
 	return d
+}
+
+// pathPrompt is the attach path input row.
+type pathPrompt struct {
+	input string
+}
+
+// promptKey captures the prompt keys: printable text appends,
+// backspace pops, enter resolves (invalid paths keep the prompt
+// open), esc cancels. The prompt only exists while a dialogue is
+// attached (the attach action is compose-context), so the direct
+// index is safe.
+func (m *Model) promptKey(msg tea.KeyPressMsg) bool {
+	p := m.prompt
+	switch {
+	case msg.String() == "enter":
+		path := compose.ExpandHome(strings.TrimSpace(p.input))
+		if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
+			m.prompt = nil
+		}
+	case msg.String() == "esc":
+		m.prompt = nil
+	case msg.String() == "backspace":
+		if p.input != "" {
+			p.input = p.input[:len(p.input)-1]
+		}
+	case msg.Text != "":
+		p.input += msg.Text
+	}
+	return true
+}
+
+// fuzzyKey captures the fuzzy context: bound actions dispatch,
+// unbound printable keys filter the query, backspace trims it.
+func (m *Model) fuzzyKey(msg tea.KeyPressMsg, km map[string]string) bool {
+	if a := actionForKey(msg, km); a != "" {
+		switch a {
+		case "fuzzy-down":
+			m.fuzzy.move(1)
+		case "fuzzy-up":
+			m.fuzzy.move(-1)
+		case "fuzzy-select":
+			m.fuzzySelect()
+		case "fuzzy-cancel":
+			m.fuzzy = nil
+		}
+		return true
+	}
+	switch {
+	case msg.String() == "backspace":
+		if m.fuzzy.query != "" {
+			m.fuzzy.query = m.fuzzy.query[:len(m.fuzzy.query)-1]
+		}
+	case msg.Text != "":
+		m.fuzzy.query += msg.Text
+	}
+	m.fuzzy.sel = 0
+	return true
+}
+
+// fuzzySelect applies the picker's selection to the dialogue: an
+// account switch sets Account and From; a signature switch loads the
+// file and attaches it. The picker only exists while a dialogue is
+// attached (the account/signature actions are compose-context).
+func (m *Model) fuzzySelect() {
+	entry, ok := m.fuzzy.selected()
+	if !ok {
+		m.fuzzy = nil
+		return
+	}
+	st := &m.tabs[m.tabIdx-1]
+	if m.fuzzy.kind == "account" {
+		a := m.st.Config().Accounts[entry]
+		st.Account, st.From = entry, a.From
+	} else {
+		if data, err := os.ReadFile(filepath.Join(sigDir, st.Account, entry)); err == nil {
+			st.SetSignature(entry, strings.TrimSuffix(string(data), "\n"))
+		}
+	}
+	m.fuzzy = nil
+}
+
+// openPicker opens the account or signature selector: the entries are
+// the configured accounts, or the account's signature files.
+func (m *Model) openPicker(kind string) {
+	st := &m.tabs[m.tabIdx-1]
+	if kind == "account" {
+		names := make([]string, 0, len(m.st.Config().Accounts))
+		for n := range m.st.Config().Accounts {
+			names = append(names, n)
+		}
+		m.fuzzy = newFuzzy("account", "account:", names)
+		return
+	}
+	var names []string
+	if sigDir != "" {
+		if entries, err := os.ReadDir(filepath.Join(sigDir, st.Account)); err == nil {
+			for _, e := range entries {
+				if !e.IsDir() {
+					names = append(names, e.Name())
+				}
+			}
+		}
+	}
+	m.fuzzy = newFuzzy("signature", "signature:", names)
+}
+
+// openReply hands the reply context to the app seam: the cursor row's
+// message in the index, the open thread's first message in the
+// pager, nil for a blank compose.
+func (m *Model) openReply(mode string) {
+	var msg *core.Message
+	if m.mode == "index" {
+		if row, ok := m.view.CursorRow(); ok {
+			msg = row.Msg
+		}
+	} else if m.mode == "pager" && m.pager != nil {
+		for _, r := range m.rows {
+			if r.Msg != nil && r.ThreadID == m.pager.threadID {
+				msg = r.Msg
+				break
+			}
+		}
+	}
+	if mode == "reply" || mode == "reply-all" || mode == "forward" {
+		if msg == nil {
+			return
+		}
+	}
+	onReply(msg, mode)
+}
+
+// tabNext/tabPrev cycle the tab list: the mail surface (index 0) and
+// every open dialogue. Stepping off a dialogue parks it; stepping
+// back re-attaches it. The pager state survives in m.pager - the mail
+// surface restores to "pager" when a thread was open.
+func (m *Model) tabNext() {
+	if len(m.tabs) == 0 {
+		return
+	}
+	m.tabIdx++
+	if m.tabIdx > len(m.tabs) {
+		m.tabIdx = 0
+	}
+	m.attachTab()
+}
+
+func (m *Model) tabPrev() {
+	if len(m.tabs) == 0 {
+		return
+	}
+	m.tabIdx--
+	if m.tabIdx < 0 {
+		m.tabIdx = len(m.tabs)
+	}
+	m.attachTab()
+}
+
+// composeTab is the attached dialogue the compose context acts on
+// (tabIdx > 0 is guaranteed whenever mode == "compose" - attachTab
+// sets both together).
+func (m *Model) composeTab() *compose.State {
+	return &m.tabs[m.tabIdx-1]
+}
+
+func (m *Model) attachTab() {
+	m.fuzzy, m.prompt = nil, nil
+	if m.tabIdx > 0 {
+		m.mode = "compose"
+		return
+	}
+	if m.pager != nil {
+		m.mode = "pager"
+		return
+	}
+	m.mode = "index"
+}
+
+// closeComposeTab removes the dialogue and lands on the previous
+// tab (or the mail surface when none remain).
+func (m *Model) closeComposeTab(i int) {
+	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+	if m.tabIdx > i {
+		m.tabIdx--
+	}
+	if m.tabIdx > len(m.tabs) {
+		m.tabIdx = len(m.tabs)
+	}
+	m.attachTab()
+}
+
+// editorDoneMsg reports the $EDITOR run: the buffer path is read back
+// (applyEditorResult) and removed. The result is addressed by tab ID
+// (not position): a tab closed or replaced while the editor runs must
+// never receive a stale buffer.
+type editorDoneMsg struct {
+	err   error
+	path  string
+	tabID string
 }

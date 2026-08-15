@@ -46,13 +46,6 @@ func newFuzzy(kind, title string, entries []string) *fuzzy {
 	return &fuzzy{kind: kind, title: title, entries: entries}
 }
 
-// setQuery narrows the filter and resets the selection: a stale sel
-// past the end of a shrunken match list would no-op Enter.
-func (f *fuzzy) setQuery(q string) {
-	f.query = q
-	f.sel = 0
-}
-
 // filtered returns the matching entry indices, ranked by first match
 // position then entry order (sorted at construction).
 func (f *fuzzy) filtered() []int {

@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/mattn/go-runewidth"
 
+	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
 )
@@ -1244,5 +1245,257 @@ func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	}
 	if m.pager != nil {
 		t.Fatal("a failed load must drop the pager")
+	}
+}
+
+func openDialogue(t *testing.T, m Model, id string) Model {
+	t.Helper()
+	next, _ := m.Update(EventMsg{Event: core.ComposeOpened{
+		TabID: id, Mode: "reply", Account: "gmail", From: "Bob <bob@example.com>",
+		To: []string{"a@b.c"}, Subject: "Re: x", Body: "> quoted",
+	}})
+	return next.(Model)
+}
+
+func TestComposeOpenedAttachesDialogue(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	if m.mode != "compose" {
+		t.Fatalf("mode = %q", m.mode)
+	}
+	if len(m.tabs) != 1 || m.tabIdx != 1 || m.tabs[0].Subject != "Re: x" {
+		t.Fatalf("tabs = %+v idx %d", m.tabs, m.tabIdx)
+	}
+}
+
+func TestTabSwitchParksDialogue(t *testing.T) {
+	m := openDialogue(t, openDialogue(t, model(), "t1"), "t2")
+	if m.tabIdx != 2 {
+		t.Fatalf("tabIdx = %d", m.tabIdx)
+	}
+	// ] steps to the mail surface, then back through the dialogues
+	m = press(t, m, "]")
+	if m.mode != "index" || m.tabIdx != 0 {
+		t.Fatalf("park: mode %q idx %d", m.mode, m.tabIdx)
+	}
+	if len(m.tabs) != 2 {
+		t.Fatalf("parking must keep the dialogues: %d", len(m.tabs))
+	}
+	m = press(t, m, "]")
+	if m.mode != "compose" || m.tabIdx != 1 {
+		t.Fatalf("re-attach: mode %q idx %d", m.mode, m.tabIdx)
+	}
+	if m.tabs[0].Subject != "Re: x" {
+		t.Fatalf("dialogue state must survive: %+v", m.tabs[0])
+	}
+	m = press(t, m, "[")
+	if m.mode != "index" || m.tabIdx != 0 {
+		t.Fatalf("[ steps back toward the mail surface: mode %q idx %d", m.mode, m.tabIdx)
+	}
+	m = press(t, m, "[")
+	if m.mode != "compose" || m.tabIdx != 2 {
+		t.Fatalf("[ must reach the last dialogue from the mail surface: mode %q idx %d", m.mode, m.tabIdx)
+	}
+}
+
+func TestReplyKeyOpensDialogue(t *testing.T) {
+	got := ""
+	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
+	defer SetReplyHandler(func(msg *core.Message, mode string) {})
+	// the model() fixture view has a cursor message at row 0 (message
+	// "a" of thread t1)
+	m := model()
+	m = press(t, m, "R")
+	if got != "reply" {
+		t.Fatalf("R must open a reply, got %q", got)
+	}
+	m = press(t, m, "F")
+	if got != "forward" {
+		t.Fatalf("F must open a forward, got %q", got)
+	}
+	m = press(t, m, "m")
+	if got != "compose" {
+		t.Fatalf("m must open a blank compose, got %q", got)
+	}
+	// the gr chain: g then r
+	m = press(t, m, "g")
+	m = press(t, m, "r")
+	if got != "reply-all" {
+		t.Fatalf("g r must open a reply-all, got %q", got)
+	}
+}
+
+func TestSendResultClosesTab(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
+	m = next.(Model)
+	if len(m.tabs) != 0 || m.mode != "index" {
+		t.Fatalf("success must close the tab: %d %q", len(m.tabs), m.mode)
+	}
+}
+
+func TestSendResultFailureKeepsDialogue(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: "boom"}})
+	m = next.(Model)
+	if len(m.tabs) != 1 || m.tabs[0].Phase != compose.PhaseFailed || m.tabs[0].Output != "boom" {
+		t.Fatalf("failure must keep the dialogue: %+v", m.tabs)
+	}
+	if m.mode != "compose" {
+		t.Fatalf("mode = %q", m.mode)
+	}
+}
+
+func TestSendArmsSeam(t *testing.T) {
+	got := compose.State{}
+	SetSendHandler(func(st compose.State) { got = st })
+	defer SetSendHandler(func(st compose.State) {})
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "y")
+	if got.ID != "t1" {
+		t.Fatalf("send seam must receive the dialogue: %+v", got)
+	}
+	if m.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("phase = %v", m.tabs[0].Phase)
+	}
+}
+
+func TestAbortTwoPress(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "q")
+	if m.tabs[0].Phase != compose.PhaseAborting {
+		t.Fatalf("first q arms aborting: %v", m.tabs[0].Phase)
+	}
+	m = press(t, m, "j")
+	if m.tabs[0].Phase != compose.PhaseEditing {
+		t.Fatalf("any other key cancels the abort: %v", m.tabs[0].Phase)
+	}
+	m = press(t, m, "q")
+	m = press(t, m, "q")
+	if len(m.tabs) != 0 || m.mode != "index" {
+		t.Fatalf("second q confirms: %d %q", len(m.tabs), m.mode)
+	}
+}
+
+func TestAttachPromptAndDetach(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	path := filepath.Join(t.TempDir(), "att.txt")
+	if err := os.WriteFile(path, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	m = press(t, m, "a")
+	if m.prompt == nil {
+		t.Fatal("a must open the prompt")
+	}
+	// type the absolute path rune by rune (the prompt appends each Text)
+	for _, r := range path {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, '\r') // String() resolves to "enter"
+	if m.prompt != nil {
+		t.Fatal("enter must close the prompt")
+	}
+	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0].Name != "att.txt" {
+		t.Fatalf("attachments = %+v", m.tabs[0].Attachments)
+	}
+	// form cursor to the attachment slot (slot 4), then d detaches
+	for i := 0; i < 4; i++ {
+		m = press(t, m, "j")
+	}
+	m = press(t, m, "d")
+	if len(m.tabs[0].Attachments) != 0 {
+		t.Fatalf("d must detach the cursor attachment: %+v", m.tabs[0].Attachments)
+	}
+}
+
+func TestFuzzyPickerSwitchesAccount(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "c")
+	if m.fuzzy == nil || m.fuzzy.kind != "account" {
+		t.Fatalf("c must open the account picker: %+v", m.fuzzy)
+	}
+	m = press(t, m, "j") // sel = 1: past a narrowed list's end
+	// type-to-filter, one key at a time
+	for _, r := range "gmail" {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, '\r') // enter selects
+	if m.fuzzy != nil {
+		t.Fatal("enter must close the picker")
+	}
+	if m.tabs[0].Account != "gmail" {
+		t.Fatalf("account = %q", m.tabs[0].Account)
+	}
+	// the switch also applies the account's From: a stale sel past the
+	// narrowed list would silently close the picker, leaving the
+	// prefill's From untouched (the Account check alone cannot see it -
+	// the fixture already opens on gmail)
+	if m.tabs[0].From != "" {
+		t.Fatalf("the switch must apply the account's From, got %q", m.tabs[0].From)
+	}
+}
+
+func TestEditorEditArmsExec(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	if cmd == nil {
+		t.Fatal("e must return an exec command")
+	}
+	if next.(Model).tabs[0].Phase != compose.PhaseEditing {
+		t.Fatalf("phase = %v", next.(Model).tabs[0].Phase)
+	}
+}
+
+func TestComposeFrameShape(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the compose frame must be exactly 24 lines, got %d:\n%s", got, frame)
+	}
+	last := stripANSI(strings.Split(frame, "\n")[23])
+	if !strings.Contains(last, "gmail") {
+		t.Fatalf("the status row must show the dialogue's account: %q", last)
+	}
+	if !strings.Contains(frame, "Re: x") || !strings.Contains(frame, "a@b.c") {
+		t.Fatalf("the form must show the fields:\n%s", frame)
+	}
+}
+
+// TestEditorDoneForClosedTabIsNoOp pins the editor result lookup: the
+// result is addressed by tab ID, so a tab closed (or replaced) while
+// the editor runs never panics and never lands in another dialogue.
+func TestEditorDoneForClosedTabIsNoOp(t *testing.T) {
+	m := model()
+	m = openDialogue(t, m, "a")
+	id := m.tabs[0].ID
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: id, OK: true}})
+	m = next.(Model)
+	next, _ = m.Update(editorDoneMsg{tabID: id, path: "/nonexistent"})
+	m = next.(Model)
+	if len(m.tabs) != 0 {
+		t.Fatalf("a stale editor result must not resurrect a tab, got %d tabs", len(m.tabs))
+	}
+	// a replaced dialogue is untouched by the stale result
+	m = openDialogue(t, m, "b")
+	subject := m.tabs[0].Subject
+	next, _ = m.Update(editorDoneMsg{tabID: id, path: "/nonexistent"})
+	m = next.(Model)
+	if m.tabs[0].Subject != subject {
+		t.Fatalf("a stale editor result must not touch another dialogue")
+	}
+}
+
+func TestComposeRenderFuzzyPopup(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "c")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the popup frame must be exactly 24 lines, got %d", got)
+	}
+	if !strings.Contains(frame, "account:") || !strings.Contains(frame, "dynamia") {
+		t.Fatalf("the popup must show the title and entries:\n%s", frame)
 	}
 }

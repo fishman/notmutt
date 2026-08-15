@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -79,5 +80,17 @@ func TestParseBufferBlankFields(t *testing.T) {
 	}
 	if len(cc) != 0 {
 		t.Fatalf("cc = %v", cc)
+	}
+}
+
+func TestParseBufferCRLF(t *testing.T) {
+	s := NewCompose("gmail", "bob@example.com", "sig", "sig body")
+	s.To = []string{"a@b.c"}
+	s.Subject = "hello"
+	s.Body = "line1\nline2"
+	buf := strings.ReplaceAll(s.BuildBuffer(), "\n", "\r\n")
+	to, cc, subject, body, sigName, sigBody := ParseBuffer(buf, s.Signature, s.SignatureBody)
+	if len(to) != 1 || to[0] != "a@b.c" || subject != "hello" || body != "line1\nline2" || sigName != "sig" || sigBody != "sig body" {
+		t.Fatalf("CRLF round trip: %v %v %q %q %q %q", to, cc, subject, body, sigName, sigBody)
 	}
 }

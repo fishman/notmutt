@@ -37,13 +37,17 @@ func (s *State) BuildBuffer() string {
 
 // ParseBuffer parses the editor buffer back into the fields (spec
 // section 7): headers up to the first blank line, the rest the body.
-// Address lists split on commas; blank entries drop. Unknown header
-// lines are dropped (the three fields own the block - pinned
-// contract). The signature tail detaches by exact match with the
-// previously attached block: a matched tail keeps the signature, an
-// edited tail stays as user text and detaches it. A buffer without
-// the separator parses as all-headers, empty body.
+// CRLF line endings (vim fileformat=dos) normalize to LF at entry - a
+// CRLF blank line is "\r\n\r\n", which would otherwise swallow the
+// whole buffer as headers. Address lists split on commas; blank
+// entries drop. Unknown header lines are dropped (the three fields
+// own the block - pinned contract). The signature tail detaches by
+// exact match with the previously attached block: a matched tail
+// keeps the signature, an edited tail stays as user text and detaches
+// it. A buffer without the separator parses as all-headers, empty
+// body.
 func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc []string, subject, body, sigName, sigBody string) {
+	buf = strings.ReplaceAll(buf, "\r\n", "\n")
 	buf = strings.TrimSuffix(buf, "\n")
 	head, rest := buf, ""
 	if i := strings.Index(buf, "\n\n"); i >= 0 {

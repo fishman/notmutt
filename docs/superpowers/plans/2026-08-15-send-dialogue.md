@@ -32,238 +32,104 @@ Key facts the tasks build on (verified against the current code):
 - Commit style: Conventional Commits, brief lowercase imperative subjects. Code commits carry NO AI trailer. Doc/spec commits carry `AI-assisted: deepseek`.
 - Every task ends with the same verification: `go test ./...` from `/home/user/git/opencode/notmutt/src` (cd into src for all go commands).
 
-Task dependencies: 1-3 are prerequisites; 4-7 build the compose package; 8-10 the app side; 11-13 the tui side; 14 wires and verifies. Tasks 4-7 and 11-12 are pure and independent of each other; 8-10 need 1, 2, 3, 7.
+Task dependencies: 1 is the tui Actions vocabulary - it must land FIRST, before the config task, so the app's binding validation (validateBindings runs `config.Default()` in tests) stays green on every commit; 2-3 the core/mail prerequisites; 4-7 build the compose package; 8 the config surface (needs 1); 9-10 the app side (need 2, 3, 7, 8); 11-13 the tui side (need 1, 4, 7); 14 wires and verifies. Tasks 4-7 and 11-12 are pure and independent of each other.
 
 ---
 
-### Task 1: Config surface - [send] table, account send fields, compose/fuzzy bindings
+### Task 1: Tui - action vocabulary for compose, fuzzy, tabs
 
 **Files:**
-- Modify: `src/config/config.go`
-- Test: `src/config/config_test.go`
+- Modify: `src/tui/model.go:22-36` (Actions map)
+- Test: `src/tui/model_test.go` (fixture update)
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing test**
 
-Add to `src/config/config_test.go`:
+In `src/tui/model_test.go`, find the `testBindings` fixture (a map of context -> key -> action used to construct models in tests). Add the compose and fuzzy contexts and the new index/pager keys to it:
 
 ```go
-func TestLoadSendDefaults(t *testing.T) {
-	cfg := Default()
-	if cfg.Send.Command != "msmtp" || !slices.Equal(cfg.Send.Args, []string{"--read-envelope-from"}) {
-		t.Fatalf("default send = %+v", cfg.Send)
-	}
-}
-
-func TestSendOverrides(t *testing.T) {
-	cfg, err := Load(write(t, `
-[send]
-command = "stub-send"
-args = ["-v"]
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.Send.Command != "stub-send" || !slices.Equal(cfg.Send.Args, []string{"-v"}) {
-		t.Fatalf("send overrides = %+v", cfg.Send)
-	}
-}
-
-func TestValidateSendCommand(t *testing.T) {
-	_, err := Load(write(t, "\n[send]\ncommand = \"\"\n"))
-	if err == nil || !strings.Contains(err.Error(), "send.command") {
-		t.Fatalf("want send.command error, got %v", err)
-	}
-}
-
-func TestAccountSendFields(t *testing.T) {
-	cfg, err := Load(write(t, `
-[accounts.gmail]
-from = "Reza <reza@example.com>"
-sent_folder = "/home/me/Mail/gmail/Sent"
-default_signature = "gmail"
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := cfg.Accounts["gmail"]
-	if a.From != "Reza <reza@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
-		t.Fatalf("account send fields = %+v", a)
-	}
-}
+		"compose": {
+			"j": "form-down", "k": "form-up",
+			"e": "edit", "a": "attach", "d": "detach",
+			"c": "account", "C": "signature", "y": "send", "q": "abort",
+			"[": "tab-prev", "]": "tab-next",
+		},
+		"fuzzy": {
+			"j": "fuzzy-down", "k": "fuzzy-up",
+			"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+			"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+		},
 ```
 
-Update `TestDefaultBindings` in the same file. Replace the two `want` maps and add the new contexts:
+and add `"m": "compose", "R": "reply", "F": "forward", "[": "tab-prev", "]": "tab-next"` to the fixture's index context and `"[": "tab-prev", "]": "tab-next"` to its pager context.
+
+Add a new test:
 
 ```go
-	want := map[string]string{
-		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
-		"r": "toggle-read", "a": "archive", "d": "delete",
-		"u": "undo", "$": "apply",
-		"pgdown": "page-down", "pgup": "page-up",
-		"m": "compose", "R": "reply", "F": "forward",
-		"[": "tab-prev", "]": "tab-next",
+func TestActionsCoverComposeAndFuzzy(t *testing.T) {
+	for _, ctx := range []string{"compose", "fuzzy"} {
+		if len(Actions[ctx]) == 0 {
+			t.Fatalf("Actions[%q] must cover the context", ctx)
+		}
 	}
-	if !maps.Equal(cfg.Bindings["index"], want) {
-		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
+	for _, ctx := range []string{"index", "pager"} {
+		if !Actions[ctx]["tab-prev"] || !Actions[ctx]["tab-next"] {
+			t.Fatalf("Actions[%q] must carry tab-prev/tab-next", ctx)
+		}
 	}
-	wantPager := map[string]string{
-		"j": "scroll-down", "k": "scroll-up",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"g": "scroll-top", "G": "scroll-bottom",
-		"q": "back",
-		"[": "tab-prev", "]": "tab-next",
-	}
-	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
-		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
-	}
-	wantCompose := map[string]string{
-		"j": "form-down", "k": "form-up",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
-	}
-	if !maps.Equal(cfg.Bindings["compose"], wantCompose) {
-		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)
-	}
-	wantFuzzy := map[string]string{
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-	}
-	if !maps.Equal(cfg.Bindings["fuzzy"], wantFuzzy) {
-		t.Fatalf("default fuzzy bindings = %v, want %v", cfg.Bindings["fuzzy"], wantFuzzy)
-	}
-```
-
-Add to `TestKeymapSchemes` (after the existing emacs index assertions):
-
-```go
-	if cfg.Bindings["compose"]["ctrl+n"] != "form-down" {
-		t.Fatalf("emacs compose movement missing: %v", cfg.Bindings["compose"])
-	}
+}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test ./config/` (from `src/`)
-Expected: FAIL - `Send` field does not exist on Config, `Bindings["compose"]` is empty in the default maps, the new account fields fail to load.
+Run: `go test ./tui/ -run TestActionsCoverComposeAndFuzzy`
+Expected: FAIL - the compose/fuzzy contexts are not in `Actions`.
 
 - [ ] **Step 3: Implement**
 
-In `src/config/config.go`:
-
-Add the `Send` type next to `Account` (config.go:450):
+In `src/tui/model.go:22-36`, replace the `Actions` map with:
 
 ```go
-// Send is the send transport argv (R4): ONE configurable command,
-// tokenized at load, exec'd as argv (F4). The default reads the
-// envelope sender from the message's own From header, so msmtp's
-// account table resolves per message - the client never sees it.
-type Send struct {
-	Command string   `toml:"command"`
-	Args    []string `toml:"args"`
-}
-```
-
-Extend `Account` (config.go:462-464):
-
-```go
-type Account struct {
-	Folder           *string `toml:"folder"`
-	From             string  `toml:"from"`
-	SentFolder       string  `toml:"sent_folder"`
-	DefaultSignature string  `toml:"default_signature"`
-}
-```
-
-Add `Send Send` to the `Config` struct (config.go:15-24, after `Accounts`):
-
-```go
-	Accounts   map[string]Account           `toml:"accounts"`
-	Send       Send                         `toml:"send"`
-```
-
-Add to `Default()` (config.go:567-609, after `Accounts`):
-
-```go
-		Send: Send{
-			Command: "msmtp",
-			Args:    []string{"--read-envelope-from"},
-		},
-```
-
-Extend `vimScheme` (config.go:487-501). Add to the `index` table:
-
-```go
-		"index": {
-			"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
-			"r": "toggle-read", "a": "archive", "d": "delete",
-			"u": "undo", "$": "apply",
-			"pgdown": "page-down", "pgup": "page-up",
-			"m": "compose", "R": "reply", "F": "forward",
-			"[": "tab-prev", "]": "tab-next",
-		},
-```
-
-Add `"[": "tab-prev", "]": "tab-next"` to the vim `pager` table, and add the two new context tables after it:
-
-```go
+var Actions = map[string]map[string]bool{
+	"index": {
+		"cursor-down": true, "cursor-up": true,
+		"cursor-top": true, "cursor-bottom": true,
+		"page-down": true, "page-up": true,
+		"open": true, "quit": true, "undo": true, "apply": true,
+		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"tab-prev": true, "tab-next": true,
+	},
 	"pager": {
-		"j": "scroll-down", "k": "scroll-up",
-		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"pgdown": "page-down", "pgup": "page-up",
-		"g": "scroll-top", "G": "scroll-bottom",
-		"q": "back",
-		"[": "tab-prev", "]": "tab-next",
+		"scroll-down": true, "scroll-up": true,
+		"page-down": true, "page-up": true,
+		"half-page-down": true, "half-page-up": true,
+		"scroll-top": true, "scroll-bottom": true,
+		"back": true, "quit": true,
+		"tab-prev": true, "tab-next": true,
 	},
 	"compose": {
-		"j": "form-down", "k": "form-up",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
+		"form-down": true, "form-up": true,
+		"edit": true, "attach": true, "detach": true,
+		"account": true, "signature": true,
+		"send": true, "abort": true,
+		"tab-prev": true, "tab-next": true,
 	},
 	"fuzzy": {
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+		"fuzzy-down": true, "fuzzy-up": true,
+		"fuzzy-select": true, "fuzzy-cancel": true,
 	},
-```
-
-Extend `emacsScheme` (config.go:505-518) the same way: add `"m": "compose", "R": "reply", "F": "forward", "[": "tab-prev", "]": "tab-next"` to `index`; `"[": "tab-prev", "]": "tab-next"` to `pager`; add:
-
-```go
-	"compose": {
-		"ctrl+n": "form-down", "ctrl+p": "form-up",
-		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
-		"[": "tab-prev", "]": "tab-next",
-	},
-	"fuzzy": {
-		"j": "fuzzy-down", "k": "fuzzy-up",
-		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-	},
-```
-
-Add to `validate` (config.go:725-809, in the accounts loop area):
-
-```go
-	if strings.TrimSpace(cfg.Send.Command) == "" {
-		return fmt.Errorf("send.command: must not be empty")
-	}
+}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test ./config/`
-Expected: PASS (all config tests including the updated TestDefaultBindings/TestKeymapSchemes).
+Run: `go test ./tui/`
+Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/config/config.go src/config/config_test.go
-git commit -m "feat(config): send transport argv, account send fields, compose bindings"
+git add src/tui/model.go src/tui/model_test.go
+git commit -m "feat(tui): compose, fuzzy, and tab actions vocabulary"
 ```
 
 ---
@@ -1546,100 +1412,234 @@ git commit -m "feat(compose): bus mapping and home expansion"
 
 ---
 
-### Task 8: Tui - action vocabulary for compose, fuzzy, tabs
+### Task 8: Config surface - [send] table, account send fields, compose/fuzzy bindings
 
 **Files:**
-- Modify: `src/tui/model.go:22-36` (Actions map)
-- Test: `src/tui/model_test.go` (fixture update)
+- Modify: `src/config/config.go`
+- Test: `src/config/config_test.go`
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
-In `src/tui/model_test.go`, find the `testBindings` fixture (a map of context -> key -> action used to construct models in tests). Add the compose and fuzzy contexts and the new index/pager keys to it:
-
-```go
-		"compose": {
-			"j": "form-down", "k": "form-up",
-			"e": "edit", "a": "attach", "d": "detach",
-			"c": "account", "C": "signature", "y": "send", "q": "abort",
-			"[": "tab-prev", "]": "tab-next",
-		},
-		"fuzzy": {
-			"j": "fuzzy-down", "k": "fuzzy-up",
-			"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
-			"enter": "fuzzy-select", "esc": "fuzzy-cancel",
-		},
-```
-
-and add `"m": "compose", "R": "reply", "F": "forward", "[": "tab-prev", "]": "tab-next"` to the fixture's index context and `"[": "tab-prev", "]": "tab-next"` to its pager context.
-
-Add a new test:
+Add to `src/config/config_test.go`:
 
 ```go
-func TestActionsCoverComposeAndFuzzy(t *testing.T) {
-	for _, ctx := range []string{"compose", "fuzzy"} {
-		if len(Actions[ctx]) == 0 {
-			t.Fatalf("Actions[%q] must cover the context", ctx)
-		}
-	}
-	for _, ctx := range []string{"index", "pager"} {
-		if !Actions[ctx]["tab-prev"] || !Actions[ctx]["tab-next"] {
-			t.Fatalf("Actions[%q] must carry tab-prev/tab-next", ctx)
-		}
+func TestLoadSendDefaults(t *testing.T) {
+	cfg := Default()
+	if cfg.Send.Command != "msmtp" || !slices.Equal(cfg.Send.Args, []string{"--read-envelope-from"}) {
+		t.Fatalf("default send = %+v", cfg.Send)
 	}
 }
+
+func TestSendOverrides(t *testing.T) {
+	cfg, err := Load(write(t, `
+[send]
+command = "stub-send"
+args = ["-v"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Send.Command != "stub-send" || !slices.Equal(cfg.Send.Args, []string{"-v"}) {
+		t.Fatalf("send overrides = %+v", cfg.Send)
+	}
+}
+
+func TestValidateSendCommand(t *testing.T) {
+	_, err := Load(write(t, "\n[send]\ncommand = \"\"\n"))
+	if err == nil || !strings.Contains(err.Error(), "send.command") {
+		t.Fatalf("want send.command error, got %v", err)
+	}
+}
+
+func TestAccountSendFields(t *testing.T) {
+	cfg, err := Load(write(t, `
+[accounts.gmail]
+from = "Reza <reza@example.com>"
+sent_folder = "/home/me/Mail/gmail/Sent"
+default_signature = "gmail"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := cfg.Accounts["gmail"]
+	if a.From != "Reza <reza@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
+		t.Fatalf("account send fields = %+v", a)
+	}
+}
+```
+
+Update `TestDefaultBindings` in the same file. Replace the two `want` maps and add the new contexts:
+
+```go
+	want := map[string]string{
+		"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+		"r": "toggle-read", "a": "archive", "d": "delete",
+		"u": "undo", "$": "apply",
+		"pgdown": "page-down", "pgup": "page-up",
+		"m": "compose", "R": "reply", "F": "forward",
+		"[": "tab-prev", "]": "tab-next",
+	}
+	if !maps.Equal(cfg.Bindings["index"], want) {
+		t.Fatalf("default index bindings = %v, want %v", cfg.Bindings["index"], want)
+	}
+	wantPager := map[string]string{
+		"j": "scroll-down", "k": "scroll-up",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
+		"pgdown": "page-down", "pgup": "page-up",
+		"g": "scroll-top", "G": "scroll-bottom",
+		"q": "back",
+		"[": "tab-prev", "]": "tab-next",
+	}
+	if !maps.Equal(cfg.Bindings["pager"], wantPager) {
+		t.Fatalf("default pager bindings = %v, want %v", cfg.Bindings["pager"], wantPager)
+	}
+	wantCompose := map[string]string{
+		"j": "form-down", "k": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	}
+	if !maps.Equal(cfg.Bindings["compose"], wantCompose) {
+		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)
+	}
+	wantFuzzy := map[string]string{
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+	}
+	if !maps.Equal(cfg.Bindings["fuzzy"], wantFuzzy) {
+		t.Fatalf("default fuzzy bindings = %v, want %v", cfg.Bindings["fuzzy"], wantFuzzy)
+	}
+```
+
+Add to `TestKeymapSchemes` (after the existing emacs index assertions):
+
+```go
+	if cfg.Bindings["compose"]["ctrl+n"] != "form-down" {
+		t.Fatalf("emacs compose movement missing: %v", cfg.Bindings["compose"])
+	}
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `go test ./tui/ -run TestActionsCoverComposeAndFuzzy`
-Expected: FAIL - the compose/fuzzy contexts are not in `Actions`.
+Run: `go test ./config/` (from `src/`)
+Expected: FAIL - `Send` field does not exist on Config, `Bindings["compose"]` is empty in the default maps, the new account fields fail to load.
 
 - [ ] **Step 3: Implement**
 
-In `src/tui/model.go:22-36`, replace the `Actions` map with:
+In `src/config/config.go`:
+
+Add the `Send` type next to `Account` (config.go:450):
 
 ```go
-var Actions = map[string]map[string]bool{
-	"index": {
-		"cursor-down": true, "cursor-up": true,
-		"cursor-top": true, "cursor-bottom": true,
-		"page-down": true, "page-up": true,
-		"open": true, "quit": true, "undo": true, "apply": true,
-		"reply": true, "reply-all": true, "forward": true, "compose": true,
-		"tab-prev": true, "tab-next": true,
-	},
+// Send is the send transport argv (R4): ONE configurable command,
+// tokenized at load, exec'd as argv (F4). The default reads the
+// envelope sender from the message's own From header, so msmtp's
+// account table resolves per message - the client never sees it.
+type Send struct {
+	Command string   `toml:"command"`
+	Args    []string `toml:"args"`
+}
+```
+
+Extend `Account` (config.go:462-464):
+
+```go
+type Account struct {
+	Folder           *string `toml:"folder"`
+	From             string  `toml:"from"`
+	SentFolder       string  `toml:"sent_folder"`
+	DefaultSignature string  `toml:"default_signature"`
+}
+```
+
+Add `Send Send` to the `Config` struct (config.go:15-24, after `Accounts`):
+
+```go
+	Accounts   map[string]Account           `toml:"accounts"`
+	Send       Send                         `toml:"send"`
+```
+
+Add to `Default()` (config.go:567-609, after `Accounts`):
+
+```go
+		Send: Send{
+			Command: "msmtp",
+			Args:    []string{"--read-envelope-from"},
+		},
+```
+
+Extend `vimScheme` (config.go:487-501). Add to the `index` table:
+
+```go
+		"index": {
+			"j": "cursor-down", "k": "cursor-up", "o": "open", "q": "quit",
+			"r": "toggle-read", "a": "archive", "d": "delete",
+			"u": "undo", "$": "apply",
+			"pgdown": "page-down", "pgup": "page-up",
+			"m": "compose", "R": "reply", "F": "forward",
+			"[": "tab-prev", "]": "tab-next",
+		},
+```
+
+Add `"[": "tab-prev", "]": "tab-next"` to the vim `pager` table, and add the two new context tables after it:
+
+```go
 	"pager": {
-		"scroll-down": true, "scroll-up": true,
-		"page-down": true, "page-up": true,
-		"half-page-down": true, "half-page-up": true,
-		"scroll-top": true, "scroll-bottom": true,
-		"back": true, "quit": true,
-		"tab-prev": true, "tab-next": true,
+		"j": "scroll-down", "k": "scroll-up",
+		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
+		"pgdown": "page-down", "pgup": "page-up",
+		"g": "scroll-top", "G": "scroll-bottom",
+		"q": "back",
+		"[": "tab-prev", "]": "tab-next",
 	},
 	"compose": {
-		"form-down": true, "form-up": true,
-		"edit": true, "attach": true, "detach": true,
-		"account": true, "signature": true,
-		"send": true, "abort": true,
-		"tab-prev": true, "tab-next": true,
+		"j": "form-down", "k": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
 	},
 	"fuzzy": {
-		"fuzzy-down": true, "fuzzy-up": true,
-		"fuzzy-select": true, "fuzzy-cancel": true,
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
 	},
-}
+```
+
+Extend `emacsScheme` (config.go:505-518) the same way: add `"m": "compose", "R": "reply", "F": "forward", "[": "tab-prev", "]": "tab-next"` to `index`; `"[": "tab-prev", "]": "tab-next"` to `pager`; add:
+
+```go
+	"compose": {
+		"ctrl+n": "form-down", "ctrl+p": "form-up",
+		"e": "edit", "a": "attach", "d": "detach",
+		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"[": "tab-prev", "]": "tab-next",
+	},
+	"fuzzy": {
+		"j": "fuzzy-down", "k": "fuzzy-up",
+		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
+		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+	},
+```
+
+Add to `validate` (config.go:725-809, in the accounts loop area):
+
+```go
+	if strings.TrimSpace(cfg.Send.Command) == "" {
+		return fmt.Errorf("send.command: must not be empty")
+	}
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `go test ./tui/`
-Expected: PASS
+Run: `go test ./config/`
+Expected: PASS (all config tests including the updated TestDefaultBindings/TestKeymapSchemes).
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/tui/model.go src/tui/model_test.go
-git commit -m "feat(tui): compose, fuzzy, and tab actions vocabulary"
+git add src/config/config.go src/config/config_test.go
+git commit -m "feat(config): send transport argv, account send fields, compose bindings"
 ```
 
 ---
@@ -2559,7 +2559,7 @@ This is the largest task. The model gains the dialogue tab list, the compose/fuz
 
 - [ ] **Step 1: Write the failing tests**
 
-Add to `src/tui/model_test.go` (the existing `model()` helper builds a fixture model with the testBindings map - Task 8 already extended it with the compose/fuzzy contexts; `press(t, m, key)` presses a text key as `KeyPressMsg{Text, Code}`, `pressType(t, m, k)` presses a special key by Code - both exist in the file):
+Add to `src/tui/model_test.go` (the existing `model()` helper builds a fixture model with the testBindings map - Task 1 already extended it with the compose/fuzzy contexts; `press(t, m, key)` presses a text key as `KeyPressMsg{Text, Code}`, `pressType(t, m, k)` presses a special key by Code - both exist in the file):
 
 ```go
 func openDialogue(t *testing.T, m Model, id string) Model {
@@ -3429,7 +3429,7 @@ git commit -m "feat(app): wire compose dialogue open and send seams"
 
 ## Self-review notes (run after the last task)
 
-- **Spec coverage:** account selection (detection chain Task 9, selection picker Task 13); async send with output kept (Task 10); fuzzy selector + signatures (Tasks 11, 13); compose dialogue in a new tab with dialogue/tab duality (Task 13); editor flow (Task 12); fcc + reindex (Task 10); In-Reply-To/References (Task 6); quoting with cap (Task 4); two-press abort (Task 13); config surface (Task 1); keybindings incl. g r chain (Tasks 1, 8, 13).
+- **Spec coverage:** account selection (detection chain Task 9, selection picker Task 13); async send with output kept (Task 10); fuzzy selector + signatures (Tasks 11, 13); compose dialogue in a new tab with dialogue/tab duality (Task 13); editor flow (Task 12); fcc + reindex (Task 10); In-Reply-To/References (Task 6); quoting with cap (Task 4); two-press abort (Task 13); config surface (Task 8); keybindings incl. g r chain (Tasks 1, 8, 13).
 - **Placeholders:** none - every step carries complete code.
-- **Type consistency:** `composeTab()` helper (Task 13) matches the `tabs []compose.State` + `tabIdx` fields; `core.ComposeOpened` field names match `compose.ToEvent/FromEvent` (Task 7); `compose.Mode.String()` output matches the event Mode strings ("compose" | "reply" | "reply-all" | "forward") and `parseMode`; `sendJob`'s `workerAPI` matches `refresh.go:13`; `tui.SetReplyHandler(func(*core.Message, string))` matches `openReply`'s `onReply(msg, mode)` call.
+- **Type consistency:** the dispatch's direct `m.tabs[m.tabIdx-1]` indexing (Task 13) matches the `tabs []compose.State` + `tabIdx` fields; `core.ComposeOpened` field names match `compose.ToEvent/FromEvent` (Task 7); `compose.Mode.String()` output matches the event Mode strings ("compose" | "reply" | "reply-all" | "forward") and `parseMode`; `sendJob`'s `workerAPI` matches `refresh.go:13`; `tui.SetReplyHandler(func(*core.Message, string))` matches `openReply`'s `onReply(msg, mode)` call.
 - **Known pinned simplifications:** the fuzzy popup shows at most rows-4 entries (no internal scroll); the compose form caps To/Cc at 2 display rows and attachments at 3; unknown editor headers are dropped; a leading blank body line is consumed by the header separator (buffer contract); `c` = account picker and `C` = signature picker (the spec's "c account/signature" split into two actions); EDITOR values are whitespace-tokenized (no quote support).

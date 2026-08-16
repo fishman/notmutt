@@ -11,6 +11,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/filter"
 	"notmutt/notmuch"
 )
 
@@ -35,8 +36,9 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 // transport first: what was not delivered is not stored. A delivered
 // message never fails the dialogue on a fcc error (a retry would
 // double-send) - the note surfaces in the SendResult output. A
-// missing sent_folder skips fcc silently.
-func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, st compose.State) {
+// missing mail root (unresolvable at startup) leaves the fcc empty
+// and skips it silently.
+func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) {
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Err: err})
@@ -58,7 +60,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	var note string
 	sent := st.Fcc
 	if sent == "" {
-		sent = cfg.Accounts[st.Account].SentFolder
+		sent = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
 	if sent != "" {
 		if err := writeFcc(compose.ExpandHome(sent), data); err != nil {
@@ -94,4 +96,21 @@ func writeFcc(dir string, data []byte) error {
 	}
 	name := filepath.Join(sub, fmt.Sprintf("%d.%d.notmutt", time.Now().UnixNano(), os.Getpid()))
 	return os.WriteFile(name, data, 0600)
+}
+
+// sentPath derives the account's sent folder: the notmuch mail root
+// plus the account's folder space plus the sent folder candidates,
+// resolved through the mover's own machinery (first existing wins,
+// else the first candidate - the sync tool creates the folder). A
+// hard tag never needs a config option; an empty root (notmuch
+// config unresolvable at startup) leaves the fcc empty.
+func sentPath(root, name string, a config.Account) string {
+	if root == "" {
+		return ""
+	}
+	cs := filter.Candidates(a, "sent")
+	if len(cs) == 0 {
+		cs = []string{"Sent"}
+	}
+	return filepath.Join(root, filter.ResolveFolder(root, a.Tag(name), cs))
 }

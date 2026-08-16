@@ -117,12 +117,21 @@ func Run() error {
 	loadConfigAttachCommands(cfg)
 	tui.SetAttachCommandSource(func() map[string][]string { return attachCommandSnapshot() })
 
+	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
+	// ONE resolution for the filter job and the fcc derivation. A
+	// failure disables the filter job and leaves the fcc empty (skipped
+	// on send) - the client still works.
+	root, rootErr := mailRoot()
+	if rootErr != nil {
+		diag.Warn("filter: disabled", "err", rootErr.Error())
+	}
+
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches
 	// the tab
 	tui.SetReplyHandler(func(msg *core.Message, mode string) {
 		go func() {
-			st := replyPrefill(cfg, view, worker, msg, mode)
+			st := replyPrefill(cfg, view, worker, msg, mode, root)
 			if st == nil {
 				return
 			}
@@ -134,7 +143,7 @@ func Run() error {
 	// send: the app runs the send job on its own goroutine; SendResult
 	// closes the tab or keeps it failed
 	tui.SetSendHandler(func(st compose.State) {
-		go sendJob(bus, worker, view, cfg, st)
+		go sendJob(bus, worker, view, cfg, root, st)
 	})
 
 	// address completion: the compose Tab trigger (lazy, debounced in
@@ -150,14 +159,11 @@ func Run() error {
 		}()
 	})
 
-	// the filter job (R2): the poll's classification pipeline. The mail
-	// root resolves once (argv-only, F4 - the setupAccounts pattern); a
-	// failure disables the job - the client still works, the poll
-	// degrades to the refresher's plain new.
+	// the filter job (R2): the poll's classification pipeline; a root
+	// resolution failure disables it - the poll degrades to the
+	// refresher's plain new.
 	var fj *filterJob
-	if root, err := mailRoot(); err != nil {
-		diag.Warn("filter: disabled", "err", err.Error())
-	} else {
+	if rootErr == nil {
 		fj = newFilterJob(bus, worker, st, root, view.Name)
 	}
 

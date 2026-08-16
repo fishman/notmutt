@@ -63,9 +63,9 @@ func parseSecurity(s string) Security {
 	return SecurityNone
 }
 
-// ExpandHome expands a leading ~ to the user's home dir (the config
-// path style; the client knows no mail root - the sent_folder is a
-// full path, muttrc record shape).
+// ExpandHome expands a leading ~ to the user's home dir (config path
+// style; the derived fcc paths are already absolute, a hand-set
+// dialogue Fcc may still be ~-shaped).
 func ExpandHome(p string) string {
 	if !strings.HasPrefix(p, "~") {
 		return p

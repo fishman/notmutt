@@ -707,7 +707,6 @@ type Send struct {
 type Account struct {
 	Folder           *string             `toml:"folder"`
 	From             string              `toml:"from"`
-	SentFolder       string              `toml:"sent_folder"`
 	DefaultSignature string              `toml:"default_signature"`
 	Folders          map[string]string   `toml:"folders"`
 	Preset           string              `toml:"preset"`

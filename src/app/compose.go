@@ -60,7 +60,7 @@ func defaultSig(cfg config.Config, account string) (name, body string) {
 // "reply-all" | "forward"): account detection, the parsed original
 // (reply/forward), the default signature. Nil when the original
 // cannot be parsed - the open key then no-ops.
-func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode string) *compose.State {
+func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, root string) *compose.State {
 	account := resolveAccount(cfg, tagsOf(msg), cursorTags(view))
 	from := cfg.Accounts[account].From
 	sigName, sigBody := defaultSig(cfg, account)
@@ -85,7 +85,7 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode st
 		}
 	}
 	if st != nil {
-		st.Fcc = cfg.Accounts[account].SentFolder
+		st.Fcc = sentPath(root, account, cfg.Accounts[account])
 	}
 	return st
 }
@@ -96,8 +96,8 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode st
 // paths load with Thread, on open, R1). The thread's newest message is
 // the reply original: the overview line shows the newest date, and the
 // pager path always carries the real message.
-func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode string) *compose.State {
-	st := buildCompose(cfg, view, msg, mode)
+func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode, root string) *compose.State {
+	st := buildCompose(cfg, view, msg, mode, root)
 	if st != nil || msg == nil || msg.ThreadID == "" {
 		return st
 	}
@@ -115,7 +115,7 @@ func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, ms
 	if newest == nil {
 		return nil
 	}
-	return buildCompose(cfg, view, newest, mode)
+	return buildCompose(cfg, view, newest, mode, root)
 }
 
 func tagsOf(msg *core.Message) []string {

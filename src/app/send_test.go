@@ -32,7 +32,7 @@ func TestSendJobFccStateWins(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "account-sent")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -46,16 +46,16 @@ func TestSendJobFccStateWins(t *testing.T) {
 	st.Body = "y"
 	st.Fcc = filepath.Join(dir, "state-sent")
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
 	}
 	if entries, err := os.ReadDir(filepath.Join(dir, "state-sent", "new")); err != nil || len(entries) != 1 {
-		t.Fatalf("the dialogue Fcc must win over the account sent_folder: %v %v", entries, err)
+		t.Fatalf("the dialogue Fcc must win over the account sent folder: %v %v", entries, err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "account-sent")); !os.IsNotExist(err) {
-		t.Fatal("the account sent_folder must not receive the copy")
+	if _, err := os.Stat(filepath.Join(dir, "gmail", "Sent")); !os.IsNotExist(err) {
+		t.Fatal("the account sent folder must not receive the copy")
 	}
 }
 
@@ -66,10 +66,10 @@ func TestSendJobDelivers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
 		t.Fatal(err)
 	}
-	sent := filepath.Join(dir, "sent")
+	sent := filepath.Join(dir, "gmail", "Sent")
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: sent}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -82,7 +82,7 @@ func TestSendJobDelivers(t *testing.T) {
 	st.Subject = "hello"
 	st.Body = "the message body"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	e := (<-ch).(core.SendResult)
 	if !e.OK {
@@ -125,7 +125,7 @@ func TestSendJobTagsOriginalOnReply(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "sent")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	view := core.NewView("inbox", "tag:inbox")
@@ -139,7 +139,7 @@ func TestSendJobTagsOriginalOnReply(t *testing.T) {
 	st.Mode = compose.ModeReply
 	st.OriginalID = "<orig@example.com>"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 	// the SendResult on the bus goes unread (drop-on-full is fine for
 	// one message); the assertions run on the recorded actions
 	if len(w.actions) != 2 {
@@ -176,7 +176,7 @@ func TestSendJobForwardTagAndQuoteEscape(t *testing.T) {
 	st.Mode = compose.ModeForward
 	st.OriginalID = "<a\"b@example.com>"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	if len(w.actions) != 2 {
 		t.Fatalf("actions = %+v", w.actions)
@@ -198,7 +198,7 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "sent")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -211,7 +211,7 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	e := (<-ch).(core.SendResult)
 	if e.OK {
@@ -223,7 +223,7 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	if len(w.actions) != 0 {
 		t.Fatalf("a failed send must not fcc or tag: %+v", w.actions)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "sent")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(dir, "gmail", "Sent")); !os.IsNotExist(err) {
 		t.Fatal("a failed send must not create the sent dir")
 	}
 }
@@ -242,7 +242,7 @@ func TestSendJobPassesEnvelopeRecipients(t *testing.T) {
 	}
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub"), Args: []string{"--read-envelope-from"}}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "sent")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -257,7 +257,7 @@ func TestSendJobPassesEnvelopeRecipients(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -289,7 +289,8 @@ func TestSendJobFccErrorNotesButDelivers(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "blocker"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "blocker", "sent")}
+	root := filepath.Join(dir, "blocker")
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -302,7 +303,7 @@ func TestSendJobFccErrorNotesButDelivers(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, root, *st)
 
 	e := (<-ch).(core.SendResult)
 	if !e.OK {
@@ -323,10 +324,10 @@ func TestSendJobBccEnvelopeOnly(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
 		t.Fatal(err)
 	}
-	sent := filepath.Join(dir, "sent")
+	sent := filepath.Join(dir, "gmail", "Sent")
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
-	cfg.Accounts["gmail"] = config.Account{SentFolder: sent}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -340,7 +341,7 @@ func TestSendJobBccEnvelopeOnly(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, *st)
+	sendJob(bus, w, view, cfg, dir, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)

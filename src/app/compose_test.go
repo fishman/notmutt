@@ -93,6 +93,7 @@ func TestDefaultSig(t *testing.T) {
 
 func TestBuildComposeReply(t *testing.T) {
 	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
 	path := filepath.Join(dir, "msg.eml")
 	eml := "From: Alice <alice@example.com>\n" +
 		"To: Bob <bob@example.com>, Carole <carole@example.com>\n" +
@@ -106,7 +107,7 @@ func TestBuildComposeReply(t *testing.T) {
 	cfg := config.Default()
 	g := cfg.Accounts["gmail"]
 	g.From = "Bob <bob@example.com>"
-	g.SentFolder = "/tmp/sent"
+	g.Folders = map[string]string{"sent": "Sent"}
 	g.DefaultSignature = ""
 	cfg.Accounts["gmail"] = g
 	view := core.NewView("inbox", "tag:inbox")
@@ -118,7 +119,7 @@ func TestBuildComposeReply(t *testing.T) {
 		Paths: []string{path},
 	}
 
-	st := buildCompose(cfg, view, msg, "reply")
+	st := buildCompose(cfg, view, msg, "reply", root)
 	if st == nil {
 		t.Fatal("reply must build")
 	}
@@ -131,26 +132,27 @@ func TestBuildComposeReply(t *testing.T) {
 	if st.MessageID != "<m1@example.com>" || st.OriginalID != "<m1@example.com>" {
 		t.Fatalf("ids = %q %q", st.MessageID, st.OriginalID)
 	}
-	if st.Fcc != "/tmp/sent" {
-		t.Fatalf("Fcc = %q, want the account sent_folder", st.Fcc)
+	if st.Fcc != filepath.Join(root, "gmail", "Sent") {
+		t.Fatalf("Fcc = %q, want the derived sent folder", st.Fcc)
 	}
 
-	if st := buildCompose(cfg, view, msg, "reply-all"); st.Mode != compose.ModeReplyAll || len(st.Cc) != 1 || st.Cc[0] != "carole@example.com" {
+	if st := buildCompose(cfg, view, msg, "reply-all", root); st.Mode != compose.ModeReplyAll || len(st.Cc) != 1 || st.Cc[0] != "carole@example.com" {
 		t.Fatalf("reply-all must exclude the own address: %+v", st)
 	}
-	if st := buildCompose(cfg, view, msg, "forward"); len(st.To) != 0 {
+	if st := buildCompose(cfg, view, msg, "forward", root); len(st.To) != 0 {
 		t.Fatalf("forward must have no To: %+v", st)
 	}
-	if st := buildCompose(cfg, view, nil, "compose"); st == nil || st.Mode != compose.ModeCompose {
+	if st := buildCompose(cfg, view, nil, "compose", root); st == nil || st.Mode != compose.ModeCompose {
 		t.Fatalf("blank compose must build: %+v", st)
 	}
-	if st := buildCompose(cfg, view, nil, "reply"); st != nil {
+	if st := buildCompose(cfg, view, nil, "reply", root); st != nil {
 		t.Fatal("reply without a message must return nil")
 	}
 }
 
 func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 	dir := t.TempDir()
+	mroot := filepath.Join(dir, "mail")
 	rootPath := filepath.Join(dir, "root.eml")
 	replyPath := filepath.Join(dir, "reply.eml")
 	root := "From: Alice <alice@example.com>\n" +
@@ -190,7 +192,7 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 	cfg := config.Default()
 	g := cfg.Accounts["gmail"]
 	g.From = "Bob <bob@example.com>"
-	g.SentFolder = "/tmp/sent"
+	g.Folders = map[string]string{"sent": "Sent"}
 	cfg.Accounts["gmail"] = g
 	view := core.NewView("inbox", "tag:inbox")
 	// the index row: thread summary only - no id, no paths
@@ -199,7 +201,7 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 		Author:    "Alice <alice@example.com>, Dave <dave@example.com>",
 		Subject:   "Re: hello", Tags: []string{"inbox", "gmail"}}
 
-	st := replyPrefill(cfg, view, worker, row, "reply")
+	st := replyPrefill(cfg, view, worker, row, "reply", mroot)
 	if st == nil {
 		t.Fatal("index-row reply must fetch the thread and build")
 	}
@@ -209,22 +211,22 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 	if st.OriginalID != "<m2@example.com>" {
 		t.Fatalf("OriginalID = %q, want the newest message", st.OriginalID)
 	}
-	if st.Fcc != "/tmp/sent" {
-		t.Fatalf("Fcc = %q", st.Fcc)
+	if st.Fcc != filepath.Join(mroot, "gmail", "Sent") {
+		t.Fatalf("Fcc = %q, want the derived sent folder", st.Fcc)
 	}
 
-	st = replyPrefill(cfg, view, worker, row, "reply-all")
+	st = replyPrefill(cfg, view, worker, row, "reply-all", mroot)
 	if st.Mode != compose.ModeReplyAll || len(st.Cc) != 0 {
 		t.Fatalf("reply-all: %+v", st)
 	}
-	st = replyPrefill(cfg, view, worker, row, "forward")
+	st = replyPrefill(cfg, view, worker, row, "forward", mroot)
 	if st.Mode != compose.ModeForward || len(st.To) != 0 {
 		t.Fatalf("forward: %+v", st)
 	}
-	if st := replyPrefill(cfg, view, worker, row, "compose"); st.Mode != compose.ModeCompose {
+	if st := replyPrefill(cfg, view, worker, row, "compose", mroot); st.Mode != compose.ModeCompose {
 		t.Fatalf("blank compose must not fetch: %+v", st)
 	}
-	if st := replyPrefill(cfg, view, worker, nil, "reply"); st != nil {
+	if st := replyPrefill(cfg, view, worker, nil, "reply", mroot); st != nil {
 		t.Fatal("nil message must stay nil")
 	}
 }

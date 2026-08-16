@@ -385,14 +385,13 @@ func TestAccountSendFields(t *testing.T) {
 	cfg, err := Load(write(t, `
 [accounts.gmail]
 from = "Sender <sender@example.com>"
-sent_folder = "/home/me/Mail/gmail/Sent"
 default_signature = "gmail"
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	a := cfg.Accounts["gmail"]
-	if a.From != "Sender <sender@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
+	if a.From != "Sender <sender@example.com>" || a.DefaultSignature != "gmail" {
 		t.Fatalf("account send fields = %+v", a)
 	}
 }

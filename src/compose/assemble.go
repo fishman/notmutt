@@ -65,7 +65,9 @@ func (s *State) Assemble(w io.Writer) error {
 		return err
 	}
 	ih := mail.InlineHeader{}
-	ih.Set("Content-Type", ContentTypeOf(s.Body)+"; charset=utf-8")
+	f := InlineFacts(s)
+	ih.Set("Content-Type", f.Type+"; charset="+f.Charset)
+	ih.Set("Content-Transfer-Encoding", f.Encoding)
 	b, err := mw.CreateSingleInline(ih)
 	if err != nil {
 		return err
@@ -82,11 +84,9 @@ func (s *State) Assemble(w io.Writer) error {
 			return err
 		}
 		ah := mail.AttachmentHeader{}
-		// the detected type rides the wire (the row shows the same
-		// value); empty keeps go-message's reader default
-		if a.MimeType != "" {
-			ah.Set("Content-Type", a.MimeType)
-		}
+		af := AttachmentFacts(a)
+		ah.Set("Content-Type", af.Type)
+		ah.Set("Content-Transfer-Encoding", af.Encoding)
 		ah.SetFilename(a.Name)
 		ab, err := mw.CreateAttachment(ah)
 		if err != nil {

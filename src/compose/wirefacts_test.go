@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-// TestAssemblePartWireFacts pins the wire facts the compose UI's
-// attachment rows display (tui wireEncodingInline/wireEncodingAttach/
-// wireCharsetInline): the inline part is quoted-printable with the
-// explicit charset, an attachment rides base64 and the detected
-// Content-Type. If a go-message upgrade changes any of these, this
-// test fails and the display constants must follow.
+// TestAssemblePartWireFacts pins the part wire facts the compose
+// rows display (InlineFacts/AttachmentFacts - the TUI renders them
+// verbatim): the inline part is quoted-printable with the explicit
+// charset, an attachment rides base64 and the detected Content-Type.
+// Assemble writes the same facts, so the display and the wire share
+// one definition - a drift in either fails this test.
 func TestAssemblePartWireFacts(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "note-*.md")
 	if err != nil {
@@ -24,6 +24,12 @@ func TestAssemblePartWireFacts(t *testing.T) {
 	st.AddAttachment(f.Name())
 	if got := st.Attachments[0].MimeType; got != "text/markdown" {
 		t.Fatalf("MimeTypeOf(.md) = %q, want text/markdown", got)
+	}
+	if got := InlineFacts(st); got != (PartFacts{Type: "text/plain", Encoding: "quoted-printable", Charset: "utf-8"}) {
+		t.Fatalf("inline facts = %+v", got)
+	}
+	if got := AttachmentFacts(st.Attachments[0]); got != (PartFacts{Type: "text/markdown", Encoding: "base64"}) {
+		t.Fatalf("attachment facts = %+v", got)
 	}
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {

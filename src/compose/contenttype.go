@@ -49,3 +49,32 @@ func MimeTypeOf(name string) string {
 	}
 	return t
 }
+
+// PartFacts are one part's wire facts as Assemble writes them: the
+// MIME type, the transfer encoding, the charset (text parts only).
+// ONE definition - Assemble applies the facts to the wire and the
+// compose rows display them (the matcha sender model: the composer
+// decides the encoding, the UI never hardcodes it). Charset stays
+// empty for parts whose wire carries none.
+type PartFacts struct {
+	Type, Encoding, Charset string
+}
+
+// InlineFacts derives the body part's wire facts: the derived content
+// type, quoted-printable (the composer's fixed text encoding, the
+// matcha shape), the explicit charset.
+func InlineFacts(s *State) PartFacts {
+	return PartFacts{Type: ContentTypeOf(s.Body), Encoding: "quoted-printable", Charset: "utf-8"}
+}
+
+// AttachmentFacts derives an attachment's wire facts: the detected
+// type (octet-stream when the extension is unknown - the reader
+// default), base64 (the composer's fixed attachment encoding), no
+// charset on the wire.
+func AttachmentFacts(a Attachment) PartFacts {
+	typ := a.MimeType
+	if typ == "" {
+		typ = "application/octet-stream"
+	}
+	return PartFacts{Type: typ, Encoding: "base64"}
+}

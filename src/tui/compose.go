@@ -25,15 +25,16 @@ type composeForm struct {
 	divider bool   // section bar (--- Attachments / --- Preview): compose.divider style
 }
 
-// wire facts as Assemble writes them (pinned by the compose wire
-// test): the inline part is quoted-printable with the explicit
-// charset, attachments ride base64. The attachment rows show these -
-// a row displays what the mail will carry.
-const (
-	wireEncodingInline = "quoted-printable"
-	wireEncodingAttach = "base64"
-	wireCharsetInline  = "utf-8"
-)
+// partCell renders one part's wire facts (compose.PartFacts - what
+// Assemble writes, never hardcoded here) as the row's mime column:
+// [type, encoding, charset?, size].
+func partCell(f compose.PartFacts, size int64) string {
+	s := fmt.Sprintf("[%s, %s", f.Type, f.Encoding)
+	if f.Charset != "" {
+		s += ", " + f.Charset
+	}
+	return fmt.Sprintf("%s, %s]", s, sizeStr(size))
+}
 
 // renderCompose builds the attached dialogue frame (spec section 5,
 // the mutt layout): the tab bar on the first line, the keyhint on the
@@ -181,20 +182,15 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 	}
 	// the message-text row: marker I (mutt's inline part), entry 1,
 	// the buffer file path, its wire facts
-	bodyMime := fmt.Sprintf("[%s, %s, %s, %s]", compose.ContentTypeOf(st.Body), wireEncodingInline, wireCharsetInline,
-		sizeStr(int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))))
-	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath, bodyMime, m.width)})
+	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath,
+		partCell(compose.InlineFacts(&st), int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))), m.width)})
 	for i, a := range st.Attachments {
 		if i >= 3 {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
-		mime := a.MimeType
-		if mime == "" {
-			mime = "application/octet-stream" // go-message's reader default for a headerless part
-		}
 		rows = append(rows, composeForm{slot: 9 + i,
-			text: attachRow("A", i+2, a.Name, fmt.Sprintf("[%s, %s, %s]", mime, wireEncodingAttach, sizeStr(a.Size)), m.width)})
+			text: attachRow("A", i+2, a.Name, partCell(compose.AttachmentFacts(a), a.Size), m.width)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "--- Preview", divider: true})
 	// the form rows render mail-derived text (Subject/To/Cc from the

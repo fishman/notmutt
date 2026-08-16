@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
@@ -265,7 +266,12 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 			return
 		case <-ticker.C:
 			if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-				diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
+				// the cgo build cannot run `notmuch new` (ErrUnsupported,
+				// expected every tick there) - the poll then degrades to
+				// the revision refresh, which picks up external new runs
+				if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+					diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
+				}
 			}
 			r.cycle()
 		case e := <-ch:

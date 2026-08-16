@@ -8,6 +8,12 @@ import (
 	"notmutt/core"
 )
 
+// ErrUnsupported marks a backend action the build cannot run: the cgo
+// backend's New (running `notmuch new` needs the CLI's post-new hooks
+// and write lock - the read-only handle stays clean). Callers treat it
+// as a silent no-op, never as a failure to report.
+var ErrUnsupported = errors.New("not supported by this backend")
+
 type ActionKind int
 
 const (

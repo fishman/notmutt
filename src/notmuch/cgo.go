@@ -237,7 +237,7 @@ func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
 }
 
 func (b *CGOBackend) New(ctx context.Context) error {
-	return fmt.Errorf("notmuch new: unsupported (run `notmuch new` outside the client)")
+	return fmt.Errorf("notmuch new: unsupported (run `notmuch new` outside the client): %w", ErrUnsupported)
 }
 
 func tagsOf(m *nm.Message) []string {

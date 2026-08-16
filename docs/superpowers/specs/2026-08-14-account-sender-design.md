@@ -72,10 +72,14 @@ background sync/filter runs must never interrupt composition.
   message goes to stdin).
 - **Reply body:** mutt-style quote of the original in the $EDITOR
   buffer (section 6).
-- **Sent copy:** fcc to the account's sent folder on successful send
-  (`[accounts.<name>] sent_folder`), then `notmuch new` indexes it and
-  the folder rule tags it sent (the muttrc record + nm_record_tags
-  reference shape).
+- **Sent copy:** fcc to the account's DERIVED sent folder on
+  successful send (the notmuch mail root + the account folder space +
+  the sent candidates, resolved through the mover's own machinery -
+  first existing wins, else the first candidate; the sync tool creates
+  the folder), then `notmuch new` indexes it and the folder rule tags
+  it sent (the muttrc record + nm_record_tags reference shape). No
+  sent_folder config option exists - the derivation replaces it
+  (2026-08-17).
 - **Compose layout:** form rows (From/To/Cc/Subject), attachment
   rows, body preview pane filling the rest; keyhint + status floating
   at the bottom (the existing frame discipline, section 5).
@@ -106,7 +110,7 @@ The R4 shape, mapped onto the existing app:
   run pauses the TUI via tea exec passthrough (v2 `tea.ExecProcess`),
   the dialogue state survives (R4 pause/restart).
 - `config`: `[send]` transport argv, `[accounts.<name>]` gains
-  `from`, `sent_folder`, `default_signature`.
+  `from`, `default_signature` (the sent folder is derived, section 9).
 
 Tabs: the model holds a stack of dialogue states
 (`[]*compose.State` + active index); composition is tabbed (R4), the
@@ -270,8 +274,9 @@ closes the tab (OK) or flips it to failed (error, output kept).
    error visible; e re-edits and y retries.
 
 Order is transport first, then fcc: what was not delivered is not
-stored. A missing `sent_folder` skips fcc with a visible status note.
-A missing `from` on the selected account is a send-time error.
+stored. A mail root that fails to resolve (notmuch config unavailable)
+leaves the fcc empty and skips it silently. A missing `from` on the
+selected account is a send-time error.
 
 Delivery shape is mutt's exactly (2026-08-16, neomutt reference:
 header.c:632-636, send.c:1477-1483): the wire message carries NO Bcc
@@ -293,7 +298,6 @@ args = ["--read-envelope-from"]
 [accounts.gmail]
 folder = "gmail"
 from = "Bob Example <bob@example.com>"
-sent_folder = "[Gmail]/Sent Mail"
 default_signature = "gmail"
 ```
 
@@ -301,9 +305,12 @@ default_signature = "gmail"
   (F4). Defaults as above.
 - `[accounts.<name>] from`: the account's sender address. Optional;
   sending without one is a clear error.
-- `[accounts.<name>] sent_folder`: the sent maildir path (absolute or
-  ~-expanded, the muttrc `record` shape - the client knows no mail
-  root). Optional; missing skips fcc with a note.
+- Sent folder: DERIVED, never config (2026-08-17) - the notmuch mail
+  root + the account folder space + the sent folder candidates,
+  resolved through the mover's own machinery (`filter.Candidates` +
+  `filter.ResolveFolder`, the same resolution the mover uses). The
+  sync tool creates the folder on the first send. A mail root that
+  fails to resolve skips fcc with a visible status note.
 - `[accounts.<name>] default_signature`: the default signature file
   name in `~/.config/notmutt/signatures/<account>/`; missing = no
   signature.

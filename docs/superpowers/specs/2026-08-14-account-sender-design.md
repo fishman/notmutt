@@ -79,10 +79,11 @@ background sync/filter runs must never interrupt composition.
 - **Compose layout:** form rows (From/To/Cc/Subject), attachment
   rows, body preview pane filling the rest; keyhint + status floating
   at the bottom (the existing frame discipline, section 5).
-- **Header editing:** the $EDITOR buffer carries the header block
-  (To/Cc/Subject) above the body (the mutt edit-headers shape) - one
-  mechanism instead of inline inputs. Inline field editing is future
-  surface.
+- **Header editing:** the $EDITOR buffer holds ONLY the mail content
+  (mutt's msgbody shape) - the email header is built from the
+  dialogue fields at assembly, never the editor. Header fields edit
+  inline: t/s/f prompt From/To/Subject, e on a field row prompts
+  Cc/Bcc/Reply-To, e on Security cycles.
 
 ## 4. Architecture
 
@@ -226,10 +227,6 @@ original References + original message-id (core.Message carries both).
 e runs `$EDITOR` (fallback `vi`) on a temp buffer:
 
 ```
-To: <to list>
-Cc: <cc list>
-Subject: <subject>
-
 <body>
 (blank line)
 -- 
@@ -238,11 +235,11 @@ Subject: <subject>
 
 The TUI pauses (tea exec passthrough on the same terminal); the
 dialogue state survives (R4). On exit the buffer parses back: the
-header block (up to the first blank line) updates To/Cc/Subject; the
-rest is the body (signature stripped per section 6 for storage, kept
-for the preview). The written format is the contract: a buffer
-without the separator blank line parses as all-headers, an empty
-body. Buffer I/O is local; the temp file is 0600 (F5).
+content (body + signature tail, detached per section 6 for storage,
+kept for the preview). The buffer holds ONLY the mail content - the
+email header (From/To/Cc/Bcc/Subject/Reply-To) is built from the
+dialogue fields at assembly, never the editor (mutt's msgbody shape,
+2026-08-16). Buffer I/O is local; the temp file is 0600 (F5).
 
 ## 8. Send job
 
@@ -350,7 +347,9 @@ hardcoded.
 - Gmail dot/plus normalization and the per-account From-address table
   (the draft's section 3 model) - future work; milestone 1 matches
   the exact configured `from`.
-- Inline field editing in the tab; the editor buffer owns headers.
+- Edit-headers mode (the editor buffer carries the header block) -
+  the editor holds content only; headers are dialogue rows
+  (2026-08-16).
 - Attachments from the fuzzy picker (a path prompt is the milestone-1
   shape); crypto (R10) transforms between assembly and the send job.
 - Draft/pending save and postpone - future work.

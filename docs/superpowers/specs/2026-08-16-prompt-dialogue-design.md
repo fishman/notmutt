@@ -108,9 +108,13 @@ a terminal too small (height < 5) leaves the frame untouched.
 
 ## 5. Compose abort
 
-`PhaseAborting` is deleted. The abort action arms
-`dialogue{confirm, "Abort composition?", action: "abort"}` instead;
-enter dispatches abort, esc returns to editing. The renderCompose
+The abort action arms `dialogue{confirm, "Abort composition?",
+action: "abort"}` instead of a dedicated confirm row; enter dispatches
+abort, esc returns to editing. `PhaseAborting` survives as a dispatch
+marker only (render state, not a UI branch): confirm-enter's abort
+action lands on the PhaseAborting branch which closes the tab - without
+the marker the same action would re-arm the dialogue forever. Esc from
+the confirm resets PhaseAborting to PhaseEditing. The renderCompose
 PhaseAborting branch and the "q to confirm" semantics are gone (one
 explicit enter, no accidentally-quit-on-any-key).
 

@@ -24,8 +24,41 @@ lowercase imperative subject. Spec/doc commits carry an
 commits carry no AI-assisted trailer - the human bears responsibility for
 code.
 
+## Behavior
+
+- Reverse-engineering mindset: how-it-works over hype, constraints
+  matter, assume failure until proven reliable.
+- No fluff, no press-release language, no optimism bias.
+- Neutral-critical on AI: tool, not prophecy.
+- Use engineering analogies; cite hardware/software tradeoffs and
+  bureaucratic bottlenecks; call out noise and hidden failure modes.
+
 ## Style
 
+- Clear, concise, direct.
 - DRY: a concept exists once - derive, never duplicate.
 - Brief: shortest code that works.
-- No unnecessary comments; only non-obvious constraints get one.
+- No unnecessary comments; self-documenting names; only annotate
+  non-obvious constraints, edge cases, or critical tradeoffs; never
+  explain basic syntax.
+- ASCII only (no unicode dashes/quotes).
+
+## Testing
+
+- Treat AI output like firmware: assume it fails in production unless
+  thoroughly tested. Non-trivial logic leaves ONE runnable check
+  (assert-based self-test or a single small test).
+
+## Output (maximize token reuse)
+
+- Prompt caching is longest-prefix match: the reusable head (system
+  prompt, CLAUDE.md, AGENTS.md, static project rules) stays stable; the
+  mutable tail (current file contents, error logs, turns) stays small.
+- Read tool: use limit/offset to read only the needed lines - less
+  context = less cache bust.
+- Use Edit over Write - diffs cache better; match existing patterns
+  verbatim (import order, naming, structure).
+- Don't rewrite comments unless factually wrong.
+- Don't explain what changed - the diff speaks for itself.
+- Batch independent edits in parallel tool calls; prefer replace_all for
+  repeated patterns across a file.

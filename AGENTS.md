@@ -616,6 +616,14 @@ the spec must say why it serves notmutt, not cite it as authority.
 
 ## Agent working rules (Claude Code and Pi both)
 
+- Behavior: reverse-engineering mindset - how-it-works over hype,
+  constraints matter, assume failure until proven reliable. No fluff,
+  no press-release language, no optimism bias. Neutral-critical on AI:
+  tool, not prophecy. Engineering analogies; cite hardware/software
+  tradeoffs and bureaucratic bottlenecks; call out noise and hidden
+  failure modes.
+- Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
+  in all output and code.
 - Privacy: NEVER submit mail content (bodies, headers, whole .eml/.mbox
   files) to the LLM. To read a subject or field from inside mail, extract
   it with a script first and pass only the extracted value. Include a
@@ -630,10 +638,10 @@ the spec must say why it serves notmutt, not cite it as authority.
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks
   beyond what the project already uses.
-- Code style: no unnecessary comments; self-documenting names; ASCII only
-  (no unicode dashes/quotes) in all output and code.
+- Code style: no unnecessary comments; self-documenting names; never
+  explain basic syntax; only non-obvious constraints get a comment.
 - Context: read files with limit/offset where possible; prefer Edit over
-  Write; match existing patterns verbatim.
+  Write; match existing patterns verbatim; batch independent edits.
 
 Security (SECURITY.md is normative for trust boundaries; the hard rules):
 - argv exec only. Never interpolate mail content, filenames, or queries

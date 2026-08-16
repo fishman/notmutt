@@ -280,6 +280,21 @@ func TestKeymapSchemes(t *testing.T) {
 		cfg.Bindings["compose"]["alt+v"] != "page-up" {
 		t.Fatalf("emacs compose scroll keys missing: %v", cfg.Bindings["compose"])
 	}
+	for _, tc := range []struct{ key, fun string }{
+		{"x", "edit-cc"}, {"b", "edit-bcc"}, {"r", "edit-replyto"}, {"S", "security"},
+	} {
+		if cfg.Bindings["compose"][tc.key] != tc.fun {
+			t.Fatalf("emacs compose %s must map to %s: %v", tc.key, tc.fun, cfg.Bindings["compose"])
+		}
+	}
+}
+
+func TestFormNavDescriptions(t *testing.T) {
+	cfg := Default()
+	if cfg.Descriptions["form-down"] != "Move to the next attachment" ||
+		cfg.Descriptions["form-up"] != "Move to the previous attachment" {
+		t.Fatalf("form nav descs must describe the attachment list: %v", cfg.Descriptions)
+	}
 }
 
 func TestKeymapFileOverlay(t *testing.T) {

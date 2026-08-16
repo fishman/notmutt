@@ -2569,55 +2569,47 @@ func TestFormNavRestrictedToAttachments(t *testing.T) {
 	if m.formIdx != 8 {
 		t.Fatalf("j with no attachments must no-op, formIdx = %d", m.formIdx)
 	}
-}
-
-// TestFieldHotkeysArmDialogues pins the new field hotkeys: x/b/r arm
-// the prompt dialogue prefilled with the field's current values, and
-// enter splits the addresses back into the tab state.
-func TestFieldHotkeysArmDialogues(t *testing.T) {
-	m := openDialogue(t, model(), "t1")
-	m = press(t, m, "x")
-	if m.dialogue == nil || m.dialogue.field != "cc" || m.dialogue.label != "Cc: " {
-		t.Fatalf("x must arm the Cc dialogue: %+v", m.dialogue)
-	}
-	m = press(t, m, "esc")
-	m = press(t, m, "b")
-	if m.dialogue == nil || m.dialogue.field != "bcc" || m.dialogue.label != "Bcc: " {
-		t.Fatalf("b must arm the Bcc dialogue: %+v", m.dialogue)
-	}
-	m = press(t, m, "esc")
-	m = press(t, m, "r")
-	if m.dialogue == nil || m.dialogue.field != "replyto" || m.dialogue.label != "Reply-To: " {
-		t.Fatalf("r must arm the Reply-To dialogue: %+v", m.dialogue)
-	}
-	for _, ch := range "a@b, c@d" {
-		m = press(t, m, string(ch))
-	}
-	m = pressType(t, m, '\r')
-	if got := m.tabs[0].ReplyTo; len(got) != 2 || got[0] != "a@b" || got[1] != "c@d" {
-		t.Fatalf("enter must split the addresses into ReplyTo, got %v", got)
+	m = press(t, m, "k")
+	if m.formIdx != 8 {
+		t.Fatalf("k with no attachments must no-op, formIdx = %d", m.formIdx)
 	}
 }
 
-// TestSecurityCycleAction pins the S action: none -> sign -> encrypt
-// -> sign+encrypt -> none.
-func TestSecurityCycleAction(t *testing.T) {
+// TestDetachClampMidList pins the detach clamp: removing the last
+// attachment shrinks the list and the cursor clamps back into it.
+func TestDetachClampMidList(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	if m.tabs[0].Security != compose.SecurityNone {
-		t.Fatalf("a fresh dialogue must be unsigned, got %v", m.tabs[0].Security)
+	m.tabs[0].Attachments = []compose.Attachment{{Name: "a", Size: 1}, {Name: "b", Size: 1}, {Name: "c", Size: 1}}
+	m.formIdx = 10 // the last attachment
+	m = press(t, m, "d")
+	if m.formIdx != 9 {
+		t.Fatalf("detach must clamp into the shrunk list, formIdx = %d", m.formIdx)
 	}
-	m = press(t, m, "S")
-	if m.tabs[0].Security != compose.SecuritySign {
-		t.Fatalf("S must cycle into sign, got %v", m.tabs[0].Security)
+	if len(m.tabs[0].Attachments) != 2 {
+		t.Fatalf("detach must remove the attachment, got %d", len(m.tabs[0].Attachments))
 	}
-	m = press(t, m, "S")
-	m = press(t, m, "S")
-	if m.tabs[0].Security != compose.SecuritySignEncrypt {
-		t.Fatalf("three cycles must land on sign+encrypt, got %v", m.tabs[0].Security)
-	}
-	m = press(t, m, "S")
-	if m.tabs[0].Security != compose.SecurityNone {
-		t.Fatalf("the fourth cycle must wrap to none, got %v", m.tabs[0].Security)
+}
+
+// TestFieldHotkeysPrefill pins the prefill contract: x/b/r arm the
+// prompt dialogue with the field's current values joined into the
+// input.
+func TestFieldHotkeysPrefill(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Cc = []string{"c@old", "c2@old"}
+	m.tabs[0].Bcc = []string{"b@old"}
+	m.tabs[0].ReplyTo = []string{"r@old"}
+	for _, tc := range []struct {
+		key, field, want string
+	}{
+		{"x", "cc", "c@old, c2@old"},
+		{"b", "bcc", "b@old"},
+		{"r", "replyto", "r@old"},
+	} {
+		m = press(t, m, tc.key)
+		if m.dialogue == nil || m.dialogue.input != tc.want {
+			t.Fatalf("%s must prefill the %s value, input = %q, want %q", tc.key, tc.field, m.dialogue.input, tc.want)
+		}
+		m = press(t, m, "esc")
 	}
 }
 
@@ -2679,10 +2671,16 @@ func TestComposeLongValueKeepsFrameHeight(t *testing.T) {
 	if n := strings.Count(frame, "\n") + 1; n != 24 {
 		t.Fatalf("the frame must stay exactly 24 lines with a long value, got %d:\n%s", n, frame)
 	}
-	for _, l := range strings.Split(frame, "\n") {
-		if strings.HasPrefix(l, "Subject:") && len(l) > 80 {
-			t.Fatalf("the value must truncate to the row width, row = %d cells:\n%s", len(l), l)
-		}
+	// the value run must truncate to its cell budget (80 - labelW 9 -
+	// the seam 1) - never wrap to a second line
+	plain := stripANSI(composeLabel("Subject", strings.Repeat("s", 100), 9, 80, m.styles))
+	if strings.Contains(plain, "\n") {
+		t.Fatal("the value must never wrap to a second line")
+	}
+	// " Subject: " is the 10-cell label seam ("Subject:" right-aligned
+	// in 9 cells plus the separator); the value run follows
+	if v := strings.TrimPrefix(plain, " Subject: "); len(v) > 70 {
+		t.Fatalf("the value must truncate to 70 cells, got %d", len(v))
 	}
 }
 

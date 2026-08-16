@@ -13,7 +13,9 @@ import (
 // composeForm is one form line: the settings rows carry a label +
 // value (rendered as a two-column table, never highlighted), the
 // attachment rows carry a cursor slot (8+i), the static rows
-// (dividers, content-type) carry plain text.
+// (dividers, content-type) carry plain text. Every non-focusable row
+// carries the sentinel slot -1 (the settings rows included - only
+// the attachment slots are ever focused).
 type composeForm struct {
 	slot  int
 	label string // settings row label, rendered right-aligned in compose.label
@@ -150,17 +152,17 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		return strings.Join(addrs[:2], ", ") + fmt.Sprintf(", +%d more", len(addrs)-2)
 	}
 	rows := []composeForm{
-		{label: "Account", value: st.Account},
-		{label: "From", value: st.From},
-		{label: "To", value: capList(st.To)},
-		{label: "Cc", value: capList(st.Cc)},
-		{label: "Bcc", value: capList(st.Bcc)},
-		{label: "Subject", value: st.Subject},
-		{label: "Reply-To", value: capList(st.ReplyTo)},
-		{label: "Fcc", value: st.Fcc},
-		{label: "Security", value: st.Security.String()},
-		{text: "---"},
-		{text: "[ ] " + compose.ContentTypeOf(st.Body)},
+		{slot: -1, label: "Account", value: st.Account},
+		{slot: -1, label: "From", value: st.From},
+		{slot: -1, label: "To", value: capList(st.To)},
+		{slot: -1, label: "Cc", value: capList(st.Cc)},
+		{slot: -1, label: "Bcc", value: capList(st.Bcc)},
+		{slot: -1, label: "Subject", value: st.Subject},
+		{slot: -1, label: "Reply-To", value: capList(st.ReplyTo)},
+		{slot: -1, label: "Fcc", value: st.Fcc},
+		{slot: -1, label: "Security", value: st.Security.String()},
+		{slot: -1, text: "---"},
+		{slot: -1, text: "[ ] " + compose.ContentTypeOf(st.Body)},
 	}
 	for i, a := range st.Attachments {
 		if i >= 3 {

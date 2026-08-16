@@ -1,14 +1,14 @@
--- outlook.lua - an Outlook.com IMAP layout (seed shape).
+-- outlook.lua - the outlook provider shape (seed, adjust to taste).
+-- Match names are top-level folders only. Enable in [setup] templates.
 return {
   name = "outlook",
-  required = {
+  match = { "INBOX", "Sent" },
+  folders = {
     inbox = { "INBOX" },
     sent = { "Sent" },
     deleted = { "Deleted Items" },
-  },
-  optional = {
-    archive = { "Archive" },
     draft = { "Drafts" },
-    spam = { "Junk" },
+    archive = { "Archive" },
+    spam = { "Junk", "Spam" },
   },
 }

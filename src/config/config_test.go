@@ -450,7 +450,10 @@ func TestBindingHiddenFlag(t *testing.T) {
 }
 
 // TestDefaultHiddenPaging pins the base schemes: the generic paging
-// keys are hidden in every context of both keymaps, navigation is not.
+// keys and the generic navigation keys (j/k, g g/G, enter) are hidden
+// in both keymaps - the keyhint shows the command surface, the help
+// dialog lists every binding. The command keys (quit/back) stay
+// visible.
 func TestDefaultHiddenPaging(t *testing.T) {
 	cfg := Default()
 	for _, ctx := range []string{"index", "pager", "compose"} {
@@ -458,8 +461,11 @@ func TestDefaultHiddenPaging(t *testing.T) {
 			t.Fatalf("the paging keys must be hidden in the vim %s context", ctx)
 		}
 	}
-	if cfg.Hidden["index"]["j"] || cfg.Hidden["pager"]["q"] {
-		t.Fatal("navigation keys must not be hidden")
+	if !cfg.Hidden["index"]["j"] || !cfg.Hidden["index"]["enter"] || !cfg.Hidden["index"]["g g"] {
+		t.Fatal("the generic navigation keys must be hidden too")
+	}
+	if cfg.Hidden["index"]["q"] || cfg.Hidden["pager"]["q"] {
+		t.Fatal("the command keys (quit/back) must stay visible")
 	}
 	emacs := Default()
 	emacs.UI.Keymap = "emacs"

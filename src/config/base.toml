@@ -19,9 +19,9 @@
 "pending" = "pending"
 
 [schemes.vim.index]
-"j" = { fun = "cursor-down", desc = "Move the cursor down" }
-"k" = { fun = "cursor-up", desc = "Move the cursor up" }
-"enter" = { fun = "open", desc = "Open the message under the cursor" }
+"j" = { fun = "cursor-down", desc = "Move the cursor down", hidden = true }
+"k" = { fun = "cursor-up", desc = "Move the cursor up", hidden = true }
+"enter" = { fun = "open", desc = "Open the message under the cursor", hidden = true }
 "q" = { fun = "quit", desc = "Quit notmutt" }
 "r" = { fun = "reply", desc = "Reply to the sender" }
 "R" = { fun = "reply-all", desc = "Reply to all recipients" }
@@ -35,8 +35,8 @@
 "y" = "spam"
 "p" = "pending"
 "P" = { fun = "preview", desc = "Preview the message under the cursor" }
-"g g" = { fun = "cursor-top", desc = "Jump to the first row" }
-"G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
+"g g" = { fun = "cursor-top", desc = "Jump to the first row", hidden = true }
+"G" = { fun = "cursor-bottom", desc = "Jump to the last row", hidden = true }
 "g r" = "reply-all"
 "ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", hidden = true }
 "ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page", hidden = true }
@@ -47,15 +47,15 @@
 "?" = { fun = "help", desc = "Show this help" }
 
 [schemes.vim.pager]
-"j" = { fun = "scroll-down", desc = "Scroll down one line" }
-"k" = { fun = "scroll-up", desc = "Scroll up one line" }
+"j" = { fun = "scroll-down", desc = "Scroll down one line", hidden = true }
+"k" = { fun = "scroll-up", desc = "Scroll up one line", hidden = true }
 "space" = { fun = "page-down", hidden = true }
 "ctrl+d" = { fun = "half-page-down", hidden = true }
 "ctrl+u" = { fun = "half-page-up", hidden = true }
 "pgdown" = { fun = "page-down", hidden = true }
 "pgup" = { fun = "page-up", hidden = true }
-"g" = { fun = "scroll-top", desc = "Jump to the top" }
-"G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
+"g" = { fun = "scroll-top", desc = "Jump to the top", hidden = true }
+"G" = { fun = "scroll-bottom", desc = "Jump to the bottom", hidden = true }
 "q" = { fun = "back", desc = "Return to the message list" }
 "[" = "tab-prev"
 "]" = "tab-next"

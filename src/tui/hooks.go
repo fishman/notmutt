@@ -59,3 +59,32 @@ func SetAttachCommandSource(fn func() map[string][]string) {
 		attachCommands = fn
 	}
 }
+
+// onLuaCommand is the :lua seam (R8): the app runs the chunk in a
+// Lua VM (the current thread id as msg() context, empty when none)
+// and publishes LuaResult; the default is a no-op so the model works
+// in tests.
+var onLuaCommand = func(code, threadID string) {}
+
+func SetLuaCommandHandler(fn func(code, threadID string)) {
+	onLuaCommand = fn
+}
+
+// onLuaAction runs a plugin-registered action (R8): the app resolves
+// the action in its Lua registry and publishes LuaResult.
+var onLuaAction = func(action, threadID string) {}
+
+func SetLuaActionHandler(fn func(action, threadID string)) {
+	onLuaAction = fn
+}
+
+// pluginActions is the plugin action name registry seam: the app
+// wires it with SetPluginActionSource; the binding validation and the
+// dispatch fallthrough consult it. Nil = no plugin actions.
+var pluginActions = func() map[string]bool { return nil }
+
+func SetPluginActionSource(fn func() map[string]bool) {
+	if fn != nil {
+		pluginActions = fn
+	}
+}

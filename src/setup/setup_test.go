@@ -50,10 +50,11 @@ func TestDetectGmail(t *testing.T) {
 	}
 }
 
-// TestDetectFlatImapUnmatched pins the discriminator: a flat IMAP
-// layout (system folders at the account root) fails the required
-// [Gmail] names and stays unmatched; a plain file is not an account.
-func TestDetectFlatImapUnmatched(t *testing.T) {
+// TestDetectFlatImap pins the gmail discriminator: a flat IMAP layout
+// (system folders at the account root, no top-level [Gmail]) is not
+// gmail - it falls to the generic shape whose Match names resolve
+// (INBOX + Sent). A plain file is never an account.
+func TestDetectFlatImap(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
 		"jelveh/INBOX", "jelveh/Drafts", "jelveh/Sent",
@@ -65,8 +66,18 @@ func TestDetectFlatImapUnmatched(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(accs) != 1 || accs[0].Name != "jelveh" || accs[0].Template != "" {
-		t.Fatalf("flat imap must not match the gmail template: %+v", accs)
+	if len(accs) != 1 {
+		t.Fatalf("want one account, got %+v", accs)
+	}
+	a := accs[0]
+	if a.Name != "jelveh" || a.Template != "outlook" {
+		t.Fatalf("flat imap must match the generic shape, got %+v", a)
+	}
+	if a.Folders["inbox"] != "INBOX" || a.Folders["sent"] != "Sent" {
+		t.Fatalf("the folder map must extract the top-level names: %v", a.Folders)
+	}
+	if a.Template == "gmail" {
+		t.Fatal("flat imap must never match gmail")
 	}
 }
 
@@ -122,11 +133,11 @@ func TestDetectTemplateSet(t *testing.T) {
 		"gmail/[Gmail]/Spam", "gmail/[Gmail]/Trash",
 		"exchange/INBOX", "exchange/Sent Items", "exchange/Deleted Items")
 	templates := []Template{
-		{Name: "gmail", Required: map[string][]string{
+		{Name: "gmail", Match: []string{"INBOX", "[Gmail]"}, Folders: map[string][]string{
 			"inbox": {"INBOX"}, "draft": {"[Gmail]/Drafts"}, "sent": {"[Gmail]/Sent Mail"},
 			"spam": {"[Gmail]/Spam"}, "deleted": {"[Gmail]/Trash"},
 		}},
-		{Name: "exchange", Required: map[string][]string{
+		{Name: "exchange", Match: []string{"INBOX", "Sent Items"}, Folders: map[string][]string{
 			"inbox": {"INBOX"}, "sent": {"Sent Items"}, "deleted": {"Deleted Items"},
 		}},
 	}
@@ -140,6 +151,53 @@ func TestDetectTemplateSet(t *testing.T) {
 	}
 	if got["gmail"] != "gmail" || got["exchange"] != "exchange" {
 		t.Fatalf("the merged set must detect both accounts: %v", got)
+	}
+}
+
+// TestDetectTopLevelOnly pins the match rule: only TOP-LEVEL folders
+// gate a template. A [Gmail] dir nested below another folder never
+// counts, while an account whose top-level [Gmail] carries just one
+// subfolder still matches (the sync may skip system folders - the
+// presence of [Gmail] itself says gmail).
+func TestDetectTopLevelOnly(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root,
+		"nested/INBOX", "nested/stuff/[Gmail]", "nested/stuff/[Gmail]/Drafts",
+		"partial/INBOX", "partial/[Gmail]/Drafts")
+	accs, err := Detect(root, Templates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accs) != 2 {
+		t.Fatalf("both dirs are account candidates (they hold folders): %+v", accs)
+	}
+	byName := map[string]Account{}
+	for _, a := range accs {
+		byName[a.Name] = a
+	}
+	if byName["nested"].Template != "" {
+		t.Fatalf("a nested [Gmail] must never match gmail: %+v", accs)
+	}
+	if byName["partial"].Template != "gmail" {
+		t.Fatalf("a top-level [Gmail] must match gmail: %+v", accs)
+	}
+	if byName["partial"].Folders["inbox"] != "INBOX" || byName["partial"].Folders["draft"] != "[Gmail]/Drafts" {
+		t.Fatalf("extraction must still resolve the nested paths: %v", byName["partial"].Folders)
+	}
+}
+
+// TestDetectSkipsEmptyDir pins the drafts case: an empty directory is
+// not an account - no detection noise from a stray maildir under
+// construction.
+func TestDetectSkipsEmptyDir(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root, "drafts")
+	accs, err := Detect(root, Templates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accs) != 0 {
+		t.Fatalf("an empty dir must not be an account: %+v", accs)
 	}
 }
 

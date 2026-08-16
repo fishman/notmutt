@@ -173,6 +173,15 @@ type JobError struct {
 	Err error
 }
 
+// LuaResult reports a :lua command or a Lua plugin action run (R8):
+// the collected print output plus the error, or nil on success. The
+// TUI shows it as a transient status notice. Output is plugin/user
+// data, never mail content (F6 - errors never carry message text).
+type LuaResult struct {
+	Output string
+	Err    error
+}
+
 // Progress reports a background job's batch progress (R15). Jobs report
 // their own totals; the worker action loop is not a progress source.
 // View names the virtual folder the job serves - progress is scoped per

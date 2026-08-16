@@ -86,12 +86,14 @@ func TestChainDataCompletes(t *testing.T) {
 	if m.CursorIndex() != 0 {
 		t.Fatalf("g g must move the cursor to the top, idx=%d", m.CursorIndex())
 	}
-	// an armed prefix lists its continuations in the keyhint
+	// an armed prefix lists its visible continuations in the keyhint
+	// (g g is a hidden generic binding - the hint shows what the
+	// prefix can do, the hidden flag rules both views)
 	m = press(t, m, "g")
 	frame := m.render()
 	clean := stripANSI(frame)
-	if !strings.Contains(clean, "g g cursor-top") || !strings.Contains(clean, "g r reply-all") {
-		t.Fatalf("the armed prefix must list its chains:\n%s", clean)
+	if !strings.Contains(clean, "g r reply-all") || strings.Contains(clean, "g g cursor-top") {
+		t.Fatalf("the armed prefix must list its visible chains:\n%s", clean)
 	}
 	if strings.Contains(clean, "j cursor-down") {
 		t.Fatalf("an armed prefix must replace the base hint:\n%s", clean)
@@ -121,11 +123,11 @@ func TestChainExpires(t *testing.T) {
 		t.Fatalf("an expired chain must not dispatch, got %q", got)
 	}
 	// the expired chain-starting key re-arms the prefix: the armed
-	// hint lists only the continuations, not the base bindings
+	// hint lists only the visible continuations, not the base bindings
 	m = press(t, m, "g")
 	m = press(t, m, "g")
 	clean := stripANSI(m.render())
-	if !strings.Contains(clean, "g g cursor-top") || strings.Contains(clean, "j cursor-down") {
+	if !strings.Contains(clean, "g r reply-all") || strings.Contains(clean, "j cursor-down") {
 		t.Fatalf("an expired chain-starting key must re-arm the prefix:\n%s", clean)
 	}
 }
@@ -140,14 +142,14 @@ func TestChainExpiryResetsKeyhint(t *testing.T) {
 	m := model()
 	m = press(t, m, "g")
 	clean := stripANSI(m.render())
-	if !strings.Contains(clean, "g g cursor-top") || strings.Contains(clean, "j cursor-down") {
-		t.Fatalf("the armed prefix must list only its chains:\n%s", clean)
+	if !strings.Contains(clean, "g r reply-all") || strings.Contains(clean, "j cursor-down") {
+		t.Fatalf("the armed prefix must list only its visible chains:\n%s", clean)
 	}
 	next, _ := m.Update(chainTick{})
 	m = next.(Model)
 	clean = stripANSI(m.render())
-	if !strings.Contains(clean, "j cursor-down") {
-		t.Fatalf("the expired chain must reset the continuation view:\n%s", clean)
+	if !strings.Contains(clean, "$ apply") {
+		t.Fatalf("the expired chain must reset to the base hint:\n%s", clean)
 	}
 }
 
@@ -1124,8 +1126,8 @@ func TestKeyhintRowInView(t *testing.T) {
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	strip = stripANSI(m.View().Content)
-	if !strings.Contains(strip, "j scroll-down") {
-		t.Fatalf("pager hint row missing:\n%s", strip)
+	if !strings.Contains(strip, "q back") || strings.Contains(strip, "j scroll-down") {
+		t.Fatalf("the pager hint must show the visible keys, not the hidden j/k:\n%s", strip)
 	}
 	if strings.Contains(strip, "g g cursor-top") {
 		t.Fatalf("pager must not show index bindings:\n%s", strip)

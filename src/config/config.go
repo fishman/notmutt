@@ -92,6 +92,8 @@ type Config struct {
 	UI        UI                           `toml:"ui"`
 	Views     map[string]View              `toml:"view"`
 	TagGroups map[string]core.TagGroup     `toml:"tag-groups"`
+	Setup     Setup                        `toml:"setup"`
+	Lua       Lua                          `toml:"lua"`
 	Bindings  map[string]map[string]string `toml:"-"`
 	// Hidden is the per-context key set the keyhint row skips (the
 	// help dialog shows every binding): derived from the scheme
@@ -107,6 +109,24 @@ type Config struct {
 	// Descriptions is the derived help vocabulary (action -> text),
 	// collected from the scheme entries - never a config block
 	Descriptions map[string]string `toml:"-"`
+}
+
+// Setup configures the `notmutt setup` subcommand: Templates names the
+// OPT-IN contributed detection templates in <configdir>/lua/templates
+// that load (not all templates are autoloaded - the seeded examples
+// stay inert until listed). Empty = built-in templates only.
+type Setup struct {
+	Templates []string `toml:"templates"`
+}
+
+// Lua configures the Lua plugin layer (R8): Tags is the config-level
+// tag list the plugins reference (cfg.tags) - the ai-tags example
+// restricts its proposals to these names; AI is the command argv that
+// runs an AI prompt (F4: tokenized at load, prompt on stdin, never a
+// shell string). Empty AI = the ai() plugin call fails.
+type Lua struct {
+	Tags []string `toml:"tags"`
+	AI   []string `toml:"ai"`
 }
 
 type UI struct {

@@ -1,17 +1,18 @@
 -- gmail.lua - the gmail provider shape (reference template).
--- Copy to <configdir>/lua/templates/ to override; the lua build loads
--- every *.lua there. Mirrors setup.Templates in setup.go - the sync
--- test pins them equal.
+-- The match names are TOP-LEVEL folders: a top-level [Gmail] dir says
+-- gmail, even when the sync skipped some of its subfolders. Copy to
+-- <configdir>/lua/templates/ and enable it in [setup] templates to
+-- override. Mirrors setup.Templates in setup.go - the sync test pins
+-- them equal.
 return {
   name = "gmail",
-  required = {
+  match = { "INBOX", "[Gmail]" },
+  folders = {
     inbox = { "INBOX" },
     draft = { "[Gmail]/Drafts" },
     sent = { "[Gmail]/Sent Mail" },
     spam = { "[Gmail]/Spam" },
     deleted = { "[Gmail]/Trash" },
-  },
-  optional = {
     archive = { "Archives", "Archive" },
     pending = { "Pending" },
   },

@@ -26,8 +26,10 @@ type statusData struct {
 	visible int
 	prog    *core.Progress // nil = no job on
 	on      bool
-	legend  string // icon library: "icon name" pairs for the view's tags
-	account string // the cursor message's account tag (R2), empty on none
+	legend    string // icon library: "icon name" pairs for the view's tags
+	account   string // the cursor message's account tag (R2), empty on none
+	notice    string // transient :lua/plugin-action result (R8), empty on none
+	noticeErr bool   // styles the notice with the error style
 }
 
 // statusLine renders the status row at the default width.
@@ -53,11 +55,19 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 	if d.on && d.prog != nil {
 		right = append(right, progressSegment(ui, *d.prog, st))
 	}
-	if d.legend != "" {
-		// The legend is pre-fitted to the leftover width, truncated
-		// wcwidth-aware (R11 slot reservation); the drop loop stays as
-		// the backstop when a future segment overruns. Its footprint is
-		// content + two inner gaps + the bar gap before it.
+	// The notice (R8) and the legend share the leftover slot: the notice
+	// wins while present (it clears on the next keypress), the legend
+	// returns immediately after. Both are pre-fitted to the leftover
+	// width, truncated wcwidth-aware (R11 slot reservation); the drop
+	// loop stays as the backstop when a future segment overruns. The
+	// footprint is content + two inner gaps + the bar gap before it.
+	if d.notice != "" {
+		fixed := groupWidth(left)
+		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
+		if budget > 0 {
+			left = append(left, noticeSegment(d.notice, budget, d.noticeErr, st))
+		}
+	} else if d.legend != "" {
 		fixed := groupWidth(left)
 		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
 		if budget > 0 {

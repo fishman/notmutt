@@ -46,6 +46,17 @@ func legendSegment(legend string, budget int) statusSegment {
 	return statusSegment{content: truncCells(legend, budget), priority: 3}
 }
 
+// noticeSegment is the transient :lua/plugin-action result (R8):
+// plugin print output or the error text, pre-fitted like the legend
+// (never mail content, F6). err styles it with the error style.
+func noticeSegment(notice string, budget int, err bool, st Styles) statusSegment {
+	s := statusSegment{content: truncCells(notice, budget), priority: 4}
+	if err {
+		s.style = st.Error
+	}
+	return s
+}
+
 // progressSegment is the job progress region (R15).
 func progressSegment(ui config.UI, p core.Progress, st Styles) statusSegment {
 	label := fmt.Sprintf("%s %d/%d", p.Job, p.Done, p.Total)

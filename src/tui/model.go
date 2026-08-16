@@ -47,7 +47,7 @@ var Actions = map[string]map[string]bool{
 		"open": true, "preview": true, "quit": true, "undo": true, "apply": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true,
+		"help": true, "command": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -56,7 +56,7 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true,
+		"help": true, "command": true,
 	},
 	"compose": {
 		"form-down": true, "form-up": true,
@@ -71,7 +71,7 @@ var Actions = map[string]map[string]bool{
 		"account":  true, "signature": true,
 		"send": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true,
+		"help": true, "command": true,
 	},
 	"fuzzy": {
 		"fuzzy-down": true, "fuzzy-up": true,
@@ -96,6 +96,12 @@ type Model struct {
 	job        string
 	progress   core.Progress
 	progressOn bool
+	// luaNotice is the transient :lua/plugin-action result (R8): set
+	// by LuaResult, cleared by the next keypress. It renders on the
+	// status line - never mail content, only output the plugin printed
+	// or the error text. luaErr styles it with the error style.
+	luaNotice string
+	luaErr    bool
 	// indexOffset is the index window's anchored top row (the
 	// read-position model): the window holds
 	// still while the cursor moves within it; only when the cursor
@@ -274,6 +280,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpView.setSize(m.width, h)
 		}
 	case tea.KeyPressMsg:
+		// a keypress consumes the transient lua notice (R8)
+		m.luaNotice = ""
+		m.luaErr = false
 		// the picker outranks the prompt: the attach '?' picker arms the
 		// attach prompt (input = "@name"), so both can be live at once
 		if m.fuzzy != nil {
@@ -498,6 +507,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.onComposeOpened(e)
 		case core.SendResult:
 			m.onSendResult(e)
+		case core.LuaResult:
+			// the :lua command or plugin action notice: the output or
+			// the error on the status line until the next keypress
+			if e.Err != nil {
+				m.luaNotice = "lua: " + e.Err.Error()
+				m.luaErr = true
+			} else {
+				m.luaNotice = e.Output
+			}
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
@@ -776,7 +794,18 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 		m.helpView.setLines(m.helpRows())
 		m.helpView.setSize(m.width, h)
+	case "command":
+		// the command line: ": lua <code>" runs a Lua chunk, plugin
+		// action names dispatch to their registered functions (R8)
+		m.dialogue = &dialogue{kind: dialogueInput, field: "command", label: ": "}
 	default:
+		// a plugin-registered action (R8): the app runs it in the
+		// plugin's VM with the cursor thread as msg() context
+		if pluginActions()[action] {
+			tid, _ := m.cursorThreadID()
+			onLuaAction(action, tid)
+			break
+		}
 		// staged tag ops (and undo) advance the cursor one row -
 		// the next keypress acts on the next message (mutt's
 		// auto-advance). A no-op action (ghost row, unknown action)
@@ -1800,6 +1829,8 @@ func (m Model) statusData() statusData {
 	// resolution (the flattening CursorRow at 33k rows)
 	d.legend = m.legend
 	d.account = m.account
+	d.notice = m.luaNotice
+	d.noticeErr = m.luaErr
 	return d
 }
 
@@ -1849,6 +1880,14 @@ func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			path := compose.ExpandHome(input)
 			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
 				m.dialogue = nil
+			}
+			return m, nil
+		}
+		if d.field == "command" {
+			m.dialogue = nil
+			if input != "" {
+				tid, _ := m.cursorThreadID()
+				onLuaCommand(input, tid)
 			}
 			return m, nil
 		}

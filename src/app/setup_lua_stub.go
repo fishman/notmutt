@@ -13,6 +13,6 @@ func builtinTemplates() []setup.Template {
 	return nil
 }
 
-func luaTemplates(dir string) []setup.Template {
+func luaTemplates(dir string, active []string) []setup.Template {
 	return nil
 }

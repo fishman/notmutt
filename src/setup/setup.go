@@ -15,78 +15,81 @@ import (
 	"strings"
 )
 
-// Template is a provider folder shape: per hard tag, the candidate
-// folder names in priority order (the afew folder_priorities shape).
-// An account matches when every required tag resolves; optional tags
-// are extracted when present.
+// Template is a provider folder shape: Match names the TOP-LEVEL
+// folders that gate the template (an account matches when every one
+// is present - the match only ever applies to top-level folders), and
+// Folders maps each hard tag to its candidate folder paths in
+// priority order (the afew folder_priorities shape). A tag's folder
+// is its first present candidate - the gmail candidates nest
+// ("[Gmail]/Drafts") for the mover's real path - and tags with no
+// present candidate stay out of the account's folder map.
 type Template struct {
-	Name     string
-	Required map[string][]string
-	Optional map[string][]string
+	Name    string
+	Match   []string
+	Folders map[string][]string
 }
 
 // Templates is the built-in detection set, tried in order: an account
-// matches the first template whose required tags all resolve. The
-// gmail shape is INBOX plus the [Gmail] system folders; flat IMAP
-// layouts (Drafts/Sent/Trash at the account root) fail the required
-// [Gmail] names and stay unmatched. The lua build evaluates the same
-// templates from app/lua/templates/*.lua (the shipped examples users
-// copy from); this Go set is the no-Lua fallback, pinned equal by
+// matches the first template whose top-level Match names all resolve.
+// The gmail discriminator is the top-level [Gmail] folder (mbsync
+// syncs it as one dir; its presence says "gmail system folders", so
+// an account that carries it is a gmail account even when some
+// [Gmail] subfolders were never synced); flat IMAP layouts without it
+// (Drafts/Sent/Trash at the account root) fall to the generic
+// shapes. The lua build evaluates the same templates from
+// app/lua/templates/*.lua (the shipped examples users copy from);
+// this Go set is the no-Lua fallback, pinned equal by
 // TestBuiltinTemplatesMatchGoData. The provider shapes are seeds -
-// contributed templates in <configdir>/lua/templates override them by
-// name.
+// contributed templates in <configdir>/lua/templates, enabled by name
+// in [setup] templates, override them.
 var Templates = []Template{
 	{
-		Name: "gmail",
-		Required: map[string][]string{
+		Name:  "gmail",
+		Match: []string{"INBOX", "[Gmail]"},
+		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"draft":   {"[Gmail]/Drafts"},
 			"sent":    {"[Gmail]/Sent Mail"},
 			"spam":    {"[Gmail]/Spam"},
 			"deleted": {"[Gmail]/Trash"},
-		},
-		Optional: map[string][]string{
 			"archive": {"Archives", "Archive"},
 			"pending": {"Pending"},
 		},
 	},
 	{
-		Name: "exchange",
-		Required: map[string][]string{
+		Name:  "exchange",
+		Match: []string{"INBOX", "Sent Items"},
+		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"sent":    {"Sent Items"},
 			"deleted": {"Deleted Items"},
-		},
-		Optional: map[string][]string{
-			"archive": {"Archive"},
 			"draft":   {"Drafts"},
+			"archive": {"Archive"},
 			"spam":    {"Junk Email", "Junk"},
 		},
 	},
 	{
-		Name: "icloud",
-		Required: map[string][]string{
+		Name:  "icloud",
+		Match: []string{"INBOX", "Sent Messages"},
+		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"sent":    {"Sent Messages"},
 			"deleted": {"Trash"},
-		},
-		Optional: map[string][]string{
-			"archive": {"Archive"},
 			"draft":   {"Drafts"},
+			"archive": {"Archive"},
 			"spam":    {"Junk"},
 		},
 	},
 	{
-		Name: "outlook",
-		Required: map[string][]string{
+		Name:  "outlook",
+		Match: []string{"INBOX", "Sent"},
+		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"sent":    {"Sent"},
 			"deleted": {"Deleted Items"},
-		},
-		Optional: map[string][]string{
-			"archive": {"Archive"},
 			"draft":   {"Drafts"},
-			"spam":    {"Junk"},
+			"archive": {"Archive"},
+			"spam":    {"Junk", "Spam"},
 		},
 	},
 }
@@ -99,11 +102,13 @@ type Account struct {
 	Folders  map[string]string
 }
 
-// Detect walks the notmuch mail root: every top-level directory is an
-// account candidate; a candidate whose folder set resolves a
-// template's required tags matches that template. Templates are tried
-// in order - the first match wins. Unreadable and folder-less
-// directories stay unmatched. Accounts sort by name.
+// Detect walks the notmuch mail root: every top-level directory with
+// at least one folder is an account candidate; a candidate whose
+// top-level folders resolve a template's Match names matches that
+// template (first match wins). Directory names only - never mail
+// content. Empty and unreadable directories are not accounts (a
+// stray maildir under construction is not a detection result).
+// Accounts sort by name.
 func Detect(root string, templates []Template) ([]Account, error) {
 	top, err := os.ReadDir(root)
 	if err != nil {
@@ -114,13 +119,15 @@ func Detect(root string, templates []Template) ([]Account, error) {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
+		set, err := folders(filepath.Join(root, e.Name()))
+		if err != nil || len(set) == 0 {
+			continue
+		}
 		a := Account{Name: e.Name()}
-		if set, err := folders(filepath.Join(root, e.Name())); err == nil {
-			for i := range templates {
-				if f, ok := resolve(&templates[i], set); ok {
-					a.Template, a.Folders = templates[i].Name, f
-					break
-				}
+		for i := range templates {
+			if f, ok := resolve(&templates[i], set); ok {
+				a.Template, a.Folders = templates[i].Name, f
+				break
 			}
 		}
 		out = append(out, a)
@@ -162,23 +169,25 @@ func maildirInternal(name string) bool {
 	return name == "cur" || name == "new" || name == "tmp"
 }
 
-// resolve maps each tag to its first present candidate; match is true
-// when every required tag resolved.
+// resolve matches a template against the folder set: every Match name
+// must be a TOP-LEVEL folder (the match never looks below the account
+// root - a [Gmail] dir at the top level is the gmail discriminator).
+// The extracted folder map resolves each tag to its first present
+// candidate anywhere in the set (nested paths included - the mover
+// needs the real "[Gmail]/Drafts").
 func resolve(t *Template, set map[string]bool) (map[string]string, bool) {
-	folders := map[string]string{}
-	for _, tags := range [2]map[string][]string{t.Required, t.Optional} {
-		for tag, cands := range tags {
-			for _, c := range cands {
-				if set[c] {
-					folders[tag] = c
-					break
-				}
-			}
+	for _, name := range t.Match {
+		if !set[name] {
+			return nil, false
 		}
 	}
-	for tag := range t.Required {
-		if _, ok := folders[tag]; !ok {
-			return nil, false
+	folders := map[string]string{}
+	for tag, cands := range t.Folders {
+		for _, c := range cands {
+			if set[c] {
+				folders[tag] = c
+				break
+			}
 		}
 	}
 	return folders, true

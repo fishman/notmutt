@@ -264,7 +264,11 @@ func setupAccounts() error {
 	if err != nil {
 		return fmt.Errorf("setup: resolve database.path: %w", err)
 	}
-	accs, err := setup.Detect(strings.TrimSpace(string(out)), mergedTemplates())
+	cfg, err := config.Load(configPath())
+	if err != nil {
+		log.Printf("setup: config %s: %v", configPath(), err)
+	}
+	accs, err := setup.Detect(strings.TrimSpace(string(out)), mergedTemplates(cfg.Setup.Templates))
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
@@ -327,10 +331,13 @@ func seedTemplates(dir string) {
 
 // mergedTemplates is the detection set: the built-ins (the lua build
 // evaluates the embedded template files, default builds the Go
-// fallback), then the contributed Lua templates from
-// <configdir>/lua/templates sorted by name. A Lua template replaces
-// the built-in of the same name (the R2 preset override rule).
-func mergedTemplates() []setup.Template {
+// fallback), then the OPT-IN contributed Lua templates from
+// <configdir>/lua/templates - only the names in active load (not all
+// templates are autoloaded; the seeded examples stay inert until
+// [setup] templates names them), sorted by name. A loaded Lua
+// template replaces the built-in of the same name (the R2 preset
+// override rule).
+func mergedTemplates(active []string) []setup.Template {
 	base := builtinTemplates()
 	if len(base) == 0 {
 		base = setup.Templates
@@ -342,7 +349,7 @@ func mergedTemplates() []setup.Template {
 		seen[t.Name] = true
 	}
 	var add []setup.Template
-	for _, t := range luaTemplates(filepath.Dir(configPath())) {
+	for _, t := range luaTemplates(filepath.Dir(configPath()), active) {
 		if !seen[t.Name] {
 			add = append(add, t)
 			continue

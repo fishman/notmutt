@@ -1,28 +1,30 @@
 //go:build lua
 
 // The setup template layer (R8, the R12 build-gating pattern): every
-// detection template is a Lua file returning a table with name,
-// required, and optional tag -> candidate-folder maps. The shipped
-// templates (lua/templates/, the examples contributors copy) are
-// embedded and evaluated as the built-ins; contributed templates from
-// <configdir>/lua/templates replace built-ins by name (the R2 preset
-// override rule), new names add to the detection set. Compiles only
-// under the lua build tag - default builds carry setup_lua_stub.go,
-// no Lua runtime, and the Go fallback in setup.Templates.
+// detection template is a Lua file returning a table with name, match
+// (the TOP-LEVEL folders that gate the template), and folders (tag ->
+// candidate-folder paths for extraction). The shipped templates
+// (lua/templates/, the examples contributors copy) are embedded and
+// evaluated as the built-ins; contributed templates from
+// <configdir>/lua/templates are OPT-IN - only the names listed in
+// [setup] templates load, replacing built-ins by name (the R2 preset
+// override rule) or adding to the detection set. Compiles only under
+// the lua build tag - default builds carry setup_lua_stub.go, no Lua
+// runtime, and the Go fallback in setup.Templates.
 //
 // The template shape (copy a file from lua/templates/ to
-// <configdir>/lua/templates/ and edit):
+// <configdir>/lua/templates/, enable its name in [setup] templates,
+// and edit):
 //
 //	return {
 //	  name = "exchange",
-//	  required = {
+//	  match = { "INBOX", "Sent Items" },
+//	  folders = {
 //	    inbox = { "INBOX" },
 //	    sent = { "Sent Items" },
 //	    deleted = { "Deleted Items" },
-//	  },
-//	  optional = {
-//	    archive = { "Archive" },
 //	    draft = { "Drafts" },
+//	    archive = { "Archive" },
 //	    spam = { "Junk Email", "Junk" },
 //	  },
 //	}
@@ -37,6 +39,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -89,20 +92,28 @@ func builtinTemplates() []setup.Template {
 	return out
 }
 
-// luaTemplates loads every *.lua file in dir/templates (sorted, so
-// the detection order is deterministic): each file is one detection
-// template. A file that fails to load is logged and skipped (the
-// plugin degrade rule - a bad template never breaks setup). A missing
-// dir is a no-op - no contributed templates.
-func luaTemplates(dir string) []setup.Template {
+// luaTemplates loads the OPT-IN contributed templates from
+// dir/templates: a file is one detection template, named <name>.lua,
+// and only the names in active load (not every template is
+// autoloaded - the seeded examples stay inert until [setup] templates
+// names them; an unlisted file is not even evaluated). Sorted, so the
+// detection order is deterministic. A listed file that fails to load
+// is logged and skipped (the plugin degrade rule - a bad template
+// never breaks setup). A missing dir is a no-op - no contributed
+// templates.
+func luaTemplates(dir string, active []string) []setup.Template {
 	tdir := filepath.Join(dir, "templates")
 	entries, err := os.ReadDir(tdir)
 	if err != nil {
 		return nil
 	}
+	enabled := map[string]bool{}
+	for _, name := range active {
+		enabled[name] = true
+	}
 	var files []string
 	for _, e := range entries {
-		if !e.IsDir() && filepath.Ext(e.Name()) == ".lua" {
+		if !e.IsDir() && filepath.Ext(e.Name()) == ".lua" && enabled[strings.TrimSuffix(e.Name(), ".lua")] {
 			files = append(files, e.Name())
 		}
 	}
@@ -114,11 +125,16 @@ func luaTemplates(dir string) []setup.Template {
 			log.Printf("setup template %s: %v", name, err)
 			continue
 		}
-		if t, err := templateFromSource(src); err != nil {
+		t, err := templateFromSource(src)
+		if err != nil {
 			log.Printf("setup template %s: %v", name, err)
-		} else {
-			out = append(out, t)
+			continue
 		}
+		if t.Name != strings.TrimSuffix(name, ".lua") {
+			log.Printf("setup template %s: name %q must match the file name", name, t.Name)
+			continue
+		}
+		out = append(out, t)
 	}
 	return out
 }
@@ -147,12 +163,28 @@ func templateFromSource(src []byte) (setup.Template, error) {
 		return setup.Template{}, fmt.Errorf("name must be a non-empty string")
 	}
 	t := setup.Template{Name: string(name)}
-	t.Required = tagFolders(tbl.RawGetString("required"))
-	t.Optional = tagFolders(tbl.RawGetString("optional"))
-	if len(t.Required) == 0 {
-		return setup.Template{}, fmt.Errorf("required must map tags to candidate folder names")
+	t.Match = stringList(tbl.RawGetString("match"))
+	t.Folders = tagFolders(tbl.RawGetString("folders"))
+	if len(t.Match) == 0 {
+		return setup.Template{}, fmt.Errorf("match must name the top-level folders that gate the template")
+	}
+	if len(t.Folders) == 0 {
+		return setup.Template{}, fmt.Errorf("folders must map tags to candidate folder names")
 	}
 	return t, nil
+}
+
+// stringList converts a Lua table of strings (the match names).
+func stringList(v lua.LValue) []string {
+	tbl, ok := v.(*lua.LTable)
+	if !ok {
+		return nil
+	}
+	var out []string
+	tbl.ForEach(func(_, v lua.LValue) {
+		out = append(out, v.String())
+	})
+	return out
 }
 
 // tagFolders converts a Lua table of tag -> candidate-name arrays.

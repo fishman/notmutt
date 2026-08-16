@@ -457,3 +457,46 @@ func TestPollReproScript(t *testing.T) {
 		t.Fatalf("check without a stored diff = %q, want an error", out)
 	}
 }
+
+// TestRunPollConfig: the dry-run uses the config files, not defaults -
+// a fixture config dir (the NOTMUTT_CONFIG path pollOnce takes) whose
+// filters.toml header rule and accounts.toml account with its hard-tag
+// folder map must show up in the replayed diff: +work from the rule,
+// +gmail from the account, +archive from the hard-tag folder map.
+func TestRunPollConfig(t *testing.T) {
+	conf := t.TempDir()
+	os.WriteFile(filepath.Join(conf, "filters.toml"), []byte(
+		"[[filter.header-rules]]\nquery = \"from:acme\"\nadd = [\"work\"]\n"), 0o600)
+	os.WriteFile(filepath.Join(conf, "accounts.toml"), []byte(
+		"[accounts.gmail]\nfolder = \"gmail\"\n\n"+
+			"[accounts.gmail.folders]\narchive = \"Archives\"\ninbox = \"INBOX\"\n"), 0o600)
+	t.Setenv("NOTMUTT_CONFIG", conf)
+	cfg, err := config.Load(configDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	os.MkdirAll(filepath.Join(root, "gmail", "Archives", "cur"), 0o700)
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}}},
+	}
+	w.rev.Store(5)
+
+	line, diff, err := runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "dry-run: 0..5: 1 entries") {
+		t.Fatalf("summary = %q", line)
+	}
+	joined := strings.Join(diff, "\n")
+	for _, want := range []string{"+work", "+gmail", "+archive", "-inbox"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("diff lacks %s (the rule/account/hard-tag from the config): %q", want, diff)
+		}
+	}
+}

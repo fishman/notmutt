@@ -149,7 +149,10 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 			continue
 		}
 		a, ok := m.cfg.Accounts[e.Account]
-		if !ok {
+		if !ok || a.ReadOnly {
+			// readonly accounts (dead accounts like toptal) never move:
+			// no targets means every entry skips silently - folder tags
+			// still apply, nothing destructive ever touches their mail.
 			continue
 		}
 		fs := a.Tag(e.Account)

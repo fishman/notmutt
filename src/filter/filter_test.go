@@ -367,6 +367,52 @@ func TestMoverStripsMbsyncUID(t *testing.T) {
 	}
 }
 
+// TestMoverReadOnlyAccount: a readonly account (R2 - toptal, a dead
+// account) never moves: no file ops, no path ops, the source stays.
+// Non-readonly accounts in the same report still move.
+func TestMoverReadOnlyAccount(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"INBOX", "Archives"} {
+		for _, a := range []string{"gmail", "toptal"} {
+			if err := os.MkdirAll(filepath.Join(root, a, d, "cur"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	src := filepath.Join(root, "toptal", "INBOX", "cur", "1")
+	if err := os.WriteFile(src, []byte("mail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{
+		"gmail":  {Preset: "gmail"},
+		"toptal": {Preset: "gmail", ReadOnly: true},
+	}
+	cfg.Filter.DryRun = false
+	w := &fakeWorker{}
+	rep := &Report{Entries: []Entry{
+		{ID: "m1", Account: "toptal", Folder: "archive", Paths: []string{"toptal/INBOX/cur/1"}},
+		{ID: "m2", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/2"}},
+	}}
+
+	mr, err := NewMover(w, cfg, root).Move(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mr.Moves) != 1 || mr.Moves[0].ID != "m2" {
+		t.Fatalf("moves = %+v, want only the gmail move", mr.Moves)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("readonly source was moved")
+	}
+	if len(w.pathOps) != 2 {
+		t.Fatalf("path ops = %+v, want only the gmail add+remove", w.pathOps)
+	}
+}
+
 func equalOps(a, b []core.TagOp) bool {
 	if len(a) != len(b) {
 		return false

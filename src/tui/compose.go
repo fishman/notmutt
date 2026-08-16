@@ -293,12 +293,14 @@ func formRowOf(form []composeForm, slot int) int {
 	return -1
 }
 
-// renderFuzzy builds the selector popup frame: the title, the ranked
-// matches, the query row, the fuzzy keyhint, the status row. Exactly
-// m.height lines - the popup replaces the compose frame (a clean
-// diff, never an overlay). The query row always renders - the user's
-// filter input stays visible mid-type - and the match list clips to
-// fill the frame (large lists scroll later).
+// renderFuzzy builds the selector popup frame: the matcher row on
+// top (title + filter input - the title doubles as the prompt, no
+// standalone title line), then the ranked matches, then the fuzzy
+// keyhint and status rows. Exactly m.height lines - the popup
+// replaces the compose frame (a clean diff, never an overlay). The
+// matcher row always renders - the user's filter input stays visible
+// mid-type - and the match list clips to fill the frame (large lists
+// scroll later).
 func (m *Model) renderFuzzy() string {
 	rows := m.height - 3
 	if rows < 1 {
@@ -307,10 +309,8 @@ func (m *Model) renderFuzzy() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
-	lines := []string{m.fuzzy.title}
-	// the query row always renders (the user's filter input must stay
-	// visible mid-type); the match list clips to fill
-	matchRows := rows - 2
+	lines := []string{padRow(m.fuzzy.title+" "+m.fuzzy.query, m.width, m.styles.Indicator)}
+	matchRows := rows - 1
 	if matchRows < 0 {
 		matchRows = 0
 	}
@@ -325,7 +325,6 @@ func (m *Model) renderFuzzy() string {
 		}
 		lines = append(lines, padRow(m.fuzzy.entries[matches[i]], m.width, outer))
 	}
-	lines = append(lines, padRow(m.fuzzy.title+" "+m.fuzzy.query, m.width, m.styles.Indicator))
 	for len(lines) < rows {
 		lines = append(lines, padRow("", m.width, m.styles.Normal))
 	}

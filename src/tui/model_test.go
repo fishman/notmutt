@@ -2106,9 +2106,11 @@ func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 		t.Fatalf("the popup frame must be exactly 7 lines, got %d", got)
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
-	// 5 popup rows: title, 3 matches (4 accounts exist), the query row
-	if got := strings.TrimSpace(lines[4]); got != "account:" {
-		t.Fatalf("the query row must stay visible above the keyhint:\n%s", frame)
+	// 5 popup rows after the tab bar: the matcher row on top (title +
+	// filter input - the title doubles as the prompt, no standalone
+	// title line), then 3 matches (4 accounts exist)
+	if got := strings.TrimSpace(lines[1]); got != "account:" {
+		t.Fatalf("the matcher row must stay visible above the matches:\n%s", frame)
 	}
 	if strings.Contains(frame, "toptal") {
 		t.Fatalf("the match list must clip to fill, not the query row:\n%s", frame)

@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -583,6 +584,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.logEntry(e.Output, false)
 			}
+		case core.FilterDone:
+			// the filter run's summary on the status line (R2); the
+			// per-file detail lives in diag
+			verb := "applied"
+			if e.DryRun {
+				verb = "dry-run"
+			}
+			m.logEntry(fmt.Sprintf("filter: %d entries, %d moved, %d skipped (%s)", e.Entries, e.Moves, e.Skips, verb), false)
 		case core.JobError:
 			// a failed background job logs with its kind (R15)
 			m.logEntry(e.Job+": "+e.Err.Error(), true)

@@ -24,6 +24,9 @@ type Mover struct {
 	cfg    config.Config
 	root   string
 	dryRun bool
+	// Progress, when set, reports each processed entry (R15 batch
+	// boundary: the mover's per-message loop).
+	Progress func(done, total int)
 }
 
 func NewMover(w Worker, cfg config.Config, root string) *Mover {
@@ -55,7 +58,10 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 	out := &MoveReport{}
 	targets, managed := m.resolveAccounts(rep)
 	var toAdd, toRemove []string
-	for _, e := range rep.Entries {
+	for i, e := range rep.Entries {
+		if m.Progress != nil {
+			m.Progress(i+1, len(rep.Entries))
+		}
 		if e.Folder == "" {
 			continue
 		}

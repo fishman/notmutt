@@ -253,6 +253,17 @@ func TestJobErrorSurfaces(t *testing.T) {
 	}
 }
 
+// TestFilterDoneSurfaces pins the filter summary line (R2): the run's
+// counts land on the status line as an info entry.
+func TestFilterDoneSurfaces(t *testing.T) {
+	m := model()
+	next, _ := m.Update(EventMsg{Event: core.FilterDone{DryRun: true, Entries: 3, Moves: 1, Skips: 2}})
+	m = next.(Model)
+	if m.statusMsg != "filter: 3 entries, 1 moved, 2 skipped (dry-run)" || m.statusMsgErr {
+		t.Fatalf("filter summary = %q err=%v", m.statusMsg, m.statusMsgErr)
+	}
+}
+
 // TestLogRingCaps pins the ring cap: beyond logCap entries the oldest
 // drop.
 func TestLogRingCaps(t *testing.T) {

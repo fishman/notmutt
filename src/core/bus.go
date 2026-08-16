@@ -213,6 +213,17 @@ type JobError struct {
 	Err error
 }
 
+// FilterDone reports a filter run's outcome (R2): the classification
+// entry count and the mover's moves and skips, dry-run or applied. The
+// per-file detail lines live in diag; this is the summary surface (the
+// TUI's status line, R15's async channel).
+type FilterDone struct {
+	DryRun  bool
+	Entries int
+	Moves   int
+	Skips   int
+}
+
 // LuaResult reports a :lua command or a Lua plugin action run (R8):
 // the collected print output plus the error, or nil on success. The
 // TUI shows it as a transient status notice. Output is plugin/user

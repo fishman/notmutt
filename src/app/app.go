@@ -151,7 +151,18 @@ func Run() error {
 		}()
 	})
 
-	go runRefresher(ctx, bus, worker, refresher, st)
+	// the filter job (R2): the poll's classification pipeline. The mail
+	// root resolves once (argv-only, F4 - the setupAccounts pattern); a
+	// failure disables the job - the client still works, the poll
+	// degrades to the refresher's plain new.
+	var fj *filterJob
+	if root, err := mailRoot(); err != nil {
+		diag.Warn("filter: disabled", "err", err.Error())
+	} else {
+		fj = newFilterJob(bus, worker, st, root, view.Name)
+	}
+
+	go runRefresher(ctx, bus, worker, refresher, st, fj)
 
 	busCh := bus.Subscribe()
 	// WithFPS(120) aligns the renderer's write tick with the model's 8ms
@@ -248,17 +259,17 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 	}
 }
 
-// runRefresher is the refresh loop: the poll ticker runs `notmuch new`
-// and refreshes the view at the [refresh] interval (R2/R3 - the poll is
-// the trigger for the user's post-new classification pipeline, so the
-// cadence is configurable, default 20 min). The manual refresh key
-// publishes RefreshRequested, which runs the same poll body. The
-// ActNew itself publishes WorkerDone, which triggers a second cycle;
-// the running flag makes overlapping cycles no-ops, and a post-ActNew
-// cycle catches the lastmod bumps of the classification tags. A
-// [refresh] config change re-arms the ticker; other sections reach
-// onConfig.
-func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {
+// runRefresher is the refresh loop: the poll ticker refreshes the view
+// at the [refresh] interval (R2/R3 - the poll is the trigger for the
+// user's classification pipeline, so the cadence is configurable,
+// default 20 min). The manual refresh key publishes RefreshRequested,
+// which runs the same poll body. With the filter job enabled it owns
+// `notmuch new` (the revision bracket + delta classification); its
+// ActNew's WorkerDone cycles the view, and a post-ActNew cycle catches
+// the lastmod bumps of the classification tags. Disabled, the poll
+// runs a plain `notmuch new` here. A [refresh] config change re-arms
+// the ticker; other sections reach onConfig.
+func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store, fj *filterJob) {
 	ch := bus.Subscribe()
 	// interval 0 = the automatic poll is off (a nil channel never
 	// fires in the select); the refresh key still runs the poll body
@@ -271,6 +282,13 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 		tickCh = ticker.C
 	}
 	poll := func() {
+		if fj != nil && st.Config().Filter.Enabled {
+			// the filter job owns `notmuch new`; the view cycle comes
+			// from its ActNew's WorkerDone (the refresher's own
+			// WorkerDone case below)
+			go fj.run()
+			return
+		}
 		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
 			// a backend without a New path (ErrUnsupported) is expected -
 			// the poll then degrades to the revision refresh, which picks

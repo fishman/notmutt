@@ -92,7 +92,27 @@ func (j *filterJob) run() {
 			moved++
 		}
 	}
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped})
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: prioritySubjects(cfg, rep)})
+}
+
+// prioritySubjects caps the [notify] priority payload: the subjects of
+// entries carrying a priority tag (F6: subjects only, never ids or
+// bodies), at most max; max <= 0 disables the subjects, the count
+// stays.
+func prioritySubjects(cfg config.Config, rep *filter.Report) []string {
+	if cfg.Notify.Max <= 0 {
+		return nil
+	}
+	var out []string
+	for _, e := range rep.Entries {
+		if e.Priority && e.Subject != "" {
+			out = append(out, e.Subject)
+			if len(out) >= cfg.Notify.Max {
+				break
+			}
+		}
+	}
+	return out
 }
 
 func (j *filterJob) fail(err error) {

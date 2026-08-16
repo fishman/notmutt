@@ -133,6 +133,49 @@ func TestEngineClassification(t *testing.T) {
 	}
 }
 
+// TestEntryPriority: an entry whose resolved tag set contains a
+// [notify] priority tag is flagged; one without is not.
+func TestEntryPriority(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	root := filepath.Join(dir, "mail")
+	if err := os.MkdirAll(filepath.Join(root, "gmail", "INBOX", "cur"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mark := filepath.Join(dir, ".cache", "mail-sync-mark")
+	if err := os.MkdirAll(filepath.Dir(mark), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(mark, nil, 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.HeaderRules = []config.HeaderRule{{Query: "from:x", Add: []string{"work"}}}
+	cfg.Filter.DryRun = true
+	cfg.Notify.Priority = []string{"work"}
+
+	w := &fakeWorker{
+		delta:  []core.Message{{ID: "m1"}},
+		snaps:  []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/INBOX/cur/2"}}},
+		header: map[string]bool{"m1": true},
+	}
+	rep, err := New(w, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 || !rep.Entries[0].Priority {
+		t.Fatalf("priority entry missing: %+v", rep.Entries)
+	}
+	cfg.Notify.Priority = []string{"urgent"}
+	rep, err = New(w, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 || rep.Entries[0].Priority {
+		t.Fatalf("unrelated priority tag flagged: %+v", rep.Entries)
+	}
+}
+
 func TestMover(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")

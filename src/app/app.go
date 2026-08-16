@@ -165,12 +165,15 @@ func Run() error {
 
 	// the new-mail notification (R2 side effect): the filter job's
 	// completion event, live runs only - a dry-run report is review
-	// noise, not a delivery. The count is the only payload (F6).
+	// noise, not a delivery. The backend resolves once at startup
+	// (auto-detected by default); the payload is the count plus the
+	// priority subjects (F6: subjects only).
 	go func() {
+		backend := resolveNotifyBackend(st.Config(), notifyDaemonReachable)
 		ch := bus.Subscribe()
 		for e := range ch {
 			if d, ok := e.(core.FilterDone); ok && !d.DryRun {
-				go notifyNewMail(st.Config(), d.Entries)
+				go notifyNewMail(st.Config(), backend, d.Entries, d.Priority)
 			}
 		}
 	}()

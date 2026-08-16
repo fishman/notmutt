@@ -218,10 +218,11 @@ type JobError struct {
 // per-file detail lines live in diag; this is the summary surface (the
 // TUI's status line, R15's async channel).
 type FilterDone struct {
-	DryRun  bool
-	Entries int
-	Moves   int
-	Skips   int
+	DryRun   bool
+	Entries  int
+	Moves    int
+	Skips    int
+	Priority []string // subjects of entries with a [notify] priority tag, capped (F6: subjects only)
 }
 
 // LuaResult reports a :lua command or a Lua plugin action run (R8):

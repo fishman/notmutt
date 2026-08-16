@@ -1,0 +1,34 @@
+<toast activationType="{{.ActivationType}}" launch="{{.ActivationArguments}}" duration="{{.Duration}}">
+    <visual>
+        <binding template="ToastGeneric">
+            {{if .Icon}}
+            <image placement="appLogoOverride" src="{{.Icon}}" />
+            {{end}}
+            {{if .Title}}
+            <text><![CDATA[{{.Title}}]]></text>
+            {{end}}
+            {{if .Body}}
+            <text><![CDATA[{{.Body}}]]></text>
+            {{end}}
+        </binding>
+    </visual>
+    {{if ne .Audio "silent"}}
+	<audio src="{{.Audio}}" loop="{{.Loop}}" />
+	{{else}}
+	<audio silent="true" />
+	{{end}}
+    {{if .Actions}}
+    <actions>
+        {{range .Inputs}}
+        <input id="{{.ID}}" title="{{.Title}}" placeHolderContent="{{.Placeholder}}" {{if .Selections}} type="selection" {{else}} type="text" {{end}}>
+            {{range .Selections}}
+            <selection id="{{.ID}}" content="{{.Content}}" />
+            {{end}}
+        </input>
+        {{end}}
+        {{range .Actions}}
+        <action activationType="{{.Type}}" content="{{.Content}}" arguments="{{.Arguments}}" />
+        {{end}}
+    </actions>
+    {{end}}
+</toast>

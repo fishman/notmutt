@@ -87,6 +87,54 @@ command = [""]
 	}
 }
 
+func TestLoadNotifyFields(t *testing.T) {
+	cfg, err := Load(write(t, `
+[notify]
+backend = "command"
+priority = ["urgent"]
+max = 5
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notify.Backend != "command" || len(cfg.Notify.Priority) != 1 || cfg.Notify.Max != 5 {
+		t.Fatalf("notify = %+v", cfg.Notify)
+	}
+	for _, b := range []string{"", "beeep"} { // auto and explicit both load
+		if _, err := Load(write(t, "[notify]\nbackend = \""+b+"\"\n")); err != nil {
+			t.Fatalf("backend %q: %v", b, err)
+		}
+	}
+}
+
+func TestLoadNotifyUnknownBackendErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[notify]
+backend = "carrier-pigeon"
+`))
+	if err == nil || !strings.Contains(err.Error(), "carrier-pigeon") {
+		t.Fatalf("unknown backend must error naming it, got: %v", err)
+	}
+}
+
+func TestLoadNotifyBadValuesError(t *testing.T) {
+	for _, toml := range []string{
+		"[notify]\nmax = -1\n",
+		"[notify]\npriority = [\"\"]\n",
+	} {
+		if _, err := Load(write(t, toml)); err == nil {
+			t.Fatalf("expected error for: %s", toml)
+		}
+	}
+}
+
+func TestDefaultNotify(t *testing.T) {
+	cfg := Default()
+	if cfg.Notify.Backend != "" || cfg.Notify.Max != 3 {
+		t.Fatalf("default notify = %+v", cfg.Notify)
+	}
+}
+
 func TestLoadUnknownKeyErrors(t *testing.T) {
 	_, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nksy = true\n"))
 	if err == nil {

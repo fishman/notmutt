@@ -162,11 +162,20 @@ type Filter struct {
 	HeaderRules []HeaderRule `toml:"header-rules"`
 }
 
-// Notify configures the new-mail notification side effect (R2): an
-// argv command run once per processed batch, {count} replaced with
-// the processed entry count. No command = disabled.
+// Notify configures the new-mail notification side effect (R2): the
+// argv command backend or the platform backend ("beeep"). The backend
+// is auto-detected when empty (the default): the platform backend
+// when the session can show notifications, the command otherwise -
+// explicit config always wins. {count} in the argv is the processed
+// entry count, {subjects} the subjects of entries carrying any
+// priority tag (capped at max, one per line). No command = disabled;
+// the beeep body is built the same way. The payload never carries
+// bodies or ids (F6).
 type Notify struct {
-	Command []string `toml:"command"`
+	Backend  string   `toml:"backend"`
+	Command  []string `toml:"command"`
+	Priority []string `toml:"priority"`
+	Max      int      `toml:"max"`
 }
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it
@@ -895,6 +904,9 @@ func Default() Config {
 			Enabled: true,
 			DryRun:  true,
 		},
+		Notify: Notify{
+			Max: 3,
+		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 	}
@@ -1067,8 +1079,19 @@ func validate(cfg Config) error {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
 		}
 	}
+	if b := cfg.Notify.Backend; b != "" && b != "command" && b != "beeep" {
+		return fmt.Errorf("notify: unknown backend %q", b)
+	}
 	if len(cfg.Notify.Command) > 0 && strings.TrimSpace(cfg.Notify.Command[0]) == "" {
 		return fmt.Errorf("notify: command argv must not be empty")
+	}
+	if cfg.Notify.Max < 0 {
+		return fmt.Errorf("notify: max must be >= 0")
+	}
+	for _, t := range cfg.Notify.Priority {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("notify: priority tag must not be empty")
+		}
 	}
 	for i, r := range cfg.Filter.HeaderRules {
 		if strings.TrimSpace(r.Query) == "" {

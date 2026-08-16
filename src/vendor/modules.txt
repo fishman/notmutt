@@ -1,6 +1,13 @@
 # charm.land/bubbletea/v2 v2.0.8
 ## explicit; go 1.25.0
 charm.land/bubbletea/v2
+# git.sr.ht/~jackmordaunt/go-toast v1.1.2
+## explicit; go 1.20
+git.sr.ht/~jackmordaunt/go-toast
+git.sr.ht/~jackmordaunt/go-toast/internal/winrt/data/xml/dom
+git.sr.ht/~jackmordaunt/go-toast/internal/winrt/ui/notifications
+git.sr.ht/~jackmordaunt/go-toast/tmpl
+git.sr.ht/~jackmordaunt/go-toast/wintoast
 # github.com/BurntSushi/toml v1.4.0
 ## explicit; go 1.18
 github.com/BurntSushi/toml
@@ -49,9 +56,24 @@ github.com/emersion/go-message/textproto
 # github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f
 ## explicit; go 1.16
 github.com/erikgeiser/coninput
+# github.com/esiqveland/notify v0.13.3
+## explicit; go 1.13
+github.com/esiqveland/notify
 # github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928 => ../notmuch/bindings/go.notmuch
 ## explicit; go 1.23
 github.com/fishman/go.notmuch
+# github.com/gen2brain/beeep v0.11.2
+## explicit; go 1.21.5
+github.com/gen2brain/beeep
+# github.com/go-ole/go-ole v1.3.0
+## explicit; go 1.12
+github.com/go-ole/go-ole
+# github.com/godbus/dbus/v5 v5.1.0
+## explicit; go 1.12
+github.com/godbus/dbus/v5
+# github.com/jackmordaunt/icns/v3 v3.0.1
+## explicit; go 1.21.5
+github.com/jackmordaunt/icns/v3
 # github.com/lucasb-eyer/go-colorful v1.4.0
 ## explicit; go 1.12
 github.com/lucasb-eyer/go-colorful
@@ -74,12 +96,25 @@ github.com/muesli/cancelreader
 # github.com/muesli/termenv v0.15.2
 ## explicit; go 1.17
 github.com/muesli/termenv
+# github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
+## explicit
+github.com/nfnt/resize
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg
 # github.com/sahilm/fuzzy v0.1.3
 ## explicit; go 1.24.5
 github.com/sahilm/fuzzy
+# github.com/sergeymakinen/go-bmp v1.0.0
+## explicit; go 1.13
+github.com/sergeymakinen/go-bmp
+# github.com/sergeymakinen/go-ico v1.0.0-beta.0
+## explicit; go 1.17
+github.com/sergeymakinen/go-ico
+github.com/sergeymakinen/go-ico/internal/icondir
+# github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af
+## explicit
+github.com/tadvi/systray
 # github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
 ## explicit; go 1.19
 github.com/xo/terminfo
@@ -99,6 +134,7 @@ golang.org/x/sync/errgroup
 ## explicit; go 1.25.0
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+golang.org/x/sys/windows/registry
 # golang.org/x/text v0.14.0
 ## explicit; go 1.18
 golang.org/x/text/encoding

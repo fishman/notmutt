@@ -87,11 +87,13 @@ func candidates(a config.Account, tag string) []string {
 
 // Entry is one message's classification outcome.
 type Entry struct {
-	ID      string
-	Account string
-	Folder  string       // the resolved folder-group winner with move candidates; empty = no move
-	Paths   []string     // the message's files, as notmuch reported them
-	Ops     []core.TagOp // the fully resolved op set (adds + exclusive-group removals)
+	ID       string
+	Subject  string
+	Priority bool // carries a [notify] priority tag after classification
+	Account  string
+	Folder   string       // the resolved folder-group winner with move candidates; empty = no move
+	Paths    []string     // the message's files, as notmuch reported them
+	Ops      []core.TagOp // the fully resolved op set (adds + exclusive-group removals)
 }
 
 // Report is the run's outcome: dry-run writes nothing and the entries
@@ -263,7 +265,21 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 	if len(ops) == 0 {
 		return Entry{}
 	}
-	_, resolved := core.ResolveOps(m.Tags, ops, e.groups)
+	final, resolved := core.ResolveOps(m.Tags, ops, e.groups)
+	prio := false
+	if len(e.cfg.Notify.Priority) > 0 {
+		for _, t := range final {
+			for _, p := range e.cfg.Notify.Priority {
+				if t == p {
+					prio = true
+					break
+				}
+			}
+			if prio {
+				break
+			}
+		}
+	}
 	acc := ""
 	folder := ""
 	if ar != nil {
@@ -280,7 +296,7 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 			}
 		}
 	}
-	return Entry{ID: m.ID, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
+	return Entry{ID: m.ID, Subject: m.Subject, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
 // relPath strips the mail root prefix: the path rules match relative

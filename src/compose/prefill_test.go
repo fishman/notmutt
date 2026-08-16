@@ -93,8 +93,8 @@ func TestForwardPrefill(t *testing.T) {
 }
 
 func TestNewCompose(t *testing.T) {
-	s := NewCompose("dynamia", "Reza <reza@example.com>", "", "")
-	if s.Mode != ModeCompose || s.Account != "dynamia" {
+	s := NewCompose("nimbus", "Sender <sender@example.com>", "", "")
+	if s.Mode != ModeCompose || s.Account != "nimbus" {
 		t.Fatalf("new compose: %+v", s)
 	}
 	if len(s.To) != 0 || s.Subject != "" || s.Body != "" || s.Signature != "" {

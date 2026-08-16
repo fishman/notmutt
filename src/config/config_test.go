@@ -384,7 +384,7 @@ func TestRefreshIntervalNegativeErrors(t *testing.T) {
 func TestAccountSendFields(t *testing.T) {
 	cfg, err := Load(write(t, `
 [accounts.gmail]
-from = "Reza <reza@example.com>"
+from = "Sender <sender@example.com>"
 sent_folder = "/home/me/Mail/gmail/Sent"
 default_signature = "gmail"
 `))
@@ -392,7 +392,7 @@ default_signature = "gmail"
 		t.Fatal(err)
 	}
 	a := cfg.Accounts["gmail"]
-	if a.From != "Reza <reza@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
+	if a.From != "Sender <sender@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
 		t.Fatalf("account send fields = %+v", a)
 	}
 }
@@ -864,13 +864,13 @@ func TestSetThemeVariant(t *testing.T) {
 
 func TestAccounts(t *testing.T) {
 	cfg, err := Load(writeThemeFile(t, `
-[accounts.dynamia]
+[accounts.atlas]
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Accounts["dynamia"].Tag("dynamia") != "dynamia" {
-		t.Fatalf("account tag defaults to the name: %+v", cfg.Accounts["dynamia"])
+	if cfg.Accounts["atlas"].Tag("atlas") != "atlas" {
+		t.Fatalf("account tag defaults to the name: %+v", cfg.Accounts["atlas"])
 	}
 	// a file adding one account merges over the reference defaults (R8)
 	if cfg.Accounts["gmail"].Tag("gmail") != "gmail" {
@@ -893,7 +893,7 @@ folder = "gmail"
 
 func TestAccountStrictLoad(t *testing.T) {
 	_, err := Load(writeThemeFile(t, `
-[accounts.dynamia]
+[accounts.atlas]
 nonesuch = "x"
 `))
 	if err == nil || !strings.Contains(err.Error(), "nonesuch") {
@@ -903,7 +903,7 @@ nonesuch = "x"
 
 func TestAccountBlankFolder(t *testing.T) {
 	_, err := Load(writeThemeFile(t, `
-[accounts.dynamia]
+[accounts.atlas]
 folder = ""
 `))
 	if err == nil || !strings.Contains(err.Error(), "folder") {
@@ -952,7 +952,7 @@ enabled = false
 dry-run = false
 
 [[filter.header-rules]]
-query = "from:*@dynamia.ai"
+query = "from:*@atlas.example"
 add = ["work"]
 `))
 	if err != nil {
@@ -961,7 +961,7 @@ add = ["work"]
 	if cfg.Filter.Enabled || cfg.Filter.DryRun {
 		t.Fatalf("filter overrides ignored: %+v", cfg.Filter)
 	}
-	if len(cfg.Filter.HeaderRules) != 1 || cfg.Filter.HeaderRules[0].Query != "from:*@dynamia.ai" ||
+	if len(cfg.Filter.HeaderRules) != 1 || cfg.Filter.HeaderRules[0].Query != "from:*@atlas.example" ||
 		len(cfg.Filter.HeaderRules[0].Add) != 1 || cfg.Filter.HeaderRules[0].Add[0] != "work" {
 		t.Fatalf("header-rules = %+v", cfg.Filter.HeaderRules)
 	}

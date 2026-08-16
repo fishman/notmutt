@@ -2,36 +2,36 @@ package tui
 
 import "testing"
 
-// TestFuzzyAddressRanking pins the matcher's score ranking on the
-// real complaint: query "Mila" must rank the exact display form
-// "Mila <mila@stclab.com>" first, above every longer name that shares
-// the M-i-l-a subsequence (the old first-position tie-break ranked
-// alphabetically and lost).
+// TestFuzzyAddressRanking pins the matcher's score ranking: query
+// "Mila" must rank the exact display form "Mila <mila@stlab.test>"
+// first, above every longer entry that shares the M-i-l-a subsequence
+// (the old first-position tie-break ranked alphabetically and lost).
+// Entries are fabricated - never real people's addresses.
 func TestFuzzyAddressRanking(t *testing.T) {
 	f := newFuzzy("address", "address:", []string{
-		"Maria Lopez-Diaz <maria.lopez@cpdesignthinking.com>",
-		"Marielle de Sagazan <marie.desagazan2@orange.fr>",
-		"MediaMarkt (c) Kundenbetreuung <info@arum998.everlasting065.hamidreza.co>",
-		"Mejia Rodriguez, Catalina <catalina.mejia@rwth-aachen.de>",
-		"Michał Marszałek <michal.marszalek@flyrlabs.com>",
-		"Mieszko Mularczyk <mieszko.mular@apptimia.com.pl>",
-		"Mila <mila@stclab.com>",
+		"Maria Lopez-Diaz <maria.lopez@design.test>",
+		"Marielle de Santos <marielle.santos@mailco.test>",
+		"MediaOutlet (c) Customer Care <info@shop482.mall.test>",
+		"Mejia Rodriguez, Carlota <carlota.mejia@uniwest.test>",
+		"Michał Mazurkiewicz <michal.mazurkiewicz@flylab.test>",
+		"Mikołaj Mularczyk <mikolaj.mular@apptimia.test>",
+		"Mila <mila@stlab.test>",
 	})
 	f.query = "Mila"
 	idx := f.filtered()
 	if len(idx) != 7 {
 		t.Fatalf("all entries must match, got %d", len(idx))
 	}
-	if got := f.entries[idx[0]]; got != "Mila <mila@stclab.com>" {
+	if got := f.entries[idx[0]]; got != "Mila <mila@stlab.test>" {
 		t.Fatalf("the consecutive run must rank first, got %q", got)
 	}
 }
 
 func TestFuzzyFilteredRanking(t *testing.T) {
-	f := newFuzzy("account", "account:", []string{"gmail", "jelveh", "gmail-work"})
+	f := newFuzzy("account", "account:", []string{"gmail", "jane", "gmail-work"})
 	f.query = "gmail"
 	got := f.filtered()
-	// entries are sorted at construction: [gmail, gmail-work, jelveh];
+	// entries are sorted at construction: [gmail, gmail-work, jane];
 	// both matches score the same run, the stable sort keeps entry
 	// order, so [0, 1]
 	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
@@ -51,7 +51,7 @@ func TestFuzzyFilteredRanking(t *testing.T) {
 }
 
 func TestFuzzyEmptyQueryShowsAll(t *testing.T) {
-	f := newFuzzy("account", "account:", []string{"gmail", "jelveh"})
+	f := newFuzzy("account", "account:", []string{"gmail", "jane"})
 	if got := f.filtered(); len(got) != 2 || got[0] != 0 || got[1] != 1 {
 		t.Fatalf("empty query must list every entry in order: %v", got)
 	}

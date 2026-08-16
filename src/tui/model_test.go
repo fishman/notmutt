@@ -437,7 +437,10 @@ func model() Model {
 		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}, References: []string{"b"}},
 		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}},
 	})})
-	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	cfg := config.Default()
+	// generated accounts: tests never use real account names
+	cfg.Accounts = map[string]config.Account{"alpha": {}, "beta": {}, "gamma": {}, "delta": {}}
+	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(cfg), cfg.UI)
 }
 
 // ghostModel builds a thread whose messages share no reference chain:
@@ -2203,14 +2206,14 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	}
 	m = press(t, m, "j") // sel = 1: past a narrowed list's end
 	// type-to-filter, one key at a time
-	for _, r := range "gmail" {
+	for _, r := range "alpha" {
 		m = press(t, m, string(r))
 	}
 	m = pressType(t, m, '\r') // enter selects
 	if m.fuzzy != nil {
 		t.Fatal("enter must close the picker")
 	}
-	if m.tabs[0].Account != "gmail" {
+	if m.tabs[0].Account != "alpha" {
 		t.Fatalf("account = %q", m.tabs[0].Account)
 	}
 	// the switch also applies the account's From: a stale sel past the
@@ -2284,7 +2287,7 @@ func TestComposeRenderFuzzyPopup(t *testing.T) {
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the popup frame must be exactly 24 lines, got %d", got)
 	}
-	if !strings.Contains(frame, "account:") || !strings.Contains(frame, "dynamia") {
+	if !strings.Contains(frame, "account:") || !strings.Contains(frame, "alpha") {
 		t.Fatalf("the popup must show the title and entries:\n%s", frame)
 	}
 }
@@ -2309,7 +2312,7 @@ func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 	if got := strings.TrimSpace(lines[1]); got != "account:" {
 		t.Fatalf("the matcher row must stay visible above the matches:\n%s", frame)
 	}
-	if strings.Contains(frame, "toptal") {
+	if strings.Contains(frame, "gamma") {
 		t.Fatalf("the match list must clip to fill, not the query row:\n%s", frame)
 	}
 }
@@ -2999,7 +3002,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	m = press(t, m, "c")
-	for _, ch := range "reza@x.io" {
+	for _, ch := range "writer@example.org" {
 		m = press(t, m, string(ch))
 	}
 	frame := m.render()
@@ -3008,7 +3011,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	if !strings.Contains(row, m.styles.ComposeLabel.Render("Cc: ")) {
 		t.Fatalf("the label must render in compose.label:\n%s", frame)
 	}
-	if !strings.Contains(row, m.styles.Normal.Render("reza@x.io")) {
+	if !strings.Contains(row, m.styles.Normal.Render("writer@example.org")) {
 		t.Fatalf("the entry must render in the normal style:\n%s", frame)
 	}
 	if strings.Contains(row, m.styles.sgr.indicator.open) {

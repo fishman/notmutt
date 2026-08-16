@@ -70,7 +70,6 @@ func TestSendJobDelivers(t *testing.T) {
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
 	cfg.Accounts["gmail"] = config.Account{SentFolder: sent}
-	cfg.Accounts["jelveh"] = config.Account{}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()

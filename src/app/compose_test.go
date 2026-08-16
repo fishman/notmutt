@@ -46,47 +46,47 @@ func (t *threadBackend) New(ctx context.Context) error { return nil }
 
 func TestResolveAccountChain(t *testing.T) {
 	cfg := config.Default()
-	if got := resolveAccount(cfg, []string{"inbox", "gmail", "work"}, nil); got != "gmail" {
+	cfg.Accounts = map[string]config.Account{"acme": {}, "globex": {}, "nimbus": {}}
+	if got := resolveAccount(cfg, []string{"inbox", "acme", "work"}, nil); got != "acme" {
 		t.Fatalf("message tag first: %q", got)
 	}
-	if got := resolveAccount(cfg, []string{"inbox"}, []string{"dynamia"}); got != "dynamia" {
+	if got := resolveAccount(cfg, []string{"inbox"}, []string{"globex"}); got != "globex" {
 		t.Fatalf("cursor fallback: %q", got)
 	}
-	if got := resolveAccount(cfg, nil, nil); got != "dynamia" {
-		// default accounts are gmail, jelveh, toptal, dynamia - sorted,
-		// first is dynamia
+	if got := resolveAccount(cfg, nil, nil); got != "acme" {
+		// generated accounts are sorted, first wins
 		t.Fatalf("first account fallback: %q", got)
 	}
 }
 
 func TestDefaultSig(t *testing.T) {
 	cfg := config.Default()
-	g := cfg.Accounts["gmail"]
-	g.DefaultSignature = "personal"
-	cfg.Accounts["gmail"] = g
-	cfg.Accounts["dynamia"] = config.Account{}
+	cfg.Accounts = map[string]config.Account{
+		"acme":   {DefaultSignature: "personal"},
+		"globex": {},
+	}
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "gmail"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "acme"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "gmail", "personal"), []byte("sig text\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "acme", "personal"), []byte("sig text\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	old := sigDir
 	sigDir = dir
 	defer func() { sigDir = old }()
 
-	name, body := defaultSig(cfg, "gmail")
+	name, body := defaultSig(cfg, "acme")
 	if name != "personal" || body != "sig text" {
 		t.Fatalf("default sig = %q %q", name, body)
 	}
-	if name, _ := defaultSig(cfg, "dynamia"); name != "" {
+	if name, _ := defaultSig(cfg, "globex"); name != "" {
 		t.Fatalf("account without default must resolve empty, got %q", name)
 	}
-	to := cfg.Accounts["toptal"]
+	to := cfg.Accounts["globex"]
 	to.DefaultSignature = "absent"
-	cfg.Accounts["toptal"] = to
-	if name, body := defaultSig(cfg, "toptal"); name != "" || body != "" {
+	cfg.Accounts["globex"] = to
+	if name, body := defaultSig(cfg, "globex"); name != "" || body != "" {
 		t.Fatalf("missing signature file must resolve empty, got %q %q", name, body)
 	}
 }

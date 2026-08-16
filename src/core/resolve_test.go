@@ -121,7 +121,7 @@ func TestResolveAddThenRemoveNets(t *testing.T) {
 }
 
 func TestAccountTag(t *testing.T) {
-	set := map[string]bool{"gmail": true, "dynamia": true}
+	set := map[string]bool{"gmail": true, "globex": true}
 	if AccountTag([]string{"inbox", "gmail", "work"}, set) != "gmail" {
 		t.Fatal("must find the first account tag in the tag list")
 	}

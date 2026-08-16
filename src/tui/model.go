@@ -102,6 +102,20 @@ type Model struct {
 	// or the error text. luaErr styles it with the error style.
 	luaNotice string
 	luaErr    bool
+	// statusMsg is the transient status message on the status line's
+	// reserved right slot ("sent to ...", send failures - the R4 send
+	// completions): set by the send result, cleared by the next
+	// keypress like the lua notice. msgErr styles it with the error
+	// style.
+	statusMsg    string
+	statusMsgErr bool
+	// spin is the send dialogue spinner's frame index (sendTick
+	// advances it while a send is in flight).
+	spin int
+	// sendTickOn gates the spinner tick to a single one in flight (the
+	// legendTickOn pattern): armed when a send starts, dies when the
+	// last send completes.
+	sendTickOn bool
 	// indexOffset is the index window's anchored top row (the
 	// read-position model): the window holds
 	// still while the cursor moves within it; only when the cursor
@@ -281,9 +295,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.helpView.setSize(m.width, h)
 		}
 	case tea.KeyPressMsg:
-		// a keypress consumes the transient lua notice (R8)
+		// a keypress consumes the transient notices (R8/R4)
 		m.luaNotice = ""
 		m.luaErr = false
+		m.statusMsg = ""
+		m.statusMsgErr = false
 		// the picker outranks the prompt: the attach '?' picker arms the
 		// attach prompt (input = "@name"), so both can be live at once
 		if m.fuzzy != nil {
@@ -535,8 +551,31 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, progressTickCmd()
 		}
 		return m, nil
+	case sendTick:
+		// the send spinner's frame cadence: the tick re-arms itself
+		// and the event channel while a send is in flight, so the
+		// result lands even between keypresses (the event channel is
+		// otherwise only re-armed by events and the progress tick)
+		if m.anySending() {
+			m.spin++
+			m.sendTickOn = true
+			return m, tea.Batch(EventCmd(m.ch), sendTickCmd())
+		}
+		m.sendTickOn = false
+		return m, nil
 	}
 	return m, nil
+}
+
+// anySending reports a send in flight across the dialogue tabs - the
+// spinner tick's liveness.
+func (m *Model) anySending() bool {
+	for i := range m.tabs {
+		if m.tabs[i].Phase == compose.PhaseSending {
+			return true
+		}
+	}
+	return false
 }
 
 // dispatchAction runs a bound action with its count, then the
@@ -824,6 +863,13 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		m.legendTickOn = true
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
 	}
+	// a send press (or a retry) arms the spinner tick while the job is
+	// in flight - the single-in-flight gate keeps the 100ms re-arms
+	// from piling up across dispatches
+	if m.anySending() && !m.sendTickOn {
+		m.sendTickOn = true
+		cmds = append(cmds, sendTickCmd())
+	}
 	if len(cmds) > 0 {
 		return m, tea.Batch(cmds...)
 	}
@@ -917,13 +963,23 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 }
 
 // onSendResult applies a send result to its dialogue: OK closes the
-// tab, a failure keeps it open with Output for review. Addressed by
-// tab ID, so a closed tab's ID is a no-op (idempotent - the same
-// result may arrive via the channel and the bus snapshot).
+// tab with the "sent to ..." status message on the reserved right slot
+// (the fcc note rides along); a failure keeps the tab open, opens the
+// error dialogue with Output for review, and flags the status message.
+// Addressed by tab ID, so a closed tab's ID is a no-op (idempotent -
+// the same result may arrive via the channel and the bus snapshot).
 func (m *Model) onSendResult(e core.SendResult) {
 	for i := range m.tabs {
 		if m.tabs[i].ID == e.TabID {
 			if e.OK {
+				msg := "sent"
+				if len(m.tabs[i].To) > 0 {
+					msg = "sent to " + strings.Join(m.tabs[i].To, ", ")
+				}
+				if e.Output != "" {
+					msg += " (" + e.Output + ")"
+				}
+				m.statusMsg = core.SanitizeControls(msg)
 				m.closeComposeTab(i)
 			} else {
 				m.tabs[i].Phase = compose.PhaseFailed
@@ -931,8 +987,27 @@ func (m *Model) onSendResult(e core.SendResult) {
 				if e.Err != nil && m.tabs[i].Output == "" {
 					m.tabs[i].Output = e.Err.Error()
 				}
+				m.statusMsg = "send failed"
+				m.statusMsgErr = true
+				m.dialogue = &dialogue{
+					kind: dialogueError, label: "send failed",
+					input: m.tabs[i].Output, tabID: e.TabID,
+				}
 			}
 			break
+		}
+	}
+}
+
+// activateTab attaches the dialogue with the given ID - the error
+// dialogue's retry/edit land on the failed tab, wherever the send
+// result found the user.
+func (m *Model) activateTab(id string) {
+	for i := range m.tabs {
+		if m.tabs[i].ID == id {
+			m.tabIdx = i + 1
+			m.attachTab()
+			return
 		}
 	}
 }
@@ -1126,6 +1201,12 @@ type progressTick struct{}
 
 func progressTickCmd() tea.Cmd {
 	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg { return progressTick{} })
+}
+
+type sendTick struct{}
+
+func sendTickCmd() tea.Cmd {
+	return tea.Tick(sendTickInterval, func(time.Time) tea.Msg { return sendTick{} })
 }
 
 type legendTick struct{ moves int }
@@ -1669,13 +1750,14 @@ func (m Model) render() string {
 }
 
 // overlayDialogue splices the prompt dialogue box over the frame: a
-// lipgloss-bordered box (border, content row, border) whose rows
+// lipgloss-bordered box (border, content rows, border) whose rows
 // replace whole frame lines above the status line, so the splice
 // never cuts an SGR sequence. The derivation is the preview popup's:
 // config border glyphs (R11), the indicator's background as the
-// border color, the content row indicator-styled (the compose prompt
-// row's style). A terminal too small (height < 5, width < 3) leaves
-// the frame untouched.
+// border color, the content rows indicator-styled. The error kind
+// shows the failure output (capped rows - the failed tab keeps the
+// full text in its preview) plus the keyhint. A terminal too small
+// (height < 5, width < 3) leaves the frame untouched.
 func (m Model) overlayDialogue(frame string) string {
 	if m.dialogue == nil {
 		return frame
@@ -1685,38 +1767,67 @@ func (m Model) overlayDialogue(frame string) string {
 		return frame
 	}
 	lines = padFrameTail(lines, m.height)
-	g := m.ui.Glyphs
-	sg := m.styles.sgr
 	inner := m.width - 2
 	label := core.SanitizeControls(m.dialogue.label)
 	entry := core.SanitizeControls(m.dialogue.input)
-	if m.dialogue.kind == dialogueConfirm {
-		entry = "(enter = confirm, esc = cancel)"
+	var content []string
+	switch m.dialogue.kind {
+	case dialogueConfirm:
+		content = []string{label + " (enter = confirm, esc = cancel)"}
+	case dialogueError:
+		content = append(content, m.styles.ComposeLabel.Render(label))
+		for i, l := range strings.Split(entry, "\n") {
+			if i >= errBoxRows {
+				content = append(content, "...")
+				break
+			}
+			content = append(content, truncCells(l, inner))
+		}
+		content = append(content, "(enter/esc = close, y = retry, e = edit)")
+	default: // dialogueInput: labels are ASCII constants, so byte
+		// length is cell width; the entry truncates to the remaining
+		// inner width - the line never exceeds it and the box never
+		// word-wraps to a different height
+		budget := inner - len(label)
+		if budget < 0 {
+			budget = 0
+		}
+		content = []string{m.styles.ComposeLabel.Render(label) +
+			m.styles.Normal.Render(truncCells(entry, budget))}
 	}
-	lbl := m.styles.ComposeLabel.Render(label)
-	// labels are ASCII constants, so byte length is cell width; the
-	// entry truncates to the remaining inner width - the line never
-	// exceeds it and the box never word-wraps to a different height
-	budget := inner - len(label)
-	if budget < 0 {
-		budget = 0
+	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
+}
+
+// spliceBox replaces whole frame rows above the status line with the
+// lipgloss-bordered box (border + content rows), so the splice never
+// cuts an SGR sequence. Config border glyphs (R11), the indicator's
+// background as the border color, the content rows on the normal
+// background.
+func spliceBox(lines []string, width int, ui config.UI, st Styles, content []string) []string {
+	g := ui.Glyphs
+	inner := width - 2
+	if inner < 1 {
+		inner = 1
 	}
-	box := m.styles.Normal.
+	box := st.Normal.
 		Border(boxBorder(g)).
-		BorderForeground(m.styles.Indicator.GetBackground()).
-		BorderBackground(m.styles.Normal.GetBackground()).
+		BorderForeground(st.Indicator.GetBackground()).
+		BorderBackground(st.Normal.GetBackground()).
 		Width(inner).
-		Render(lbl + m.styles.Normal.Render(truncCells(entry, budget)))
-	rows := make([]string, 0, 3)
+		Render(strings.Join(content, "\n"))
+	rows := make([]string, 0, len(content)+2)
 	for i, line := range strings.Split(box, "\n") {
-		if i == 3 {
+		if i >= len(content)+2 {
 			break
 		}
-		rows = append(rows, padRowSGR(line, m.width, sg.normal))
+		rows = append(rows, padRowSGR(line, width, st.sgr.normal))
 	}
-	top := len(lines) - 4 // three rows above the status line (last)
-	copy(lines[top:top+3], rows)
-	return strings.Join(lines, "\n")
+	top := len(lines) - len(rows) - 1 // anchored above the status line
+	if top < 0 {
+		top = 0
+	}
+	copy(lines[top:top+len(rows)], rows)
+	return lines
 }
 
 // overlayPreview splices the preview popup over the index frame: a
@@ -1814,7 +1925,9 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	if d.prog != nil {
 		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
 	}
-	sig += "|" + d.legend + "|" + d.account + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+	sig += "|" + d.legend + "|" + d.account + "|" + d.notice + "|" + strconv.FormatBool(d.noticeErr) +
+		"|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
+		"|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
 
@@ -1825,7 +1938,8 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 func (m Model) statusData() statusData {
 	if m.mode == "compose" {
 		st := m.tabs[m.tabIdx-1]
-		return statusData{view: "compose", visible: len(m.tabs), account: st.Account}
+		return statusData{view: "compose", visible: len(m.tabs), account: st.Account,
+			msg: m.statusMsg, msgErr: m.statusMsgErr}
 	}
 	d := statusData{view: m.view.Name, visible: len(m.rows), on: m.progressOn}
 	if m.progressOn {
@@ -1839,20 +1953,27 @@ func (m Model) statusData() statusData {
 	d.account = m.account
 	d.notice = m.luaNotice
 	d.noticeErr = m.luaErr
+	d.msg = m.statusMsg
+	d.msgErr = m.statusMsgErr
 	return d
 }
 
 // dialogue is the modal prompt box: confirm (enter to confirm, esc to
-// cancel) or input (typed text delivered to the field consumer). The
-// label is the rendered prefix; the input the current text. The field
-// names the input consumer (attach | from | to | subject | cc | bcc |
-// replyto); the action the confirm's landing action (the binding
-// vocabulary, dispatched through dispatchAction).
+// cancel), input (typed text delivered to the field consumer), or
+// error (the send failure - enter/esc close, y retry, e edit). The
+// label is the rendered prefix; the input the current text (for the
+// error kind, the failure output). The field names the input consumer
+// (attach | from | to | subject | cc | bcc | replyto); the action the
+// confirm's landing action (the binding vocabulary, dispatched through
+// dispatchAction); tabID the dialogue's compose tab (the error kind -
+// retry/edit land on the failed tab wherever the result found the
+// user).
 type dialogueKind int
 
 const (
 	dialogueConfirm dialogueKind = iota
 	dialogueInput
+	dialogueError
 )
 
 type dialogue struct {
@@ -1861,6 +1982,7 @@ type dialogue struct {
 	label  string
 	input  string
 	action string
+	tabID  string
 }
 
 // dialogueKey captures the dialogue keys: printable text appends,
@@ -1874,6 +1996,23 @@ type dialogue struct {
 // without escaping the message loop.
 func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	d := m.dialogue
+	if d.kind == dialogueError {
+		switch msg.String() {
+		case "enter", "esc":
+			// close the box; the failed tab keeps the failure note in
+			// its preview (y retries, e edits from there)
+			m.dialogue = nil
+		case "y": // retry: re-attach the failed tab, re-enter the gate
+			m.dialogue = nil
+			m.activateTab(d.tabID)
+			return m.dispatchAction("send", 1)
+		case "e": // edit the body of the failed tab
+			m.dialogue = nil
+			m.activateTab(d.tabID)
+			return m.dispatchAction("edit", 1)
+		}
+		return m, nil
+	}
 	switch {
 	case msg.String() == "enter":
 		input := strings.TrimSpace(d.input)

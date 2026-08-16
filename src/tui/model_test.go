@@ -1988,7 +1988,7 @@ func TestDialogueBoxCoversKeyhintInFullIndex(t *testing.T) {
 // not launch the editor while the job runs.
 func TestEditGatedDuringSending(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m.tabs[0].Phase = compose.PhaseSending
+	m = press(t, m, "y") // arms PhaseSending and the spinner tick
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
 	if cmd != nil {
 		t.Fatal("e during PhaseSending must not launch the editor")
@@ -2827,5 +2827,100 @@ func TestComposeContentTypeRow(t *testing.T) {
 	frame := m.render()
 	if !strings.Contains(frame, "[text/markdown, quoted-printable, utf-8") {
 		t.Fatalf("the content-type row must show text/markdown:\n%s", frame)
+	}
+}
+
+// TestSendOverlaySpinner pins the sending overlay: a tab in
+// PhaseSending renders the "Sending" row with the spinner frame and
+// the switch-tabs note above the status line; the overlay is
+// phase-based, never a modal - the tab strip keeps its tabs.
+func TestSendOverlaySpinner(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.width, m.height = 80, 24
+	m = press(t, m, "y") // arms PhaseSending + the spinner tick
+	if !m.anySending() {
+		t.Fatal("the send press must leave the tab in PhaseSending")
+	}
+	frame := stripANSI(m.render())
+	if !strings.Contains(frame, "Sending "+spinnerChar(m.spin)) {
+		t.Fatalf("the overlay must show the spinner:\n%s", frame)
+	}
+	if !strings.Contains(frame, "switch tabs while sending") {
+		t.Fatalf("the overlay must carry the switch-tabs note:\n%s", frame)
+	}
+}
+
+// TestSendTickReArmsWhileSending pins the spinner tick gate: a tick
+// while a send is in flight advances the frame and re-arms itself (a
+// non-nil cmd); a tick with no send in flight dies silently.
+func TestSendTickReArmsWhileSending(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, cmd := m.Update(sendTick{})
+	if cmd != nil {
+		t.Fatalf("no send in flight: the tick must die, got %v", cmd)
+	}
+	m = press(t, m, "y") // arms PhaseSending + the tick
+	before := m.spin
+	next, cmd = m.Update(sendTick{})
+	m = next.(Model)
+	if m.spin != before+1 {
+		t.Fatalf("the tick must advance the frame: %d -> %d", before, m.spin)
+	}
+	if cmd == nil {
+		t.Fatal("a tick during a send must re-arm itself")
+	}
+	m.onSendResult(core.SendResult{TabID: "t1", OK: true})
+	next, cmd = m.Update(sendTick{})
+	if cmd != nil {
+		t.Fatalf("the tick must die once the send completes, got %v", cmd)
+	}
+}
+
+// TestSendErrorDialogue pins the failure half: the result opens the
+// error dialogue with the output for review and flags the status
+// message; esc dismisses, y re-enters the send gate on the failed
+// tab, e re-opens its body for editing.
+func TestSendErrorDialogue(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "y") // the send press
+	m = pressType(t, m, 'x')
+	calls := 0
+	SetSendHandler(func(st compose.State) { calls++ })
+	defer SetSendHandler(func(st compose.State) {})
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: "boom"}})
+	m = next.(Model)
+	if m.dialogue == nil || m.dialogue.kind != dialogueError || m.dialogue.input != "boom" {
+		t.Fatalf("failure must open the error dialogue: %+v", m.dialogue)
+	}
+	if !m.statusMsgErr || m.statusMsg != "send failed" {
+		t.Fatalf("failure must flag the status message: %q %v", m.statusMsg, m.statusMsgErr)
+	}
+	// esc closes the box; the tab stays failed with the output
+	m = press(t, m, "esc")
+	if m.dialogue != nil {
+		t.Fatalf("esc must close the error dialogue: %+v", m.dialogue)
+	}
+	if m.tabs[0].Phase != compose.PhaseFailed || m.tabs[0].Output != "boom" {
+		t.Fatalf("the failed tab must survive: %+v", m.tabs[0])
+	}
+	// y retries on the failed tab
+	m = press(t, m, "y")
+	if m.dialogue != nil || m.tabs[0].Phase != compose.PhaseSending || calls != 1 {
+		t.Fatalf("y must re-enter the send gate: %+v", m.tabs[0])
+	}
+}
+
+// TestSendOkStatusMessage pins the success half: the result closes
+// the tab and leaves the "sent to ..." status message; no To renders
+// a bare "sent".
+func TestSendOkStatusMessage(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
+	m = next.(Model)
+	if len(m.tabs) != 0 {
+		t.Fatalf("success must close the tab: %d", len(m.tabs))
+	}
+	if m.statusMsg != "sent to a@b.c" || m.statusMsgErr {
+		t.Fatalf("success must leave the sent message: %q", m.statusMsg)
 	}
 }

@@ -21,6 +21,9 @@ const (
 	// progressTickInterval is the progress bar's repaint cadence while
 	// a job is on (R15).
 	progressTickInterval = 200 * time.Millisecond
+	// sendTickInterval is the send dialogue spinner's frame cadence
+	// while a send is in flight (R4).
+	sendTickInterval = 100 * time.Millisecond
 )
 
 // Layout.
@@ -28,6 +31,9 @@ const (
 	// progressWidth is the progress region's cell budget in the status
 	// row.
 	progressWidth = 40
+	// errBoxRows caps the error dialogue's output rows (the failed
+	// tab's preview keeps the full text).
+	errBoxRows = 4
 	// defaultStatusWidth is the width the width-less statusLine variant
 	// renders at (tests and callers without a window size).
 	defaultStatusWidth = 80

@@ -109,7 +109,38 @@ func (m *Model) renderCompose() string {
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	return m.overlayDialogue(b.String())
+	frame := m.overlayDialogue(b.String())
+	if m.composeTab().Phase == compose.PhaseSending {
+		return m.sendOverlay(frame)
+	}
+	return frame
+}
+
+// sendOverlay replaces the compose frame's body rows with the send box
+// while the delivery is in flight (R4): the spinner frame (advanced by
+// sendTick) and the note that tab switching stays live - the send runs
+// on its own goroutine, the dialogue waits. The splice is compose-
+// surface only: switching tabs parks the box with the dialogue, the
+// mail surface shows nothing while the job runs.
+func (m Model) sendOverlay(frame string) string {
+	lines := strings.Split(frame, "\n")
+	if m.height < 6 || m.width < 3 || len(lines) < 5 {
+		return frame
+	}
+	content := []string{
+		"Sending " + spinnerChar(m.spin),
+		"[ ] switch tabs while sending",
+	}
+	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
+}
+
+// spinnerChar is the send spinner's current frame - ASCII frames, a
+// presentation constant (the R15 glyphs are config data; the spinner
+// is animation state, not a themed glyph).
+const spinFrames = "|/-\\"
+
+func spinnerChar(i int) string {
+	return string(spinFrames[i%len(spinFrames)])
 }
 
 // syncPreviewPager rebuilds the preview pager only when the rendered

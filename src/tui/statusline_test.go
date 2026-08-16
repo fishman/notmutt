@@ -104,3 +104,33 @@ func TestStatusLineDropsLowPriorityOnNarrow(t *testing.T) {
 		t.Fatalf("the view name must survive: %q", narrow)
 	}
 }
+
+// TestStatusLineMessage pins the reserved right slot: the transient
+// send status message renders rightmost in the row (the row never
+// shifts with it), the error form carries the error style, and no
+// message leaves the row exactly as before.
+func TestStatusLineMessage(t *testing.T) {
+	ui := config.Default().UI
+	st := DefaultStyles()
+	base := statusLine(st, ui, statusData{view: "inbox", visible: 2})
+	row := statusLine(st, ui, statusData{view: "inbox", visible: 2, msg: "sent to a@b.c"})
+	if !strings.HasSuffix(stripANSI(row), " sent to a@b.c ") {
+		t.Fatalf("the message must be the rightmost pill: %q", row)
+	}
+	if !strings.Contains(strings.TrimSuffix(row, " sent to a@b.c "), " inbox ") {
+		t.Fatalf("the left group must be untouched: %q", row)
+	}
+	rowErr := statusLine(st, ui, statusData{view: "inbox", visible: 2, msg: "send failed", msgErr: true})
+	if !strings.Contains(rowErr, "224;108;117") {
+		t.Fatalf("a failed send must carry the error foreground: %q", rowErr)
+	}
+	if got := statusLine(st, ui, statusData{view: "inbox", visible: 2, msg: "sent to a@b.c"}); got == base {
+		t.Fatalf("the message must render: %q", got)
+	}
+	// truncation is pre-fitted: a message wider than the leftover drops
+	// cells, never the view pill
+	narrow := statusLineWidth(st, ui, statusData{view: "inbox", visible: 2, msg: "sent to a@b.c"}, 20)
+	if !strings.Contains(narrow, "inbox") {
+		t.Fatalf("the view must survive a narrow fit: %q", narrow)
+	}
+}

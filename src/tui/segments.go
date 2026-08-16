@@ -57,6 +57,19 @@ func noticeSegment(notice string, budget int, err bool, st Styles) statusSegment
 	return s
 }
 
+// msgSegment is the transient status message (R4): the send result
+// ("sent to ...", "send failed") on the status line's reserved right
+// slot. Pre-fitted like the notice; err styles it with the error
+// style. Priority 0 - it drops with the progress region first when
+// the row overruns.
+func msgSegment(msg string, budget int, err bool, st Styles) statusSegment {
+	s := statusSegment{content: truncCells(msg, budget), priority: 0}
+	if err {
+		s.style = st.Error
+	}
+	return s
+}
+
 // progressSegment is the job progress region (R15).
 func progressSegment(ui config.UI, p core.Progress, st Styles) statusSegment {
 	label := fmt.Sprintf("%s %d/%d", p.Job, p.Done, p.Total)

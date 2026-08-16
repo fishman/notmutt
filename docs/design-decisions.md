@@ -407,3 +407,22 @@ The aerc/matcha survey verdict (2026-08-17): neither has a
 classifiable notification surface; aerc notifies via command hooks,
 matcha has no notify path. The argv backend (the muttrc/notify
 command shape) is the reference, not a library.
+
+## 22. Config precedence: config.toml is the main file (2026-08-17)
+
+Decision: the config dir holds any number of *.toml files -
+config.toml, accounts.toml, filters.toml split freely, one file as
+the degenerate case. The merge precedence is FIXED, not
+alphabetical: the optional splits (accounts.toml, filters.toml,
+anything else) merge first in sorted name order, then config.toml
+merges LAST and wins any conflict. The main file is authoritative;
+the splits are partitions of its sections. A key set in both
+config.toml and a split resolves to config.toml; a key present only
+in a split survives (the setup-generated accounts.toml is the
+canonical example - [accounts.*] lives only there and loads
+unchanged). Rationale: the single-file user writes everything into
+config.toml and must not observe different behavior than the split
+user; alphabetical ordering would let filters.toml silently override
+the main file, which inverts the mental model "config.toml is the
+config". Strict load (R8) still names the FILE carrying an unknown
+key, so attribution survives the merge.

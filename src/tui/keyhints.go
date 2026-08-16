@@ -28,15 +28,21 @@ func keyhintRow(km map[string]string, w int) string {
 	return line
 }
 
-// activeBindings resolves the current context's map, falling back to
-// the index map for modes without bindings. The preview popup borrows
-// the pager surface: its scroll keys ARE the pager keys, so the
-// keyhint derives the same way (R9 - the binding data answers).
-func (m Model) activeBindings() map[string]string {
+// bindingCtx is the context the bindings answer for: the preview
+// popup borrows the pager surface (its scroll keys ARE the pager
+// keys), so both the keyhint and the help derive the same way (R9 -
+// the binding data answers).
+func (m Model) bindingCtx() string {
 	if m.preview {
-		return m.bindings["pager"]
+		return "pager"
 	}
-	if km := m.bindings[m.mode]; km != nil {
+	return m.mode
+}
+
+// activeBindings resolves the current context's map, falling back to
+// the index map for modes without bindings.
+func (m Model) activeBindings() map[string]string {
+	if km := m.bindings[m.bindingCtx()]; km != nil {
 		return km
 	}
 	return m.bindings["index"]
@@ -54,7 +60,7 @@ func (m Model) keyhint() string {
 }
 
 func (m Model) keyhintBuild() string {
-	km := m.activeBindings()
+	km := m.visibleBindings()
 	if m.pendingPrefix == "" {
 		return keyhintRow(km, m.width)
 	}
@@ -65,6 +71,27 @@ func (m Model) keyhintBuild() string {
 		}
 	}
 	return keyhintRow(continuations, m.width)
+}
+
+// visibleBindings is the active context's map minus its hidden keys:
+// the generic bindings (paging) stay out of the keyhint row, the help
+// dialog shows every binding (R9 - the hidden flag is binding data).
+func (m Model) visibleBindings() map[string]string {
+	km := m.activeBindings()
+	hidden := map[string]bool{}
+	if m.st != nil {
+		hidden = m.st.Config().Hidden[m.bindingCtx()]
+	}
+	if len(hidden) == 0 {
+		return km
+	}
+	out := make(map[string]string, len(km))
+	for k, a := range km {
+		if !hidden[k] {
+			out[k] = a
+		}
+	}
+	return out
 }
 
 // keyFor finds the alphabetically-first key bound to an action (single

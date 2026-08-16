@@ -38,10 +38,10 @@
 "g g" = { fun = "cursor-top", desc = "Jump to the first row" }
 "G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
 "g r" = "reply-all"
-"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page" }
-"ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page" }
-"pgdown" = { fun = "page-down", desc = "Scroll down one page" }
-"pgup" = { fun = "page-up", desc = "Scroll up one page" }
+"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", hidden = true }
+"ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page", hidden = true }
+"pgdown" = { fun = "page-down", desc = "Scroll down one page", hidden = true }
+"pgup" = { fun = "page-up", desc = "Scroll up one page", hidden = true }
 "[" = { fun = "tab-prev", desc = "Switch to the previous tab" }
 "]" = { fun = "tab-next", desc = "Switch to the next tab" }
 "?" = { fun = "help", desc = "Show this help" }
@@ -49,11 +49,11 @@
 [schemes.vim.pager]
 "j" = { fun = "scroll-down", desc = "Scroll down one line" }
 "k" = { fun = "scroll-up", desc = "Scroll up one line" }
-"space" = "page-down"
-"ctrl+d" = "half-page-down"
-"ctrl+u" = "half-page-up"
-"pgdown" = "page-down"
-"pgup" = "page-up"
+"space" = { fun = "page-down", hidden = true }
+"ctrl+d" = { fun = "half-page-down", hidden = true }
+"ctrl+u" = { fun = "half-page-up", hidden = true }
+"pgdown" = { fun = "page-down", hidden = true }
+"pgup" = { fun = "page-up", hidden = true }
 "g" = { fun = "scroll-top", desc = "Jump to the top" }
 "G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
 "q" = { fun = "back", desc = "Return to the message list" }
@@ -64,10 +64,10 @@
 [schemes.vim.compose]
 "j" = { fun = "form-down", desc = "Move to the next attachment" }
 "k" = { fun = "form-up", desc = "Move to the previous attachment" }
-"ctrl+d" = "half-page-down"
-"ctrl+u" = "half-page-up"
-"ctrl+f" = "page-down"
-"ctrl+b" = "page-up"
+"ctrl+d" = { fun = "half-page-down", hidden = true }
+"ctrl+u" = { fun = "half-page-up", hidden = true }
+"ctrl+f" = { fun = "page-down", hidden = true }
+"ctrl+b" = { fun = "page-up", hidden = true }
 "t" = { fun = "edit-to", desc = "Edit the To list" }
 "s" = { fun = "edit-subject", desc = "Edit the subject" }
 "f" = { fun = "edit-from", desc = "Edit the From address" }
@@ -111,8 +111,8 @@
 "y" = "spam"
 "p" = "pending"
 "P" = "preview"
-"pgdown" = "page-down"
-"pgup" = "page-up"
+"pgdown" = { fun = "page-down", hidden = true }
+"pgup" = { fun = "page-up", hidden = true }
 "[" = "tab-prev"
 "]" = "tab-next"
 "?" = "help"
@@ -120,10 +120,10 @@
 [schemes.emacs.pager]
 "ctrl+n" = "scroll-down"
 "ctrl+p" = "scroll-up"
-"ctrl+v" = "page-down"
-"alt+v" = "page-up"
-"pgdown" = "page-down"
-"pgup" = "page-up"
+"ctrl+v" = { fun = "page-down", hidden = true }
+"alt+v" = { fun = "page-up", hidden = true }
+"pgdown" = { fun = "page-down", hidden = true }
+"pgup" = { fun = "page-up", hidden = true }
 "ctrl+g" = "back"
 "q" = "quit"
 "[" = "tab-prev"
@@ -133,8 +133,8 @@
 [schemes.emacs.compose]
 "ctrl+n" = "form-down"
 "ctrl+p" = "form-up"
-"ctrl+v" = "page-down"
-"alt+v" = "page-up"
+"ctrl+v" = { fun = "page-down", hidden = true }
+"alt+v" = { fun = "page-up", hidden = true }
 "t" = "edit-to"
 "s" = "edit-subject"
 "f" = "edit-from"

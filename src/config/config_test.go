@@ -224,7 +224,8 @@ func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	// the default bindings ARE the embedded vim scheme (base.toml),
 	// context for context - the Go side derives, never re-declares
-	if !maps.EqualFunc(cfg.Bindings, bindingsFromScheme(baseConfig.Schemes["vim"]), maps.Equal) {
+	bs, _ := bindingsFromScheme(baseConfig.Schemes["vim"])
+	if !maps.EqualFunc(cfg.Bindings, bs, maps.Equal) {
 		t.Fatalf("default bindings = %v, want the embedded vim scheme %v", cfg.Bindings, baseConfig.Schemes["vim"])
 	}
 	// the derived table is a clone: rebinding a Default never touches
@@ -404,6 +405,52 @@ keymap = "emacs"
 	}
 	if cfg.Descriptions["open"] != "Open the message under the cursor" {
 		t.Fatalf("unset emacs descs inherit the vim scheme: %q", cfg.Descriptions["open"])
+	}
+}
+
+// TestBindingHiddenFlag pins the hidden flag: the table form carries
+// it, the derived Hidden set follows the selected keymap, and the
+// binding stays in the dispatch surface and the help vocabulary.
+func TestBindingHiddenFlag(t *testing.T) {
+	cfg, err := Load(write(t, `
+[schemes.vim.index]
+"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", hidden = true }
+"x" = { fun = "open", desc = "Not hidden" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Hidden["index"]["ctrl+d"] {
+		t.Fatal("the hidden key must land in the derived set")
+	}
+	if cfg.Hidden["index"]["x"] {
+		t.Fatal("a key without the flag must not be hidden")
+	}
+	if cfg.Bindings["index"]["ctrl+d"] != "half-page-down" {
+		t.Fatal("a hidden binding must stay in the dispatch surface")
+	}
+	if cfg.Descriptions["half-page-down"] == "" {
+		t.Fatal("a hidden binding keeps its description")
+	}
+}
+
+// TestDefaultHiddenPaging pins the base schemes: the generic paging
+// keys are hidden in every context of both keymaps, navigation is not.
+func TestDefaultHiddenPaging(t *testing.T) {
+	cfg := Default()
+	for _, ctx := range []string{"index", "pager", "compose"} {
+		if !cfg.Hidden[ctx]["ctrl+d"] && !cfg.Hidden[ctx]["pgdown"] && !cfg.Hidden[ctx]["ctrl+v"] {
+			t.Fatalf("the paging keys must be hidden in the vim %s context", ctx)
+		}
+	}
+	if cfg.Hidden["index"]["j"] || cfg.Hidden["pager"]["q"] {
+		t.Fatal("navigation keys must not be hidden")
+	}
+	emacs := Default()
+	emacs.UI.Keymap = "emacs"
+	emacs.Bindings, emacs.Hidden = bindingsFromScheme(emacs.Schemes["emacs"])
+	if !emacs.Hidden["pager"]["ctrl+v"] || !emacs.Hidden["index"]["pgdown"] {
+		t.Fatal("the emacs scheme hides its paging keys too")
 	}
 }
 

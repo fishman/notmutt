@@ -43,8 +43,9 @@ var bindingContexts = map[string]bool{
 // binding - there is no separate descriptions block; the help
 // vocabulary derives from these entries (R8).
 type Binding struct {
-	Fun  string
-	Desc string
+	Fun    string
+	Desc   string
+	Hidden bool
 }
 
 func (b *Binding) UnmarshalTOML(v interface{}) error {
@@ -73,8 +74,11 @@ func (b *Binding) UnmarshalTOML(v interface{}) error {
 		if desc, ok := t["desc"].(string); ok {
 			b.Desc = desc
 		}
+		if hidden, ok := t["hidden"].(bool); ok {
+			b.Hidden = hidden
+		}
 		for k := range t {
-			if k != "fun" && k != "desc" {
+			if k != "fun" && k != "desc" && k != "hidden" {
 				return fmt.Errorf("binding: unknown key %q", k)
 			}
 		}
@@ -85,10 +89,14 @@ func (b *Binding) UnmarshalTOML(v interface{}) error {
 }
 
 type Config struct {
-	UI             UI                                       `toml:"ui"`
-	Views          map[string]View                          `toml:"view"`
-	TagGroups      map[string]core.TagGroup                 `toml:"tag-groups"`
-	Bindings       map[string]map[string]string             `toml:"-"`
+	UI        UI                           `toml:"ui"`
+	Views     map[string]View              `toml:"view"`
+	TagGroups map[string]core.TagGroup     `toml:"tag-groups"`
+	Bindings  map[string]map[string]string `toml:"-"`
+	// Hidden is the per-context key set the keyhint row skips (the
+	// help dialog shows every binding): derived from the scheme
+	// entries' hidden flag, never a config block
+	Hidden         map[string]map[string]bool               `toml:"-"`
 	TagActions     map[string]string                        `toml:"tag-actions"`
 	Accounts       map[string]Account                       `toml:"accounts"`
 	Send           Send                                     `toml:"send"`
@@ -701,20 +709,28 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// bindingsFromScheme flattens a scheme's entries to key -> action:
-// the dispatch surface (the tui switches on the action strings). The
-// result is always a fresh map set - a caller's rebind never touches
-// the store or the next Default.
-func bindingsFromScheme(scheme map[string]map[string]Binding) map[string]map[string]string {
+// bindingsFromScheme flattens a scheme's entries to key -> action
+// plus the per-context hidden-key set (the keyhint row skips them,
+// the help dialog shows every binding): the dispatch surface (the
+// tui switches on the action strings). The result is always a fresh
+// map set - a caller's rebind never touches the store or the next
+// Default.
+func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[string]string, map[string]map[string]bool) {
 	out := make(map[string]map[string]string, len(scheme))
+	hidden := make(map[string]map[string]bool, len(scheme))
 	for ctx, km := range scheme {
 		m := make(map[string]string, len(km))
+		h := make(map[string]bool, len(km))
 		for k, b := range km {
 			m[k] = b.Fun
+			if b.Hidden {
+				h[k] = true
+			}
 		}
 		out[ctx] = m
+		hidden[ctx] = h
 	}
-	return out
+	return out, hidden
 }
 
 func Default() Config {
@@ -766,7 +782,7 @@ func Default() Config {
 	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
 		panic(err)
 	}
-	cfg.Bindings = bindingsFromScheme(cfg.Schemes["vim"])
+	cfg.Bindings, cfg.Hidden = bindingsFromScheme(cfg.Schemes["vim"])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, "vim")
 	if err := validate(cfg); err != nil {
 		panic(err)
@@ -901,7 +917,7 @@ func Load(path string) (Config, error) {
 		}
 	}
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
-	cfg.Bindings = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
+	cfg.Bindings, cfg.Hidden = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {
 		return cfg, err

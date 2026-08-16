@@ -1132,6 +1132,23 @@ func TestKeyhintRowInView(t *testing.T) {
 	}
 }
 
+// TestKeyhintHidesPaging pins the hidden flag: the generic paging
+// keys stay out of the keyhint row (the help dialog shows every
+// binding - the ? overlay lists them with descriptions).
+func TestKeyhintHidesPaging(t *testing.T) {
+	m := model()
+	m.width, m.height = 160, 24
+	strip := stripANSI(m.View().Content)
+	if strings.Contains(strip, "half-page-down") || strings.Contains(strip, "page-down") {
+		t.Fatalf("the paging bindings must stay out of the keyhint row:\n%s", strip)
+	}
+	m = press(t, m, "?")
+	clean := stripANSI(m.render())
+	if !strings.Contains(clean, "ctrl+d  half-page-down  Scroll down half a page") {
+		t.Fatalf("the help dialog must list the hidden binding:\n%s", clean)
+	}
+}
+
 func TestPagerKeysOnlyInPager(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})

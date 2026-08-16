@@ -18,6 +18,10 @@ import (
 // and callers get no log churn.
 var diag = slog.New(slog.NewTextHandler(io.Discard, nil))
 
+// diagLogMax caps the diagnostic log: at the cap the file rotates to
+// notmutt.log.1 (one generation kept) - the file never grows past it.
+const diagLogMax = 10 << 20 // 10 MiB
+
 // openDiagLog points diag at the cache-dir file, creating the dir and
 // appending to the file (0600). A file failure falls back to stderr -
 // diagnostics never silently vanish.
@@ -36,7 +40,39 @@ func openDiagLog() {
 		diag = slog.New(slog.NewTextHandler(os.Stderr, nil))
 		return
 	}
-	diag = slog.New(slog.NewTextHandler(f, nil))
+	diag = slog.New(slog.NewTextHandler(&cappedFile{f: f, path: filepath.Join(dir, "notmutt.log"), cap: diagLogMax}, nil))
+}
+
+// cappedFile is a size-capped log file: when a write would push the
+// size past the cap, the file rotates to <path>.1 (one generation kept,
+// overwriting the old one) and the write starts fresh. slog serializes
+// handler calls, so the rotate/check never races.
+type cappedFile struct {
+	f    *os.File
+	path string
+	cap  int64
+}
+
+func (c *cappedFile) Write(p []byte) (int, error) {
+	if c.f == nil {
+		return 0, os.ErrClosed
+	}
+	st, err := c.f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	if st.Size()+int64(len(p)) > c.cap {
+		c.rotate()
+	}
+	return c.f.Write(p)
+}
+
+func (c *cappedFile) rotate() {
+	c.f.Close()
+	if err := os.Rename(c.path, c.path+".1"); err != nil {
+		os.Truncate(c.path, 0)
+	}
+	c.f, _ = os.OpenFile(c.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 }
 
 // runDiagBus routes the diagnostic bus events into the file log: job

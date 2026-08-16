@@ -12,10 +12,10 @@ import (
 
 // composeForm is one form line: the settings rows carry a label +
 // value (rendered as a two-column table, never highlighted), the
-// attachment rows carry a cursor slot (8+i), the static rows
-// (dividers, content-type) carry plain text. Every non-focusable row
-// carries the sentinel slot -1 (the settings rows included - only
-// the attachment slots are ever focused).
+// attachment-list rows carry a cursor slot (8 the message-text row,
+// 9+i attachment i), the static rows (dividers) carry plain text.
+// Every non-focusable row carries the sentinel slot -1 (the settings
+// rows included - only the attachment-list slots are ever focused).
 type composeForm struct {
 	slot  int
 	label string // settings row label, rendered right-aligned in compose.label
@@ -137,10 +137,11 @@ func previewLinesOf(content string) []core.Line {
 
 // composeForm renders the form rows: the sender info (account, From,
 // To, Cc, Bcc, Subject, Reply-To, Fcc - Fcc static, set from the
-// account), the Security row, the content-type entry (derived from
-// the body), the attachment rows, separators. Address lists cap at
-// two display rows (alignment never shifts; "+N more" names the
-// overflow).
+// account), the Security row, then the attachment list with mutt's
+// markers: the message-text row (marker -, entry 1, its mime type,
+// the buffer file path) and the attached files (marker A, deletable),
+// separators. Address lists cap at two display rows (alignment never
+// shifts; "+N more" names the overflow).
 func (m *Model) composeForm(st compose.State) []composeForm {
 	capList := func(addrs []string) string {
 		if len(addrs) == 0 {
@@ -162,14 +163,19 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		{slot: -1, label: "Fcc", value: st.Fcc},
 		{slot: -1, label: "Security", value: st.Security.String()},
 		{slot: -1, text: "---"},
-		{slot: -1, text: "[ ] " + compose.ContentTypeOf(st.Body)},
 	}
+	body := "- 1"
+	if st.BodyPath != "" {
+		body += " " + st.BodyPath
+	}
+	body += " [" + compose.ContentTypeOf(st.Body) + "]"
+	rows = append(rows, composeForm{slot: 8, text: body})
 	for i, a := range st.Attachments {
 		if i >= 3 {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
-		rows = append(rows, composeForm{slot: 8 + i, text: fmt.Sprintf("[ ] %s (%d bytes)", a.Name, a.Size)})
+		rows = append(rows, composeForm{slot: 9 + i, text: fmt.Sprintf("A %d %s (%d bytes)", i+2, a.Name, a.Size)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "---"})
 	// the form rows render mail-derived text (Subject/To/Cc from the

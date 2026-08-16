@@ -15,7 +15,7 @@ func TestEditorBufferRoundTrip(t *testing.T) {
 	s.Subject = "hello"
 	s.Body = "body text"
 
-	path, err := writeEditorBuffer(*s)
+	path, err := writeEditorBuffer(*s, "")
 	if err != nil {
 		t.Fatal(err)
 	}

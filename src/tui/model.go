@@ -170,7 +170,8 @@ type Model struct {
 	// re-attaches it (spec section 5: the dialogue IS the tab).
 	tabs   []compose.State
 	tabIdx int
-	// formIdx is the compose form cursor slot: 8+i attachment i. The
+	// formIdx is the compose form cursor slot: 8 the message-text row,
+	// 9+i attachment i. The
 	// settings rows are never focused - every field edits by hotkey.
 	formIdx int
 	// formView scrolls the compose form (the pager widget): when the
@@ -423,7 +424,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
-		os.Remove(msg.path)
+		// the buffer file lives on: it IS the tab's edit surface
+		// (BodyPath), removed when the tab closes
 		return m, nil
 	case attachCmdDoneMsg:
 		if msg.err == nil {
@@ -678,9 +680,10 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "tab-next":
 		m.tabNext()
 	case "form-down":
-		// navigation lives in the attachment list only: the settings
-		// rows are edited by hotkey, never focused
-		if n := len(m.composeTab().Attachments); n > 0 && m.formIdx < 8+n-1 {
+		// navigation lives in the message-text row and the attachment
+		// list only: the settings rows are edited by hotkey, never
+		// focused
+		if m.formIdx < 8+len(m.composeTab().Attachments) {
 			m.formIdx++
 		}
 		deferPaint()
@@ -700,12 +703,13 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		if m.composeTab().Phase == compose.PhaseFailed {
 			m.composeTab().Phase = compose.PhaseEditing
 		}
-		st := *m.composeTab()
-		tabID := st.ID
-		path, err := writeEditorBuffer(st)
+		t := m.composeTab()
+		path, err := writeEditorBuffer(*t, t.BodyPath)
 		if err != nil {
 			return m, nil
 		}
+		t.BodyPath = path
+		tabID := t.ID
 		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
 			return editorDoneMsg{err: err, path: path, tabID: tabID}
 		})
@@ -716,13 +720,11 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "detach":
 		t := m.composeTab()
 		if t.Phase != compose.PhaseSending {
-			if i := m.formIdx - 8; i >= 0 && i < len(t.Attachments) {
+			// slot 8 is the message-text row, never an attachment
+			if i := m.formIdx - 9; i >= 0 && i < len(t.Attachments) {
 				t.Attachments = slices.Delete(t.Attachments, i, i+1)
-				if n := len(t.Attachments); m.formIdx > 8+n-1 {
-					m.formIdx = 8 + n - 1
-				}
-				if m.formIdx < 8 {
-					m.formIdx = 8
+				if n := len(t.Attachments); m.formIdx > 8+n {
+					m.formIdx = 8 + n
 				}
 			}
 		}
@@ -946,7 +948,13 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	st := compose.FromEvent(e)
 	m.tabs = append(m.tabs, *st)
 	m.tabIdx = len(m.tabs)
-	m.formIdx = 8 // first attachment slot; a phantom with no attachments
+	m.formIdx = 8 // the message-text row; with no attachments the cursor rests there
+	// the body is backed by a buffer file for the tab's lifetime (mutt's
+	// msgbody) - the message-text row shows its path, e reuses it
+	tab := &m.tabs[len(m.tabs)-1]
+	if path, err := writeEditorBuffer(*tab, ""); err == nil {
+		tab.BodyPath = path
+	}
 	m.attachTab()
 }
 
@@ -2122,8 +2130,10 @@ func (m *Model) attachTab() {
 }
 
 // closeComposeTab removes the dialogue and lands on the previous
-// tab (or the mail surface when none remain).
+// tab (or the mail surface when none remain). The tab's buffer file
+// dies with it.
 func (m *Model) closeComposeTab(i int) {
+	os.Remove(m.tabs[i].BodyPath)
 	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
 	if m.tabIdx > i {
 		m.tabIdx--

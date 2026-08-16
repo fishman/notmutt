@@ -8,20 +8,24 @@ import (
 	"notmutt/compose"
 )
 
-// writeEditorBuffer writes the editor buffer to a 0600 temp file (F5)
-// and returns its path. The write is the buffer contract's local half
-// - the dialogue state itself never leaves the model.
-func writeEditorBuffer(st compose.State) (string, error) {
-	f, err := os.CreateTemp("", "notmutt-compose-*")
-	if err != nil {
+// writeEditorBuffer writes the editor buffer to the tab's buffer file
+// (0600, F5): the first write creates the file, later writes reuse the
+// same path - the message-text row shows it for the tab's lifetime
+// (mutt's msgbody). The write is the buffer contract's local half -
+// the dialogue state itself never leaves the model.
+func writeEditorBuffer(st compose.State, path string) (string, error) {
+	if path == "" {
+		f, err := os.CreateTemp("", "notmutt-compose-*")
+		if err != nil {
+			return "", err
+		}
+		path = f.Name()
+		f.Close() // the rewrite below reopens it
+	}
+	if err := os.WriteFile(path, []byte(st.BuildBuffer()), 0600); err != nil {
 		return "", err
 	}
-	defer f.Close()
-	if _, err := f.WriteString(st.BuildBuffer()); err != nil {
-		os.Remove(f.Name())
-		return "", err
-	}
-	return f.Name(), nil
+	return path, nil
 }
 
 // editorCmd builds the $EDITOR run (fallback vi): whitespace-tokenized

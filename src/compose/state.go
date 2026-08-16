@@ -106,6 +106,7 @@ type State struct {
 	OriginalID    string // original notmuch id (reply/forward tagging)
 	Phase         Phase
 	Output        string // send job captured output (failed)
+	BodyPath      string // editor buffer file backing the body (mutt's msgbody): TUI-owned, created at open, reused by e, removed on close
 }
 
 // NewCompose opens a blank compose dialogue.

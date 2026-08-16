@@ -227,7 +227,7 @@ func TestSendGatesDetachAttachDuringSending(t *testing.T) {
 	m.tabs[0].Phase = compose.PhaseSending
 	att := compose.Attachment{Name: "a.txt", Path: "/tmp/a.txt", Size: 3}
 	m.tabs[0].Attachments = []compose.Attachment{att}
-	m.formIdx = 5
+	m.formIdx = 9 // an attachment slot
 	m = press(t, m, "d")
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0] != att {
 		t.Fatalf("d during PhaseSending must not mutate the attachments: %+v", m.tabs[0].Attachments)
@@ -1496,7 +1496,15 @@ func openDialogue(t *testing.T, m Model, id string) Model {
 		TabID: id, Mode: "reply", Account: "gmail", From: "Bob <bob@example.com>",
 		To: []string{"a@b.c"}, Subject: "Re: x", Body: "> quoted",
 	}})
-	return next.(Model)
+	mm := next.(Model)
+	// the buffer file (BodyPath) dies with the tab; tests that never
+	// close the tab leave it to this cleanup
+	t.Cleanup(func() {
+		for i := range mm.tabs {
+			os.Remove(mm.tabs[i].BodyPath)
+		}
+	})
+	return mm
 }
 
 func TestComposeOpenedAttachesDialogue(t *testing.T) {
@@ -1751,6 +1759,38 @@ func TestAbortConfirmDialogue(t *testing.T) {
 	}
 }
 
+// TestBodyBufferFileLivesForTab pins the mutt msgbody model: the
+// message text is backed by a temp file created at open, reused by e,
+// removed when the tab closes.
+func TestBodyBufferFileLivesForTab(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	p := m.tabs[0].BodyPath
+	if p == "" {
+		t.Fatal("a dialogue must back the body with a buffer file")
+	}
+	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0600 {
+		t.Fatalf("the buffer file must exist with 0600 (F5): %v", err)
+	}
+	if !strings.Contains(m.tabs[0].BuildBuffer(), "> quoted") {
+		t.Fatal("the buffer file must mirror the dialogue body")
+	}
+	// e reuses the same file - the row's path never churns
+	next, _ := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	m = next.(Model)
+	if m.tabs[0].BodyPath != p {
+		t.Fatalf("e must reuse the buffer file, path = %q, want %q", m.tabs[0].BodyPath, p)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("e must leave the buffer file in place: %v", err)
+	}
+	// closing the tab removes it
+	m = press(t, m, "q")
+	m = press(t, m, "enter")
+	if _, err := os.Stat(p); !os.IsNotExist(err) {
+		t.Fatalf("closing the tab must remove the buffer file: %v", err)
+	}
+}
+
 func TestAttachPromptAndDetach(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	path := filepath.Join(t.TempDir(), "att.txt")
@@ -1772,10 +1812,9 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0].Name != "att.txt" {
 		t.Fatalf("attachments = %+v", m.tabs[0].Attachments)
 	}
-	// form cursor to the attachment slot (slot 8), then d detaches
-	for i := 0; i < 8; i++ {
-		m = press(t, m, "j")
-	}
+	// form cursor to the attachment (slot 9, one down from the
+	// message-text row), then d detaches
+	m = press(t, m, "j")
 	m = press(t, m, "d")
 	if len(m.tabs[0].Attachments) != 0 {
 		t.Fatalf("d must detach the cursor attachment: %+v", m.tabs[0].Attachments)
@@ -2380,10 +2419,20 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if !strings.Contains(stripANSI(lines[1]), "a attach") {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
-	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "[ ] text/plain"} {
+	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "- 1", "[text/plain]"} {
 		if !strings.Contains(stripANSI(frame), want) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
+	}
+	// the message-text row shows the buffer file path, attachments the
+	// A marker (mutt's attach list)
+	if !strings.Contains(stripANSI(frame), m.tabs[0].BodyPath) {
+		t.Fatalf("the message-text row must show the buffer file path:\n%s", frame)
+	}
+	m.tabs[0].Attachments = []compose.Attachment{{Name: "x.txt", Size: 3}}
+	frame = stripANSI(m.render())
+	if !strings.Contains(frame, "A 2 x.txt (3 bytes)") {
+		t.Fatalf("the attachment row must show the A marker:\n%s", frame)
 	}
 	// the prompt box splices above the status line; the keyhint stays
 	// on line 1
@@ -2539,32 +2588,41 @@ func TestComposeSlotEditSecurityCycle(t *testing.T) {
 	}
 }
 
-// TestFormNavRestrictedToAttachments pins the redesign's navigation:
-// j/k move only within the attachment list; with no attachments they
-// are no-ops, and the cursor never enters the settings rows.
+// TestFormNavRestrictedToAttachments pins the mutt attach-list
+// navigation: j/k move within the message-text row and the attachment
+// list only - with no attachments they are no-ops, and the cursor
+// never enters the settings rows.
 func TestFormNavRestrictedToAttachments(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.tabs[0].Attachments = []compose.Attachment{
 		{Name: "a.txt", Size: 3}, {Name: "b.txt", Size: 3},
 	}
 	if m.formIdx != 8 {
-		t.Fatalf("a fresh dialogue must land on the first attachment, formIdx = %d", m.formIdx)
+		t.Fatalf("a fresh dialogue must land on the message-text row, formIdx = %d", m.formIdx)
 	}
 	m = press(t, m, "j")
 	if m.formIdx != 9 {
-		t.Fatalf("j must move into the second attachment, formIdx = %d", m.formIdx)
+		t.Fatalf("j must move onto the first attachment, formIdx = %d", m.formIdx)
 	}
 	m = press(t, m, "j")
-	if m.formIdx != 9 {
+	if m.formIdx != 10 {
+		t.Fatalf("j must move onto the second attachment, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "j")
+	if m.formIdx != 10 {
 		t.Fatalf("j must clamp at the last attachment, formIdx = %d", m.formIdx)
 	}
 	m = press(t, m, "k")
-	if m.formIdx != 8 {
+	if m.formIdx != 9 {
 		t.Fatalf("k must move back to the first attachment, formIdx = %d", m.formIdx)
 	}
 	m = press(t, m, "k")
 	if m.formIdx != 8 {
-		t.Fatalf("k must stop at the first attachment, formIdx = %d", m.formIdx)
+		t.Fatalf("k must move back onto the message-text row, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "k")
+	if m.formIdx != 8 {
+		t.Fatalf("k must stop at the message-text row, formIdx = %d", m.formIdx)
 	}
 	m.tabs[0].Attachments = nil
 	m = press(t, m, "j")
@@ -2577,14 +2635,30 @@ func TestFormNavRestrictedToAttachments(t *testing.T) {
 	}
 }
 
+// TestDetachProtectsMessageText pins the mutt attach-list rule: the
+// message-text row (slot 8) is not an attachment - d on it is a no-op
+// and the cursor stays.
+func TestDetachProtectsMessageText(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Attachments = []compose.Attachment{{Name: "a", Size: 1}}
+	m.formIdx = 8
+	m = press(t, m, "d")
+	if len(m.tabs[0].Attachments) != 1 {
+		t.Fatalf("d on the message-text row must not detach: %+v", m.tabs[0].Attachments)
+	}
+	if m.formIdx != 8 {
+		t.Fatalf("d on the message-text row must not move the cursor, formIdx = %d", m.formIdx)
+	}
+}
+
 // TestDetachClampMidList pins the detach clamp: removing the last
 // attachment shrinks the list and the cursor clamps back into it.
 func TestDetachClampMidList(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.tabs[0].Attachments = []compose.Attachment{{Name: "a", Size: 1}, {Name: "b", Size: 1}, {Name: "c", Size: 1}}
-	m.formIdx = 10 // the last attachment
+	m.formIdx = 11 // the last attachment
 	m = press(t, m, "d")
-	if m.formIdx != 9 {
+	if m.formIdx != 10 {
 		t.Fatalf("detach must clamp into the shrunk list, formIdx = %d", m.formIdx)
 	}
 	if len(m.tabs[0].Attachments) != 2 {
@@ -2743,7 +2817,7 @@ func TestComposeContentTypeRow(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	frame := m.render()
-	if !strings.Contains(frame, "[ ] text/markdown") {
+	if !strings.Contains(frame, "[text/markdown]") {
 		t.Fatalf("the content-type row must show text/markdown:\n%s", frame)
 	}
 }

@@ -6,9 +6,10 @@ return {
   folders = {
     inbox = { "INBOX" },
     sent = { "Sent" },
-    deleted = { "Deleted Items" },
+    deleted = { "Trash", "Deleted Items" },
     draft = { "Drafts" },
-    archive = { "Archive" },
-    spam = { "Junk", "Spam" },
+    archive = { "Archives", "Archive" },
+    spam = { "Spam", "Junk" },
+    pending = { "Pending" },
   },
 }

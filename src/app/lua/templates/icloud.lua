@@ -8,7 +8,8 @@ return {
     sent = { "Sent Messages" },
     deleted = { "Trash" },
     draft = { "Drafts" },
-    archive = { "Archive" },
-    spam = { "Junk" },
+    archive = { "Archives", "Archive" },
+    spam = { "Spam", "Junk" },
+    pending = { "Pending" },
   },
 }

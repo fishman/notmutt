@@ -50,15 +50,19 @@ func TestDetectGmail(t *testing.T) {
 	}
 }
 
-// TestDetectFlatImap pins the gmail discriminator: a flat IMAP layout
-// (system folders at the account root, no top-level [Gmail]) is not
-// gmail - it falls to the generic shape whose Match names resolve
-// (INBOX + Sent). A plain file is never an account.
+// TestDetectFlatImap pins the gmail discriminator and the flat layout
+// (the jelveh shape): system folders at the account root, no top-level
+// [Gmail] - not gmail, it falls to the generic shape whose Match names
+// resolve (INBOX + Sent). Every hard tag resolves from the flat names
+// (Trash, Pending), and the priority lists pick the standard name when
+// both exist (Archives over Archive, Spam over Junk). A plain file is
+// never an account.
 func TestDetectFlatImap(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
 		"jelveh/INBOX", "jelveh/Drafts", "jelveh/Sent",
-		"jelveh/Spam", "jelveh/Trash", "jelveh/Archive")
+		"jelveh/Spam", "jelveh/Junk", "jelveh/Trash",
+		"jelveh/Archive", "jelveh/Archives", "jelveh/Pending")
 	if err := os.WriteFile(filepath.Join(root, "notes"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -73,8 +77,12 @@ func TestDetectFlatImap(t *testing.T) {
 	if a.Name != "jelveh" || a.Template != "outlook" {
 		t.Fatalf("flat imap must match the generic shape, got %+v", a)
 	}
-	if a.Folders["inbox"] != "INBOX" || a.Folders["sent"] != "Sent" {
-		t.Fatalf("the folder map must extract the top-level names: %v", a.Folders)
+	want := map[string]string{
+		"inbox": "INBOX", "sent": "Sent", "deleted": "Trash",
+		"draft": "Drafts", "archive": "Archives", "spam": "Spam", "pending": "Pending",
+	}
+	if !maps.Equal(a.Folders, want) {
+		t.Fatalf("folders = %v, want %v", a.Folders, want)
 	}
 	if a.Template == "gmail" {
 		t.Fatal("flat imap must never match gmail")
@@ -103,6 +111,31 @@ func TestDetectGmailVariant(t *testing.T) {
 	}
 	if _, ok := a.Folders["pending"]; ok {
 		t.Fatal("absent optional tags must stay out of the map")
+	}
+}
+
+// TestDetectGmailFlatFallbacks pins the [Gmail]-marked flat account
+// (the toptal shape): the [Gmail] marker is present but the system
+// subfolders were never synced - sent/deleted resolve to the flat
+// names at the account root instead of staying unmapped.
+func TestDetectGmailFlatFallbacks(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root,
+		"toptal/INBOX", "toptal/Archive", "toptal/Sent", "toptal/Trash",
+		"toptal/[Gmail]")
+	accs, err := Detect(root, Templates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accs) != 1 || accs[0].Template != "gmail" {
+		t.Fatalf("the marker must match gmail with flat fallbacks: %+v", accs)
+	}
+	a := accs[0]
+	if a.Folders["sent"] != "Sent" || a.Folders["deleted"] != "Trash" || a.Folders["archive"] != "Archive" {
+		t.Fatalf("flat fallbacks must resolve, got %v", a.Folders)
+	}
+	if _, ok := a.Folders["draft"]; ok {
+		t.Fatal("absent tags must stay out of the map")
 	}
 }
 

@@ -36,7 +36,11 @@ type Template struct {
 // an account that carries it is a gmail account even when some
 // [Gmail] subfolders were never synced); flat IMAP layouts without it
 // (Drafts/Sent/Trash at the account root) fall to the generic
-// shapes. The lua build evaluates the same templates from
+// shapes. Candidate lists are priority-ordered: the standard name
+// first (Archives before Archive, Spam before Junk), the flat
+// fallback after the provider's system folders (a [Gmail]-marked
+// account synced flat, or a flat account with Trash instead of
+// Deleted Items, still resolves). The lua build evaluates the same templates from
 // app/lua/templates/*.lua (the shipped examples users copy from);
 // this Go set is the no-Lua fallback, pinned equal by
 // TestBuiltinTemplatesMatchGoData. The provider shapes are seeds -
@@ -48,10 +52,10 @@ var Templates = []Template{
 		Match: []string{"INBOX", "[Gmail]"},
 		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
-			"draft":   {"[Gmail]/Drafts"},
-			"sent":    {"[Gmail]/Sent Mail"},
-			"spam":    {"[Gmail]/Spam"},
-			"deleted": {"[Gmail]/Trash"},
+			"draft":   {"[Gmail]/Drafts", "Drafts"},
+			"sent":    {"[Gmail]/Sent Mail", "Sent"},
+			"spam":    {"[Gmail]/Spam", "Spam", "Junk"},
+			"deleted": {"[Gmail]/Trash", "Trash"},
 			"archive": {"Archives", "Archive"},
 			"pending": {"Pending"},
 		},
@@ -62,10 +66,11 @@ var Templates = []Template{
 		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"sent":    {"Sent Items"},
-			"deleted": {"Deleted Items"},
+			"deleted": {"Trash", "Deleted Items"},
 			"draft":   {"Drafts"},
-			"archive": {"Archive"},
-			"spam":    {"Junk Email", "Junk"},
+			"archive": {"Archives", "Archive"},
+			"spam":    {"Spam", "Junk Email", "Junk"},
+			"pending": {"Pending"},
 		},
 	},
 	{
@@ -76,8 +81,9 @@ var Templates = []Template{
 			"sent":    {"Sent Messages"},
 			"deleted": {"Trash"},
 			"draft":   {"Drafts"},
-			"archive": {"Archive"},
-			"spam":    {"Junk"},
+			"archive": {"Archives", "Archive"},
+			"spam":    {"Spam", "Junk"},
+			"pending": {"Pending"},
 		},
 	},
 	{
@@ -86,10 +92,11 @@ var Templates = []Template{
 		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"sent":    {"Sent"},
-			"deleted": {"Deleted Items"},
+			"deleted": {"Trash", "Deleted Items"},
 			"draft":   {"Drafts"},
-			"archive": {"Archive"},
-			"spam":    {"Junk", "Spam"},
+			"archive": {"Archives", "Archive"},
+			"spam":    {"Spam", "Junk"},
+			"pending": {"Pending"},
 		},
 	},
 }

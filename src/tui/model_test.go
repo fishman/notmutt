@@ -2197,7 +2197,7 @@ func TestEditGatedDuringSending(t *testing.T) {
 
 func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m = press(t, m, "c")
+	m = press(t, m, "A")
 	if m.fuzzy == nil || m.fuzzy.kind != "account" {
 		t.Fatalf("c must open the account picker: %+v", m.fuzzy)
 	}
@@ -2279,7 +2279,7 @@ func TestComposeRenderFuzzyPopup(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
-	m = press(t, m, "c")
+	m = press(t, m, "A")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the popup frame must be exactly 24 lines, got %d", got)
@@ -2297,7 +2297,7 @@ func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 7})
 	m = next.(Model)
-	m = press(t, m, "c")
+	m = press(t, m, "A")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 7 {
 		t.Fatalf("the popup frame must be exactly 7 lines, got %d", got)
@@ -2776,7 +2776,7 @@ func TestComposeSlotEditFieldPrompts(t *testing.T) {
 		field string
 		label string
 	}{
-		{"x", "cc", "Cc: "},
+		{"c", "cc", "Cc: "},
 		{"b", "bcc", "Bcc: "},
 		{"r", "replyto", "Reply-To: "},
 	} {
@@ -2907,7 +2907,7 @@ func TestFieldHotkeysPrefill(t *testing.T) {
 	for _, tc := range []struct {
 		key, field, want string
 	}{
-		{"x", "cc", "c@old, c2@old"},
+		{"c", "cc", "c@old, c2@old"},
 		{"b", "bcc", "b@old"},
 		{"r", "replyto", "r@old"},
 	} {
@@ -2998,7 +2998,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
-	m = press(t, m, "x")
+	m = press(t, m, "c")
 	for _, ch := range "reza@x.io" {
 		m = press(t, m, string(ch))
 	}

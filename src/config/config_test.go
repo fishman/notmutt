@@ -344,9 +344,9 @@ func TestDefaultBindings(t *testing.T) {
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
-		"x": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
+		"c": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
 		"e": "edit", "a": "attach", "d": "detach",
-		"c": "account", "C": "signature", "y": "send", "q": "abort",
+		"A": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help", "~": "log",
 	}
@@ -386,7 +386,7 @@ func TestKeymapSchemes(t *testing.T) {
 		t.Fatalf("emacs compose scroll keys missing: %v", cfg.Bindings["compose"])
 	}
 	for _, tc := range []struct{ key, fun string }{
-		{"x", "edit-cc"}, {"b", "edit-bcc"}, {"r", "edit-replyto"}, {"S", "security"},
+		{"c", "edit-cc"}, {"b", "edit-bcc"}, {"r", "edit-replyto"}, {"S", "security"},
 	} {
 		if cfg.Bindings["compose"][tc.key] != tc.fun {
 			t.Fatalf("emacs compose %s must map to %s: %v", tc.key, tc.fun, cfg.Bindings["compose"])

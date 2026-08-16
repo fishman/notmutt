@@ -84,14 +84,14 @@
 "t" = { fun = "edit-to", desc = "Edit the To list", show = true }
 "s" = { fun = "edit-subject", desc = "Edit the subject", show = true }
 "f" = { fun = "edit-from", desc = "Edit the From address", show = true }
-"x" = { fun = "edit-cc", desc = "Edit the Cc list", show = true }
+"c" = { fun = "edit-cc", desc = "Edit the Cc list", show = true }
 "b" = { fun = "edit-bcc", desc = "Edit the Bcc list", show = true }
 "r" = { fun = "edit-replyto", desc = "Edit the Reply-To list", show = true }
 "S" = { fun = "security", desc = "Cycle the security setting", show = true }
 "e" = { fun = "edit", desc = "Edit the message body", show = true }
 "a" = { fun = "attach", desc = "Attach a file", show = true }
 "d" = { fun = "detach", desc = "Detach the attachment under the cursor", show = true }
-"c" = { fun = "account", desc = "Choose the sender account", show = true }
+"A" = { fun = "account", desc = "Choose the sender account", show = true }
 "C" = { fun = "signature", desc = "Choose the signature", show = true }
 "y" = { fun = "send", desc = "Send the message", show = true }
 "q" = { fun = "abort", desc = "Abort the composition", show = true }
@@ -163,14 +163,14 @@
 "t" = { fun = "edit-to", show = true }
 "s" = { fun = "edit-subject", show = true }
 "f" = { fun = "edit-from", show = true }
-"x" = { fun = "edit-cc", show = true }
+"c" = { fun = "edit-cc", show = true }
 "b" = { fun = "edit-bcc", show = true }
 "r" = { fun = "edit-replyto", show = true }
 "S" = { fun = "security", show = true }
 "e" = { fun = "edit", show = true }
 "a" = { fun = "attach", show = true }
 "d" = { fun = "detach", show = true }
-"c" = { fun = "account", show = true }
+"A" = { fun = "account", show = true }
 "C" = { fun = "signature", show = true }
 "y" = { fun = "send", show = true }
 "q" = { fun = "abort", show = true }

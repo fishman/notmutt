@@ -106,6 +106,7 @@ type Config struct {
 	Accounts       map[string]Account                       `toml:"accounts"`
 	Send           Send                                     `toml:"send"`
 	Refresh        Refresh                                  `toml:"refresh"`
+	Filter         Filter                                   `toml:"filter"`
 	AttachCommands map[string][]string                      `toml:"attach-commands"`
 	Palette        Palette                                  `toml:"palette"`
 	Theme          Theme                                    `toml:"theme"`
@@ -146,6 +147,25 @@ type Refresh struct {
 	// Interval is the poll cadence in seconds (default 1200 = 20 min;
 	// 0 disables the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
+}
+
+// Filter configures the classification pipeline (R2): Enabled turns the
+// post-new engine on, DryRun reports what-would-change without writing
+// (the first runs against a real mailbox are always dry), HeaderRules
+// are the content-based soft-tag rules - the engine evaluates each
+// rule's query over the delta and enforces the NOT guards itself
+// (muttrc/notmuch/post-new as data).
+type Filter struct {
+	Enabled     bool         `toml:"enabled"`
+	DryRun      bool         `toml:"dry-run"`
+	HeaderRules []HeaderRule `toml:"header-rules"`
+}
+
+// HeaderRule is one content-based soft-tag rule: a query and the tags it
+// adds when it matches.
+type HeaderRule struct {
+	Query string   `toml:"query"`
+	Add   []string `toml:"add"`
 }
 
 type UITags struct {
@@ -660,13 +680,23 @@ type Send struct {
 // pointer distinguishes unset from an explicitly empty value, which is
 // a load error. Folders is the detected hard-tag folder map (the
 // `notmutt setup` output) - per-account tag -> folder-name for the
-// mover's folder resolution.
+// mover's folder resolution. Preset names a built-in provider folder
+// map (gmail, generic-imap; unknown names are load errors); Moves
+// overrides the preset per tag (tag -> folder candidates, first
+// existing wins, '*' globs - afew folder_priorities). ReadOnly
+// accounts get folder tags but never physical moves (toptal);
+// ReturnInbox enables the trash return-to-inbox rule (the non-standard
+// rule in muttrc/afew/config).
 type Account struct {
-	Folder           *string           `toml:"folder"`
-	From             string            `toml:"from"`
-	SentFolder       string            `toml:"sent_folder"`
-	DefaultSignature string            `toml:"default_signature"`
-	Folders          map[string]string `toml:"folders"`
+	Folder           *string             `toml:"folder"`
+	From             string              `toml:"from"`
+	SentFolder       string              `toml:"sent_folder"`
+	DefaultSignature string              `toml:"default_signature"`
+	Folders          map[string]string   `toml:"folders"`
+	Preset           string              `toml:"preset"`
+	Moves            map[string][]string `toml:"moves"`
+	ReadOnly         bool                `toml:"readonly"`
+	ReturnInbox      bool                `toml:"return_inbox"`
 }
 
 func (a Account) Tag(name string) string {
@@ -674,6 +704,36 @@ func (a Account) Tag(name string) string {
 		return *a.Folder
 	}
 	return name
+}
+
+// Preset is a provider's tag -> folder-name candidates (R2): the
+// default move rule is universal (tag:<t> moves to t's folder), only
+// the folder names vary per provider (afew folder_priorities as data).
+// Candidates are tried in order, first existing folder wins, '*' is a
+// glob. The gmail names are the muttrc afew config reference.
+type Preset map[string][]string
+
+// Presets are the built-in provider folder maps. An account's preset
+// resolves by name; unknown names are load errors.
+var Presets = map[string]Preset{
+	"gmail": {
+		"archive": {"Archives", "Archive"},
+		"deleted": {"[Gmail]/Trash", "Trash", "Deleted Items"},
+		"spam":    {"[Gmail]/Spam", "Spam", "Junk*"},
+		"pending": {"Pending"},
+		"draft":   {"[Gmail]/Drafts", "Drafts"},
+		"sent":    {"[Gmail]/Sent Mail", "Sent"},
+		"inbox":   {"INBOX"},
+	},
+	"generic-imap": {
+		"archive": {"Archive"},
+		"deleted": {"Trash"},
+		"spam":    {"Spam"},
+		"pending": {"Pending"},
+		"draft":   {"Drafts"},
+		"sent":    {"Sent"},
+		"inbox":   {"INBOX"},
+	},
 }
 
 // AccountTags derives the account tag set: one tag per account (the
@@ -822,6 +882,10 @@ func Default() Config {
 		},
 		Refresh: Refresh{
 			Interval: 1200,
+		},
+		Filter: Filter{
+			Enabled: true,
+			DryRun:  true,
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
@@ -995,6 +1059,19 @@ func validate(cfg Config) error {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
 		}
 	}
+	for i, r := range cfg.Filter.HeaderRules {
+		if strings.TrimSpace(r.Query) == "" {
+			return fmt.Errorf("filter.header-rules[%d]: query must not be empty", i)
+		}
+		if len(r.Add) == 0 {
+			return fmt.Errorf("filter.header-rules[%d]: at least one add tag required", i)
+		}
+		for _, t := range r.Add {
+			if strings.TrimSpace(t) == "" {
+				return fmt.Errorf("filter.header-rules[%d]: empty add tag", i)
+			}
+		}
+	}
 	if len(cfg.Views) == 0 {
 		return fmt.Errorf("at least one view required")
 	}
@@ -1075,6 +1152,27 @@ func validate(cfg Config) error {
 	for name, a := range cfg.Accounts {
 		if a.Folder != nil && strings.TrimSpace(*a.Folder) == "" {
 			return fmt.Errorf("accounts.%s: folder must not be blank", name)
+		}
+		if a.Preset != "" {
+			if _, ok := Presets[a.Preset]; !ok {
+				return fmt.Errorf("accounts.%s: unknown preset %q", name, a.Preset)
+			}
+		}
+		for tag, candidates := range a.Moves {
+			if strings.TrimSpace(tag) == "" {
+				return fmt.Errorf("accounts.%s.moves: empty tag name", name)
+			}
+			if len(candidates) == 0 {
+				return fmt.Errorf("accounts.%s.moves.%s: at least one candidate required", name, tag)
+			}
+			for _, c := range candidates {
+				if strings.TrimSpace(c) == "" {
+					return fmt.Errorf("accounts.%s.moves.%s: empty candidate", name, tag)
+				}
+				if strings.ContainsAny(c, `"`) {
+					return fmt.Errorf("accounts.%s.moves.%s: candidate %q: double quotes break the folder rule query", name, tag, c)
+				}
+			}
 		}
 	}
 	return nil

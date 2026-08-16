@@ -793,3 +793,111 @@ deleted = "[Gmail]/Trash"
 		t.Fatalf("folders = %v, want the detected map", got)
 	}
 }
+
+func TestFilterDefaults(t *testing.T) {
+	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Filter.Enabled || !cfg.Filter.DryRun {
+		t.Fatalf("filter defaults = enabled %v dry-run %v", cfg.Filter.Enabled, cfg.Filter.DryRun)
+	}
+}
+
+func TestFilterHeaderRules(t *testing.T) {
+	cfg, err := Load(write(t, `
+[filter]
+enabled = false
+dry-run = false
+
+[[filter.header-rules]]
+query = "from:*@dynamia.ai"
+add = ["work"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Filter.Enabled || cfg.Filter.DryRun {
+		t.Fatalf("filter overrides ignored: %+v", cfg.Filter)
+	}
+	if len(cfg.Filter.HeaderRules) != 1 || cfg.Filter.HeaderRules[0].Query != "from:*@dynamia.ai" ||
+		len(cfg.Filter.HeaderRules[0].Add) != 1 || cfg.Filter.HeaderRules[0].Add[0] != "work" {
+		t.Fatalf("header-rules = %+v", cfg.Filter.HeaderRules)
+	}
+}
+
+func TestFilterHeaderRuleEmptyQueryErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[[filter.header-rules]]
+query = ""
+add = ["work"]
+`))
+	if err == nil || !strings.Contains(err.Error(), "filter.header-rules") {
+		t.Fatalf("empty query must error, got: %v", err)
+	}
+}
+
+func TestFilterHeaderRuleEmptyAddErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[[filter.header-rules]]
+query = "from:x"
+add = []
+`))
+	if err == nil || !strings.Contains(err.Error(), "add") {
+		t.Fatalf("empty add must error, got: %v", err)
+	}
+}
+
+func TestAccountPreset(t *testing.T) {
+	cfg, err := Load(write(t, `
+[accounts.gmail]
+folder = "gmail"
+preset = "gmail"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Accounts["gmail"].Preset != "gmail" {
+		t.Fatalf("preset = %q", cfg.Accounts["gmail"].Preset)
+	}
+	if len(Presets["gmail"]["deleted"]) != 3 {
+		t.Fatalf("gmail deleted candidates = %v", Presets["gmail"]["deleted"])
+	}
+}
+
+func TestAccountUnknownPresetErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[accounts.gmail]
+preset = "exchange"
+`))
+	if err == nil || !strings.Contains(err.Error(), "exchange") {
+		t.Fatalf("unknown preset must error naming it, got: %v", err)
+	}
+}
+
+func TestAccountMoves(t *testing.T) {
+	cfg, err := Load(write(t, `
+[accounts.gmail]
+folder = "gmail"
+
+[accounts.gmail.moves]
+archive = ["Archives", "Archive"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Accounts["gmail"].Moves["archive"]) != 2 {
+		t.Fatalf("moves = %v", cfg.Accounts["gmail"].Moves)
+	}
+}
+
+func TestAccountMovesInvalid(t *testing.T) {
+	_, err := Load(write(t, "[accounts.gmail]\nfolder = \"gmail\"\n[accounts.gmail.moves]\narchive = []\n"))
+	if err == nil || !strings.Contains(err.Error(), "moves.archive") {
+		t.Fatalf("empty candidates must error, got: %v", err)
+	}
+	_, err = Load(write(t, "[accounts.gmail]\nfolder = \"gmail\"\n[accounts.gmail.moves]\narchive = ['Archives\"']\n"))
+	if err == nil || !strings.Contains(err.Error(), "moves.archive") {
+		t.Fatalf("a quoted candidate must error, got: %v", err)
+	}
+}

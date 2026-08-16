@@ -1,7 +1,6 @@
 package compose
 
 import (
-	"fmt"
 	"strings"
 )
 
@@ -22,24 +21,8 @@ func BodyWithSig(body, sigBody string) string {
 	return strings.TrimRight(body, "\n") + SigBlock(sigBody)
 }
 
-// BuildBuffer is the editor buffer contract (spec section 7): the
-// header block, one blank separator line, the body, the signature
-// block. No trailing newline (the file write may add one; the parse
-// strips it).
-func (s *State) BuildBuffer() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "To: %s\n", strings.Join(s.To, ", "))
-	fmt.Fprintf(&b, "Cc: %s\n", strings.Join(s.Cc, ", "))
-	fmt.Fprintf(&b, "Bcc: %s\n", strings.Join(s.Bcc, ", "))
-	fmt.Fprintf(&b, "Reply-To: %s\n", strings.Join(s.ReplyTo, ", "))
-	fmt.Fprintf(&b, "Subject: %s\n\n", s.Subject)
-	b.WriteString(BodyWithSig(s.Body, s.SignatureBody))
-	return b.String()
-}
-
 // SplitAddrs splits an address list on commas and drops blanks - the
-// one canonical list parse, shared by the editor buffer and the
-// compose field editors (DRY).
+// one canonical list parse for the compose field editors (DRY).
 func SplitAddrs(s string) []string {
 	var out []string
 	for _, a := range strings.Split(s, ",") {
@@ -50,47 +33,24 @@ func SplitAddrs(s string) []string {
 	return out
 }
 
-// ParseBuffer parses the editor buffer back into the fields (spec
-// section 7): headers up to the first blank line, the rest the body.
-// CRLF line endings (vim fileformat=dos) normalize to LF at entry - a
-// CRLF blank line is "\r\n\r\n", which would otherwise swallow the
-// whole buffer as headers. Address lists split on commas; blank
-// entries drop. Unknown header lines are dropped (the three fields
-// own the block - pinned contract). The signature tail detaches by
-// exact match with the previously attached block: a matched tail
-// keeps the signature, an edited tail stays as user text and detaches
-// it. A buffer without the separator parses as all-headers, empty
-// body.
-func ParseBuffer(buf, prevSigName, prevSigBody string) (to, cc, bcc, replyTo []string, subject, body, sigName, sigBody string) {
+// ParseBuffer parses the editor buffer back (spec section 7): the
+// buffer holds ONLY the mail content - the body and the attached
+// signature tail (mutt's msgbody shape). The email header never
+// lives here; the dialogue fields build it at assembly. The
+// signature tail detaches by exact match with the previously
+// attached block: a matched tail keeps the signature, an edited tail
+// stays as user text and detaches it. CRLF line endings (vim
+// fileformat=dos) normalize to LF at entry; a trailing newline
+// strips.
+func ParseBuffer(buf, prevSigName, prevSigBody string) (body, sigName, sigBody string) {
 	buf = strings.ReplaceAll(buf, "\r\n", "\n")
-	buf = strings.TrimSuffix(buf, "\n")
-	head, rest := buf, ""
-	if i := strings.Index(buf, "\n\n"); i >= 0 {
-		head, rest = buf[:i], buf[i+2:]
-	}
-	parse := func(pref string) []string {
-		var out []string
-		for _, l := range strings.Split(head, "\n") {
-			if v, ok := strings.CutPrefix(l, pref); ok {
-				out = append(out, SplitAddrs(v)...)
-			}
-		}
-		return out
-	}
-	to, cc = parse("To:"), parse("Cc:")
-	bcc, replyTo = parse("Bcc:"), parse("Reply-To:")
-	for _, l := range strings.Split(head, "\n") {
-		if v, ok := strings.CutPrefix(l, "Subject:"); ok {
-			subject = strings.TrimSpace(v)
-		}
-	}
-	body = rest
+	body = strings.TrimSuffix(buf, "\n")
 	if prevSigBody != "" {
 		block := SigBlock(prevSigBody)
 		if strings.HasSuffix(body, block) {
 			body = strings.TrimSuffix(body, block)
-			return to, cc, bcc, replyTo, subject, body, prevSigName, prevSigBody
+			return body, prevSigName, prevSigBody
 		}
 	}
-	return to, cc, bcc, replyTo, subject, body, "", ""
+	return body, "", ""
 }

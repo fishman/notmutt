@@ -1771,8 +1771,15 @@ func TestBodyBufferFileLivesForTab(t *testing.T) {
 	if fi, err := os.Stat(p); err != nil || fi.Mode().Perm() != 0600 {
 		t.Fatalf("the buffer file must exist with 0600 (F5): %v", err)
 	}
-	if !strings.Contains(m.tabs[0].BuildBuffer(), "> quoted") {
+	raw, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "> quoted") {
 		t.Fatal("the buffer file must mirror the dialogue body")
+	}
+	if strings.Contains(string(raw), "To:") || strings.Contains(string(raw), "Subject:") {
+		t.Fatal("the editor buffer holds only the mail content, never the email header (mutt msgbody)")
 	}
 	// e reuses the same file - the row's path never churns
 	next, _ := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
@@ -1850,7 +1857,7 @@ func TestFieldEditFrom(t *testing.T) {
 
 // TestFieldEditToSplitsAddrs pins the To editor: t pre-fills the list,
 // a comma entry splits through the shared SplitAddrs helper (DRY with
-// the editor buffer parse).
+// the other compose field editors).
 func TestFieldEditToSplitsAddrs(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "t")

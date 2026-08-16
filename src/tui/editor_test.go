@@ -27,27 +27,34 @@ func TestEditorBufferRoundTrip(t *testing.T) {
 	if fi.Mode().Perm() != 0600 {
 		t.Fatalf("buffer perms = %v, want 0600 (F5)", fi.Mode().Perm())
 	}
+	// the buffer holds ONLY the mail content (mutt's msgbody shape) -
+	// the email header is built from the dialogue fields, never the
+	// editor
+	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "Subject:") || strings.Contains(string(raw), "To:") {
+		t.Fatalf("the editor buffer must not carry the email header:\n%s", raw)
+	}
 
 	got, err := applyEditorResult(*s, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Subject != "hello" || got.Body != "body text" {
-		t.Fatalf("round trip: %q %q", got.Subject, got.Body)
+	if got.Body != "body text" {
+		t.Fatalf("round trip: %q", got.Body)
 	}
 	if got.SignatureBody != "bob" {
 		t.Fatalf("signature must survive the round trip: %q", got.SignatureBody)
+	}
+	if got.To[0] != "a@b.c" || got.Subject != "hello" {
+		t.Fatalf("header fields are dialogue-owned, must survive untouched: %v %q", got.To, got.Subject)
 	}
 }
 
 func TestApplyEditorResultParsesEdits(t *testing.T) {
 	s := compose.NewCompose("gmail", "Bob <bob@example.com>", "gmail", "bob")
-	s.To = []string{"a@b.c"}
-	s.Subject = "old"
 	s.Body = "old body"
 
 	path := filepath.Join(t.TempDir(), "buf")
-	content := "To: x@y.z\nCc: \nSubject: new subject\n\nnew body\n\n-- \nnew sig"
+	content := "new body\n\n-- \nnew sig"
 	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,11 +63,8 @@ func TestApplyEditorResultParsesEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Subject != "new subject" || got.Body != "new body\n\n-- \nnew sig" {
-		t.Fatalf("edits = %q %q", got.Subject, got.Body)
-	}
-	if len(got.To) != 1 || got.To[0] != "x@y.z" {
-		t.Fatalf("to = %v", got.To)
+	if got.Body != "new body\n\n-- \nnew sig" {
+		t.Fatalf("edits = %q", got.Body)
 	}
 	// the edited signature tail no longer matches "bob": it stays as
 	// body text and the signature detaches

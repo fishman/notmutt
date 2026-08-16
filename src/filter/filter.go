@@ -283,18 +283,30 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 	return Entry{ID: m.ID, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
-// norm strips the mail root prefix once per message: the path rules
-// match relative paths (notmuch reports them relative to the database
-// path; absolute only for files outside it). The root join leaves a
-// leading slash that would break the folder prefix match.
+// relPath strips the mail root prefix: the path rules match relative
+// paths (notmuch reports them relative to the database path; absolute
+// only for files outside it). The root join leaves a leading slash
+// that would break the folder prefix match.
+func relPath(root, p string) string {
+	if root != "" && strings.HasPrefix(p, root) {
+		return strings.Trim(strings.TrimPrefix(p, root), "/")
+	}
+	return p
+}
+
+// absPath joins the root for a file stat; absolute paths pass through.
+func absPath(root, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(root, p)
+}
+
+// norm strips the mail root prefix once per message.
 func (e *Engine) norm(paths []string) []string {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		if e.root != "" && strings.HasPrefix(p, e.root) {
-			out[i] = strings.Trim(strings.TrimPrefix(p, e.root), "/")
-		} else {
-			out[i] = p
-		}
+		out[i] = relPath(e.root, p)
 	}
 	return out
 }
@@ -315,10 +327,7 @@ func (e *Engine) accountOf(paths []string) *accountRule {
 
 // abs joins the root for a file stat; absolute paths pass through.
 func (e *Engine) abs(p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	return filepath.Join(e.root, p)
+	return absPath(e.root, p)
 }
 
 // inFolder reports whether the path sits under the account's folder

@@ -71,9 +71,9 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 		}
 		for _, f := range e.Paths {
 			me := MoveEntry{ID: e.ID, From: f}
-			rel := m.rel(f)
+			rel := relPath(m.root, f)
 			dst := filepath.Join(target, filepath.Base(filepath.Dir(rel)), filepath.Base(rel))
-			if _, err := os.Stat(m.abs(f)); err != nil {
+			if _, err := os.Stat(absPath(m.root, f)); err != nil {
 				me.Skip = "source gone"
 			} else {
 				srcMaildir := filepath.Dir(filepath.Dir(rel))
@@ -82,7 +82,7 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 					me.Skip = "not managed"
 				case sameTree(srcMaildir, filepath.Dir(filepath.Dir(dst))):
 					me.Skip = "already home"
-				case m.exists(m.abs(dst)):
+				case exists(absPath(m.root, dst)):
 					me.Skip = "dest exists"
 				default:
 					me.To = dst
@@ -90,11 +90,11 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 			}
 			out.Moves = append(out.Moves, me)
 			if me.To != "" && !m.dryRun {
-				if err := copyFile(m.abs(f), m.abs(dst)); err != nil {
+				if err := copyFile(absPath(m.root, f), absPath(m.root, dst)); err != nil {
 					return nil, fmt.Errorf("mover: copy %s: %w", f, err)
 				}
-				toAdd = append(toAdd, m.abs(dst))
-				toRemove = append(toRemove, m.abs(f))
+				toAdd = append(toAdd, absPath(m.root, dst))
+				toRemove = append(toRemove, absPath(m.root, f))
 			}
 		}
 	}
@@ -132,9 +132,12 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 // resolveAccounts computes the per-account move targets and managed
 // folder sets once per run: the folder state changes between polls
 // (mbsync creates folders), so the resolution never caches across runs.
-// The managed set is INBOX plus every resolved target tree - mail the
-// user filed in organizational folders is left where it is (the
-// reference gmail/* wildcard expansion).
+// The managed set is the inbox tree plus every resolved target tree -
+// mail the user filed in organizational folders is left where it is
+// (the reference gmail/* wildcard expansion). The inbox tree resolves
+// through the same candidate machinery as the untag gate (candidates,
+// R2); the bare INBOX convention is the fallback where an account has
+// no inbox candidates at all.
 func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[string][]string) {
 	targets := map[string]map[string]string{}
 	managed := map[string][]string{}
@@ -151,7 +154,12 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 		}
 		fs := a.Tag(e.Account)
 		ts := map[string]string{}
-		trees := []string{filepath.Join(fs, "INBOX")}
+		var trees []string
+		if cs := candidates(a, "inbox"); len(cs) > 0 {
+			trees = append(trees, m.resolveTarget(fs, cs))
+		} else {
+			trees = []string{filepath.Join(fs, "INBOX")}
+		}
 		for tag, cs := range candidateTags(a) {
 			ts[tag] = m.resolveTarget(fs, cs)
 			trees = append(trees, ts[tag])
@@ -162,26 +170,33 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 	return targets, managed
 }
 
-// candidateTags is the account's hard tags with folder candidates
-// (moves + preset + detected folders merged; candidates() is the
-// per-tag resolution).
+// candidateTags is the account's hard tags with folder candidates:
+// the union of the moves, preset, and detected-folder keys, each
+// resolved through candidates() - the moves > preset > folders
+// precedence lives there once.
 func candidateTags(a config.Account) map[string][]string {
 	out := map[string][]string{}
-	for tag, cs := range a.Moves {
-		out[tag] = cs
+	seen := map[string]bool{}
+	add := func(tag string) {
+		if seen[tag] {
+			return
+		}
+		seen[tag] = true
+		if cs := candidates(a, tag); len(cs) > 0 {
+			out[tag] = cs
+		}
+	}
+	for tag := range a.Moves {
+		add(tag)
 	}
 	if a.Preset != "" {
-		for tag, cs := range config.Presets[a.Preset] {
-			if _, ok := out[tag]; !ok {
-				out[tag] = cs
-			}
+		for tag := range config.Presets[a.Preset] {
+			add(tag)
 		}
 	}
 	for tag, f := range a.Folders {
 		if f != "" {
-			if _, ok := out[tag]; !ok {
-				out[tag] = []string{f}
-			}
+			add(tag)
 		}
 	}
 	return out
@@ -199,14 +214,14 @@ func (m *Mover) resolveTarget(folderSpace string, cs []string) string {
 			if err == nil {
 				sort.Strings(matches)
 				for _, match := range matches {
-					if m.isDir(match) {
+					if isDir(match) {
 						return filepath.Join(folderSpace, filepath.Base(match))
 					}
 				}
 			}
 			continue
 		}
-		if m.isDir(filepath.Join(base, c)) {
+		if isDir(filepath.Join(base, c)) {
 			return filepath.Join(folderSpace, c)
 		}
 	}
@@ -266,28 +281,12 @@ func copyFile(src, dst string) error {
 	return os.Chtimes(dst, fi.ModTime(), fi.ModTime())
 }
 
-func (m *Mover) abs(p string) string {
-	if filepath.IsAbs(p) {
-		return p
-	}
-	return filepath.Join(m.root, p)
-}
-
-// rel strips the mail root prefix (the folder matches work on
-// relative paths; see Engine.norm).
-func (m *Mover) rel(p string) string {
-	if m.root != "" && strings.HasPrefix(p, m.root) {
-		return strings.Trim(strings.TrimPrefix(p, m.root), "/")
-	}
-	return p
-}
-
-func (m *Mover) isDir(p string) bool {
+func isDir(p string) bool {
 	fi, err := os.Stat(p)
 	return err == nil && fi.IsDir()
 }
 
-func (m *Mover) exists(p string) bool {
+func exists(p string) bool {
 	_, err := os.Stat(p)
 	return err == nil
 }

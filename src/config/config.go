@@ -4,7 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"maps"
-	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -1019,38 +1019,47 @@ func (c Config) TagGroupList() []core.TagGroup {
 	return out
 }
 
-// Load merges file values over defaults. Unknown keys are load errors
-// naming the key (strict load, R8). A missing file means defaults.
-// The file's [schemes.*] tables overlay the embedded base per key
-// (mergeSchemes; BurntSushi replaces whole context tables in nested
-// maps), so a rebinding names the scheme, context, and key it touches.
-func Load(path string) (Config, error) {
+// Load merges every *.toml file in dir over defaults, sorted by name
+// with later files winning - config.toml, accounts.toml and
+// filters.toml split freely, one file as the degenerate case. Tables
+// merge recursively; arrays and scalars replace. Unknown keys are
+// load errors naming the file and key (strict load, R8). A missing
+// dir means defaults. The merged [schemes.*] tables overlay the
+// embedded base per key (mergeSchemes; BurntSushi replaces whole
+// context tables in nested maps), so a rebinding names the scheme,
+// context, and key it touches.
+func Load(dir string) (Config, error) {
 	cfg := Default()
-	md, err := toml.DecodeFile(path, &cfg)
+	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return cfg, nil
-		}
 		return cfg, err
 	}
-	if und := md.Undecoded(); len(und) > 0 {
-		keys := make([]string, 0, len(und))
-		for _, k := range und {
-			// palette/theme decode through custom unmarshalers that
-			// consume their whole subtree; BurntSushi does not mark
-			// Unmarshaler subtrees as decoded, so their inner keys
-			// always land here. The unmarshalers are strict themselves.
-			// A 4-level schemes key is a table-form binding entry's
-			// field (schemes.<km>.<ctx>.<key>.<fun|desc>) - consumed by
-			// Binding.UnmarshalTOML, which rejects unknown fields.
-			if k[0] == "palette" || k[0] == "theme" || (k[0] == "schemes" && len(k) == 5) {
-				continue
-			}
-			keys = append(keys, k.String())
+	sort.Strings(files)
+	if len(files) == 0 {
+		return cfg, nil
+	}
+	merged := map[string]any{}
+	for _, f := range files {
+		var probe Config
+		md, err := toml.DecodeFile(f, &probe)
+		if err != nil {
+			return cfg, err
 		}
-		if len(keys) > 0 {
-			return cfg, fmt.Errorf("%s: unknown key(s): %s", path, strings.Join(keys, ", "))
+		if keys := undecodedKeys(md); len(keys) > 0 {
+			return cfg, fmt.Errorf("%s: unknown key(s): %s", f, strings.Join(keys, ", "))
 		}
+		var m map[string]any
+		if _, err := toml.DecodeFile(f, &m); err != nil {
+			return cfg, err
+		}
+		merged = mergeMaps(merged, m)
+	}
+	raw, err := toml.Marshal(merged)
+	if err != nil {
+		return cfg, err
+	}
+	if _, err := toml.Decode(string(raw), &cfg); err != nil {
+		return cfg, err
 	}
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
 	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
@@ -1059,6 +1068,43 @@ func Load(path string) (Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// undecodedKeys runs the strict check: the keys the struct decode did
+// not consume. palette/theme decode through custom unmarshalers that
+// consume their whole subtree; BurntSushi does not mark Unmarshaler
+// subtrees as decoded, so their inner keys always land here. The
+// unmarshalers are strict themselves. A 4-level schemes key is a
+// table-form binding entry's field (schemes.<km>.<ctx>.<key>.<fun|desc>)
+// - consumed by Binding.UnmarshalTOML, which rejects unknown fields.
+func undecodedKeys(md toml.MetaData) []string {
+	var keys []string
+	for _, k := range md.Undecoded() {
+		if k[0] == "palette" || k[0] == "theme" || (k[0] == "schemes" && len(k) == 5) {
+			continue
+		}
+		keys = append(keys, k.String())
+	}
+	return keys
+}
+
+// mergeMaps overlays b over a: tables merge recursively, arrays and
+// scalars replace - later files win per key.
+func mergeMaps(a, b map[string]any) map[string]any {
+	out := make(map[string]any, len(a)+len(b))
+	for k, v := range a {
+		out[k] = v
+	}
+	for k, v := range b {
+		if av, ok := out[k].(map[string]any); ok {
+			if bv, ok := v.(map[string]any); ok {
+				out[k] = mergeMaps(av, bv)
+				continue
+			}
+		}
+		out[k] = v
+	}
+	return out
 }
 
 func validate(cfg Config) error {

@@ -150,7 +150,7 @@ return { name = "vendor", match = { "INBOX" }, folders = { inbox = { "INBOX" } }
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOTMUTT_CONFIG", filepath.Join(dir, "config.toml"))
+	t.Setenv("NOTMUTT_CONFIG", dir)
 	got := mergedTemplates([]string{"gmail", "exchange"})
 	want := []string{"gmail", "exchange", "icloud", "outlook"}
 	if len(got) != len(want) {
@@ -201,7 +201,7 @@ return {
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOTMUTT_CONFIG", filepath.Join(dir, "config.toml"))
+	t.Setenv("NOTMUTT_CONFIG", dir)
 	accs, err := setup.Detect(root, mergedTemplates([]string{"exchange"}))
 	if err != nil {
 		t.Fatal(err)

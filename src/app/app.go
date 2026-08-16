@@ -33,7 +33,7 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		return setupAccounts()
 	}
-	cfg, err := config.Load(configPath())
+	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
@@ -102,14 +102,14 @@ func Run() error {
 	// the signatures root (spec section 9): ONE path, both halves of
 	// the send surface read the same tree - the app (default signature
 	// in buildCompose) and the tui (the picker lists the files)
-	sigDir = filepath.Join(filepath.Dir(configPath()), "signatures")
+	sigDir = filepath.Join(configDir(), "signatures")
 	tui.SetSignaturesDir(sigDir)
 
 	// the Lua layer (R8): plugin files from <configdir>/lua, each
 	// registering its body_render as a render transform. The adapter
 	// compiles only under the lua build tag (the R12 pattern); default
 	// builds run the no-op stub. Loaded before any open can fire.
-	loadLuaPlugins(filepath.Join(filepath.Dir(configPath()), "lua"))
+	loadLuaPlugins(filepath.Join(configDir(), "lua"))
 
 	// attach commands: config tables register first, then Lua plugin
 	// registrations (later, per-plugin load order) - both land in the
@@ -358,9 +358,9 @@ func setupAccounts() error {
 	if err != nil {
 		return fmt.Errorf("setup: resolve database.path: %w", err)
 	}
-	cfg, err := config.Load(configPath())
+	cfg, err := config.Load(configDir())
 	if err != nil {
-		log.Printf("setup: config %s: %v", configPath(), err)
+		log.Printf("setup: config %s: %v", configDir(), err)
 	}
 	accs, err := setup.Detect(root, mergedTemplates(cfg.Setup.Templates))
 	if err != nil {
@@ -374,7 +374,7 @@ func setupAccounts() error {
 			matched = append(matched, fmt.Sprintf("%s (%s)", a.Name, a.Template))
 		}
 	}
-	dir := filepath.Dir(configPath())
+	dir := configDir()
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
@@ -443,7 +443,7 @@ func mergedTemplates(active []string) []setup.Template {
 		seen[t.Name] = true
 	}
 	var add []setup.Template
-	for _, t := range luaTemplates(filepath.Dir(configPath()), active) {
+	for _, t := range luaTemplates(configDir(), active) {
 		if !seen[t.Name] {
 			add = append(add, t)
 			continue
@@ -459,15 +459,15 @@ func mergedTemplates(active []string) []setup.Template {
 	return append(out, add...)
 }
 
-func configPath() string {
+func configDir() string {
 	if p := os.Getenv("NOTMUTT_CONFIG"); p != "" {
 		return p
 	}
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return "config.toml"
+		return "notmutt"
 	}
-	return filepath.Join(base, "notmutt", "config.toml")
+	return filepath.Join(base, "notmutt")
 }
 
 func cachePath() string {

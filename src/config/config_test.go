@@ -13,11 +13,11 @@ import (
 
 func write(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
-	return path
+	return dir
 }
 
 func TestLoadValid(t *testing.T) {
@@ -37,6 +37,73 @@ threads = true
 	}
 	if cfg.Views["inbox"].Query != "tag:inbox" || !cfg.Views["inbox"].Threads {
 		t.Fatalf("view parse wrong: %+v", cfg.Views["inbox"])
+	}
+}
+
+// TestLoadMultipleFiles pins the multi-file merge: every *.toml in the
+// dir loads, tables merge across files, later files win on scalars and
+// arrays, and a single-file dir still loads.
+func TestLoadMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("accounts.toml", `
+[accounts.gmail]
+folder = "gmail"
+preset = "gmail"
+`)
+	write("config.toml", `
+[ui]
+keymap = "emacs"
+
+[notify]
+max = 1
+`)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Keymap != "emacs" || *cfg.Accounts["gmail"].Folder != "gmail" {
+		t.Fatalf("cross-file merge wrong: %+v %+v", cfg.UI.Keymap, cfg.Accounts)
+	}
+	if cfg.Notify.Max != 1 {
+		t.Fatalf("notify.max = %d", cfg.Notify.Max)
+	}
+	// later file wins on the same scalar; a key absent from later
+	// files survives from earlier ones
+	write("filters.toml", `
+[notify]
+max = 4
+
+[ui.tags]
+max = 2
+`)
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notify.Max != 4 {
+		t.Fatalf("later file must win: notify.max = %d", cfg.Notify.Max)
+	}
+	if *cfg.Accounts["gmail"].Folder != "gmail" {
+		t.Fatalf("earlier-file keys must survive: %+v", cfg.Accounts)
+	}
+}
+
+// TestLoadUnknownKeyNamesFile pins strict-load attribution: an unknown
+// key errors naming the file that carries it.
+func TestLoadUnknownKeyNamesFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "accounts.toml"), []byte("[notify]\nnonesuch = 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := Load(dir)
+	if err == nil || !strings.Contains(err.Error(), "accounts.toml") || !strings.Contains(err.Error(), "nonesuch") {
+		t.Fatalf("want accounts.toml naming nonesuch, got %v", err)
 	}
 }
 
@@ -153,7 +220,7 @@ func TestLoadInvalidEnum(t *testing.T) {
 }
 
 func TestLoadDefaultsWhenMissing(t *testing.T) {
-	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"))
+	cfg, err := Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +282,7 @@ func TestLoadUnknownTagGroupKey(t *testing.T) {
 	if err := os.WriteFile(p, []byte("[tag-groups.folder]\ntags = [\"inbox\"]\nbogus = 1\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := Load(p)
+	_, err := Load(dir)
 	if err == nil || !strings.Contains(err.Error(), "bogus") {
 		t.Fatalf("unknown key must error, got %v", err)
 	}
@@ -661,13 +728,12 @@ func writeThemeFile(t *testing.T, body string) string {
 }
 
 func TestThemeStrictLoad(t *testing.T) {
-	dir := t.TempDir()
 	write := func(name, body string) string {
-		p := filepath.Join(dir, name)
-		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		return p
+		return dir
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"unknown key":     {"[theme.dark]\nnonesuch = { fg = \"base00\" }", "unknown key"},
@@ -842,7 +908,6 @@ folder = ""
 
 func TestAccountFoldersStrictLoad(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "config.toml")
 	body := `
 [accounts.gmail]
 folder = "gmail"
@@ -851,11 +916,11 @@ folder = "gmail"
 inbox = "INBOX"
 deleted = "[Gmail]/Trash"
 `
-	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "config.toml"), []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("NOTMUTT_CONFIG", path)
-	cfg, err := Load(path)
+	t.Setenv("NOTMUTT_CONFIG", dir)
+	cfg, err := Load(dir)
 	if err != nil {
 		t.Fatalf("the setup-generated accounts shape must load strictly: %v", err)
 	}
@@ -866,7 +931,7 @@ deleted = "[Gmail]/Trash"
 }
 
 func TestFilterDefaults(t *testing.T) {
-	cfg, err := Load(filepath.Join(t.TempDir(), "nope.toml"))
+	cfg, err := Load(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}

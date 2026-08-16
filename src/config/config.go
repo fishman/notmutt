@@ -693,7 +693,7 @@ type Send struct {
 // folder prefix is its folder space in the maildir (R2). The account
 // tag in notmuch is the folder prefix - the muttrc folder:/^<folder>\//
 // pattern as data. Folder defaults to the account name (the common
-// case: [accounts.dynamia] maps to the "dynamia" tag directly); the
+// case: [accounts.atlas] maps to the "atlas" tag directly); the
 // pointer distinguishes unset from an explicitly empty value, which is
 // a load error. Folders is the detected hard-tag folder map (the
 // `notmutt setup` output) - per-account tag -> folder-name for the
@@ -701,7 +701,7 @@ type Send struct {
 // map (gmail, generic-imap; unknown names are load errors); Moves
 // overrides the preset per tag (tag -> folder candidates, first
 // existing wins, '*' globs - afew folder_priorities). ReadOnly
-// accounts get folder tags but never physical moves (toptal);
+// accounts get folder tags but never physical moves (atlas);
 // ReturnInbox enables the trash return-to-inbox rule (the non-standard
 // rule in muttrc/afew/config).
 type Account struct {
@@ -888,10 +888,11 @@ func Default() Config {
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
 		},
-		// the reference mail setup (muttrc): one account per maildir
-		// root, each mapping to its folder tag by name
+		// the gmail placeholder keeps the default shape; the real
+		// accounts come from the user's accounts file (a table that
+		// merges over this map)
 		Accounts: map[string]Account{
-			"gmail": {}, "jelveh": {}, "toptal": {}, "dynamia": {},
+			"gmail": {},
 		},
 		Send: Send{
 			Command: "msmtp",

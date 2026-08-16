@@ -1019,15 +1019,16 @@ func (c Config) TagGroupList() []core.TagGroup {
 	return out
 }
 
-// Load merges every *.toml file in dir over defaults, sorted by name
-// with later files winning - config.toml, accounts.toml and
-// filters.toml split freely, one file as the degenerate case. Tables
-// merge recursively; arrays and scalars replace. Unknown keys are
-// load errors naming the file and key (strict load, R8). A missing
-// dir means defaults. The merged [schemes.*] tables overlay the
-// embedded base per key (mergeSchemes; BurntSushi replaces whole
-// context tables in nested maps), so a rebinding names the scheme,
-// context, and key it touches.
+// Load merges every *.toml file in dir over defaults: the optional
+// splits (accounts.toml, filters.toml, ...) merge in sorted name
+// order, then config.toml merges LAST and wins any conflict - the
+// main file is authoritative, the splits partition its sections, and
+// one file remains the degenerate case. Tables merge recursively;
+// arrays and scalars replace. Unknown keys are load errors naming
+// the file and key (strict load, R8). A missing dir means defaults.
+// The merged [schemes.*] tables overlay the embedded base per key
+// (mergeSchemes; BurntSushi replaces whole context tables in nested
+// maps), so a rebinding names the scheme, context, and key it touches.
 func Load(dir string) (Config, error) {
 	cfg := Default()
 	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
@@ -1035,6 +1036,7 @@ func Load(dir string) (Config, error) {
 		return cfg, err
 	}
 	sort.Strings(files)
+	files = configLast(files)
 	if len(files) == 0 {
 		return cfg, nil
 	}
@@ -1086,6 +1088,24 @@ func undecodedKeys(md toml.MetaData) []string {
 		keys = append(keys, k.String())
 	}
 	return keys
+}
+
+// configLast moves config.toml to the end of the load order: it wins
+// conflicts against the optional splits.
+func configLast(files []string) []string {
+	out := make([]string, 0, len(files))
+	var main string
+	for _, f := range files {
+		if filepath.Base(f) == "config.toml" {
+			main = f
+			continue
+		}
+		out = append(out, f)
+	}
+	if main != "" {
+		out = append(out, main)
+	}
+	return out
 }
 
 // mergeMaps overlays b over a: tables merge recursively, arrays and

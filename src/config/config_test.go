@@ -41,8 +41,9 @@ threads = true
 }
 
 // TestLoadMultipleFiles pins the multi-file merge: every *.toml in the
-// dir loads, tables merge across files, later files win on scalars and
-// arrays, and a single-file dir still loads.
+// dir loads, tables merge across files, config.toml wins on conflicts
+// (the splits merge first, the main file last), keys absent from
+// config.toml survive from the splits, and a single-file dir loads.
 func TestLoadMultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {
@@ -73,8 +74,9 @@ max = 1
 	if cfg.Notify.Max != 1 {
 		t.Fatalf("notify.max = %d", cfg.Notify.Max)
 	}
-	// later file wins on the same scalar; a key absent from later
-	// files survives from earlier ones
+	// a split's scalar conflicts with config.toml: config.toml wins
+	// (it merges last); a key absent from config.toml survives from
+	// the split
 	write("filters.toml", `
 [notify]
 max = 4
@@ -86,11 +88,14 @@ max = 2
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Notify.Max != 4 {
-		t.Fatalf("later file must win: notify.max = %d", cfg.Notify.Max)
+	if cfg.Notify.Max != 1 {
+		t.Fatalf("config.toml must win the conflict: notify.max = %d", cfg.Notify.Max)
+	}
+	if cfg.UI.Tags.Max != 2 {
+		t.Fatalf("split-only keys must survive: ui.tags.max = %d", cfg.UI.Tags.Max)
 	}
 	if *cfg.Accounts["gmail"].Folder != "gmail" {
-		t.Fatalf("earlier-file keys must survive: %+v", cfg.Accounts)
+		t.Fatalf("split-only account keys must survive: %+v", cfg.Accounts)
 	}
 }
 

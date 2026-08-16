@@ -842,7 +842,7 @@ func TestComposeFormSanitizesControls(t *testing.T) {
 func TestProgressBarRendersAndClears(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	if strings.Contains(m.View().Content, "refresh") {
+	if strings.Contains(m.View().Content, "refresh 5/10") {
 		t.Fatal("no bar before any progress event")
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 5, Total: 10})
@@ -854,7 +854,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
-	if strings.Contains(m.View().Content, "refresh") {
+	if strings.Contains(m.View().Content, "refresh 10/10") {
 		t.Fatal("bar must clear on completion")
 	}
 }

@@ -52,6 +52,7 @@
 "]" = { fun = "tab-next", desc = "Switch to the next tab", show = true }
 "?" = { fun = "help", desc = "Show this help", show = true }
 "~" = { fun = "log", desc = "Show the session log", show = true }
+"=" = { fun = "refresh", desc = "Check for new mail now", show = true }
 
 [schemes.vim.pager]
 "j" = { fun = "scroll-down", desc = "Scroll down one line" }
@@ -134,6 +135,7 @@
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
+"ctrl+r" = { fun = "refresh", desc = "Check for new mail now", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }

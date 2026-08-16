@@ -140,9 +140,10 @@ type UI struct {
 }
 
 // Refresh is the [refresh] section: the periodic new-mail poll (R2/R3).
-// The poll runs `notmuch new` and refreshes the view at the cadence.
+// The poll runs `notmuch new` and refreshes the view at the cadence
+// (default 20 min - the refresh key checks manually in between).
 type Refresh struct {
-	// Interval is the poll cadence in seconds (default 5, min 1).
+	// Interval is the poll cadence in seconds (default 1200, min 1).
 	Interval int `toml:"interval"`
 }
 
@@ -819,7 +820,7 @@ func Default() Config {
 			Args:    []string{"--read-envelope-from"},
 		},
 		Refresh: Refresh{
-			Interval: 5,
+			Interval: 1200,
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),

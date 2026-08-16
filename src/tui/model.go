@@ -45,7 +45,7 @@ var Actions = map[string]map[string]bool{
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
-		"open": true, "preview": true, "quit": true, "undo": true, "apply": true,
+		"open": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
@@ -687,6 +687,12 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "apply":
 		onApply()
+	case "refresh":
+		// the manual poll trigger: the app-side refresher runs the same
+		// poll body as its ticker (notmuch new + view cycle)
+		if m.bus != nil {
+			m.bus.Publish(core.RefreshRequested{})
+		}
 	case "scroll-down":
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollDown(n)

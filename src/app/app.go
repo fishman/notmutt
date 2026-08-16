@@ -251,31 +251,38 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 // runRefresher is the refresh loop: the poll ticker runs `notmuch new`
 // and refreshes the view at the [refresh] interval (R2/R3 - the poll is
 // the trigger for the user's post-new classification pipeline, so the
-// cadence is configurable, default 5s). The ActNew itself publishes
-// WorkerDone, which triggers a second cycle; the running flag makes
-// overlapping cycles no-ops, and a post-ActNew cycle catches the
-// lastmod bumps of the classification tags. A [refresh] config change
-// re-arms the ticker; other sections reach onConfig.
+// cadence is configurable, default 20 min). The manual refresh key
+// publishes RefreshRequested, which runs the same poll body. The
+// ActNew itself publishes WorkerDone, which triggers a second cycle;
+// the running flag makes overlapping cycles no-ops, and a post-ActNew
+// cycle catches the lastmod bumps of the classification tags. A
+// [refresh] config change re-arms the ticker; other sections reach
+// onConfig.
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {
 	ch := bus.Subscribe()
 	ticker := time.NewTicker(refreshInterval(st))
 	defer ticker.Stop()
+	poll := func() {
+		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
+			// a backend without a New path (ErrUnsupported) is expected -
+			// the poll then degrades to the revision refresh, which picks
+			// up external new runs
+			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+				diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
+			}
+		}
+		r.cycle()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-				// the cgo build cannot run `notmuch new` (ErrUnsupported,
-				// expected every tick there) - the poll then degrades to
-				// the revision refresh, which picks up external new runs
-				if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
-					diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
-				}
-			}
-			r.cycle()
+			poll()
 		case e := <-ch:
 			switch e := e.(type) {
+			case core.RefreshRequested:
+				poll()
 			case core.WorkerDone:
 				r.cycle()
 			case core.ConfigChanged:

@@ -135,6 +135,10 @@ type WorkerDone struct{ Job string }
 
 type WorkerLockTimeout struct{ Kind string }
 
+// RefreshRequested is the manual poll trigger (the refresh key): the
+// refresher runs the same poll body as its ticker.
+type RefreshRequested struct{}
+
 type CacheResult struct {
 	MsgID string
 	Atts  []Attachment

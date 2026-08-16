@@ -3,6 +3,7 @@ package notmuch
 import (
 	"context"
 	"errors"
+	"os/exec"
 
 	"notmutt/core"
 )
@@ -57,10 +58,37 @@ type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error
 	Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error
+	// QueryMsgs walks a message-level query (the filter engine's delta
+	// scans - lastmod ranges): bare message ids (no "id:" prefix; the
+	// engine prefixes when it builds query terms), chunked like Query.
+	QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error
 	Count(ctx context.Context, query string) (int, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
+	// Snapshots fetches per-message tags and paths for the given bare
+	// message ids - the engine's working set (small: the lastmod
+	// delta). Messages missing from the DB are skipped, never an error.
+	Snapshots(ctx context.Context, ids []string) ([]Message, error)
 	Addresses(ctx context.Context, query string) ([]core.AddressEntry, error)
 	Tag(ctx context.Context, query string, ops []TagOp) error
+	// AddPaths/RemovePaths register or drop files for the given paths
+	// (the mover's copy-then-delete DB update: AddPaths first, so the
+	// message keeps its tags).
+	AddPaths(ctx context.Context, paths []string) error
+	RemovePaths(ctx context.Context, paths []string) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)
 	New(ctx context.Context) error
+}
+
+// runFn abstracts one CLI invocation: the cgo backend runs `notmuch
+// new` through it, the CLI backend everything. argv only, never a
+// shell (F4).
+type runFn func(ctx context.Context, name string, args []string) ([]byte, error)
+
+func defaultRun(ctx context.Context, name string, args []string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil && ctx.Err() != nil {
+		return out, ctx.Err()
+	}
+	return out, err
 }

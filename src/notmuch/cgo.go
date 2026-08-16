@@ -2,6 +2,7 @@ package notmuch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -17,10 +18,11 @@ import (
 // to the CLI (decision record 3); the CLI backend stays reachable behind
 // -tags cli (SECURITY.md F10).
 type CGOBackend struct {
-	db *nm.DB
+	db  *nm.DB
+	run runFn // the subprocess boundary: `notmuch new` (scanning is CLI machinery)
 }
 
-func NewCGO() *CGOBackend { return &CGOBackend{} }
+func NewCGO() *CGOBackend { return &CGOBackend{run: defaultRun} }
 
 func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
 	if dbPath == "" {
@@ -189,55 +191,169 @@ func (b *CGOBackend) Addresses(ctx context.Context, query string) ([]core.Addres
 	return out, nil
 }
 
-// Tag writes through a transient read-write reopen: the handle stays
-// read-only for the fill (reads never hold notmuch's write lock), and
-// the write lock is held only for the op - the CLI backend's lock
-// footprint, so concurrent `notmuch new`/`notmuch tag` elsewhere keep
-// working. The whole op is one atomic transaction, like `notmuch tag`.
-func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
+// withWriteLock runs fn on a transient read-write handle: the handle
+// stays read-only for the fill (reads never hold notmuch's write
+// lock), and the write lock is held only for the op - the CLI
+// backend's lock footprint, so concurrent `notmuch new`/`notmuch tag`
+// elsewhere keep working. The whole op is one atomic transaction,
+// like `notmuch tag`.
+func (b *CGOBackend) withWriteLock(ctx context.Context, what string, fn func(*nm.DB) error) error {
 	if b.db == nil {
-		return fmt.Errorf("notmuch tag: database not open")
+		return fmt.Errorf("notmuch %s: database not open", what)
 	}
 	if err := b.db.Reopen(nm.DBReadWrite); err != nil {
-		return fmt.Errorf("notmuch tag: %w", err)
+		return fmt.Errorf("notmuch %s: %w", what, err)
 	}
 	defer b.db.Reopen(nm.DBReadOnly)
 	var opErr error
-	b.db.Atomic(func(db *nm.DB) {
+	b.db.Atomic(func(db *nm.DB) { opErr = fn(db) })
+	return opErr
+}
+
+func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
+	return b.withWriteLock(ctx, "tag", func(db *nm.DB) error {
 		q := db.NewQuery(query)
 		defer q.Close()
 		msgs, err := q.Messages()
 		if err != nil {
-			opErr = fmt.Errorf("notmuch tag: %w", err)
-			return
+			return fmt.Errorf("notmuch tag: %w", err)
 		}
 		defer msgs.Close()
 		for m := range msgs.All() {
 			if ctx.Err() != nil {
-				opErr = ctx.Err()
-				return
+				return ctx.Err()
 			}
 			for _, op := range ops {
 				if op.Add {
 					if err := m.AddTag(op.Tag); err != nil {
-						opErr = fmt.Errorf("notmuch tag: %w", err)
-						return
+						return fmt.Errorf("notmuch tag: %w", err)
 					}
 				} else if err := m.RemoveTag(op.Tag); err != nil {
-					opErr = fmt.Errorf("notmuch tag: %w", err)
-					return
+					return fmt.Errorf("notmuch tag: %w", err)
 				}
 			}
 		}
 		if err := msgs.Err(); err != nil {
-			opErr = fmt.Errorf("notmuch tag: %w", err)
+			return fmt.Errorf("notmuch tag: %w", err)
 		}
+		return nil
 	})
-	return opErr
 }
 
+// AddPaths indexes the given files (the mover's copy-side update). The
+// message keeps its tags: AddMessage finds it by message-id and
+// appends the path - add-first is the ordering that preserves tags.
+// The binding maps index_file's duplicate-id status to an error, but
+// the filename association already happened - the mover's exact case
+// (a copy of a known message), so it counts as success.
+func (b *CGOBackend) AddPaths(ctx context.Context, paths []string) error {
+	return b.withWriteLock(ctx, "add", func(db *nm.DB) error {
+		for _, p := range paths {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if _, err := db.AddMessage(p); err != nil && !errors.Is(err, nm.ErrDuplicateMessageID) {
+				return fmt.Errorf("notmuch add: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+func (b *CGOBackend) RemovePaths(ctx context.Context, paths []string) error {
+	return b.withWriteLock(ctx, "remove", func(db *nm.DB) error {
+		for _, p := range paths {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			// the binding maps remove_message's duplicate-id status (the
+			// message still has other files) to an error, but the file
+			// link was removed - the mover's copy-then-delete case.
+			if err := db.RemoveMessage(p); err != nil && !errors.Is(err, nm.ErrDuplicateMessageID) {
+				return fmt.Errorf("notmuch remove: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// New runs `notmuch new` as a subprocess (argv-only, F4): scanning
+// needs the CLI machinery - the incremental scan, the write lock, and
+// the post-new hooks are notmuch-new.c, there is no library API. The
+// hooks run as configured; the filter engine takes over classification
+// on the revision delta after this returns, and the migration empties
+// the hook file once the engine owns the pipeline (early overlap is
+// guarded, never double-worked).
 func (b *CGOBackend) New(ctx context.Context) error {
-	return fmt.Errorf("notmuch new: unsupported (run `notmuch new` outside the client): %w", ErrUnsupported)
+	out, err := b.run(ctx, "notmuch", []string{"new"})
+	if err != nil {
+		return fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// QueryMsgs walks a message-level query (the filter engine's delta
+// scans - lastmod ranges): bare message ids, chunked like Query. The
+// per-message iterator crosses the C boundary per message, so this is
+// for small result sets - the delta - never the index fill.
+func (b *CGOBackend) QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error {
+	if b.db == nil {
+		return fmt.Errorf("notmuch search: database not open")
+	}
+	q := b.db.NewQuery(query)
+	defer q.Close()
+	msgs, err := q.Messages()
+	if err != nil {
+		return fmt.Errorf("notmuch search: %w", err)
+	}
+	defer msgs.Close()
+	size := firstChunk
+	rows := make([]core.Message, 0, size)
+	for m := range msgs.All() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		rows = append(rows, core.Message{ID: strings.TrimPrefix(m.ID(), "id:")})
+		if len(rows) >= size {
+			if emit != nil && !emit(rows) {
+				return nil
+			}
+			rows = make([]core.Message, 0, steadyChunk)
+			size = steadyChunk
+		}
+	}
+	if err := msgs.Err(); err != nil {
+		return fmt.Errorf("notmuch search: %w", err)
+	}
+	if len(rows) > 0 && emit != nil {
+		emit(rows)
+	}
+	return nil
+}
+
+// Snapshots fetches per-message tags and paths via the header cache
+// (zero file opens) - the engine's working set. A message that
+// vanished between the delta query and this call (an external new or
+// move) is skipped, never an error: its classification is moot.
+func (b *CGOBackend) Snapshots(ctx context.Context, ids []string) ([]Message, error) {
+	if b.db == nil {
+		return nil, fmt.Errorf("notmuch snapshot: database not open")
+	}
+	out := make([]Message, 0, len(ids))
+	for _, id := range ids {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		m, err := b.db.FindMessage(id)
+		if errors.Is(err, nm.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("notmuch snapshot: %w", err)
+		}
+		out = append(out, Message{ID: id, Tags: tagsOf(m), Paths: pathsOf(m)})
+	}
+	return out, nil
 }
 
 func tagsOf(m *nm.Message) []string {

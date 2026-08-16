@@ -7,14 +7,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strconv"
 	"strings"
 
 	"notmutt/core"
 )
-
-type runFn func(ctx context.Context, name string, args []string) ([]byte, error)
 
 // CLIBackend drives the notmuch CLI. argv only, never a shell (F4).
 type CLIBackend struct {
@@ -23,15 +20,6 @@ type CLIBackend struct {
 
 func NewCLI() *CLIBackend {
 	return &CLIBackend{run: defaultRun}
-}
-
-func defaultRun(ctx context.Context, name string, args []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil && ctx.Err() != nil {
-		return out, ctx.Err()
-	}
-	return out, err
 }
 
 func (b *CLIBackend) Open(ctx context.Context, dbPath string) error {
@@ -93,6 +81,69 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit int, emit fu
 		size = steadyChunk
 	}
 	return nil
+}
+
+// QueryMsgs walks a message-level query (the filter engine's delta
+// scans): one `notmuch search --output=messages` subprocess, bare
+// message ids - the json emits "id:"-prefixed strings, the prefix is
+// stripped (the engine re-adds it when it builds query terms).
+func (b *CLIBackend) QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error {
+	out, err := b.run(ctx, "notmuch", []string{"search", "--format=json", "--output=messages", query})
+	if err != nil {
+		return fmt.Errorf("notmuch search: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var ids []string
+	if err := json.Unmarshal(out, &ids); err != nil {
+		return fmt.Errorf("notmuch search: parse: %w", err)
+	}
+	if emit == nil {
+		return nil
+	}
+	rows := make([]core.Message, 0, len(ids))
+	for _, id := range ids {
+		rows = append(rows, core.Message{ID: strings.TrimPrefix(id, "id:")})
+	}
+	for i := 0; i < len(rows); i += steadyChunk {
+		hi := min(i+steadyChunk, len(rows))
+		if !emit(rows[i:hi]) {
+			return nil
+		}
+	}
+	return nil
+}
+
+// Snapshots fetches per-message tags and paths via `notmuch show
+// --format=json --body=false` - the escape-hatch implementation (the
+// cgo backend reads the header cache in-process). The show tree walk
+// is Thread's; the thread id is unknown here and never needed.
+func (b *CLIBackend) Snapshots(ctx context.Context, ids []string) ([]Message, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	terms := make([]string, len(ids))
+	for i, id := range ids {
+		terms[i] = "id:" + id
+	}
+	out, err := b.run(ctx, "notmuch", []string{"show", "--format=json", "--body=false", "(" + strings.Join(terms, " or ") + ")"})
+	if err != nil {
+		return nil, fmt.Errorf("notmuch show: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var groups [][]showNode
+	if err := json.Unmarshal(out, &groups); err != nil {
+		return nil, fmt.Errorf("notmuch show: parse: %w", err)
+	}
+	got := walkGroups(groups, "")
+	byID := make(map[string]*Message, len(got))
+	for i := range got {
+		byID[strings.TrimPrefix(got[i].ID, "id:")] = &got[i]
+	}
+	outMsgs := make([]Message, 0, len(ids))
+	for _, id := range ids {
+		if m, ok := byID[id]; ok {
+			outMsgs = append(outMsgs, *m)
+		}
+	}
+	return outMsgs, nil
 }
 
 // Count returns the number of threads matching the query - the fill's
@@ -240,4 +291,16 @@ func (b *CLIBackend) New(ctx context.Context) error {
 		return fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// AddPaths/RemovePaths are unsupported on the CLI backend: there is no
+// add/remove-file command (`notmuch insert` runs the post-new hooks -
+// not the mover's shape). The poll's own `notmuch new` reconciles
+// moved files one cycle later (the cgo backend updates in-process).
+func (b *CLIBackend) AddPaths(ctx context.Context, paths []string) error {
+	return fmt.Errorf("notmuch add: unsupported by the cli backend: %w", ErrUnsupported)
+}
+
+func (b *CLIBackend) RemovePaths(ctx context.Context, paths []string) error {
+	return fmt.Errorf("notmuch remove: unsupported by the cli backend: %w", ErrUnsupported)
 }

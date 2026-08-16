@@ -23,6 +23,12 @@ func (t *threadBackend) Close(ctx context.Context) error          { return nil }
 func (t *threadBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
 	return nil
 }
+func (t *threadBackend) QueryMsgs(ctx context.Context, q string, emit func([]core.Message) bool) error {
+	return nil
+}
+func (t *threadBackend) Snapshots(ctx context.Context, ids []string) ([]notmuch.Message, error) {
+	return nil, nil
+}
 func (t *threadBackend) Count(ctx context.Context, q string) (int, error) { return len(t.msgs), nil }
 func (t *threadBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
 	return nil, nil
@@ -31,6 +37,8 @@ func (t *threadBackend) Thread(ctx context.Context, id string) ([]core.Message, 
 	return t.msgs, nil
 }
 func (t *threadBackend) Tag(ctx context.Context, q string, ops []notmuch.TagOp) error { return nil }
+func (t *threadBackend) AddPaths(ctx context.Context, paths []string) error           { return nil }
+func (t *threadBackend) RemovePaths(ctx context.Context, paths []string) error        { return nil }
 func (t *threadBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return "uuid-1", 42, nil
 }

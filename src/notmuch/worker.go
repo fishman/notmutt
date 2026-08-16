@@ -8,10 +8,10 @@ import (
 	"notmutt/core"
 )
 
-// ErrUnsupported marks a backend action the build cannot run: the cgo
-// backend's New (running `notmuch new` needs the CLI's post-new hooks
-// and write lock - the read-only handle stays clean). Callers treat it
-// as a silent no-op, never as a failure to report.
+// ErrUnsupported marks a backend action the build cannot run: the CLI
+// backend's path updates (there is no add/remove-file command; its own
+// `notmuch new` reconciles moved files one poll later). Callers treat
+// it as a silent no-op, never as a failure to report.
 var ErrUnsupported = errors.New("not supported by this backend")
 
 type ActionKind int
@@ -19,9 +19,13 @@ type ActionKind int
 const (
 	ActOpen ActionKind = iota
 	ActQuery
+	ActQueryMsgs
 	ActCount
 	ActThread
+	ActSnapshots
 	ActTag
+	ActAddPaths
+	ActRemovePaths
 	ActRevision
 	ActNew
 	ActAddresses
@@ -34,8 +38,9 @@ type Action struct {
 	Query    string
 	ThreadID string
 	Limit    int
-	Emit     func([]core.Message) bool // ActQuery only: the fill consumes chunks as the backend walks
+	Emit     func([]core.Message) bool // ActQuery/ActQueryMsgs only: the consumer collects chunks as the backend walks
 	TagOps   []TagOp
+	Paths    []string // ActSnapshots: the message ids; ActAddPaths/ActRemovePaths: the files
 	replyCh  chan Reply
 }
 
@@ -107,7 +112,7 @@ func (w *Worker) handle(a Action) {
 	// read handle and are MVCC-safe, so the fill must never be cut off
 	// mid-walk by the budget.
 	ctx, cancel := context.WithCancel(w.ctx)
-	if a.Kind == ActTag || a.Kind == ActNew {
+	if a.Kind == ActTag || a.Kind == ActNew || a.Kind == ActAddPaths || a.Kind == ActRemovePaths {
 		ctx, cancel = context.WithTimeout(w.ctx, w.timeout)
 	}
 	defer cancel()
@@ -118,12 +123,26 @@ func (w *Worker) handle(a Action) {
 		err = w.backend.Open(ctx, a.Query)
 	case ActQuery:
 		err = w.backend.Query(ctx, a.Query, a.Limit, a.Emit)
+	case ActQueryMsgs:
+		err = w.backend.QueryMsgs(ctx, a.Query, a.Emit)
 	case ActCount:
 		r.Count, err = w.backend.Count(ctx, a.Query)
 	case ActThread:
 		r.Msgs, err = w.backend.Thread(ctx, a.ThreadID)
+	case ActSnapshots:
+		r.Msgs, err = w.backend.Snapshots(ctx, a.Paths)
 	case ActTag:
 		err = w.backend.Tag(ctx, a.Query, a.TagOps)
+		if err == nil {
+			w.bus.Publish(core.WorkerDone{Job: "tag"})
+		}
+	case ActAddPaths:
+		err = w.backend.AddPaths(ctx, a.Paths)
+		if err == nil {
+			w.bus.Publish(core.WorkerDone{Job: "tag"})
+		}
+	case ActRemovePaths:
+		err = w.backend.RemovePaths(ctx, a.Paths)
 		if err == nil {
 			w.bus.Publish(core.WorkerDone{Job: "tag"})
 		}
@@ -153,10 +172,18 @@ func actionName(k ActionKind) string {
 		return "open"
 	case ActQuery:
 		return "query"
+	case ActQueryMsgs:
+		return "querymsgs"
 	case ActThread:
 		return "thread"
+	case ActSnapshots:
+		return "snapshots"
 	case ActTag:
 		return "tag"
+	case ActAddPaths:
+		return "addpaths"
+	case ActRemovePaths:
+		return "removepaths"
 	case ActRevision:
 		return "revision"
 	case ActNew:

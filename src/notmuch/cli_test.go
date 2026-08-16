@@ -210,6 +210,67 @@ func TestCLIQueryError(t *testing.T) {
 	}
 }
 
+// TestCLIQueryMsgs pins the delta walk: `search --output=messages`
+// emits "id:"-prefixed strings, the backend strips the prefix (the
+// engine re-adds it when it builds query terms - the contract is bare
+// ids).
+func TestCLIQueryMsgs(t *testing.T) {
+	b := NewCLI()
+	var got []string
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		got = args
+		return []byte(`["id:m1","id:m2"]`), nil
+	})
+	var ids []string
+	if err := b.QueryMsgs(context.Background(), "lastmod:1..2", func(rows []core.Message) bool {
+		for _, m := range rows {
+			ids = append(ids, m.ID)
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 || ids[0] != "m1" || ids[1] != "m2" {
+		t.Fatalf("ids = %v, want bare [m1 m2]", ids)
+	}
+	want := []string{"search", "--format=json", "--output=messages", "lastmod:1..2"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv wrong: %v", got)
+	}
+}
+
+func TestCLISnapshots(t *testing.T) {
+	b := NewCLI()
+	var got []string
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		got = args
+		return []byte(showJSON), nil
+	})
+	snaps, err := b.Snapshots(context.Background(), []string{"m1", "m2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snaps) != 2 || snaps[0].ID != "m1" || snaps[1].ID != "m2" ||
+		snaps[0].Paths[0] != "/m/Mail/x/1" || snaps[0].Tags[0] != "inbox" {
+		t.Fatalf("snapshots wrong: %+v", snaps)
+	}
+	want := []string{"show", "--format=json", "--body=false", "(id:m1 or id:m2)"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv wrong: %v", got)
+	}
+}
+
+func TestCLIPathOpsUnsupported(t *testing.T) {
+	b := NewCLI()
+	fakeRun(b, func(name string, args []string) ([]byte, error) { return nil, nil })
+	if err := b.AddPaths(context.Background(), []string{"/x"}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("AddPaths must be unsupported on the cli backend, got %v", err)
+	}
+	if err := b.RemovePaths(context.Background(), []string{"/x"}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("RemovePaths must be unsupported on the cli backend, got %v", err)
+	}
+}
+
 func TestCLIAddresses(t *testing.T) {
 	b := NewCLI()
 	var got []string

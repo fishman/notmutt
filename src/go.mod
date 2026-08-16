@@ -13,6 +13,7 @@ require (
 	github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928
 	github.com/mattn/go-runewidth v0.0.23
 	github.com/muesli/termenv v0.15.2
+	github.com/sahilm/fuzzy v0.1.3
 	github.com/yuin/gopher-lua v1.1.2
 	go.etcd.io/bbolt v1.3.11
 )

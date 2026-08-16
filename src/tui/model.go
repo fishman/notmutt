@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	sfuzzy "github.com/sahilm/fuzzy"
 
 	"notmutt/compose"
 	"notmutt/config"
@@ -1081,15 +1082,17 @@ func (m *Model) openAddrPicker() {
 		return
 	}
 	q := m.dialogue.input
-	var entries []string
+	var disp []string
 	for _, a := range m.addrs {
-		disp := a.Addr
+		d := a.Addr
 		if a.Name != "" {
-			disp = a.Name + " <" + a.Addr + ">"
+			d = a.Name + " <" + a.Addr + ">"
 		}
-		if _, ok := fuzzyMatch(q, disp); ok {
-			entries = append(entries, disp)
-		}
+		disp = append(disp, d)
+	}
+	entries := make([]string, 0, len(disp))
+	for _, mt := range sfuzzy.Find(q, disp) {
+		entries = append(entries, disp[mt.Index])
 	}
 	m.fuzzy = newFuzzy("address", "address:", entries)
 	m.fuzzy.query = q

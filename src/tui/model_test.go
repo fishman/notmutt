@@ -2667,6 +2667,25 @@ func TestComposeTableColonAlign(t *testing.T) {
 	}
 }
 
+// TestComposeLongValueKeepsFrameHeight pins the truncation contract:
+// a long settings value truncates in place - a word-wrapped value
+// would embed newlines and displace the status line (frame height).
+func TestComposeLongValueKeepsFrameHeight(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.composeTab().Subject = strings.Repeat("s", 100)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	frame := stripANSI(m.render())
+	if n := strings.Count(frame, "\n") + 1; n != 24 {
+		t.Fatalf("the frame must stay exactly 24 lines with a long value, got %d:\n%s", n, frame)
+	}
+	for _, l := range strings.Split(frame, "\n") {
+		if strings.HasPrefix(l, "Subject:") && len(l) > 80 {
+			t.Fatalf("the value must truncate to the row width, row = %d cells:\n%s", len(l), l)
+		}
+	}
+}
+
 // TestDialogueLabelStyledBlue pins the dialogue restyle: the content
 // row renders the label in compose.label (blue) and the entry in the
 // normal style, with no indicator background on the text. Cc is empty

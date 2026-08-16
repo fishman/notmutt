@@ -188,7 +188,7 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 // the normal style, so the caller's row padding never restyles it.
 func composeLabel(label, value string, labelW, w int, st Styles) string {
 	lbl := st.ComposeLabel.Width(labelW).Align(lipgloss.Right).Render(label + ":")
-	val := st.Normal.Width(w - labelW - 1).Render(value)
+	val := st.Normal.Render(truncCells(value, w-labelW-1))
 	return lbl + " " + val
 }
 

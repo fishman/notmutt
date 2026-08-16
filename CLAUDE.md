@@ -48,6 +48,9 @@ code.
 - Treat AI output like firmware: assume it fails in production unless
   thoroughly tested. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test).
+- Test data is generated, never personal: no real account names (jelveh,
+  dynamia, toptal) or real people's addresses in tests - fabricate
+  (alpha, atlas, acme, sender@example.com).
 
 ## Output (maximize token reuse)
 

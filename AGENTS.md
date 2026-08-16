@@ -637,7 +637,10 @@ the spec must say why it serves notmutt, not cite it as authority.
 - Testing: treat AI-generated output like firmware - assume it fails in
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks
-  beyond what the project already uses.
+  beyond what the project already uses. Test data is generated, never
+  personal: tests use fabricated account and email names (alpha, atlas,
+  acme, sender@example.com) - the real accounts (jelveh, dynamia, toptal)
+  and real people's addresses never appear in tests.
 - Code style: no unnecessary comments; self-documenting names; never
   explain basic syntax; only non-obvious constraints get a comment.
 - Context: read files with limit/offset where possible; prefer Edit over

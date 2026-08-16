@@ -1515,7 +1515,7 @@ func (m Model) render() string {
 		b.WriteString(m.keyhint())
 		b.WriteString("\n")
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
-		return b.String()
+		return m.overlayDialogue(b.String())
 	}
 	if m.rows == nil {
 		m.rows = m.view.Rows()
@@ -1547,7 +1547,7 @@ func (m Model) render() string {
 		b.WriteString(m.keyhint())
 		b.WriteByte('\n')
 		b.WriteString(m.statusLineWith(st, m.ui))
-		return m.overlayPreview(b.String())
+		return m.overlayDialogue(m.overlayPreview(b.String()))
 	}
 	cur := m.CursorIndex()
 	// the window is ANCHORED at indexOffset (the read-position model):
@@ -1633,7 +1633,49 @@ func (m Model) render() string {
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
-	return m.overlayPreview(b.String())
+	return m.overlayDialogue(m.overlayPreview(b.String()))
+}
+
+// overlayDialogue splices the prompt dialogue box over the frame: a
+// lipgloss-bordered box (border, content row, border) whose rows
+// replace whole frame lines above the status line, so the splice
+// never cuts an SGR sequence. The derivation is the preview popup's:
+// config border glyphs (R11), the indicator's background as the
+// border color, the content row indicator-styled (the compose prompt
+// row's style). A terminal too small (height < 5, width < 3) leaves
+// the frame untouched.
+func (m Model) overlayDialogue(frame string) string {
+	if m.dialogue == nil {
+		return frame
+	}
+	lines := strings.Split(frame, "\n")
+	if m.height < 5 || m.width < 3 || len(lines) < 4 {
+		return frame
+	}
+	lines = padFrameTail(lines, m.height)
+	g := m.ui.Glyphs
+	sg := m.styles.sgr
+	inner := m.width - 2
+	text := core.SanitizeControls(m.dialogue.label + m.dialogue.input)
+	if m.dialogue.kind == dialogueConfirm {
+		text += " (enter = confirm, esc = cancel)"
+	}
+	box := m.styles.Normal.
+		Border(boxBorder(g)).
+		BorderForeground(m.styles.Indicator.GetBackground()).
+		BorderBackground(m.styles.Normal.GetBackground()).
+		Width(inner).
+		Render(sg.indicator.render(truncCells(text, inner)))
+	rows := make([]string, 0, 3)
+	for i, line := range strings.Split(box, "\n") {
+		if i == 3 {
+			break
+		}
+		rows = append(rows, padRowSGR(line, m.width, sg.normal))
+	}
+	top := len(lines) - 4 // three rows above the status line (last)
+	copy(lines[top:top+3], rows)
+	return strings.Join(lines, "\n")
 }
 
 // overlayPreview splices the preview popup over the index frame: a
@@ -1662,12 +1704,7 @@ func (m Model) overlayPreview(frame string) string {
 	// index mode renders short lists shorter than the window (only the
 	// empty view pads to height); the popup must splice a full-height
 	// frame - pad the list section before the keyhint/status tail
-	pad := m.height - len(lines)
-	if pad > 0 {
-		tail := append([]string{}, lines[len(lines)-2:]...)
-		lines = append(lines[:len(lines)-2], make([]string, pad)...)
-		lines = append(lines, tail...)
-	}
+	lines = padFrameTail(lines, m.height)
 	if top+boxH > len(lines) {
 		boxH = len(lines) - top
 	}
@@ -1692,11 +1729,7 @@ func (m Model) overlayPreview(frame string) string {
 		strings.Join(content, "\n") + "\n" +
 		sg.normal.render(truncCells(m.previewHint(), inner))
 	box := m.styles.Normal.
-		Border(lipgloss.Border{
-			TopLeft: g.BorderTL, Top: g.BorderH, TopRight: g.BorderTR,
-			Left: g.BorderV, Right: g.BorderV,
-			BottomLeft: g.BorderBL, Bottom: g.BorderH, BottomRight: g.BorderBR,
-		}).
+		Border(boxBorder(g)).
 		BorderForeground(m.styles.Indicator.GetBackground()).
 		BorderBackground(m.styles.Normal.GetBackground()).
 		Width(inner).
@@ -1707,6 +1740,27 @@ func (m Model) overlayPreview(frame string) string {
 	}
 	copy(lines[top:top+boxH], rows)
 	return strings.Join(lines, "\n")
+}
+
+// padFrameTail pads a short frame (an empty index list) to the window
+// height before the keyhint/status tail, so an overlay can splice
+// full-height rows without cutting the tail.
+func padFrameTail(lines []string, height int) []string {
+	if pad := height - len(lines); pad > 0 {
+		tail := append([]string{}, lines[len(lines)-2:]...)
+		lines = append(lines[:len(lines)-2], make([]string, pad)...)
+		lines = append(lines, tail...)
+	}
+	return lines
+}
+
+// boxBorder builds the popup border from the config glyphs (R11).
+func boxBorder(g config.Glyphs) lipgloss.Border {
+	return lipgloss.Border{
+		TopLeft: g.BorderTL, Top: g.BorderH, TopRight: g.BorderTR,
+		Left: g.BorderV, Right: g.BorderV,
+		BottomLeft: g.BorderBL, Bottom: g.BorderH, BottomRight: g.BorderBR,
+	}
 }
 
 // statusLineWith builds the status data from the model's view and

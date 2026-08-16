@@ -1808,30 +1808,113 @@ func TestFieldEditToSplitsAddrs(t *testing.T) {
 	}
 }
 
-// TestAttachPromptRendersRow pins the prompt row: the attach path
-// input replaces the keyhint row 1:1 (the frame height invariant) and
-// shows the typed text - typing an attachment path is visible, and
-// pasted ESC bytes never reach the terminal (F1).
-func TestAttachPromptRendersRow(t *testing.T) {
+// TestAttachPromptRendersBox pins the dialogue box overlay: the
+// keyhint keeps its row, the box (border, content row, border)
+// splices above the status line, and the typed text renders in the
+// content row - pasted ESC bytes never reach the terminal (F1).
+func TestAttachPromptRendersBox(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	m = press(t, m, "a")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
-		t.Fatalf("the prompt frame must be exactly 24 lines, got %d", got)
+		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
 	}
-	if !strings.Contains(stripANSI(frame), "attach path:") {
-		t.Fatalf("the prompt row must render:\n%s", frame)
+	lines := strings.Split(stripANSI(frame), "\n")
+	if !strings.Contains(lines[1], "a attach") {
+		t.Fatalf("the keyhint must stay on its row:\n%s", frame)
+	}
+	if !strings.Contains(lines[len(lines)-3], "attach path:") {
+		t.Fatalf("the dialogue box must render above the status line:\n%s", frame)
+	}
+	if !strings.Contains(lines[len(lines)-1], "compose") { // box is 3 rows: 20/21/22; status stays last
+		t.Fatalf("the status line must stay the last row:\n%s", frame)
 	}
 	m = press(t, m, "h")
 	m = press(t, m, "i")
 	if !strings.Contains(stripANSI(m.render()), "attach path: hi") {
-		t.Fatalf("typed input must render in the prompt row:\n%s", m.render())
+		t.Fatalf("typed input must render in the box:\n%s", m.render())
 	}
 	m.dialogue.input = "x\x1b[31m"
 	if out := m.render(); strings.Contains(out, "\x1b[31m") {
-		t.Fatalf("control chars leaked into the prompt row:\n%q", out)
+		t.Fatalf("control chars leaked into the dialogue box:\n%q", out)
+	}
+}
+
+// TestConfirmBoxRendersHint pins the confirm box: the abort confirm
+// (q) renders its label and the enter/esc hint in the box content
+// row (three lines from the end - the middle of the 3-row box).
+func TestConfirmBoxRendersHint(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "q")
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the confirm frame must be exactly 24 lines, got %d", got)
+	}
+	lines := strings.Split(stripANSI(frame), "\n")
+	row := lines[len(lines)-3]
+	if !strings.Contains(row, "Abort composition?") {
+		t.Fatalf("the confirm label must render in the box content row:\n%s", frame)
+	}
+	if !strings.Contains(row, "(enter = confirm, esc = cancel)") {
+		t.Fatalf("the confirm hint must render in the box content row:\n%s", frame)
+	}
+}
+
+// TestDialogueBoxRendersInIndex pins the box in index mode: an armed
+// dialogue splices above the status line and the frame stays exactly
+// m.height lines. The dialogue is modal and cannot be armed by index
+// actions today - the direct arm pins the render path.
+func TestDialogueBoxRendersInIndex(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
+	}
+	lines := strings.Split(stripANSI(frame), "\n")
+	if !strings.Contains(lines[len(lines)-3], "go:") {
+		t.Fatalf("the box content row must render the label:\n%s", frame)
+	}
+	if !strings.Contains(lines[len(lines)-1], "inbox") {
+		t.Fatalf("the status line must stay the last row:\n%s", frame)
+	}
+}
+
+// TestDialogueBoxCoversKeyhintInFullIndex pins the full-height splice:
+// with the list filling the window the box replaces the last two list
+// rows and the keyhint row, and the frame stays exactly m.height lines.
+func TestDialogueBoxCoversKeyhintInFullIndex(t *testing.T) {
+	m := model()
+	threads := make([]*core.Thread, 0, 24)
+	for i := 0; i < 24; i++ {
+		threads = append(threads, core.NewThread(fmt.Sprintf("t%d", i), []*core.Message{
+			{ID: fmt.Sprintf("m%d", i), Timestamp: int64(i), Author: "Ann", Subject: "hello", Tags: []string{"inbox"}, References: []string{"r"}},
+		}))
+	}
+	m.view.MergeThreads(threads)
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
+	frame := m.render()
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
+	}
+	lines := strings.Split(stripANSI(frame), "\n")
+	last := len(lines) - 1
+	if !strings.Contains(lines[last-2], "go:") {
+		t.Fatalf("the box content row must render the label:\n%s", frame)
+	}
+	if !strings.HasPrefix(lines[last-3], "╭") || !strings.HasPrefix(lines[last-1], "╰") {
+		t.Fatalf("the box must cover the keyhint row (borders at len-4/len-2):\n%s", frame)
+	}
+	if !strings.Contains(lines[last], "inbox") {
+		t.Fatalf("the status line must stay the last row:\n%s", frame)
 	}
 }
 
@@ -2265,7 +2348,7 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 // TestComposeFrameMuttLayout pins the mutt frame: the tab bar on the
 // first line, the keyhint on the second, the sender-info rows (Bcc,
 // Reply-To, Fcc), the Security divider, the content-type entry, and
-// the prompt swapping the keyhint row.
+// the prompt box splicing above the status line.
 func TestComposeFrameMuttLayout(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
@@ -2283,12 +2366,15 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
 	}
-	// the prompt row swaps the keyhint row 1:1 (the frame height
-	// invariant)
+	// the prompt box splices above the status line; the keyhint stays
+	// on line 1
 	m = press(t, m, "a")
 	frame = m.render()
-	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), "attach path:") {
-		t.Fatalf("the attach prompt must occupy the keyhint row: %q", stripANSI(strings.Split(frame, "\n")[1]))
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), "a attach") {
+		t.Fatalf("the keyhint must stay on line 1: %q", stripANSI(strings.Split(frame, "\n")[1]))
+	}
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[21]), "attach path:") {
+		t.Fatalf("the attach prompt must splice into the box: %q", stripANSI(strings.Split(frame, "\n")[21]))
 	}
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the prompt frame must still be exactly 24 lines, got %d", got)

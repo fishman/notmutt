@@ -22,8 +22,9 @@ type composeForm struct {
 // second, the form rows (the sender info, the Security divider, the
 // content-type entry and the attachments), the preview pane (the
 // pager widget) filling the rest, the status line on the last. The
-// frame is ALWAYS exactly m.height lines - the frame discipline
-// applies to the compose surface like everywhere else.
+// prompt dialogue splices as a boxed overlay above the status when
+// open. The frame is ALWAYS exactly m.height lines - the frame
+// discipline applies to the compose surface like everywhere else.
 func (m *Model) renderCompose() string {
 	if m.fuzzy != nil {
 		return m.renderFuzzy()
@@ -36,15 +37,7 @@ func (m *Model) renderCompose() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
-	// the dialogue swaps the keyhint row 1:1 (the frame height
-	// invariant); it shows the typed text - pasted text can carry ESC,
-	// sanitized at render (F1)
-	switch {
-	case m.dialogue != nil:
-		b.WriteString(padRow(core.SanitizeControls(m.dialogue.label+m.dialogue.input), m.width, m.styles.Indicator))
-	default:
-		b.WriteString(m.keyhint())
-	}
+	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	form := m.composeForm(st)
 	// the form is a viewport (the pager widget): when the rows outgrow
@@ -83,7 +76,7 @@ func (m *Model) renderCompose() string {
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	return b.String()
+	return m.overlayDialogue(b.String())
 }
 
 // syncPreviewPager rebuilds the preview pager only when the rendered
@@ -226,5 +219,5 @@ func (m *Model) renderFuzzy() string {
 	b.WriteString(keyhintRow(m.bindings["fuzzy"], m.width))
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	return b.String()
+	return m.overlayDialogue(b.String())
 }

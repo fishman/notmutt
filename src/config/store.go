@@ -58,6 +58,7 @@ func (s *Store) Config() Config {
 func cloneStyleTable(t StyleTable) StyleTable {
 	for _, s := range []*Style{
 		&t.Normal, &t.Indicator, &t.Status, &t.Progress, &t.Error,
+		&t.Compose.Label,
 		&t.Index.Number, &t.Index.Date, &t.Index.Author, &t.Index.Subject,
 		&t.Index.Flags, &t.Index.Staged, &t.Index.Ghost, &t.Index.Tag.Default,
 		&t.Pager.Header, &t.Pager.HdrDefault, &t.Pager.Signature, &t.Pager.Attachment,

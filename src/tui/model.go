@@ -66,7 +66,9 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"edit": true, "attach": true, "detach": true,
 		"edit-from": true, "edit-to": true, "edit-subject": true,
-		"account": true, "signature": true,
+		"edit-cc": true, "edit-bcc": true, "edit-replyto": true,
+		"security": true,
+		"account":  true, "signature": true,
 		"send": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true,
@@ -162,9 +164,8 @@ type Model struct {
 	// re-attaches it (spec section 5: the dialogue IS the tab).
 	tabs   []compose.State
 	tabIdx int
-	// formIdx is the compose form cursor slot: 0 = account,
-	// 1 = From, 2 = To, 3 = Cc, 4 = Bcc, 5 = Subject, 6 = Reply-To,
-	// 7 = Security, 8+i = attachment i (d detaches there).
+	// formIdx is the compose form cursor slot: 8+i attachment i. The
+	// settings rows are never focused - every field edits by hotkey.
 	formIdx int
 	// formView scrolls the compose form (the pager widget): when the
 	// rows outgrow the frame, the window follows the cursor. A pointer
@@ -659,59 +660,37 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "tab-next":
 		m.tabNext()
 	case "form-down":
-		m.formIdx++
-		if max := 8 + len(m.composeTab().Attachments); m.formIdx > max {
-			m.formIdx = max
+		// navigation lives in the attachment list only: the settings
+		// rows are edited by hotkey, never focused
+		if n := len(m.composeTab().Attachments); n > 0 && m.formIdx < 8+n-1 {
+			m.formIdx++
 		}
 		deferPaint()
 		deferred = true
 	case "form-up":
-		if m.formIdx > 0 {
+		if m.formIdx > 8 {
 			m.formIdx--
 		}
 		deferPaint()
 		deferred = true
 	case "edit":
-		// an in-flight edit's result is discarded when the send
-		// completes - gate it like attach/detach. Slot-aware: the
-		// account, the address fields and the security cycle have
-		// their own editors; From/To/Subject/attachments keep the
-		// body editor (t/s/f already cover the named fields).
+		// the body editor is unconditional: every field edits by its
+		// own hotkey (t/s/f/x/b/r), the account by c, the security by S
 		if m.composeTab().Phase == compose.PhaseSending {
 			break
 		}
 		if m.composeTab().Phase == compose.PhaseFailed {
 			m.composeTab().Phase = compose.PhaseEditing
 		}
-		switch m.formIdx {
-		case 0:
-			m.openPicker("account")
-		case 3, 4, 6:
-			f := map[int]string{3: "cc", 4: "bcc", 6: "replyto"}[m.formIdx]
-			d := &dialogue{kind: dialogueInput, field: f}
-			switch f {
-			case "cc":
-				d.label, d.input = "Cc: ", strings.Join(m.composeTab().Cc, ", ")
-			case "bcc":
-				d.label, d.input = "Bcc: ", strings.Join(m.composeTab().Bcc, ", ")
-			case "replyto":
-				d.label, d.input = "Reply-To: ", strings.Join(m.composeTab().ReplyTo, ", ")
-			}
-			m.dialogue = d
-		case 7:
-			m.composeTab().Security = m.composeTab().Security.Next()
-		default:
-			// From/To/Subject/attachments: the body editor
-			st := *m.composeTab()
-			tabID := st.ID
-			path, err := writeEditorBuffer(st)
-			if err != nil {
-				return m, nil
-			}
-			return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
-				return editorDoneMsg{err: err, path: path, tabID: tabID}
-			})
+		st := *m.composeTab()
+		tabID := st.ID
+		path, err := writeEditorBuffer(st)
+		if err != nil {
+			return m, nil
 		}
+		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+			return editorDoneMsg{err: err, path: path, tabID: tabID}
+		})
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
 			m.dialogue = &dialogue{kind: dialogueInput, field: "attach", label: "attach path: "}
@@ -721,10 +700,16 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		if t.Phase != compose.PhaseSending {
 			if i := m.formIdx - 8; i >= 0 && i < len(t.Attachments) {
 				t.Attachments = slices.Delete(t.Attachments, i, i+1)
+				if n := len(t.Attachments); m.formIdx > 8+n-1 {
+					m.formIdx = 8 + n - 1
+				}
+				if m.formIdx < 8 {
+					m.formIdx = 8
+				}
 			}
 		}
-	case "edit-to", "edit-subject", "edit-from":
-		// the mutt field editors: t/s/f open an inline prompt
+	case "edit-to", "edit-subject", "edit-from", "edit-cc", "edit-bcc", "edit-replyto":
+		// the mutt field editors: t/s/f/x/b/r open an inline prompt
 		// prefilled with the field's current value (the compose
 		// body stays on e and the $EDITOR buffer)
 		if m.composeTab().Phase != compose.PhaseSending {
@@ -740,6 +725,12 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 				d.label, d.input = "Subject: ", st.Subject
 			case "to":
 				d.label, d.input = "To: ", strings.Join(st.To, ", ")
+			case "cc":
+				d.label, d.input = "Cc: ", strings.Join(st.Cc, ", ")
+			case "bcc":
+				d.label, d.input = "Bcc: ", strings.Join(st.Bcc, ", ")
+			case "replyto":
+				d.label, d.input = "Reply-To: ", strings.Join(st.ReplyTo, ", ")
 			}
 			m.dialogue = d
 		}
@@ -747,6 +738,10 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		m.openPicker("account")
 	case "signature":
 		m.openPicker("signature")
+	case "security":
+		if m.composeTab().Phase != compose.PhaseSending {
+			m.composeTab().Security = m.composeTab().Security.Next()
+		}
 	case "send":
 		// PhaseSending gates duplicate presses: one job in flight
 		// (the detach/attach gates protect the shared Attachments
@@ -922,7 +917,7 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	st := compose.FromEvent(e)
 	m.tabs = append(m.tabs, *st)
 	m.tabIdx = len(m.tabs)
-	m.formIdx = 0 // a fresh dialogue never inherits a stale-high slot
+	m.formIdx = 8 // first attachment slot; a phantom with no attachments
 	m.attachTab()
 }
 
@@ -1656,16 +1651,25 @@ func (m Model) overlayDialogue(frame string) string {
 	g := m.ui.Glyphs
 	sg := m.styles.sgr
 	inner := m.width - 2
-	text := core.SanitizeControls(m.dialogue.label + m.dialogue.input)
+	label := core.SanitizeControls(m.dialogue.label)
+	entry := core.SanitizeControls(m.dialogue.input)
 	if m.dialogue.kind == dialogueConfirm {
-		text += " (enter = confirm, esc = cancel)"
+		entry = "(enter = confirm, esc = cancel)"
+	}
+	lbl := m.styles.ComposeLabel.Render(label)
+	// labels are ASCII constants, so byte length is cell width; the
+	// entry truncates to the remaining inner width - the line never
+	// exceeds it and the box never word-wraps to a different height
+	budget := inner - len(label)
+	if budget < 0 {
+		budget = 0
 	}
 	box := m.styles.Normal.
 		Border(boxBorder(g)).
 		BorderForeground(m.styles.Indicator.GetBackground()).
 		BorderBackground(m.styles.Normal.GetBackground()).
 		Width(inner).
-		Render(sg.indicator.render(truncCells(text, inner)))
+		Render(lbl + m.styles.Normal.Render(truncCells(entry, budget)))
 	rows := make([]string, 0, 3)
 	for i, line := range strings.Split(box, "\n") {
 		if i == 3 {

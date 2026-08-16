@@ -1962,7 +1962,7 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 
 func TestEditorEditArmsExec(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m.formIdx = 1 // slot 0 is the account picker; From keeps the editor
+	m.formIdx = 1 // the redesign: e arms the body editor at any slot
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
 	if cmd == nil {
 		t.Fatal("e must return an exec command")
@@ -2362,7 +2362,7 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
 	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "[ ] text/plain"} {
-		if !strings.Contains(frame, want) {
+		if !strings.Contains(stripANSI(frame), want) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
 	}
@@ -2468,27 +2468,26 @@ func TestFramesChrome(t *testing.T) {
 	check("help", m.render())
 }
 
-// TestComposeSlotEditFieldPrompts pins the slot-aware e: slot 3/4/6
-// open the Cc/Bcc/Reply-To prompts, enter splits the addresses into
-// the dialogue state.
+// TestComposeSlotEditFieldPrompts pins the field hotkeys: x/b/r open
+// the Cc/Bcc/Reply-To prompts, enter splits the addresses into the
+// dialogue state.
 func TestComposeSlotEditFieldPrompts(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	for _, tc := range []struct {
-		slot  int
+		key   string
 		field string
 		label string
 	}{
-		{3, "cc", "Cc: "},
-		{4, "bcc", "Bcc: "},
-		{6, "replyto", "Reply-To: "},
+		{"x", "cc", "Cc: "},
+		{"b", "bcc", "Bcc: "},
+		{"r", "replyto", "Reply-To: "},
 	} {
-		m.formIdx = tc.slot
-		m = press(t, m, "e")
+		m = press(t, m, tc.key)
 		if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != tc.field {
-			t.Fatalf("slot %d must open the %s prompt: %+v", tc.slot, tc.field, m.dialogue)
+			t.Fatalf("%s must open the %s prompt: %+v", tc.key, tc.field, m.dialogue)
 		}
 		if m.dialogue.label != tc.label {
-			t.Fatalf("slot %d prompt label = %q, want %q", tc.slot, m.dialogue.label, tc.label)
+			t.Fatalf("%s prompt label = %q, want %q", tc.key, m.dialogue.label, tc.label)
 		}
 		m = press(t, m, "x@y.z, q@w.e")
 		m = press(t, m, "enter")
@@ -2508,17 +2507,172 @@ func TestComposeSlotEditFieldPrompts(t *testing.T) {
 	}
 }
 
-// TestComposeSlotEditSecurityCycle pins the slot-7 e: the security
+// TestComposeSlotEditSecurityCycle pins the S hotkey: the security
 // flag cycles none -> sign -> encrypt -> sign+encrypt -> none.
 func TestComposeSlotEditSecurityCycle(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m.formIdx = 7
 	want := []compose.Security{compose.SecuritySign, compose.SecurityEncrypt, compose.SecuritySignEncrypt, compose.SecurityNone}
 	for _, w := range want {
-		m = press(t, m, "e")
+		m = press(t, m, "S")
 		if m.tabs[0].Security != w {
 			t.Fatalf("security = %v, want %v", m.tabs[0].Security, w)
 		}
+	}
+}
+
+// TestFormNavRestrictedToAttachments pins the redesign's navigation:
+// j/k move only within the attachment list; with no attachments they
+// are no-ops, and the cursor never enters the settings rows.
+func TestFormNavRestrictedToAttachments(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Attachments = []compose.Attachment{
+		{Name: "a.txt", Size: 3}, {Name: "b.txt", Size: 3},
+	}
+	if m.formIdx != 8 {
+		t.Fatalf("a fresh dialogue must land on the first attachment, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "j")
+	if m.formIdx != 9 {
+		t.Fatalf("j must move into the second attachment, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "j")
+	if m.formIdx != 9 {
+		t.Fatalf("j must clamp at the last attachment, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "k")
+	if m.formIdx != 8 {
+		t.Fatalf("k must move back to the first attachment, formIdx = %d", m.formIdx)
+	}
+	m = press(t, m, "k")
+	if m.formIdx != 8 {
+		t.Fatalf("k must stop at the first attachment, formIdx = %d", m.formIdx)
+	}
+	m.tabs[0].Attachments = nil
+	m = press(t, m, "j")
+	if m.formIdx != 8 {
+		t.Fatalf("j with no attachments must no-op, formIdx = %d", m.formIdx)
+	}
+}
+
+// TestFieldHotkeysArmDialogues pins the new field hotkeys: x/b/r arm
+// the prompt dialogue prefilled with the field's current values, and
+// enter splits the addresses back into the tab state.
+func TestFieldHotkeysArmDialogues(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "x")
+	if m.dialogue == nil || m.dialogue.field != "cc" || m.dialogue.label != "Cc: " {
+		t.Fatalf("x must arm the Cc dialogue: %+v", m.dialogue)
+	}
+	m = press(t, m, "esc")
+	m = press(t, m, "b")
+	if m.dialogue == nil || m.dialogue.field != "bcc" || m.dialogue.label != "Bcc: " {
+		t.Fatalf("b must arm the Bcc dialogue: %+v", m.dialogue)
+	}
+	m = press(t, m, "esc")
+	m = press(t, m, "r")
+	if m.dialogue == nil || m.dialogue.field != "replyto" || m.dialogue.label != "Reply-To: " {
+		t.Fatalf("r must arm the Reply-To dialogue: %+v", m.dialogue)
+	}
+	for _, ch := range "a@b, c@d" {
+		m = press(t, m, string(ch))
+	}
+	m = pressType(t, m, '\r')
+	if got := m.tabs[0].ReplyTo; len(got) != 2 || got[0] != "a@b" || got[1] != "c@d" {
+		t.Fatalf("enter must split the addresses into ReplyTo, got %v", got)
+	}
+}
+
+// TestSecurityCycleAction pins the S action: none -> sign -> encrypt
+// -> sign+encrypt -> none.
+func TestSecurityCycleAction(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	if m.tabs[0].Security != compose.SecurityNone {
+		t.Fatalf("a fresh dialogue must be unsigned, got %v", m.tabs[0].Security)
+	}
+	m = press(t, m, "S")
+	if m.tabs[0].Security != compose.SecuritySign {
+		t.Fatalf("S must cycle into sign, got %v", m.tabs[0].Security)
+	}
+	m = press(t, m, "S")
+	m = press(t, m, "S")
+	if m.tabs[0].Security != compose.SecuritySignEncrypt {
+		t.Fatalf("three cycles must land on sign+encrypt, got %v", m.tabs[0].Security)
+	}
+	m = press(t, m, "S")
+	if m.tabs[0].Security != compose.SecurityNone {
+		t.Fatalf("the fourth cycle must wrap to none, got %v", m.tabs[0].Security)
+	}
+}
+
+// TestEditUnconditionalAtAnySlot pins the redesign's 'e': the body
+// editor arms on every slot, including the former account slot.
+func TestEditUnconditionalAtAnySlot(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.formIdx = 0
+	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("e at slot 0 must arm the body editor")
+	}
+	if m.fuzzy != nil {
+		t.Fatal("e must not open the account picker")
+	}
+}
+
+// TestComposeTableColonAlign pins the two-column table: every settings
+// row's label colon sits at the same cell (labelW = 9 at the default
+// label set: "Security:" / "Reply-To:" are the widest).
+func TestComposeTableColonAlign(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	frame := stripANSI(m.render())
+	lines := strings.Split(frame, "\n")
+	seam := -1
+	for _, l := range lines {
+		if !strings.Contains(l, "Account:") {
+			continue
+		}
+		seam = strings.Index(l, ":")
+		break
+	}
+	if seam != 8 {
+		t.Fatalf("the label column seam must sit at cell 8, got %d:\n%s", seam, frame)
+	}
+	seen := 0
+	for _, l := range lines {
+		if c := strings.Index(l, ":"); c == seam {
+			seen++
+		}
+	}
+	if seen < 9 {
+		t.Fatalf("all nine settings rows must align at the seam, aligned = %d:\n%s", seen, frame)
+	}
+}
+
+// TestDialogueLabelStyledBlue pins the dialogue restyle: the content
+// row renders the label in compose.label (blue) and the entry in the
+// normal style, with no indicator background on the text. Cc is empty
+// on the test message, so the typed entry is a standalone run.
+func TestDialogueLabelStyledBlue(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	m = press(t, m, "x")
+	for _, ch := range "reza@x.io" {
+		m = press(t, m, string(ch))
+	}
+	frame := m.render()
+	lines := strings.Split(frame, "\n")
+	row := lines[len(lines)-3] // the box content row
+	if !strings.Contains(row, m.styles.ComposeLabel.Render("Cc: ")) {
+		t.Fatalf("the label must render in compose.label:\n%s", frame)
+	}
+	if !strings.Contains(row, m.styles.Normal.Render("reza@x.io")) {
+		t.Fatalf("the entry must render in the normal style:\n%s", frame)
+	}
+	if strings.Contains(row, m.styles.sgr.indicator.open) {
+		t.Fatalf("the content row must carry no background fill:\n%s", frame)
 	}
 }
 

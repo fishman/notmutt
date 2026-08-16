@@ -4,17 +4,21 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/lipgloss"
+
 	"notmutt/compose"
 	"notmutt/core"
 )
 
-// composeForm is one form line with its cursor slot: 0 = account,
-// 1 = From, 2 = To, 3 = Cc, 4 = Bcc, 5 = Subject, 6 = Reply-To,
-// 7 = Security, 8+i = attachment i, -1 = static row (Fcc, dividers,
-// content-type - never highlighted).
+// composeForm is one form line: the settings rows carry a label +
+// value (rendered as a two-column table, never highlighted), the
+// attachment rows carry a cursor slot (8+i), the static rows
+// (dividers, content-type) carry plain text.
 type composeForm struct {
-	slot int
-	text string
+	slot  int
+	label string // settings row label, rendered right-aligned in compose.label
+	value string // settings row value
+	text  string // plain rows (dividers, content-type, attachments)
 }
 
 // renderCompose builds the attached dialogue frame (spec section 5,
@@ -59,13 +63,24 @@ func (m *Model) renderCompose() string {
 	if r := formRowOf(form, m.formIdx); r >= 0 {
 		m.formView.ensureVisible(r)
 	}
+	labelW := 0
+	for _, f := range form {
+		if f.label != "" && len(f.label)+1 > labelW {
+			labelW = len(f.label) + 1
+		}
+	}
 	vis := m.formView.window()
-	for i, text := range vis {
+	for i := range vis {
+		f := form[m.formView.offset+i]
 		outer := m.styles.Normal
-		if form[m.formView.offset+i].slot == m.formIdx {
+		if f.slot == m.formIdx {
 			outer = m.styles.Indicator
 		}
-		b.WriteString(padRow(text, m.width, outer))
+		line := f.text
+		if f.label != "" {
+			line = composeLabel(f.label, f.value, labelW, m.width, m.styles)
+		}
+		b.WriteString(padRow(line, m.width, outer))
 		b.WriteByte('\n')
 	}
 	previewRows := rows - formRows
@@ -135,17 +150,17 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		return strings.Join(addrs[:2], ", ") + fmt.Sprintf(", +%d more", len(addrs)-2)
 	}
 	rows := []composeForm{
-		{slot: 0, text: "Account: " + st.Account},
-		{slot: 1, text: "From: " + st.From},
-		{slot: 2, text: "To: " + capList(st.To)},
-		{slot: 3, text: "Cc: " + capList(st.Cc)},
-		{slot: 4, text: "Bcc: " + capList(st.Bcc)},
-		{slot: 5, text: "Subject: " + st.Subject},
-		{slot: 6, text: "Reply-To: " + capList(st.ReplyTo)},
-		{slot: -1, text: "Fcc: " + st.Fcc},
-		{slot: 7, text: "Security: " + st.Security.String()},
-		{slot: -1, text: "---"},
-		{slot: -1, text: "[ ] " + compose.ContentTypeOf(st.Body)},
+		{label: "Account", value: st.Account},
+		{label: "From", value: st.From},
+		{label: "To", value: capList(st.To)},
+		{label: "Cc", value: capList(st.Cc)},
+		{label: "Bcc", value: capList(st.Bcc)},
+		{label: "Subject", value: st.Subject},
+		{label: "Reply-To", value: capList(st.ReplyTo)},
+		{label: "Fcc", value: st.Fcc},
+		{label: "Security", value: st.Security.String()},
+		{text: "---"},
+		{text: "[ ] " + compose.ContentTypeOf(st.Body)},
 	}
 	for i, a := range st.Attachments {
 		if i >= 3 {
@@ -157,11 +172,24 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 	rows = append(rows, composeForm{slot: -1, text: "---"})
 	// the form rows render mail-derived text (Subject/To/Cc from the
 	// replied-to message's headers) - same sanitizer as the index rows
-	// and the preview pane (F1)
+	// and the preview pane (F1). The labels are constants, never
+	// sanitized.
 	for i := range rows {
 		rows[i].text = core.SanitizeControls(rows[i].text)
+		rows[i].value = core.SanitizeControls(rows[i].value)
 	}
 	return rows
+}
+
+// composeLabel renders one settings row as a two-column table: the
+// label right-aligned in a fixed column (the colons align at the
+// seam), the value truncated to the remaining row width. The label
+// carries the compose.label style (theme blue); the value cell keeps
+// the normal style, so the caller's row padding never restyles it.
+func composeLabel(label, value string, labelW, w int, st Styles) string {
+	lbl := st.ComposeLabel.Width(labelW).Align(lipgloss.Right).Render(label + ":")
+	val := st.Normal.Width(w - labelW - 1).Render(value)
+	return lbl + " " + val
 }
 
 // formRowOf is the row index of the cursor slot (-1 when the slot has

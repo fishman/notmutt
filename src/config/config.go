@@ -227,6 +227,7 @@ type StyleTable struct {
 	Progress  Style
 	Error     Style
 	Tabbar    TabbarStyleTable
+	Compose   ComposeStyleTable
 	Index     IndexStyleTable
 	Pager     PagerStyleTable
 }
@@ -237,6 +238,12 @@ type StyleTable struct {
 type TabbarStyleTable struct {
 	Default Style
 	Active  Style
+}
+
+// ComposeStyleTable: the compose form's style surface; label is the
+// two-column settings label, shared with the prompt dialogue's label.
+type ComposeStyleTable struct {
+	Label Style
 }
 
 type IndexStyleTable struct {
@@ -367,6 +374,22 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 					return StyleTable{}, err
 				}
 				t.Tabbar.Default = s
+			}
+		case "compose":
+			cm, ok := val.(map[string]interface{})
+			if !ok {
+				return StyleTable{}, fmt.Errorf("compose: expected a table")
+			}
+			if l, ok := cm["label"]; ok {
+				s, err := rawStyle(l)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				t.Compose.Label = s
+				delete(cm, "label")
+			}
+			for k := range cm {
+				return StyleTable{}, fmt.Errorf("compose.%s: unknown key", k)
 			}
 		case "index":
 			im, ok := val.(map[string]interface{})
@@ -540,6 +563,7 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 	out["error"] = apply("error", table.Error)
 	out["tabbar"] = apply("tabbar", table.Tabbar.Default)
 	out["tabbar.active"] = apply("tabbar.active", table.Tabbar.Active)
+	out["compose.label"] = apply("compose.label", table.Compose.Label)
 	for id, s := range map[string]Style{
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
@@ -791,6 +815,9 @@ func defaultTheme() Theme {
 				Tabbar: TabbarStyleTable{
 					Default: Style{Fg: "base05", Bg: "base01"},
 					Active:  Style{Fg: "base00", Bg: "base0D"},
+				},
+				Compose: ComposeStyleTable{
+					Label: Style{Fg: "base0D"}, // the form's settings labels: onedark author blue
 				},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},

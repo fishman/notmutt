@@ -238,6 +238,7 @@ func TestDefaultBindings(t *testing.T) {
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
+		"x": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
 		"e": "edit", "a": "attach", "d": "detach",
 		"c": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
@@ -526,6 +527,26 @@ status = { fg = "#ff0000" }
 	res = cfg.Theme.Resolved(cfg.Palette, "light")
 	if res["status"].Fg != "#ff0000" || res["status"].Bg != "#fafafa" {
 		t.Fatalf("light resolution: %+v", res["status"])
+	}
+}
+
+// TestThemeComposeLabel pins the compose.label id: a [theme.dark.compose]
+// section with a label style resolves through the palette to the id.
+func TestThemeComposeLabel(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, "[theme.dark]\n[theme.dark.compose]\nlabel = { fg = \"base0D\" }"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := cfg.Theme.Resolved(cfg.Palette, "dark")
+	if res["compose.label"].Fg != "#61afef" {
+		t.Fatalf("compose.label fg = %q, want the resolved base0D (#61afef)", res["compose.label"].Fg)
+	}
+}
+
+func TestThemeComposeUnknownKey(t *testing.T) {
+	_, err := Load(writeThemeFile(t, "[theme.dark]\n[theme.dark.compose]\nnonesuch = { fg = \"base0D\" }"))
+	if err == nil || !strings.Contains(err.Error(), "compose.nonesuch") {
+		t.Fatalf("unknown compose key must be a load error, got %v", err)
 	}
 }
 

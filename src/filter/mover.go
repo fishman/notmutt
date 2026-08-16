@@ -155,13 +155,13 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 		fs := a.Tag(e.Account)
 		ts := map[string]string{}
 		var trees []string
-		if cs := candidates(a, "inbox"); len(cs) > 0 {
-			trees = append(trees, m.resolveTarget(fs, cs))
+		if cs := Candidates(a, "inbox"); len(cs) > 0 {
+			trees = append(trees, ResolveFolder(m.root, fs, cs))
 		} else {
 			trees = []string{filepath.Join(fs, "INBOX")}
 		}
 		for tag, cs := range candidateTags(a) {
-			ts[tag] = m.resolveTarget(fs, cs)
+			ts[tag] = ResolveFolder(m.root, fs, cs)
 			trees = append(trees, ts[tag])
 		}
 		targets[e.Account] = ts
@@ -172,7 +172,7 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 
 // candidateTags is the account's hard tags with folder candidates:
 // the union of the moves, preset, and detected-folder keys, each
-// resolved through candidates() - the moves > preset > folders
+// resolved through Candidates() - the moves > preset > folders
 // precedence lives there once.
 func candidateTags(a config.Account) map[string][]string {
 	out := map[string][]string{}
@@ -182,7 +182,7 @@ func candidateTags(a config.Account) map[string][]string {
 			return
 		}
 		seen[tag] = true
-		if cs := candidates(a, tag); len(cs) > 0 {
+		if cs := Candidates(a, tag); len(cs) > 0 {
 			out[tag] = cs
 		}
 	}
@@ -202,12 +202,14 @@ func candidateTags(a config.Account) map[string][]string {
 	return out
 }
 
-// resolveTarget is the reference _resolve_account_folder: the first
-// candidate that exists on disk wins ('*' candidates are globs); none
-// existing falls back to the first candidate - the sync tool creates
-// the folder.
-func (m *Mover) resolveTarget(folderSpace string, cs []string) string {
-	base := filepath.Join(m.root, folderSpace)
+// ResolveFolder is the reference _resolve_account_folder: the first
+// candidate that exists under root+folderSpace wins ('*' candidates
+// are globs); none existing falls back to the first candidate - the
+// sync tool creates the folder. Returns the account-relative path;
+// the caller joins its root. Shared by the mover and the sent-folder
+// derivation.
+func ResolveFolder(root, folderSpace string, cs []string) string {
+	base := filepath.Join(root, folderSpace)
 	for _, c := range cs {
 		if strings.ContainsAny(c, "*?[") {
 			matches, err := filepath.Glob(filepath.Join(base, c))

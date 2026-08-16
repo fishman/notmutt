@@ -54,10 +54,10 @@ func New(w Worker, cfg config.Config, root string) *Engine {
 		for _, g := range e.groups {
 			for _, tag := range g.Tags {
 				if tag == "inbox" {
-					ar.inbox = candidates(a, tag)
+					ar.inbox = Candidates(a, tag)
 					continue
 				}
-				if cs := candidates(a, tag); len(cs) > 0 {
+				if cs := Candidates(a, tag); len(cs) > 0 {
 					ar.rules[tag] = cs
 				}
 			}
@@ -67,10 +67,11 @@ func New(w Worker, cfg config.Config, root string) *Engine {
 	return e
 }
 
-// candidates resolves a hard tag's folder candidates for an account:
+// Candidates resolves a hard tag's folder candidates for an account:
 // the per-account moves override, else the preset, else the detected
-// folders map (afew folder_priorities as data, R2).
-func candidates(a config.Account, tag string) []string {
+// folders map (afew folder_priorities as data, R2). Shared by the
+// engine, the mover, and the sent-folder derivation.
+func Candidates(a config.Account, tag string) []string {
 	if cs, ok := a.Moves[tag]; ok {
 		return cs
 	}
@@ -129,7 +130,7 @@ func (e *Engine) Run(pre, cur uint64) (*Report, error) {
 	rep := &Report{DryRun: e.cfg.Filter.DryRun}
 	for i := range rpl.Msgs {
 		entry := e.classify(rpl.Msgs[i], hits, mark)
-		if len(entry.Ops) == 0 {
+		if len(entry.Ops) == 0 && entry.Folder == "" {
 			continue
 		}
 		rep.Entries = append(rep.Entries, entry)
@@ -138,6 +139,9 @@ func (e *Engine) Run(pre, cur uint64) (*Report, error) {
 		return rep, nil
 	}
 	for _, entry := range rep.Entries {
+		if len(entry.Ops) == 0 {
+			continue // a move-only entry: nothing to tag, the mover owns it
+		}
 		rpl, err := e.worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: "id:" + entry.ID, TagOps: entry.Ops})
 		if err != nil || rpl.Err != nil {
 			return nil, fmt.Errorf("filter: apply %s: %v %v", entry.ID, err, rpl.Err)
@@ -262,12 +266,9 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 			ops = append(ops, core.TagOp{Tag: "inbox", Add: true})
 		}
 	}
-	if len(ops) == 0 {
-		return Entry{}
-	}
 	final, resolved := core.ResolveOps(m.Tags, ops, e.groups)
 	prio := false
-	if len(e.cfg.Notify.Priority) > 0 {
+	if len(ops) > 0 && len(e.cfg.Notify.Priority) > 0 {
 		for _, t := range final {
 			for _, p := range e.cfg.Notify.Priority {
 				if t == p {
@@ -295,6 +296,22 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 				}
 			}
 		}
+		if folder == "" {
+			// already-tagged mail moves too: a hard tag the message
+			// carries after this pass (manual apply, an external tool)
+			// must physically follow its folder. The inFolder guard
+			// keeps already-home rows out of the mover's report - a
+			// move only when the file is not where the tag lives.
+			for _, t := range final {
+				if cs := ar.rules[t]; len(cs) > 0 && !inFolder(paths, ar.folder, cs) {
+					folder = t
+					break
+				}
+			}
+		}
+	}
+	if len(ops) == 0 && folder == "" {
+		return Entry{}
 	}
 	return Entry{ID: m.ID, Subject: m.Subject, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }

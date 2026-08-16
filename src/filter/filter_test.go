@@ -263,6 +263,61 @@ func TestMover(t *testing.T) {
 	}
 }
 
+// TestAlreadyTaggedMoves: a hard tag the message already carries (manual
+// apply, an external tool) must physically move the file - the mover
+// works off the tag's folder, not just the ops this pass produced. Mail
+// that already sits in its tag's folder produces no entry (no report
+// noise on every read-marked delta row).
+func TestAlreadyTaggedMoves(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"INBOX", "Spam"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
+	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fakeWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"gmail", "spam"}, Paths: []string{"gmail/INBOX/cur/1"}},
+			{ID: "m2", Tags: []string{"gmail", "archive"}, Paths: []string{"gmail/Archives/cur/2"}},
+		},
+	}
+	rep, err := New(w, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1 (already-home m2 must not appear): %+v", len(rep.Entries), rep.Entries)
+	}
+	e := rep.Entries[0]
+	if e.ID != "m1" || e.Folder != "spam" || len(e.Ops) != 0 {
+		t.Fatalf("entry = %+v, want m1 folder spam with no ops", e)
+	}
+	if len(w.tagged) != 0 {
+		t.Fatalf("ActTag calls = %d, want 0 (no new ops)", len(w.tagged))
+	}
+	// the mover physically follows the tag
+	if _, err := NewMover(w, cfg, root).Move(rep); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "gmail", "Spam", "cur", "1")); err != nil {
+		t.Fatalf("spam-tagged mail did not move: %v", err)
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Fatal("source still exists after the move")
+	}
+}
+
 func equalOps(a, b []core.TagOp) bool {
 	if len(a) != len(b) {
 		return false

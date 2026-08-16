@@ -43,10 +43,13 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 		return
 	}
 	// snapshot the bytes: exec drains the buffer reading stdin, and the
-	// fcc must be the exact delivered bytes
+	// fcc must be the exact delivered bytes. The wire message drops the
+	// Bcc header (envelope-only, mutt write_bcc default off); the fcc
+	// copy keeps it - the sender's record shows the blind recipients
+	// (mutt's FCC mode).
 	data := buf.Bytes()
 	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
-	cmd.Stdin = bytes.NewReader(data)
+	cmd.Stdin = bytes.NewReader(compose.DropBcc(data))
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Output: string(out), Err: err})

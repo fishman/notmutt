@@ -1,6 +1,7 @@
 package compose
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,45 @@ import (
 
 	"github.com/emersion/go-message/mail"
 )
+
+// DropBcc returns the message with the Bcc header removed - the mutt
+// delivery shape: Bcc rides the envelope only, the wire message never
+// carries it (write_bcc defaults off); the fcc copy keeps it (mutt's
+// FCC mode always writes Bcc). Header-block only: the scan stops at
+// the first blank line (LF or CRLF), so a body line reading "Bcc: ..."
+// never matches. Folded continuations go with the header.
+func DropBcc(data []byte) []byte {
+	end := len(data)
+	for i := 0; i+1 < len(data); i++ {
+		if data[i] == '\n' && (data[i+1] == '\n' || (i+2 < len(data) && data[i+1] == '\r' && data[i+2] == '\n')) {
+			end = i + 1
+			break
+		}
+	}
+	head, rest := data[:end], data[end:]
+	var b bytes.Buffer
+	skip := false
+	for _, l := range bytes.SplitAfter(head, []byte("\n")) {
+		if len(l) == 0 {
+			continue
+		}
+		line := l
+		if line[len(line)-1] == '\n' {
+			line = line[:len(line)-1]
+		}
+		if skip && (line[0] == ' ' || line[0] == '\t') {
+			continue
+		}
+		skip = false
+		if len(line) >= 4 && strings.EqualFold(string(line[:4]), "bcc:") {
+			skip = true
+			continue
+		}
+		b.Write(l)
+	}
+	b.Write(rest)
+	return b.Bytes()
+}
 
 // Assemble writes the message bytes: headers (From/To/Cc/Subject/Date/
 // Message-ID, In-Reply-To and References for replies), one text/plain

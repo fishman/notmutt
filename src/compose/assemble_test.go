@@ -156,3 +156,68 @@ func TestAssembleNoSignature(t *testing.T) {
 		t.Fatalf("body = %q", data)
 	}
 }
+
+func TestDropBcc(t *testing.T) {
+	for name, tc := range map[string]struct {
+		in, want string
+	}{
+		"simple": {
+			"Bcc: hidden@example.com\nTo: x@y.z\n\nbody\n",
+			"To: x@y.z\n\nbody\n",
+		},
+		"folded": {
+			"To: x@y.z\nBcc: a@b.c,\n c@d.e\nSubject: s\n\nbody",
+			"To: x@y.z\nSubject: s\n\nbody",
+		},
+		"first line": {
+			"Bcc: h@x.c\n\nbody",
+			"\nbody",
+		},
+		"case insensitive": {
+			"to: x@y.z\nbcc: hidden@x.c\n\nbody",
+			"to: x@y.z\n\nbody",
+		},
+		"body line kept": {
+			"To: x@y.z\n\nbody\nBcc: not-a-header@x.c\n",
+			"To: x@y.z\n\nbody\nBcc: not-a-header@x.c\n",
+		},
+		"no bcc": {
+			"To: x@y.z\nSubject: s\n\nbody\n",
+			"To: x@y.z\nSubject: s\n\nbody\n",
+		},
+		"crlf": {
+			"To: x@y.z\r\nBcc: a@b.c\r\n\r\nbody\r\n",
+			"To: x@y.z\r\n\r\nbody\r\n",
+		},
+	} {
+		if got := string(DropBcc([]byte(tc.in))); got != tc.want {
+			t.Fatalf("%s: DropBcc =\n%q\nwant\n%q", name, got, tc.want)
+		}
+	}
+}
+
+// TestDropBccAssembled pins the mutt delivery shape on the real
+// assembled bytes: the wire copy (DropBcc) carries no Bcc header, the
+// fcc copy (the raw assembly) keeps it.
+func TestDropBccAssembled(t *testing.T) {
+	s := NewCompose("gmail", "bob@example.com", "", "")
+	s.To = []string{"alice@example.com"}
+	s.Bcc = []string{"bcc@example.net"}
+	s.Subject = "x"
+	s.Body = "y"
+	var buf bytes.Buffer
+	if err := s.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	wire := string(DropBcc(data))
+	if strings.Contains(wire, "Bcc:") {
+		t.Fatalf("the wire copy must not carry Bcc:\n%s", wire)
+	}
+	if !strings.Contains(string(data), "Bcc:") || !strings.Contains(string(data), "bcc@example.net") {
+		t.Fatalf("the fcc copy must keep Bcc:\n%s", data)
+	}
+	if !strings.Contains(wire, "Subject: x") || !strings.Contains(wire, "alice@example.com") {
+		t.Fatalf("the wire copy must keep everything else:\n%s", wire)
+	}
+}

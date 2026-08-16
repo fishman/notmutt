@@ -313,3 +313,58 @@ func TestSendJobFccErrorNotesButDelivers(t *testing.T) {
 		t.Fatalf("the fcc note must surface: %q", e.Output)
 	}
 }
+
+// TestSendJobBccEnvelopeOnly pins the mutt delivery shape end to end:
+// the wire message (transport stdin) carries no Bcc header - Bcc rides
+// the envelope only - while the fcc copy keeps it (mutt's FCC mode).
+func TestSendJobBccEnvelopeOnly(t *testing.T) {
+	dir := t.TempDir()
+	captured := filepath.Join(dir, "captured")
+	stub := "#!/bin/sh\ncat > " + captured + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	sent := filepath.Join(dir, "sent")
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{SentFolder: sent}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab7"
+	st.To = []string{"alice@example.com"}
+	st.Bcc = []string{"bcc@example.net"}
+	st.Subject = "x"
+	st.Body = "y"
+
+	sendJob(bus, w, view, cfg, *st)
+
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	wire, err := os.ReadFile(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(wire), "Bcc:") {
+		t.Fatalf("the wire message must not carry Bcc:\n%s", wire)
+	}
+	if !strings.Contains(string(wire), "alice@example.com") {
+		t.Fatalf("the wire message must keep the other headers:\n%s", wire)
+	}
+	entries, err := os.ReadDir(filepath.Join(sent, "new"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("fcc files: %v %v", entries, err)
+	}
+	fcc, err := os.ReadFile(filepath.Join(sent, "new", entries[0].Name()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fcc), "Bcc:") || !strings.Contains(string(fcc), "bcc@example.net") {
+		t.Fatalf("the fcc copy must keep Bcc:\n%s", fcc)
+	}
+}

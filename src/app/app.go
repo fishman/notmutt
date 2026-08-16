@@ -18,6 +18,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/filter"
 	"notmutt/mail"
 	"notmutt/notmuch"
 	"notmutt/setup"
@@ -372,6 +373,15 @@ func setupAccounts() error {
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}
+	// the physical resolution (the mover's own machinery): each matched
+	// account's hard-tag folders resolve against the real tree BEFORE
+	// anything is written - an account that resolves nothing fails
+	// setup, the generated config would promise moves that cannot
+	// happen.
+	resolved, err := resolveSetupFolders(root, accs)
+	if err != nil {
+		return err
+	}
 	var matched, unmatched []string
 	for _, a := range accs {
 		if a.Template == "" {
@@ -390,9 +400,50 @@ func setupAccounts() error {
 		return fmt.Errorf("setup: write %s: %w", path, err)
 	}
 	fmt.Printf("setup: accounts: %s\n", strings.Join(matched, ", "))
+	for _, a := range accs {
+		if lines, ok := resolved[a.Name]; ok {
+			fmt.Printf("setup: %s: %s\n", a.Name, strings.Join(lines, " "))
+		}
+	}
 	fmt.Printf("setup: no template match: %s\n", strings.Join(unmatched, ", "))
 	fmt.Printf("setup: wrote %s\n", path)
 	return nil
+}
+
+// resolveSetupFolders resolves each matched account's hard-tag folders
+// against the physical tree through the mover's own machinery
+// (Candidates + ResolveFolder - the account's folder space plus its
+// detected folder map; first existing wins, else the first candidate,
+// the sync tool creates the folder). An account whose folders resolve
+// to nothing fails setup. Returns per-account sorted "tag=path" lines
+// with absolute paths.
+func resolveSetupFolders(root string, accs []setup.Account) (map[string][]string, error) {
+	out := map[string][]string{}
+	for _, a := range accs {
+		if a.Template == "" {
+			continue
+		}
+		acc := config.Account{Folder: &a.Name, Folders: a.Folders}
+		tags := make([]string, 0, len(a.Folders))
+		for tag := range a.Folders {
+			tags = append(tags, tag)
+		}
+		sort.Strings(tags)
+		var lines []string
+		for _, tag := range tags {
+			cs := filter.Candidates(acc, tag)
+			if len(cs) == 0 {
+				continue
+			}
+			resolved := filter.ResolveFolder(root, acc.Tag(a.Name), cs)
+			lines = append(lines, tag+"="+filepath.Join(root, resolved))
+		}
+		if len(lines) == 0 {
+			return nil, fmt.Errorf("setup: %s: no folder resolves - its tag folders are missing", a.Name)
+		}
+		out[a.Name] = lines
+	}
+	return out, nil
 }
 
 // seedTemplates copies the shipped example templates to

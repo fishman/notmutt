@@ -134,6 +134,19 @@ func Run() error {
 		go sendJob(bus, worker, view, cfg, st)
 	})
 
+	// address completion: the compose Tab trigger (lazy, debounced in
+	// the TUI) harvests the sender corpus once; the result lands as
+	// AddressIndex on the bus
+	tui.SetAddressRequestHandler(func() {
+		go func() {
+			rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActAddresses, Query: "*"})
+			if err != nil || rpl.Err != nil {
+				return
+			}
+			bus.Publish(core.AddressIndex{Addrs: rpl.Addrs})
+		}()
+	})
+
 	go runRefresher(ctx, bus, worker, refresher, st)
 
 	busCh := bus.Subscribe()

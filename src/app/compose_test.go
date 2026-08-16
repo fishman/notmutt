@@ -24,6 +24,9 @@ func (t *threadBackend) Query(ctx context.Context, q string, limit int, emit fun
 	return nil
 }
 func (t *threadBackend) Count(ctx context.Context, q string) (int, error) { return len(t.msgs), nil }
+func (t *threadBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
+	return nil, nil
+}
 func (t *threadBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
 	return t.msgs, nil
 }

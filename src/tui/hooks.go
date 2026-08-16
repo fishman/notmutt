@@ -41,6 +41,16 @@ func SetSendHandler(fn func(compose.State)) {
 	onSend = fn
 }
 
+// onAddrRequest is the address-harvest request seam: the compose Tab
+// completion fires it (lazy, debounced in the model); the app
+// harvests the sender corpus and answers on the bus with
+// AddressIndex.
+var onAddrRequest = func() {}
+
+func SetAddressRequestHandler(fn func()) {
+	onAddrRequest = fn
+}
+
 // sigDir is the signatures root (spec section 9); the app resolves it
 // from the config path, the tests set it directly.
 var sigDir string

@@ -14,6 +14,7 @@ type Bus struct {
 	progress map[string]Progress
 	sendLast map[string]SendResult
 	openLast []ComposeOpened
+	addrLast *AddressIndex
 }
 
 func NewBus() *Bus {
@@ -38,6 +39,8 @@ func (b *Bus) Publish(e Event) {
 		b.sendLast[e.TabID] = e
 	case ComposeOpened:
 		b.openLast = append(b.openLast, e)
+	case AddressIndex:
+		b.addrLast = &e
 	}
 	for _, s := range b.subs {
 		select {
@@ -88,6 +91,38 @@ func (b *Bus) LatestComposeOpened() (ComposeOpened, bool) {
 		return ComposeOpened{}, false
 	}
 	return b.openLast[len(b.openLast)-1], true
+}
+
+// LatestAddressIndex returns the last published sender corpus. The
+// map write never drops, so a harvest result survives subscriber
+// backpressure - a dropped event would otherwise leave the lazy
+// trigger pending forever.
+func (b *Bus) LatestAddressIndex() (AddressIndex, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.addrLast == nil {
+		return AddressIndex{}, false
+	}
+	return *b.addrLast, true
+}
+
+// AddressEntry is one deduplicated sender address (the go.notmuch
+// harvest shape, Name empty for bare addresses). The compose Tab
+// completion matches against these.
+type AddressEntry struct {
+	Addr string
+	Name string
+}
+
+// AddressRequest is the compose completion's lazy trigger: the TUI
+// publishes it (through the app seam) when Tab meets the length gate
+// and no corpus is loaded yet.
+type AddressRequest struct{}
+
+// AddressIndex carries the harvested sender corpus from the app to
+// the TUI; the TUI caches it for the session.
+type AddressIndex struct {
+	Addrs []AddressEntry
 }
 
 type QueryBatch struct {

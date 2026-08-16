@@ -18,6 +18,7 @@ const (
 	ActTag
 	ActRevision
 	ActNew
+	ActAddresses
 	ActClose
 )
 
@@ -40,6 +41,7 @@ type Reply struct {
 	UUID  string
 	Rev   uint64
 	Paths []string
+	Addrs []core.AddressEntry
 }
 
 // Worker owns backend access. Actions are handled serially; every op runs
@@ -121,6 +123,8 @@ func (w *Worker) handle(a Action) {
 		}
 	case ActRevision:
 		r.UUID, r.Rev, err = w.backend.Revision(ctx)
+	case ActAddresses:
+		r.Addrs, err = w.backend.Addresses(ctx, a.Query)
 	case ActNew:
 		err = w.backend.New(ctx)
 		if err == nil {
@@ -151,6 +155,8 @@ func actionName(k ActionKind) string {
 		return "revision"
 	case ActNew:
 		return "new"
+	case ActAddresses:
+		return "addresses"
 	case ActClose:
 		return "close"
 	}

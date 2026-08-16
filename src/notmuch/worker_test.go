@@ -10,7 +10,8 @@ import (
 )
 
 type fakeBackend struct {
-	err error
+	err   error
+	addrs []core.AddressEntry
 }
 
 func (f *fakeBackend) Open(ctx context.Context, p string) error { return f.err }
@@ -22,6 +23,10 @@ func (f *fakeBackend) Query(ctx context.Context, q string, limit int, emit func(
 	return f.err
 }
 func (f *fakeBackend) Count(ctx context.Context, q string) (int, error) { return 1, f.err }
+func (f *fakeBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
+	return f.addrs, f.err
+}
+
 func (f *fakeBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
 	return []core.Message{{ID: "m1", ThreadID: id, References: []string{"p"}}}, f.err
 }
@@ -83,6 +88,10 @@ func (b *blockingBackend) Query(ctx context.Context, q string, limit int, emit f
 	time.Sleep(200 * time.Millisecond) // 4x the 50ms test budget
 	return b.inner.Query(ctx, q, limit, emit)
 }
+func (b *blockingBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
+	return b.inner.Addresses(ctx, q)
+}
+
 func (b *blockingBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
 	return b.inner.Thread(ctx, id)
 }
@@ -159,6 +168,9 @@ func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.inner.Revision(ctx)
 }
 func (b *killBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
+func (b *killBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
+	return b.inner.Addresses(ctx, q)
+}
 
 // exec.CommandContext reports a killed process as "signal: killed", not
 // context.DeadlineExceeded; the worker must map that shape too. The
@@ -199,5 +211,23 @@ func TestWorkerBackendError(t *testing.T) {
 	}
 	if rpl.Err == nil {
 		t.Fatal("expected backend error in reply")
+	}
+}
+
+func TestWorkerAddresses(t *testing.T) {
+	bus := core.NewBus()
+	w := NewWorker(bus, &fakeBackend{addrs: []core.AddressEntry{
+		{Addr: "a@b.c", Name: "Ann"},
+		{Addr: "bob@x.io"},
+	}}, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+	rpl, err := w.Call(Action{Kind: ActAddresses, Query: "*"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rpl.Err != nil || len(rpl.Addrs) != 2 || rpl.Addrs[1].Addr != "bob@x.io" {
+		t.Fatalf("reply wrong: %+v %v", rpl, err)
 	}
 }

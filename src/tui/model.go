@@ -116,6 +116,20 @@ type Model struct {
 	// legendTickOn pattern): armed when a send starts, dies when the
 	// last send completes.
 	sendTickOn bool
+	// addrs is the harvested sender corpus for the compose Tab address
+	// completion (lazy, debounced harvest - loaded once per session,
+	// never at startup).
+	addrs []core.AddressEntry
+	// addrPending marks a harvest request in flight (single-flight):
+	// cleared when the AddressIndex result lands.
+	addrPending bool
+	// addrSeen dedupes the bus snapshot rescue: the corpus applies
+	// once, never re-opens the picker on every keypress.
+	addrSeen bool
+	// addrReqAt is the last Tab trigger time; the debounce settle
+	// guard fires the harvest only when no trigger arrived since the
+	// tick was armed (the legendDebounce pattern).
+	addrReqAt time.Time
 	// indexOffset is the index window's anchored top row (the
 	// read-position model): the window holds
 	// still while the cursor moves within it; only when the cursor
@@ -268,6 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if e, ok := m.bus.LatestComposeOpened(); ok && !m.opened[e.TabID] {
 			m.onComposeOpened(e)
+		}
+		if e, ok := m.bus.LatestAddressIndex(); ok && !m.addrSeen {
+			m.onAddressIndex(e)
 		}
 	}
 	// every message paints except the navigation deferrals below (they
@@ -525,6 +542,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.onComposeOpened(e)
 		case core.SendResult:
 			m.onSendResult(e)
+		case core.AddressIndex:
+			m.onAddressIndex(e)
 		case core.LuaResult:
 			// the :lua command or plugin action notice: the output or
 			// the error on the status line until the next keypress
@@ -562,6 +581,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Batch(EventCmd(m.ch), sendTickCmd())
 		}
 		m.sendTickOn = false
+		return m, nil
+	case addrReqTick:
+		// the debounce settle guard (the legendDebounce pattern): the
+		// tick fires the harvest only when no trigger arrived since it
+		// was armed; a too-young tick re-arms itself. addrPending
+		// stays true until the corpus lands - that is the single
+		// flight.
+		if time.Since(m.addrReqAt) < addrDebounce {
+			return m, addrReqTickCmd()
+		}
+		onAddrRequest()
 		return m, nil
 	}
 	return m, nil
@@ -1012,6 +1042,69 @@ func (m *Model) activateTab(id string) {
 	}
 }
 
+// addrLookup resolves a Tab completion trigger: a loaded corpus opens
+// the picker immediately; otherwise the lazy harvest fires after the
+// debounce (single-flight - repeated triggers never pile up requests).
+func (m *Model) addrLookup() tea.Cmd {
+	if len(m.addrs) > 0 {
+		m.openAddrPicker()
+		return nil
+	}
+	if m.addrPending {
+		return nil
+	}
+	m.addrPending = true
+	m.addrReqAt = time.Now()
+	return addrReqTickCmd()
+}
+
+// onAddressIndex stores the harvested sender corpus and resolves a
+// pending trigger: if an address field is still open with at least 4
+// characters, the picker opens now with the corpus (the lazy
+// trigger's pickup).
+func (m *Model) onAddressIndex(e core.AddressIndex) {
+	m.addrs = e.Addrs
+	m.addrPending = false
+	m.addrSeen = true
+	if m.fuzzy == nil && m.dialogue != nil && m.dialogue.kind == dialogueInput &&
+		isAddrField(m.dialogue.field) && len(m.dialogue.input) >= 4 {
+		m.openAddrPicker()
+	}
+}
+
+// openAddrPicker opens the address completion picker: the corpus
+// entries are pre-filtered by the field's current input (one pass -
+// the picker then narrows as the user keeps typing), and the picker
+// query starts at the input so the filter bar reads it back.
+func (m *Model) openAddrPicker() {
+	if m.dialogue == nil || m.dialogue.kind != dialogueInput || !isAddrField(m.dialogue.field) {
+		return
+	}
+	q := m.dialogue.input
+	var entries []string
+	for _, a := range m.addrs {
+		disp := a.Addr
+		if a.Name != "" {
+			disp = a.Name + " <" + a.Addr + ">"
+		}
+		if _, ok := fuzzyMatch(q, disp); ok {
+			entries = append(entries, disp)
+		}
+	}
+	m.fuzzy = newFuzzy("address", "address:", entries)
+	m.fuzzy.query = q
+}
+
+// isAddrField reports whether the dialogue field carries addresses -
+// the Tab completion surface.
+func isAddrField(f string) bool {
+	switch f {
+	case "to", "cc", "bcc", "replyto":
+		return true
+	}
+	return false
+}
+
 // onComposeOpened attaches a dialogue tab (R4). The opened set makes
 // it idempotent per TabID: the bus snapshot re-attaches a dropped
 // open event exactly once, never a closed dialogue.
@@ -1207,6 +1300,15 @@ type sendTick struct{}
 
 func sendTickCmd() tea.Cmd {
 	return tea.Tick(sendTickInterval, func(time.Time) tea.Msg { return sendTick{} })
+}
+
+// addrReqTick is the address harvest trigger's debounce tick (the
+// legendDebounce settle guard): it fires the harvest request once the
+// Tab triggers settle.
+type addrReqTick struct{}
+
+func addrReqTickCmd() tea.Cmd {
+	return tea.Tick(addrDebounce, func(time.Time) tea.Msg { return addrReqTick{} })
 }
 
 type legendTick struct{ moves int }
@@ -2059,6 +2161,14 @@ func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.mode == "compose" && m.composeTab().Phase == compose.PhaseAborting {
 			m.composeTab().Phase = compose.PhaseEditing
 		}
+	case msg.String() == "tab" && d.kind == dialogueInput && isAddrField(d.field):
+		// address completion: Tab with at least 4 typed characters
+		// opens the fuzzy picker over the harvested sender corpus;
+		// the corpus loads lazily on the first trigger (debounced -
+		// a Tab storm coalesces into one harvest)
+		if len(d.input) >= 4 {
+			return m, m.addrLookup()
+		}
 	case msg.String() == "backspace":
 		if d.input != "" {
 			d.input = d.input[:len(d.input)-1]
@@ -2161,6 +2271,16 @@ func (m *Model) fuzzySelect() {
 		return
 	}
 	st := &m.tabs[m.tabIdx-1]
+	if m.fuzzy.kind == "address" {
+		// the selection lands in the field dialogue as the address
+		// line (the display form; enter parses it back into the
+		// field's address list)
+		if m.dialogue != nil && m.dialogue.kind == dialogueInput && isAddrField(m.dialogue.field) {
+			m.dialogue.input = entry
+		}
+		m.fuzzy = nil
+		return
+	}
 	if m.fuzzy.kind == "account" {
 		a := m.st.Config().Accounts[entry]
 		st.Account, st.From = entry, a.From

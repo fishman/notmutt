@@ -169,6 +169,26 @@ func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 	return msgs, nil
 }
 
+// Addresses harvests the deduplicated sender addresses (from: only -
+// the completion corpus, spec section 3) from messages matching the
+// query. The binding walks in C with the header cache (zero file
+// opens - the fast path); entries map to the core shape, counts stay
+// in the binding (the fuzzy match ranks by position, not frequency).
+func (b *CGOBackend) Addresses(ctx context.Context, query string) ([]core.AddressEntry, error) {
+	if b.db == nil {
+		return nil, fmt.Errorf("notmuch address: database not open")
+	}
+	got, err := b.db.Addresses(query, nm.AddressOpts{Sender: true})
+	if err != nil {
+		return nil, fmt.Errorf("notmuch address: %w", err)
+	}
+	out := make([]core.AddressEntry, 0, len(got))
+	for _, e := range got {
+		out = append(out, core.AddressEntry{Addr: e.Addr, Name: e.Name})
+	}
+	return out, nil
+}
+
 // Tag writes through a transient read-write reopen: the handle stays
 // read-only for the fill (reads never hold notmuch's write lock), and
 // the write lock is held only for the op - the CLI backend's lock

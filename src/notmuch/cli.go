@@ -180,6 +180,26 @@ func walkGroups(groups [][]showNode, threadID string) []core.Message {
 	return msgs
 }
 
+func (b *CLIBackend) Addresses(ctx context.Context, query string) ([]core.AddressEntry, error) {
+	out, err := b.run(ctx, "notmuch", []string{"address", "--deduplicate=address", "--output=sender", query})
+	if err != nil {
+		return nil, fmt.Errorf("notmuch address: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	var got []core.AddressEntry
+	for _, line := range strings.Split(string(out), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if lt := strings.Index(line, " <"); lt >= 0 && strings.HasSuffix(line, ">") {
+			got = append(got, core.AddressEntry{Name: line[:lt], Addr: line[lt+2 : len(line)-1]})
+		} else {
+			got = append(got, core.AddressEntry{Addr: line})
+		}
+	}
+	return got, nil
+}
+
 func (b *CLIBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
 	args := []string{"tag"}
 	for _, op := range ops {

@@ -210,3 +210,22 @@ func TestCLIQueryError(t *testing.T) {
 	}
 }
 
+func TestCLIAddresses(t *testing.T) {
+	b := NewCLI()
+	var got []string
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		got = args
+		return []byte("Ann <a@b.c>\nbob@x.io\n\n"), nil
+	})
+	addrs, err := b.Addresses(context.Background(), "*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(addrs) != 2 || addrs[0].Name != "Ann" || addrs[0].Addr != "a@b.c" || addrs[1].Addr != "bob@x.io" {
+		t.Fatalf("parse wrong: %+v", addrs)
+	}
+	want := []string{"address", "--deduplicate=address", "--output=sender", "*"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("argv wrong: %v", got)
+	}
+}

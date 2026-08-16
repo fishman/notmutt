@@ -59,6 +59,7 @@ type Backend interface {
 	Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error
 	Count(ctx context.Context, query string) (int, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
+	Addresses(ctx context.Context, query string) ([]core.AddressEntry, error)
 	Tag(ctx context.Context, query string, ops []TagOp) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)
 	New(ctx context.Context) error

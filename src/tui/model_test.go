@@ -2924,3 +2924,114 @@ func TestSendOkStatusMessage(t *testing.T) {
 		t.Fatalf("success must leave the sent message: %q", m.statusMsg)
 	}
 }
+
+// TestAddrCompletion pins the compose Tab address completion: Tab in
+// an address field with at least 4 characters opens the fuzzy picker
+// over the harvested sender corpus (the go.notmuch result, delivered
+// as AddressIndex); selecting fills the field with the display form.
+func TestAddrCompletion(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.AddressIndex{Addrs: []core.AddressEntry{
+		{Addr: "a@b.c", Name: "Ann"},
+		{Addr: "bob@x.io"},
+		{Addr: "unrelated@z"},
+	}}})
+	m = next.(Model)
+	// "t" opens the To field prefilled with the dialogue's To (a@b.c)
+	m = press(t, m, "t")
+	if m.dialogue == nil || m.dialogue.field != "to" || m.dialogue.input != "a@b.c" {
+		t.Fatalf("the To field must be open prefilled: %+v", m.dialogue)
+	}
+	m = press(t, m, "tab")
+	if m.fuzzy == nil || m.fuzzy.kind != "address" {
+		t.Fatalf("Tab with >= 4 chars must open the address picker")
+	}
+	if len(m.fuzzy.entries) != 1 || m.fuzzy.entries[0] != "Ann <a@b.c>" {
+		t.Fatalf("entries must be pre-filtered by the input: %v", m.fuzzy.entries)
+	}
+	if m.fuzzy.query != "a@b.c" {
+		t.Fatalf("the picker query must read back the input: %q", m.fuzzy.query)
+	}
+	// enter selects: the field lands the display form
+	m = press(t, m, "enter")
+	if m.dialogue == nil || m.dialogue.input != "Ann <a@b.c>" {
+		t.Fatalf("the selection must fill the field: %+v", m.dialogue)
+	}
+	// a bare address entry displays as the address only
+	m = press(t, m, "esc") // close the To field
+	m = press(t, m, "b")   // the Bcc field, empty
+	for _, r := range "bob@" {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "tab")
+	if m.fuzzy == nil {
+		t.Fatalf("Tab with >= 4 chars must open the picker")
+	}
+	if len(m.fuzzy.entries) != 1 || m.fuzzy.entries[0] != "bob@x.io" {
+		t.Fatalf("bare addresses must match by address: %v", m.fuzzy.entries)
+	}
+}
+
+// TestAddrCompletionLengthGate pins the 4-character gate: Tab with a
+// shorter input is a no-op.
+func TestAddrCompletionLengthGate(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(EventMsg{Event: core.AddressIndex{Addrs: []core.AddressEntry{
+		{Addr: "a@b.c", Name: "Ann"},
+	}}})
+	m = next.(Model)
+	m = press(t, m, "b") // the Bcc field, empty
+	m = pressType(t, m, 'a')
+	m = press(t, m, "tab")
+	if m.fuzzy != nil {
+		t.Fatalf("Tab with < 4 chars must not open the picker")
+	}
+}
+
+// TestAddrCompletionLazyDebounce pins the lazy harvest: without a
+// corpus, Tab arms the debounce tick (single-flight); the settle
+// guard re-arms a too-young tick and fires the request once the
+// triggers settle; the AddressIndex result resolves the pending
+// trigger by opening the picker on the still-open field.
+func TestAddrCompletionLazyDebounce(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "b") // the Bcc field, empty
+	for _, r := range "bob@" {
+		m = press(t, m, string(r))
+	}
+	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
+	m = next.(Model)
+	if cmd == nil {
+		t.Fatal("a first trigger without a corpus must arm the debounce tick")
+	}
+	if !m.addrPending {
+		t.Fatal("the trigger must mark the harvest in flight")
+	}
+	// a too-young tick re-arms instead of firing
+	m.addrReqAt = time.Now()
+	next, cmd = m.Update(addrReqTick{})
+	if cmd == nil {
+		t.Fatal("a too-young tick must re-arm itself")
+	}
+	// a ripe tick fires the request through the seam
+	reqs := 0
+	SetAddressRequestHandler(func() { reqs++ })
+	defer SetAddressRequestHandler(func() {})
+	m.addrReqAt = time.Now().Add(-time.Second)
+	next, cmd = m.Update(addrReqTick{})
+	if cmd != nil || reqs != 1 {
+		t.Fatalf("a ripe tick must fire exactly one request: %v %d", cmd, reqs)
+	}
+	// the result resolves the pending trigger: the open Bcc field
+	// picks up the corpus
+	next, _ = m.Update(EventMsg{Event: core.AddressIndex{Addrs: []core.AddressEntry{
+		{Addr: "bob@x.io"},
+	}}})
+	m = next.(Model)
+	if m.addrPending {
+		t.Fatal("the result must clear the in-flight flag")
+	}
+	if m.fuzzy == nil || m.fuzzy.kind != "address" || len(m.fuzzy.entries) != 1 {
+		t.Fatalf("the result must open the picker on the pending field: %+v", m.fuzzy)
+	}
+}

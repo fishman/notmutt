@@ -54,3 +54,12 @@ drain:
 		t.Fatalf("got %d events, want 64 (buffer capacity)", got)
 	}
 }
+
+func TestBusAddressIndexSnapshot(t *testing.T) {
+	b := NewBus()
+	b.Publish(AddressIndex{Addrs: []AddressEntry{{Addr: "a@b.c", Name: "Ann"}}})
+	got, ok := b.LatestAddressIndex()
+	if !ok || len(got.Addrs) != 1 || got.Addrs[0].Addr != "a@b.c" {
+		t.Fatalf("snapshot wrong: %+v %v", got, ok)
+	}
+}

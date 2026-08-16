@@ -24,6 +24,10 @@ const (
 	// sendTickInterval is the send dialogue spinner's frame cadence
 	// while a send is in flight (R4).
 	sendTickInterval = 100 * time.Millisecond
+	// addrDebounce is the address harvest trigger's settle window: a
+	// Tab storm coalesces into one harvest, fired after the last
+	// trigger (the legendDebounce pattern).
+	addrDebounce = 40 * time.Millisecond
 )
 
 // Layout.

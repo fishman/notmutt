@@ -877,14 +877,6 @@ func (p *Program) eventLoop(model Model, cmds chan Cmd) (Model, error) {
 			case cmds <- cmd: // process command (if any)
 			}
 
-			// local patch: the optional ShouldRender gate. A model
-			// that reports false skips this render, so the model
-			// controls its own paint cadence (notmutt defers
-			// navigation paints to a fixed frame interval). Models
-			// without the method render every update as before.
-			if g, ok := model.(interface{ ShouldRender() bool }); ok && !g.ShouldRender() {
-				continue
-			}
 			p.render(model) // render view
 		}
 	}

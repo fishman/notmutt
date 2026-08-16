@@ -47,44 +47,24 @@ func (j *filterJob) run() {
 	defer func() { j.mu.Lock(); j.running = false; j.mu.Unlock() }()
 
 	cfg := j.st.Config()
-	rpl, err := j.worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-	if err != nil || rpl.Err != nil {
-		diag.Warn("filter: revision", "err", fmt.Sprintf("%v %v", err, rpl.Err))
-		return
-	}
-	pre := rpl.Rev
-	if rpl, err := j.worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-		// a backend without a New path (ErrUnsupported) is expected - the
-		// filter then degrades to classifying external new runs
-		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
-			diag.Warn("filter: new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
-			return
-		}
-	}
-	rpl, err = j.worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-	if err != nil || rpl.Err != nil {
-		diag.Warn("filter: revision", "err", fmt.Sprintf("%v %v", err, rpl.Err))
-		return
-	}
-	if rpl.Rev == pre {
-		return // nothing new; no classification pass
-	}
-	rep, err := filter.New(j.worker, cfg, j.root).Run(pre, rpl.Rev)
-	if err != nil {
-		j.fail(err)
-		return
-	}
-	mv := filter.NewMover(j.worker, cfg, j.root)
-	mv.Progress = func(done, total int) {
+	changed, rep, mr, err := runFilterPipeline(j.worker, cfg, j.root, func(done, total int) {
 		j.bus.Publish(core.Progress{Job: "filter", View: j.view, Done: done, Total: total})
-	}
-	mr, err := mv.Move(rep)
+	})
 	if err != nil {
 		j.fail(err)
+		return
+	}
+	if !changed {
 		return
 	}
 	reportFilterDiag(rep, mr)
-	moved, skipped := 0, 0
+	moved, skipped := moveCounts(mr)
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: prioritySubjects(cfg, rep)})
+}
+
+// moveCounts splits a move report into executed moves and skips -
+// shared by the FilterDone event and the poll command's summary line.
+func moveCounts(mr *filter.MoveReport) (moved, skipped int) {
 	for _, m := range mr.Moves {
 		if m.Skip != "" {
 			skipped++
@@ -92,7 +72,46 @@ func (j *filterJob) run() {
 			moved++
 		}
 	}
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: prioritySubjects(cfg, rep)})
+	return
+}
+
+// runFilterPipeline is the poll's classification body: capture the
+// revision, run `notmuch new`, capture it again, and classify the
+// (pre, cur] delta through the filter engine and the mover. Changed
+// reports whether the revision moved - a poll on a quiet mailbox
+// produces no classification pass. Shared by the filter job (bus
+// progress + FilterDone) and the headless `notmutt poll` command.
+func runFilterPipeline(worker workerAPI, cfg config.Config, root string, progress func(done, total int)) (bool, *filter.Report, *filter.MoveReport, error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+	if err != nil || rpl.Err != nil {
+		return false, nil, nil, fmt.Errorf("revision: %v %v", err, rpl.Err)
+	}
+	pre := rpl.Rev
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
+		// a backend without a New path (ErrUnsupported) is expected - the
+		// filter then degrades to classifying external new runs
+		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+			return false, nil, nil, fmt.Errorf("new: %v %v", err, rpl.Err)
+		}
+	}
+	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+	if err != nil || rpl.Err != nil {
+		return false, nil, nil, fmt.Errorf("revision: %v %v", err, rpl.Err)
+	}
+	if rpl.Rev == pre {
+		return false, nil, nil, nil // nothing new; no classification pass
+	}
+	rep, err := filter.New(worker, cfg, root).Run(pre, rpl.Rev)
+	if err != nil {
+		return true, nil, nil, err
+	}
+	mv := filter.NewMover(worker, cfg, root)
+	mv.Progress = progress
+	mr, err := mv.Move(rep)
+	if err != nil {
+		return true, rep, nil, err
+	}
+	return true, rep, mr, nil
 }
 
 // prioritySubjects caps the [notify] priority payload: the subjects of

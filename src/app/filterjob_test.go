@@ -1,6 +1,9 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,5 +139,133 @@ func TestFilterJob(t *testing.T) {
 	done, _ = drain(ch3)
 	if len(done) != 1 {
 		t.Fatalf("overlapping runs published %d FilterDone, want 1", len(done))
+	}
+}
+
+// TestRunFilterPipeline: the shared poll body - a revision bump after
+// ActNew classifies the delta and moves (the manual trigger's effect);
+// a quiet mailbox (no bump) produces no classification pass.
+func TestRunFilterPipeline(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"Archives", "INBOX"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}},
+			{ID: "m2", Tags: []string{"inbox", "spam"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	w.rev.Store(0)
+	w.bump.Store(5)
+
+	changed, rep, mr, err := runFilterPipeline(w, cfg, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || rep == nil || mr == nil {
+		t.Fatalf("changed=%v rep=%v mr=%v, want a classification pass", changed, rep, mr)
+	}
+	if len(rep.Entries) != 2 {
+		t.Fatalf("entries=%d, want 2", len(rep.Entries))
+	}
+	// the mover consumed the report: the archive entry is already home
+	// (skip), the inbox entry has no move folder - one move entry total
+	if len(mr.Moves) != 1 || mr.Moves[0].Skip == "" {
+		t.Fatalf("moves = %+v, want the single already-home skip", mr.Moves)
+	}
+	if w.tagged.Load() == 0 {
+		t.Fatal("no tag writes on a live poll")
+	}
+
+	// a quiet poll: the revision did not move, no classification
+	w.bump.Store(0)
+	changed, rep, mr, err = runFilterPipeline(w, cfg, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("quiet poll produced a classification pass")
+	}
+}
+
+// TestRunPoll: the headless poll command's contract - a successful run
+// touches the poll stamp (the cross-process wake-up for running
+// clients), a quiet poll leaves it alone, and a disabled filter
+// degrades to a plain new that still stamps.
+func TestRunPoll(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"Archives", "INBOX"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}},
+			{ID: "m2", Tags: []string{"inbox", "spam"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	w.rev.Store(0)
+	w.bump.Store(5)
+
+	line, err := runPoll(w, cfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "poll:") {
+		t.Fatalf("summary = %q", line)
+	}
+	fi, err := os.Stat(pollStampPath())
+	if err != nil {
+		t.Fatalf("stamp missing after a successful poll: %v", err)
+	}
+	stamp := fi.ModTime()
+
+	// a quiet poll changes nothing, the stamp stays untouched
+	w.bump.Store(0)
+	line, err = runPoll(w, cfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "poll: no new mail" {
+		t.Fatalf("quiet poll = %q", line)
+	}
+	fi, err = os.Stat(pollStampPath())
+	if err != nil || !fi.ModTime().Equal(stamp) {
+		t.Fatalf("stamp changed on a quiet poll: %v %v", fi, err)
+	}
+
+	// a disabled filter degrades to a plain new that still stamps
+	cfg.Filter.Enabled = false
+	line, err = runPoll(w, cfg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(line, "filter disabled") {
+		t.Fatalf("disabled-filter summary = %q", line)
+	}
+	if _, err := os.Stat(pollStampPath()); err != nil {
+		t.Fatalf("stamp missing after the plain-new poll: %v", err)
 	}
 }

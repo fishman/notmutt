@@ -27,12 +27,21 @@ import (
 
 const lockBudget = 10 * time.Second
 
+// pollWatchInterval is the external-poll stamp watch tick: how fast a
+// headless `notmutt poll` reaches running clients. A stat per tick is
+// cheap; the poll body itself is idempotent, so a stamp change across
+// N instances costs N no-op revision brackets at most.
+const pollWatchInterval = 5 * time.Second
+
 //go:embed lua/templates/*.lua
 var templateFS embed.FS
 
 func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		return setupAccounts()
+	}
+	if len(os.Args) > 1 && os.Args[1] == "poll" {
+		return pollOnce()
 	}
 	cfg, err := config.Load(configDir())
 	if err != nil {
@@ -320,10 +329,30 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 		}
 		r.cycle()
 	}
+	// the external-poll stamp: `notmutt poll` from another process
+	// touches it after a successful run; this watcher runs the poll
+	// body on change, so every open instance displays the update
+	// regardless of how many there are. A stat per tick is the
+	// cheapest wake-up signal - the revision work happens inside the
+	// poll body, and an unchanged stamp costs nothing.
+	stamp := pollStampPath()
+	last, err := os.Stat(stamp)
+	var stampMtime time.Time
+	if err == nil {
+		stampMtime = last.ModTime()
+	}
+	watch := time.NewTicker(pollWatchInterval)
+	defer watch.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-watch.C:
+			fi, err := os.Stat(stamp)
+			if err == nil && !fi.ModTime().Equal(stampMtime) {
+				stampMtime = fi.ModTime()
+				poll()
+			}
 		case <-tickCh:
 			poll()
 		case e := <-ch:
@@ -540,6 +569,97 @@ func firstView(cfg config.Config) string {
 		return name
 	}
 	return ""
+}
+
+// pollOnce is the headless poll (`notmutt poll`): the same poll body
+// as the client's interval and the in-TUI refresh key, run outside the
+// client for scripts and cron. The filter owns `notmuch new` when
+// enabled; a disabled filter degrades to a plain new. Dry-run config
+// is honored - the first runs against a real mailbox are always dry.
+// A successful run touches the poll stamp, waking every running
+// client's refresher so they display the update.
+func pollOnce() error {
+	cfg, err := config.Load(configDir())
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	bus := core.NewBus()
+	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Start(ctx)
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
+		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
+	}
+	root := ""
+	if cfg.Filter.Enabled {
+		root, err = mailRoot()
+		if err != nil {
+			return fmt.Errorf("poll: %w", err)
+		}
+	}
+	line, err := runPoll(worker, cfg, root)
+	if err != nil {
+		return err
+	}
+	fmt.Println(line)
+	return nil
+}
+
+// runPoll is the poll body behind `notmutt poll`: the summary line
+// plus the stamp that wakes running clients. Shared with the tests;
+// pollOnce resolves the worker and the mail root, runPoll decides.
+func runPoll(worker workerAPI, cfg config.Config, root string) (string, error) {
+	if !cfg.Filter.Enabled {
+		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
+			return "", fmt.Errorf("notmuch new: %v %v", err, rpl.Err)
+		}
+		if err := touchPollStamp(); err != nil {
+			return "", err
+		}
+		return "poll: notmuch new (filter disabled)", nil
+	}
+	changed, rep, mr, err := runFilterPipeline(worker, cfg, root, nil)
+	if err != nil {
+		return "", fmt.Errorf("poll: %w", err)
+	}
+	if !changed {
+		return "poll: no new mail", nil
+	}
+	if err := touchPollStamp(); err != nil {
+		return "", err
+	}
+	mode := "live"
+	if rep.DryRun {
+		mode = "dry-run"
+	}
+	moved, skipped := moveCounts(mr)
+	return fmt.Sprintf("poll: %s: %d entries, %d moved, %d skipped", mode, len(rep.Entries), moved, skipped), nil
+}
+
+// pollStampPath is the cross-process poll signal: `notmutt poll`
+// touches the stamp after a successful run; every running client's
+// refresher watches its mtime and runs the poll body on change
+// (the delivery-gate mark pattern - a cache mtime as the signal).
+// Any number of instances pick the update up within one watch tick.
+func pollStampPath() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "poll-stamp"
+	}
+	return filepath.Join(base, "notmutt", "poll-stamp")
+}
+
+func touchPollStamp() error {
+	p := pollStampPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+		return fmt.Errorf("poll stamp: %w", err)
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("poll stamp: %w", err)
+	}
+	return f.Close()
 }
 
 // validateBindings checks the loaded bindings against the per-context

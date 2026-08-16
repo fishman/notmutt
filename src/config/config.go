@@ -872,7 +872,7 @@ func defaultTheme() Theme {
 				},
 				Compose: ComposeStyleTable{
 					Label:   Style{Fg: "base0D"},               // the form's settings labels: onedark author blue
-					Divider: Style{Fg: "base00", Bg: "base01"}, // section bar: dark text on the gray
+					Divider: Style{Fg: "base05", Bg: "base03"}, // section bar: text on the gray
 				},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},

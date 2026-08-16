@@ -170,7 +170,7 @@ func DefaultStyles() Styles {
 		// fills with it (colorWhitespace), so the column seam never
 		// leaks the terminal default background
 		ComposeLabel:   lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
-		ComposeDivider: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#5c6370")),
+		ComposeDivider: lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#5c6370")),
 		Index: IndexStyles{
 			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),

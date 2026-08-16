@@ -124,10 +124,11 @@ func reportFilterDiag(rep *filter.Report, mr *filter.MoveReport) {
 	}
 }
 
-// mailRoot resolves the notmuch mail root once (argv-only, F4 - the
-// setupAccounts pattern): the engine's file stats and the mover's
-// copies need it. A failure disables the filter job - the client still
-// works, the poll degrades to the refresher's plain new.
+// mailRoot resolves the notmuch mail root (argv-only, F4 - never
+// interpolated): setup detection and the filter job share it. The
+// engine's file stats and the mover's copies need it; a failure
+// disables the filter job - the client still works, the poll degrades
+// to the refresher's plain new.
 func mailRoot() (string, error) {
 	out, err := exec.CommandContext(context.Background(), "notmuch", "config", "get", "database.path").Output()
 	if err != nil {

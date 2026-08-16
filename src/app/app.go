@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -340,8 +339,7 @@ func refreshInterval(st *config.Store) time.Duration {
 // (0600, F5). Detection reads directory names only, never mail
 // content.
 func setupAccounts() error {
-	ctx := context.Background()
-	out, err := exec.CommandContext(ctx, "notmuch", "config", "get", "database.path").Output()
+	root, err := mailRoot()
 	if err != nil {
 		return fmt.Errorf("setup: resolve database.path: %w", err)
 	}
@@ -349,7 +347,7 @@ func setupAccounts() error {
 	if err != nil {
 		log.Printf("setup: config %s: %v", configPath(), err)
 	}
-	accs, err := setup.Detect(strings.TrimSpace(string(out)), mergedTemplates(cfg.Setup.Templates))
+	accs, err := setup.Detect(root, mergedTemplates(cfg.Setup.Templates))
 	if err != nil {
 		return fmt.Errorf("setup: %w", err)
 	}

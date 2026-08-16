@@ -149,7 +149,7 @@ Add to `src/core/resolve_test.go`:
 
 ```go
 func TestAccountTag(t *testing.T) {
-	set := map[string]bool{"gmail": true, "dynamia": true}
+	set := map[string]bool{"gmail": true, "atlas": true}
 	if AccountTag([]string{"inbox", "gmail", "work"}, set) != "gmail" {
 		t.Fatal("must find the first account tag in the tag list")
 	}
@@ -479,8 +479,8 @@ func TestForwardPrefill(t *testing.T) {
 }
 
 func TestNewCompose(t *testing.T) {
-	s := NewCompose("dynamia", "Reza <reza@example.com>", "", "")
-	if s.Mode != ModeCompose || s.Account != "dynamia" {
+	s := NewCompose("atlas", "Bob <bob@example.com>", "", "")
+	if s.Mode != ModeCompose || s.Account != "atlas" {
 		t.Fatalf("new compose: %+v", s)
 	}
 	if len(s.To) != 0 || s.Subject != "" || s.Body != "" || s.Signature != "" {
@@ -1454,7 +1454,7 @@ func TestValidateSendCommand(t *testing.T) {
 func TestAccountSendFields(t *testing.T) {
 	cfg, err := Load(write(t, `
 [accounts.gmail]
-from = "Reza <reza@example.com>"
+from = "Bob <bob@example.com>"
 sent_folder = "/home/me/Mail/gmail/Sent"
 default_signature = "gmail"
 `))
@@ -1462,7 +1462,7 @@ default_signature = "gmail"
 		t.Fatal(err)
 	}
 	a := cfg.Accounts["gmail"]
-	if a.From != "Reza <reza@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
+	if a.From != "Bob <bob@example.com>" || a.SentFolder != "/home/me/Mail/gmail/Sent" || a.DefaultSignature != "gmail" {
 		t.Fatalf("account send fields = %+v", a)
 	}
 }
@@ -1673,12 +1673,12 @@ func TestResolveAccountChain(t *testing.T) {
 	if got := resolveAccount(cfg, []string{"inbox", "gmail", "work"}, nil); got != "gmail" {
 		t.Fatalf("message tag first: %q", got)
 	}
-	if got := resolveAccount(cfg, []string{"inbox"}, []string{"dynamia"}); got != "dynamia" {
+	if got := resolveAccount(cfg, []string{"inbox"}, []string{"atlas"}); got != "atlas" {
 		t.Fatalf("cursor fallback: %q", got)
 	}
-	if got := resolveAccount(cfg, nil, nil); got != "dynamia" {
-		// default accounts are gmail, jelveh, toptal, dynamia - sorted,
-		// first is dynamia
+	if got := resolveAccount(cfg, nil, nil); got != "atlas" {
+		// default accounts are gmail, flint, gull, atlas - sorted,
+		// first is atlas
 		t.Fatalf("first account fallback: %q", got)
 	}
 }
@@ -1686,7 +1686,7 @@ func TestResolveAccountChain(t *testing.T) {
 func TestDefaultSig(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts["gmail"].DefaultSignature = "personal"
-	cfg.Accounts["dynamia"] = config.Account{}
+	cfg.Accounts["atlas"] = config.Account{}
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "gmail"), 0700); err != nil {
 		t.Fatal(err)
@@ -1702,7 +1702,7 @@ func TestDefaultSig(t *testing.T) {
 	if name != "personal" || body != "sig text" {
 		t.Fatalf("default sig = %q %q", name, body)
 	}
-	if name, _ := defaultSig(cfg, "dynamia"); name != "" {
+	if name, _ := defaultSig(cfg, "atlas"); name != "" {
 		t.Fatalf("account without default must resolve empty, got %q", name)
 	}
 }
@@ -1942,7 +1942,7 @@ func TestSendJobDelivers(t *testing.T) {
 	cfg := config.Default()
 	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
 	cfg.Accounts["gmail"] = config.Account{SentFolder: sent}
-	cfg.Accounts["jelveh"] = config.Account{}
+	cfg.Accounts["flint"] = config.Account{}
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -2227,8 +2227,8 @@ func TestFuzzyMatch(t *testing.T) {
 	if pos, ok := fuzzyMatch("gmail", "gmail/me"); !ok || pos != 0 {
 		t.Fatalf("gmail/me/gmail = %d %v", pos, ok)
 	}
-	if pos, ok := fuzzyMatch("gm", "dynamia"); ok {
-		t.Fatalf("dynamia/gm must not match, pos = %d", pos)
+	if pos, ok := fuzzyMatch("gm", "atlas"); ok {
+		t.Fatalf("atlas/gm must not match, pos = %d", pos)
 	}
 	if _, ok := fuzzyMatch("", "anything"); !ok {
 		t.Fatal("empty query matches everything")
@@ -2236,7 +2236,7 @@ func TestFuzzyMatch(t *testing.T) {
 }
 
 func TestFuzzyFilteredRanking(t *testing.T) {
-	f := newFuzzy("account", []string{"gmail", "jelveh", "gmail-work"})
+	f := newFuzzy("account", []string{"gmail", "flint", "gmail-work"})
 	f.query = "gmail"
 	got := f.filtered()
 	// first-match position ranks: "gmail" (pos 0) before "gmail-work"
@@ -2769,7 +2769,7 @@ func TestComposeRenderFuzzyPopup(t *testing.T) {
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the popup frame must be exactly 24 lines, got %d", got)
 	}
-	if !strings.Contains(frame, "account:") || !strings.Contains(frame, "dynamia") {
+	if !strings.Contains(frame, "account:") || !strings.Contains(frame, "atlas") {
 		t.Fatalf("the popup must show the title and entries:\n%s", frame)
 	}
 }

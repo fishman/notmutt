@@ -674,7 +674,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	m = press(t, m, "f")
-	for _, ch := range "reza@x.io" {
+	for _, ch := range "bob@x.io" {
 		m = press(t, m, string(ch))
 	}
 	frame := m.render()
@@ -683,7 +683,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	if !strings.Contains(row, m.styles.ComposeLabel.Render("From: ")) {
 		t.Fatalf("the label must render in compose.label:\n%s", frame)
 	}
-	if !strings.Contains(row, m.styles.Normal.Render("reza@x.io")) {
+	if !strings.Contains(row, m.styles.Normal.Render("bob@x.io")) {
 		t.Fatalf("the entry must render in the normal style:\n%s", frame)
 	}
 	if strings.Contains(row, m.styles.sgr.indicator.open) {

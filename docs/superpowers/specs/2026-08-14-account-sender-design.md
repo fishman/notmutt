@@ -292,7 +292,7 @@ args = ["--read-envelope-from"]
 
 [accounts.gmail]
 folder = "gmail"
-from = "Reza Jelveh <reza.jelveh@gmail.com>"
+from = "Bob Example <bob@example.com>"
 sent_folder = "[Gmail]/Sent Mail"
 default_signature = "gmail"
 ```

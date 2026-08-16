@@ -21,8 +21,8 @@ Current classification pipeline (the reference flow):
 2. index: `notmuch new` (new mail gets `new.tags`: unread, inbox)
 3. folder rules: `notmuch tag --input` - mail in folder X gets the
    corresponding hard tag (archive, sent, spam, draft, deleted, pending)
-   plus per-account tags (gmail, jelveh, toptal, dynamia via
-   `folder:/^gmail\//` regex)
+   plus per-account tags (the account name via a
+   `folder:/^<account>\//` regex)
 4. header rules (post-new hook): content-based soft tags (work, xolo,
    meeting, cfp, conference, exhibition, receipt, newsletter)
 5. physical move: afew `--move-mails` with per-account `folder_priorities`
@@ -139,7 +139,7 @@ the other members present, and inbox is a member. Header rules stay
 data (muttrc/notmuch/post-new): query + add, guards enforced by the
 engine. Conditional rules stay explicit:
 delivery-gated untag-reversal, trash return-to-inbox. Read-only
-accounts (toptal) get folder tags but no moves. Side effects
+accounts (atlas) get folder tags but no moves. Side effects
 (address cache, notification) subscribe to the filter job's
 completion event; they are not hook steps.
 
@@ -639,8 +639,8 @@ the spec must say why it serves notmutt, not cite it as authority.
   (assert-based self-test or a single small test). No test frameworks
   beyond what the project already uses. Test data is generated, never
   personal: tests use fabricated account and email names (alpha, atlas,
-  acme, sender@example.com) - the real accounts (jelveh, dynamia, toptal)
-  and real people's addresses never appear in tests.
+  acme, sender@example.com) - real account names and real people's
+  addresses never appear in tests.
 - Code style: no unnecessary comments; self-documenting names; never
   explain basic syntax; only non-obvious constraints get a comment.
 - Context: read files with limit/offset where possible; prefer Edit over

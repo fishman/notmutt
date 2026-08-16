@@ -162,8 +162,8 @@ func DefaultStyles() Styles {
 		Account:   lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Progress:  lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Error:     lipgloss.NewStyle().Foreground(c("#e06c75")),
-		Tabbar:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#2c313a")),
-		TabActive: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#98c379")),
+		Tabbar:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
+		TabActive: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Index: IndexStyles{
 			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),

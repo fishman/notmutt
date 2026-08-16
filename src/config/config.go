@@ -785,6 +785,13 @@ func defaultTheme() Theme {
 				Count:     Style{Fg: "base00", Bg: "base0A"},
 				Account:   Style{Fg: "base00", Bg: "base0D"},
 				Progress:  Style{Fg: "base00", Bg: "base0D"},
+				// the tab strip (tmux2k window-list colors mapped onto
+				// onedark): the inactive pills sit on the gray bar, the
+				// active pill fills with the accent blue, dark text
+				Tabbar: TabbarStyleTable{
+					Default: Style{Fg: "base05", Bg: "base01"},
+					Active:  Style{Fg: "base00", Bg: "base0D"},
+				},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},

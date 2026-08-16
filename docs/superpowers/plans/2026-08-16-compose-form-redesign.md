@@ -487,9 +487,12 @@ New helper next to composeForm:
 // seam), the value truncated to the remaining row width. The label
 // carries the compose.label style (theme blue); the value cell keeps
 // the normal style, so the caller's row padding never restyles it.
+// NOTE: the value truncates with truncCells, never lipgloss Width() -
+// Width() word-wraps at the cell width and would embed newlines in
+// the row, displacing the frame height (spec review 2026-08-16).
 func composeLabel(label, value string, labelW, w int, st Styles) string {
-	lbl := st.ComposeLabel.Width(labelW).Align(lipgloss.AlignRight).Render(label + ":")
-	val := st.Normal.Width(w - labelW - 1).Render(value)
+	lbl := st.ComposeLabel.Width(labelW).Align(lipgloss.Right).Render(label + ":")
+	val := st.Normal.Render(truncCells(value, w-labelW-1))
 	return lbl + " " + val
 }
 ```

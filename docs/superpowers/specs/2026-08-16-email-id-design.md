@@ -15,30 +15,33 @@ Acceptance (scripted tests; items 6-10 are manual):
 1. `EncodeID`/`DecodeID` round trip for message-ids with whitespace,
    quotes, unicode, and angle brackets stripped; the token is a pure
    function of the message-id (same mail re-synced = same token).
-2. Malformed tokens (bad prefix, bad base64, overlong) fail with a
+2. Wipe the notmutt cache (mime-cache.db) and tokens minted before
+   the wipe still decode and open the same threads - the mapping is
+   notmuch-reproducible, the cache is never on the path.
+3. Malformed tokens (bad prefix, bad base64, overlong) fail with a
    clean error and exit 1; nothing is queried.
-3. `notmutt open <token>` for a message present in the database boots
+4. `notmutt open <token>` for a message present in the database boots
    the TUI and opens that message's thread; for a message that left
    the database (expired, deleted) it exits with "not in database".
-4. `notmutt show <token>` prints the thread's messages as JSON lines
+5. `notmutt show <token>` prints the thread's messages as JSON lines
    to stdout and exits; the metadata-only shape excludes bodies unless
    `--body` is given; the fields match the thread fetch (id, thread,
    timestamp, author, subject, tags, paths).
-5. `;` in the index and pager copies a token; the token references the
+6. `;` in the index and pager copies a token; the token references the
    newest message of the cursor row's thread (what the overview line
    represents), falls back through the thread fetch when the row
    carries no message id, and reports "copied nm1-..." on the message
    line.
-6. Manual: `;` in the index copies a token; paste it in org-mode as
+7. Manual: `;` in the index copies a token; paste it in org-mode as
    `[[notmutt:TOKEN][subject]]` and follow it - a terminal opens with
    the thread.
-7. Manual: taskwarrior round trip - `task add notmuttid:TOKEN`, then
+8. Manual: taskwarrior round trip - `task add notmuttid:TOKEN`, then
    `notmutt open $(task _get <id>.notmuttid)` opens the thread.
-8. Manual: mbsync re-sync and an afew folder move leave existing
+9. Manual: mbsync re-sync and an afew folder move leave existing
    tokens valid (the message-id is untouched by both).
-9. Manual: a link works even when the thread is not in the default
-   view (the open path loads by thread id, view-independent).
-10. Manual: `notmutt show TOKEN --body` prints the rendered text
+10. Manual: a link works even when the thread is not in the default
+    view (the open path loads by thread id, view-independent).
+11. Manual: `notmutt show TOKEN --body` prints the rendered text
     parts on stdout, piped into an AI/todo tool (the user's pipeline
     reads content it asked for; notmutt itself never logs bodies).
 
@@ -51,6 +54,12 @@ re-syncs. No mapping store, no schema change, no cache extension:
 R1's "no own database" holds because the ID derives from a
 notmuch-exposed field, and the open path is stateless.
 
+The mapping is reproducible from notmuch alone: the message-id is
+notmuch's own identity surface (`id:` search, `notmuch show`), so
+wiping the notmutt cache (mime-cache.db) cannot break a token - the
+cache is never on the encode, decode, or resolve path. A token is
+valid for exactly as long as the message's id is in the database.
+
 Format: `nm1-` + base64url(message-id without the surrounding `< >`,
 unpadded). The `nm1` prefix versions the encoding (room for v2) and
 gives the token a greppable shape in org/taskwarrior files.
@@ -61,6 +70,9 @@ Rejected alternatives:
   a mapping store (a new derived store or a cache schema extension,
   R13 scope creep); and mbsync can re-deliver the same message
   byte-differently (header order), breaking "same email, same ID".
+  The mapping store is cache-resident by necessity: wiping the cache
+  orphans every token ever minted, and a one-way digest cannot be
+  reversed to rebuild the mapping.
 - Internal database id: enumeration breaks on re-sync, and a
   synthetic authoritative id violates R1.
 - Hash-only token (no message-id recovery): hides the sender domain

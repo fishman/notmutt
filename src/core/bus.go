@@ -138,6 +138,7 @@ type ComposeOpened struct {
 type ComposeAttachment struct {
 	Name, Path string
 	Size       int64
+	MimeType   string
 }
 
 // SendResult reports the send job's outcome to the dialogue (R4): OK

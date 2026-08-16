@@ -82,6 +82,11 @@ func (s *State) Assemble(w io.Writer) error {
 			return err
 		}
 		ah := mail.AttachmentHeader{}
+		// the detected type rides the wire (the row shows the same
+		// value); empty keeps go-message's reader default
+		if a.MimeType != "" {
+			ah.Set("Content-Type", a.MimeType)
+		}
 		ah.SetFilename(a.Name)
 		ab, err := mw.CreateAttachment(ah)
 		if err != nil {

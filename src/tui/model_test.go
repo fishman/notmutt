@@ -2419,20 +2419,21 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if !strings.Contains(stripANSI(lines[1]), "a attach") {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
-	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "- 1", "[text/plain]"} {
+	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "- I", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview"} {
 		if !strings.Contains(stripANSI(frame), want) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
 	}
-	// the message-text row shows the buffer file path, attachments the
-	// A marker (mutt's attach list)
-	if !strings.Contains(stripANSI(frame), m.tabs[0].BodyPath) {
+	// the message-text row shows the buffer file path (truncated to
+	// its column area like any long name), attachments the A marker
+	// (mutt's attach list)
+	if !strings.Contains(stripANSI(frame), truncCells(m.tabs[0].BodyPath, 80-9-len("[text/plain, quoted-printable, utf-8, 0.0K]"))) {
 		t.Fatalf("the message-text row must show the buffer file path:\n%s", frame)
 	}
 	m.tabs[0].Attachments = []compose.Attachment{{Name: "x.txt", Size: 3}}
 	frame = stripANSI(m.render())
-	if !strings.Contains(frame, "A 2 x.txt (3 bytes)") {
-		t.Fatalf("the attachment row must show the A marker:\n%s", frame)
+	if !strings.Contains(frame, "2 x.txt") || !strings.Contains(frame, "[application/octet-stream, base64, 0.0K]") {
+		t.Fatalf("the attachment row must show the A marker with its wire facts:\n%s", frame)
 	}
 	// the prompt box splices above the status line; the keyhint stays
 	// on line 1
@@ -2817,7 +2818,7 @@ func TestComposeContentTypeRow(t *testing.T) {
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	m = next.(Model)
 	frame := m.render()
-	if !strings.Contains(frame, "[text/markdown]") {
+	if !strings.Contains(frame, "[text/markdown, quoted-printable, utf-8") {
 		t.Fatalf("the content-type row must show text/markdown:\n%s", frame)
 	}
 }

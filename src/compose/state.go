@@ -45,10 +45,13 @@ const (
 )
 
 // Attachment is one composed attachment: the file path, its base name
-// on the wire, its size.
+// on the wire, its size, and the MIME type its Content-Type will
+// carry (MimeTypeOf at attach time, application/octet-stream when the
+// extension is unknown).
 type Attachment struct {
 	Name, Path string
 	Size       int64
+	MimeType   string
 }
 
 // Security is the dialogue's crypto flag set (R10): none, sign,
@@ -134,6 +137,6 @@ func (s *State) AddAttachment(path string) error {
 	if fi.IsDir() {
 		return fmt.Errorf("%s: is a directory", path)
 	}
-	s.Attachments = append(s.Attachments, Attachment{Name: filepath.Base(path), Path: path, Size: fi.Size()})
+	s.Attachments = append(s.Attachments, Attachment{Name: filepath.Base(path), Path: path, Size: fi.Size(), MimeType: MimeTypeOf(path)})
 	return nil
 }

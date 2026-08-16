@@ -272,9 +272,11 @@ type TabbarStyleTable struct {
 }
 
 // ComposeStyleTable: the compose form's style surface; label is the
-// two-column settings label, shared with the prompt dialogue's label.
+// two-column settings label, shared with the prompt dialogue's label,
+// divider is the section bar (--- Attachments / --- Preview).
 type ComposeStyleTable struct {
-	Label Style
+	Label   Style
+	Divider Style
 }
 
 type IndexStyleTable struct {
@@ -418,6 +420,14 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				}
 				t.Compose.Label = s
 				delete(cm, "label")
+			}
+			if d, ok := cm["divider"]; ok {
+				s, err := rawStyle(d)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				t.Compose.Divider = s
+				delete(cm, "divider")
 			}
 			for k := range cm {
 				return StyleTable{}, fmt.Errorf("compose.%s: unknown key", k)
@@ -595,6 +605,7 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 	out["tabbar"] = apply("tabbar", table.Tabbar.Default)
 	out["tabbar.active"] = apply("tabbar.active", table.Tabbar.Active)
 	out["compose.label"] = apply("compose.label", table.Compose.Label)
+	out["compose.divider"] = apply("compose.divider", table.Compose.Divider)
 	for id, s := range map[string]Style{
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
@@ -860,7 +871,8 @@ func defaultTheme() Theme {
 					Active:  Style{Fg: "base00", Bg: "base0D"},
 				},
 				Compose: ComposeStyleTable{
-					Label: Style{Fg: "base0D"}, // the form's settings labels: onedark author blue
+					Label:   Style{Fg: "base0D"},               // the form's settings labels: onedark author blue
+					Divider: Style{Fg: "base00", Bg: "base01"}, // section bar: dark text on the gray
 				},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},

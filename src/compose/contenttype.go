@@ -1,6 +1,11 @@
 package compose
 
-import "regexp"
+import (
+	"mime"
+	"path/filepath"
+	"regexp"
+	"strings"
+)
 
 // ContentTypeOf derives the body part's MIME type: text/plain by
 // default, text/markdown when the body carries markdown syntax. ONE
@@ -26,4 +31,21 @@ func ContentTypeOf(body string) string {
 		return "text/markdown"
 	}
 	return "text/plain"
+}
+
+// MimeTypeOf guesses a file's MIME type from its extension
+// (application/octet-stream when unknown). ONE definition: the same
+// value rides the attachment's Content-Type on the wire (Assemble) and
+// in the compose row - the dialogue shows what the mail will carry.
+// The type part only; mime.TypeByExtension appends charset params for
+// text types, which the wire does not set here.
+func MimeTypeOf(name string) string {
+	t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+	if i := strings.IndexByte(t, ';'); i >= 0 {
+		t = t[:i]
+	}
+	if t == "" {
+		return "application/octet-stream"
+	}
+	return t
 }

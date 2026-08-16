@@ -20,7 +20,7 @@ func ToEvent(s *State) core.ComposeOpened {
 		MessageID: s.MessageID, References: s.References, OriginalID: s.OriginalID,
 	}
 	for _, a := range s.Attachments {
-		e.Attachments = append(e.Attachments, core.ComposeAttachment{Name: a.Name, Path: a.Path, Size: a.Size})
+		e.Attachments = append(e.Attachments, core.ComposeAttachment{Name: a.Name, Path: a.Path, Size: a.Size, MimeType: a.MimeType})
 	}
 	return e
 }
@@ -34,7 +34,7 @@ func FromEvent(e core.ComposeOpened) *State {
 		MessageID: e.MessageID, References: e.References, OriginalID: e.OriginalID,
 	}
 	for _, a := range e.Attachments {
-		s.Attachments = append(s.Attachments, Attachment{Name: a.Name, Path: a.Path, Size: a.Size})
+		s.Attachments = append(s.Attachments, Attachment{Name: a.Name, Path: a.Path, Size: a.Size, MimeType: a.MimeType})
 	}
 	return s
 }

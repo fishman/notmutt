@@ -22,20 +22,21 @@ func init() {
 // DefaultStyles are the reference port (muttrc/theme/onedark.muttrc)
 // fallback.
 type Styles struct {
-	Normal       lipgloss.Style
-	Indicator    lipgloss.Style
-	Status       lipgloss.Style
-	View         lipgloss.Style // statusline view pill
-	Count        lipgloss.Style // statusline count pill
-	Account      lipgloss.Style // statusline account pill (R2)
-	Progress     lipgloss.Style
-	Error        lipgloss.Style
-	Tabbar       lipgloss.Style // tab strip bar (inactive tabs, padding)
-	TabActive    lipgloss.Style // tab strip active-tab pill
-	ComposeLabel lipgloss.Style // compose settings label (the two-column form + the dialogue box)
-	Index        IndexStyles
-	Pager        PagerStyles
-	sgr          sgrSet // precomputed hot-path fragments (index rows, pager lines)
+	Normal         lipgloss.Style
+	Indicator      lipgloss.Style
+	Status         lipgloss.Style
+	View           lipgloss.Style // statusline view pill
+	Count          lipgloss.Style // statusline count pill
+	Account        lipgloss.Style // statusline account pill (R2)
+	Progress       lipgloss.Style
+	Error          lipgloss.Style
+	Tabbar         lipgloss.Style // tab strip bar (inactive tabs, padding)
+	TabActive      lipgloss.Style // tab strip active-tab pill
+	ComposeLabel   lipgloss.Style // compose settings label (the two-column form + the dialogue box)
+	ComposeDivider lipgloss.Style // compose section bar (--- Attachments / --- Preview)
+	Index          IndexStyles
+	Pager          PagerStyles
+	sgr            sgrSet // precomputed hot-path fragments (index rows, pager lines)
 }
 
 type IndexStyles struct {
@@ -168,7 +169,8 @@ func DefaultStyles() Styles {
 		// the background must be set - the label cell's width padding
 		// fills with it (colorWhitespace), so the column seam never
 		// leaks the terminal default background
-		ComposeLabel: lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
+		ComposeLabel:   lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
+		ComposeDivider: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#5c6370")),
 		Index: IndexStyles{
 			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),
@@ -236,17 +238,18 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 	}
 	normal := to("normal", lipgloss.NewStyle())
 	st := Styles{
-		Normal:       normal,
-		Indicator:    to("indicator", normal),
-		Status:       to("status", normal),
-		View:         to("status.view", normal),
-		Count:        to("status.count", normal),
-		Account:      to("status.account", normal),
-		Progress:     to("progress", normal),
-		Error:        to("error", normal),
-		Tabbar:       to("tabbar", normal),
-		TabActive:    to("tabbar.active", normal),
-		ComposeLabel: to("compose.label", normal),
+		Normal:         normal,
+		Indicator:      to("indicator", normal),
+		Status:         to("status", normal),
+		View:           to("status.view", normal),
+		Count:          to("status.count", normal),
+		Account:        to("status.account", normal),
+		Progress:       to("progress", normal),
+		Error:          to("error", normal),
+		Tabbar:         to("tabbar", normal),
+		TabActive:      to("tabbar.active", normal),
+		ComposeLabel:   to("compose.label", normal),
+		ComposeDivider: to("compose.divider", normal),
 		Index: IndexStyles{
 			Number: to("index.number", normal), Date: to("index.date", normal),
 			Author: to("index.author", normal), Subject: to("index.subject", normal),

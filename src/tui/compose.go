@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 
 	"notmutt/compose"
 	"notmutt/core"
@@ -17,11 +18,22 @@ import (
 // Every non-focusable row carries the sentinel slot -1 (the settings
 // rows included - only the attachment-list slots are ever focused).
 type composeForm struct {
-	slot  int
-	label string // settings row label, rendered right-aligned in compose.label
-	value string // settings row value
-	text  string // plain rows (dividers, content-type, attachments)
+	slot    int
+	label   string // settings row label, rendered right-aligned in compose.label
+	value   string // settings row value
+	text    string // plain rows (dividers, content-type, attachments)
+	divider bool   // section bar (--- Attachments / --- Preview): compose.divider style
 }
+
+// wire facts as Assemble writes them (pinned by the compose wire
+// test): the inline part is quoted-printable with the explicit
+// charset, attachments ride base64. The attachment rows show these -
+// a row displays what the mail will carry.
+const (
+	wireEncodingInline = "quoted-printable"
+	wireEncodingAttach = "base64"
+	wireCharsetInline  = "utf-8"
+)
 
 // renderCompose builds the attached dialogue frame (spec section 5,
 // the mutt layout): the tab bar on the first line, the keyhint on the
@@ -75,6 +87,9 @@ func (m *Model) renderCompose() string {
 	for i := range vis {
 		f := form[m.formView.offset+i]
 		outer := m.styles.Normal
+		if f.divider {
+			outer = m.styles.ComposeDivider
+		}
 		if f.slot == m.formIdx {
 			outer = m.styles.Indicator
 		}
@@ -162,22 +177,26 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		{slot: -1, label: "Reply-To", value: capList(st.ReplyTo)},
 		{slot: -1, label: "Fcc", value: st.Fcc},
 		{slot: -1, label: "Security", value: st.Security.String()},
-		{slot: -1, text: "---"},
+		{slot: -1, text: "--- Attachments", divider: true},
 	}
-	body := "- 1"
-	if st.BodyPath != "" {
-		body += " " + st.BodyPath
-	}
-	body += " [" + compose.ContentTypeOf(st.Body) + "]"
-	rows = append(rows, composeForm{slot: 8, text: body})
+	// the message-text row: marker I (mutt's inline part), entry 1,
+	// the buffer file path, its wire facts
+	bodyMime := fmt.Sprintf("[%s, %s, %s, %s]", compose.ContentTypeOf(st.Body), wireEncodingInline, wireCharsetInline,
+		sizeStr(int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))))
+	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath, bodyMime, m.width)})
 	for i, a := range st.Attachments {
 		if i >= 3 {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
-		rows = append(rows, composeForm{slot: 9 + i, text: fmt.Sprintf("A %d %s (%d bytes)", i+2, a.Name, a.Size)})
+		mime := a.MimeType
+		if mime == "" {
+			mime = "application/octet-stream" // go-message's reader default for a headerless part
+		}
+		rows = append(rows, composeForm{slot: 9 + i,
+			text: attachRow("A", i+2, a.Name, fmt.Sprintf("[%s, %s, %s]", mime, wireEncodingAttach, sizeStr(a.Size)), m.width)})
 	}
-	rows = append(rows, composeForm{slot: -1, text: "---"})
+	rows = append(rows, composeForm{slot: -1, text: "--- Preview", divider: true})
 	// the form rows render mail-derived text (Subject/To/Cc from the
 	// replied-to message's headers) - same sanitizer as the index rows
 	// and the preview pane (F1). The labels are constants, never
@@ -187,6 +206,41 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 		rows[i].value = core.SanitizeControls(rows[i].value)
 	}
 	return rows
+}
+
+// attachRow lays one attachment-list row out as a 4-column table
+// (mutt's attach-menu shape): the type marker (- I message text, - A
+// attachment), the entry number right-aligned in a fixed column, the
+// name/path left-aligned, the mime info right-aligned to the row
+// edge. Column widths never shift with content (R11 slot discipline);
+// a long name truncates.
+func attachRow(marker string, num int, name, mime string, w int) string {
+	prefix := fmt.Sprintf("- %s %*d ", marker, attachNumW, num)
+	fileW := w - len(prefix) - runewidth.StringWidth(mime)
+	if fileW < 1 {
+		fileW = 1
+	}
+	if pad := fileW - runewidth.StringWidth(name); pad >= 0 {
+		return prefix + name + strings.Repeat(" ", pad) + mime
+	}
+	return prefix + truncCells(name, fileW) + mime
+}
+
+// attachNumW is the entry-number column width: right-aligned and
+// fixed, room to 9999 entries before the column ever shifts.
+const attachNumW = 4
+
+// sizeStr formats a part size the way mutt's attach menu does: K and
+// M with one decimal, a trailing .0 dropped (0.1K, 40K, 1.2M).
+func sizeStr(n int64) string {
+	switch {
+	case n < 1<<10:
+		return fmt.Sprintf("%.1fK", float64(n)/(1<<10))
+	case n < 1<<20:
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/(1<<10)), ".0") + "K"
+	default:
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/(1<<20)), ".0") + "M"
+	}
 }
 
 // composeLabel renders one settings row as a two-column table: the

@@ -37,19 +37,68 @@ var bindingContexts = map[string]bool{
 	"index": true, "pager": true, "compose": true, "fuzzy": true,
 }
 
+// Binding is one keybinding entry: a plain string (the action), a
+// two-element array ["action", "description"], or a table
+// { fun = "...", desc = "..." }. The description travels with the
+// binding - there is no separate descriptions block; the help
+// vocabulary derives from these entries (R8).
+type Binding struct {
+	Fun  string
+	Desc string
+}
+
+func (b *Binding) UnmarshalTOML(v interface{}) error {
+	switch t := v.(type) {
+	case string:
+		b.Fun = t
+	case []interface{}:
+		if len(t) != 2 {
+			return fmt.Errorf("binding: array must be [fun, desc], got %d elements", len(t))
+		}
+		fun, ok := t[0].(string)
+		if !ok {
+			return fmt.Errorf("binding: array fun must be a string")
+		}
+		desc, ok := t[1].(string)
+		if !ok {
+			return fmt.Errorf("binding: array desc must be a string")
+		}
+		b.Fun, b.Desc = fun, desc
+	case map[string]interface{}:
+		fun, ok := t["fun"].(string)
+		if !ok {
+			return fmt.Errorf("binding: table must carry a string fun")
+		}
+		b.Fun = fun
+		if desc, ok := t["desc"].(string); ok {
+			b.Desc = desc
+		}
+		for k := range t {
+			if k != "fun" && k != "desc" {
+				return fmt.Errorf("binding: unknown key %q", k)
+			}
+		}
+	default:
+		return fmt.Errorf("binding: expected a string, [fun, desc], or { fun = ..., desc = ... }")
+	}
+	return nil
+}
+
 type Config struct {
-	UI             UI                                      `toml:"ui"`
-	Views          map[string]View                         `toml:"view"`
-	TagGroups      map[string]core.TagGroup                `toml:"tag-groups"`
-	Bindings       map[string]map[string]string            `toml:"-"`
-	TagActions     map[string]string                       `toml:"tag-actions"`
-	Accounts       map[string]Account                      `toml:"accounts"`
-	Send           Send                                    `toml:"send"`
-	AttachCommands map[string][]string                     `toml:"attach-commands"`
-	Palette        Palette                                 `toml:"palette"`
-	Theme          Theme                                   `toml:"theme"`
-	Schemes        map[string]map[string]map[string]string `toml:"schemes"`
-	Descriptions   map[string]string                       `toml:"descriptions"`
+	UI             UI                                       `toml:"ui"`
+	Views          map[string]View                          `toml:"view"`
+	TagGroups      map[string]core.TagGroup                 `toml:"tag-groups"`
+	Bindings       map[string]map[string]string             `toml:"-"`
+	TagActions     map[string]string                        `toml:"tag-actions"`
+	Accounts       map[string]Account                       `toml:"accounts"`
+	Send           Send                                     `toml:"send"`
+	AttachCommands map[string][]string                      `toml:"attach-commands"`
+	Palette        Palette                                  `toml:"palette"`
+	Theme          Theme                                    `toml:"theme"`
+	Schemes        map[string]map[string]map[string]Binding `toml:"schemes"`
+	// Descriptions is the derived help vocabulary (action -> text),
+	// collected from the scheme entries - never a config block
+	Descriptions map[string]string `toml:"-"`
 }
 
 type UI struct {
@@ -565,21 +614,21 @@ func (c Config) AccountTags() map[string]bool {
 // [schemes.vim.index] table replaces the whole context table when
 // decoded into the nested map, so the R9 file overlay is applied
 // explicitly here (context and key levels merge).
-func mergeSchemes(base, over map[string]map[string]map[string]string) map[string]map[string]map[string]string {
-	out := make(map[string]map[string]map[string]string, len(base))
+func mergeSchemes(base, over map[string]map[string]map[string]Binding) map[string]map[string]map[string]Binding {
+	out := make(map[string]map[string]map[string]Binding, len(base))
 	for km, ctxs := range base {
-		out[km] = make(map[string]map[string]string, len(ctxs))
+		out[km] = make(map[string]map[string]Binding, len(ctxs))
 		for c, keys := range ctxs {
 			out[km][c] = maps.Clone(keys)
 		}
 	}
 	for km, ctxs := range over {
 		if out[km] == nil {
-			out[km] = make(map[string]map[string]string)
+			out[km] = make(map[string]map[string]Binding)
 		}
 		for c, keys := range ctxs {
 			if out[km][c] == nil {
-				out[km][c] = make(map[string]string)
+				out[km][c] = make(map[string]Binding)
 			}
 			maps.Copy(out[km][c], keys)
 		}
@@ -587,13 +636,59 @@ func mergeSchemes(base, over map[string]map[string]map[string]string) map[string
 	return out
 }
 
-// cloneBindings deep-copies a binding table set: the resolved scheme
-// (Default and Load) hands out a fresh map so a caller's rebind never
-// touches the store or the next Default.
-func cloneBindings(b map[string]map[string]string) map[string]map[string]string {
-	out := make(map[string]map[string]string, len(b))
-	for ctx, km := range b {
-		out[ctx] = maps.Clone(km)
+// deriveDescriptions is the help vocabulary from the binding entries:
+// the first non-empty desc per action wins - the selected scheme's
+// entries first (a user desc on a rebound key overrides the scheme
+// default), then the other schemes sorted. Actions are shared
+// vocabulary: a desc defined once describes the action everywhere.
+func deriveDescriptions(schemes map[string]map[string]map[string]Binding, keymap string) map[string]string {
+	out := map[string]string{}
+	var others []string
+	for km := range schemes {
+		if km != keymap {
+			others = append(others, km)
+		}
+	}
+	sort.Strings(others)
+	for _, km := range append([]string{keymap}, others...) {
+		for _, c := range sortedKeys(schemes[km]) {
+			for _, k := range sortedKeys(schemes[km][c]) {
+				e := schemes[km][c][k]
+				if e.Desc == "" {
+					continue
+				}
+				if _, seen := out[e.Fun]; !seen {
+					out[e.Fun] = e.Desc
+				}
+			}
+		}
+	}
+	return out
+}
+
+// sortedKeys is the deterministic iteration order map lookups need
+// (map iteration is not).
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// bindingsFromScheme flattens a scheme's entries to key -> action:
+// the dispatch surface (the tui switches on the action strings). The
+// result is always a fresh map set - a caller's rebind never touches
+// the store or the next Default.
+func bindingsFromScheme(scheme map[string]map[string]Binding) map[string]map[string]string {
+	out := make(map[string]map[string]string, len(scheme))
+	for ctx, km := range scheme {
+		m := make(map[string]string, len(km))
+		for k, b := range km {
+			m[k] = b.Fun
+		}
+		out[ctx] = m
 	}
 	return out
 }
@@ -647,7 +742,8 @@ func Default() Config {
 	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
 		panic(err)
 	}
-	cfg.Bindings = cloneBindings(cfg.Schemes["vim"])
+	cfg.Bindings = bindingsFromScheme(cfg.Schemes["vim"])
+	cfg.Descriptions = deriveDescriptions(cfg.Schemes, "vim")
 	if err := validate(cfg); err != nil {
 		panic(err)
 	}
@@ -758,7 +854,10 @@ func Load(path string) (Config, error) {
 			// consume their whole subtree; BurntSushi does not mark
 			// Unmarshaler subtrees as decoded, so their inner keys
 			// always land here. The unmarshalers are strict themselves.
-			if k[0] == "palette" || k[0] == "theme" {
+			// A 4-level schemes key is a table-form binding entry's
+			// field (schemes.<km>.<ctx>.<key>.<fun|desc>) - consumed by
+			// Binding.UnmarshalTOML, which rejects unknown fields.
+			if k[0] == "palette" || k[0] == "theme" || (k[0] == "schemes" && len(k) == 5) {
 				continue
 			}
 			keys = append(keys, k.String())
@@ -768,7 +867,8 @@ func Load(path string) (Config, error) {
 		}
 	}
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
-	cfg.Bindings = cloneBindings(cfg.Schemes[cfg.UI.Keymap])
+	cfg.Bindings = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
+	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {
 		return cfg, err
 	}
@@ -825,7 +925,7 @@ func validate(cfg Config) error {
 				if strings.TrimSpace(k) == "" {
 					return fmt.Errorf("schemes.%s.%s: empty key", keymap, name)
 				}
-				if strings.TrimSpace(v) == "" {
+				if strings.TrimSpace(v.Fun) == "" {
 					return fmt.Errorf("schemes.%s.%s: empty action for key %q", keymap, name, k)
 				}
 			}

@@ -224,7 +224,7 @@ func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	// the default bindings ARE the embedded vim scheme (base.toml),
 	// context for context - the Go side derives, never re-declares
-	if !maps.EqualFunc(cfg.Bindings, baseConfig.Schemes["vim"], maps.Equal) {
+	if !maps.EqualFunc(cfg.Bindings, bindingsFromScheme(baseConfig.Schemes["vim"]), maps.Equal) {
 		t.Fatalf("default bindings = %v, want the embedded vim scheme %v", cfg.Bindings, baseConfig.Schemes["vim"])
 	}
 	// the derived table is a clone: rebinding a Default never touches
@@ -320,15 +320,15 @@ func TestLoadUnknownBindingKey(t *testing.T) {
 
 func TestValidateBindings(t *testing.T) {
 	cfg := Default()
-	cfg.Schemes["vim"]["index"] = map[string]string{}
+	cfg.Schemes["vim"]["index"] = map[string]Binding{}
 	if err := validate(cfg); err == nil {
 		t.Fatal("empty context must error")
 	}
-	cfg.Schemes["vim"]["index"] = map[string]string{"": "archive"}
+	cfg.Schemes["vim"]["index"] = map[string]Binding{"": {Fun: "archive"}}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank key must error")
 	}
-	cfg.Schemes["vim"]["index"] = map[string]string{"x": " "}
+	cfg.Schemes["vim"]["index"] = map[string]Binding{"x": {Fun: " "}}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank action must error")
 	}
@@ -336,7 +336,7 @@ func TestValidateBindings(t *testing.T) {
 
 func TestValidateUnknownBindingContext(t *testing.T) {
 	cfg := Default()
-	cfg.Schemes["vim"]["indicx"] = map[string]string{"q": "quit"}
+	cfg.Schemes["vim"]["indicx"] = map[string]Binding{"q": {Fun: "quit"}}
 	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "indicx") {
 		t.Fatalf("unknown context must error naming it, got %v", err)
 	}
@@ -349,6 +349,82 @@ func TestLoadUnknownBindingContext(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "indicx") {
 		t.Fatalf("error must name the context, got: %v", err)
+	}
+}
+
+// TestBindingEntryForms pins the three entry shapes (string, array,
+// table) and the derived descriptions: the help vocabulary comes from
+// the scheme entries - the selected scheme's descs first, the other
+// schemes as fallback - and a stale [descriptions] block fails load.
+func TestBindingEntryForms(t *testing.T) {
+	cfg, err := Load(write(t, `
+[schemes.vim.index]
+"plain" = "open"
+"arr" = ["quit", "Leave the program"]
+"tab" = { fun = "archive", desc = "Peek" }
+
+[schemes.emacs.index]
+"ctrl+q" = ["quit", "Emacs quits differently"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Bindings["index"]["plain"] != "open" || cfg.Bindings["index"]["arr"] != "quit" || cfg.Bindings["index"]["tab"] != "archive" {
+		t.Fatalf("all entry forms must bind their action: %v", cfg.Bindings["index"])
+	}
+	if e := cfg.Schemes["vim"]["index"]["arr"]; e.Fun != "quit" || e.Desc != "Leave the program" {
+		t.Fatalf("array entry must carry fun and desc, got %+v", e)
+	}
+	if e := cfg.Schemes["vim"]["index"]["tab"]; e.Fun != "archive" || e.Desc != "Peek" {
+		t.Fatalf("table entry must carry fun and desc, got %+v", e)
+	}
+	// the selected scheme's desc wins; other schemes only fill gaps
+	if cfg.Descriptions["quit"] != "Leave the program" {
+		t.Fatalf("vim desc must win over the emacs one, got %q", cfg.Descriptions["quit"])
+	}
+	if cfg.Descriptions["archive"] != "Peek" {
+		t.Fatalf("desc must derive from the table entry, got %q", cfg.Descriptions["archive"])
+	}
+	if cfg.Descriptions["open"] != "Open the message under the cursor" {
+		t.Fatalf("an action without its own desc inherits the scheme default: %q", cfg.Descriptions["open"])
+	}
+	// a scheme switch re-derives: the emacs desc wins under emacs
+	cfg, err = Load(write(t, `
+[ui]
+keymap = "emacs"
+[schemes.emacs.index]
+"ctrl+q" = ["quit", "Emacs quits differently"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Descriptions["quit"] != "Emacs quits differently" {
+		t.Fatalf("the selected keymap's desc must win, got %q", cfg.Descriptions["quit"])
+	}
+	if cfg.Descriptions["open"] != "Open the message under the cursor" {
+		t.Fatalf("unset emacs descs inherit the vim scheme: %q", cfg.Descriptions["open"])
+	}
+}
+
+func TestBindingEntryBadShapes(t *testing.T) {
+	for _, file := range []string{
+		`[schemes.vim.index]
+"x" = ["only-fun"]`,
+		`[schemes.vim.index]
+"x" = { wrong = "key" }`,
+	} {
+		if _, err := Load(write(t, file)); err == nil {
+			t.Fatalf("bad entry shape must error: %s", file)
+		}
+	}
+}
+
+func TestLoadStaleDescriptionsBlock(t *testing.T) {
+	// the [descriptions] block is gone: descriptions live on the
+	// binding entries, so a stale block must fail load loudly (strict,
+	// R8) instead of silently no-oping
+	if _, err := Load(write(t, "\n[descriptions]\n\"quit\" = \"Leave\"\n")); err == nil || !strings.Contains(err.Error(), "descriptions") {
+		t.Fatalf("a stale [descriptions] table must error naming it, got %v", err)
 	}
 }
 

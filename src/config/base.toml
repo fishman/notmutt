@@ -2,8 +2,14 @@
 # overlays this at load; nothing here is compiled into Go. The binding
 # schemes mirror the mutt key map (muttrc/base.bindings + base.macros
 # are the reference - the mutt-exact keys, client-only actions on keys
-# mutt leaves free). Descriptions are the help dialog's one-line texts
-# (neomutt/help.c columns); they are user data, ready for translation.
+# mutt leaves free). A binding entry is a table { fun = "...", desc =
+# "..." } (the reference shape - extra keys can grow per binding), an
+# array ["action", "description"], or a plain action string; the
+# description travels with the binding - the help dialog's one-line
+# texts (neomutt/help.c columns) derive from these entries, there is no
+# separate descriptions block. Descriptions are user data, ready for
+# translation; the vim scheme carries them, the other schemes inherit
+# by action.
 
 [tag-actions]
 "toggle-read" = "unread"
@@ -12,120 +18,77 @@
 "spam" = "spam"
 "pending" = "pending"
 
-[descriptions]
-"cursor-down" = "Move the cursor down"
-"cursor-up" = "Move the cursor up"
-"cursor-top" = "Jump to the first row"
-"cursor-bottom" = "Jump to the last row"
-"page-down" = "Scroll down one page"
-"page-up" = "Scroll up one page"
-"half-page-down" = "Scroll down half a page"
-"half-page-up" = "Scroll up half a page"
-"open" = "Open the message under the cursor"
-"preview" = "Preview the message under the cursor"
-"quit" = "Quit notmutt"
-"undo" = "Discard the staged tag ops on this message"
-"apply" = "Apply the staged tag ops"
-"reply" = "Reply to the sender"
-"reply-all" = "Reply to all recipients"
-"forward" = "Forward the message"
-"compose" = "Write a new message"
-"tab-prev" = "Switch to the previous tab"
-"tab-next" = "Switch to the next tab"
-"help" = "Show this help"
-"scroll-down" = "Scroll down one line"
-"scroll-up" = "Scroll up one line"
-"scroll-top" = "Jump to the top"
-"scroll-bottom" = "Jump to the bottom"
-"back" = "Return to the message list"
-"form-down" = "Move to the next form field"
-"form-up" = "Move to the previous form field"
-"edit" = "Edit the message body"
-"attach" = "Attach a file"
-"detach" = "Detach the attachment under the cursor"
-"edit-from" = "Edit the From address"
-"edit-to" = "Edit the To list"
-"edit-subject" = "Edit the subject"
-"account" = "Choose the sender account"
-"signature" = "Choose the signature"
-"send" = "Send the message"
-"abort" = "Abort the composition"
-"fuzzy-down" = "Move to the next candidate"
-"fuzzy-up" = "Move to the previous candidate"
-"fuzzy-select" = "Select the highlighted candidate"
-"fuzzy-cancel" = "Cancel the picker"
-
 [schemes.vim.index]
-"j" = "cursor-down"
-"k" = "cursor-up"
-"enter" = "open"
-"q" = "quit"
-"r" = "reply"
-"R" = "reply-all"
-"f" = "forward"
-"m" = "compose"
+"j" = { fun = "cursor-down", desc = "Move the cursor down" }
+"k" = { fun = "cursor-up", desc = "Move the cursor up" }
+"enter" = { fun = "open", desc = "Open the message under the cursor" }
+"q" = { fun = "quit", desc = "Quit notmutt" }
+"r" = { fun = "reply", desc = "Reply to the sender" }
+"R" = { fun = "reply-all", desc = "Reply to all recipients" }
+"f" = { fun = "forward", desc = "Forward the message" }
+"m" = { fun = "compose", desc = "Write a new message" }
 "t" = "toggle-read"
 "a" = "archive"
 "d" = "delete"
-"u" = "undo"
-"$" = "apply"
+"u" = { fun = "undo", desc = "Discard the staged tag ops on this message" }
+"$" = { fun = "apply", desc = "Apply the staged tag ops" }
 "y" = "spam"
 "p" = "pending"
-"P" = "preview"
-"g g" = "cursor-top"
-"G" = "cursor-bottom"
+"P" = { fun = "preview", desc = "Preview the message under the cursor" }
+"g g" = { fun = "cursor-top", desc = "Jump to the first row" }
+"G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
 "g r" = "reply-all"
-"ctrl+d" = "half-page-down"
-"ctrl+u" = "half-page-up"
-"pgdown" = "page-down"
-"pgup" = "page-up"
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page" }
+"ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page" }
+"pgdown" = { fun = "page-down", desc = "Scroll down one page" }
+"pgup" = { fun = "page-up", desc = "Scroll up one page" }
+"[" = { fun = "tab-prev", desc = "Switch to the previous tab" }
+"]" = { fun = "tab-next", desc = "Switch to the next tab" }
+"?" = { fun = "help", desc = "Show this help" }
 
 [schemes.vim.pager]
-"j" = "scroll-down"
-"k" = "scroll-up"
+"j" = { fun = "scroll-down", desc = "Scroll down one line" }
+"k" = { fun = "scroll-up", desc = "Scroll up one line" }
 "space" = "page-down"
 "ctrl+d" = "half-page-down"
 "ctrl+u" = "half-page-up"
 "pgdown" = "page-down"
 "pgup" = "page-up"
-"g" = "scroll-top"
-"G" = "scroll-bottom"
-"q" = "back"
+"g" = { fun = "scroll-top", desc = "Jump to the top" }
+"G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
+"q" = { fun = "back", desc = "Return to the message list" }
 "[" = "tab-prev"
 "]" = "tab-next"
 "?" = "help"
 
 [schemes.vim.compose]
-"j" = "form-down"
-"k" = "form-up"
+"j" = { fun = "form-down", desc = "Move to the next form field" }
+"k" = { fun = "form-up", desc = "Move to the previous form field" }
 "ctrl+d" = "half-page-down"
 "ctrl+u" = "half-page-up"
 "ctrl+f" = "page-down"
 "ctrl+b" = "page-up"
-"t" = "edit-to"
-"s" = "edit-subject"
-"f" = "edit-from"
-"e" = "edit"
-"a" = "attach"
-"d" = "detach"
-"c" = "account"
-"C" = "signature"
-"y" = "send"
-"q" = "abort"
+"t" = { fun = "edit-to", desc = "Edit the To list" }
+"s" = { fun = "edit-subject", desc = "Edit the subject" }
+"f" = { fun = "edit-from", desc = "Edit the From address" }
+"e" = { fun = "edit", desc = "Edit the message body" }
+"a" = { fun = "attach", desc = "Attach a file" }
+"d" = { fun = "detach", desc = "Detach the attachment under the cursor" }
+"c" = { fun = "account", desc = "Choose the sender account" }
+"C" = { fun = "signature", desc = "Choose the signature" }
+"y" = { fun = "send", desc = "Send the message" }
+"q" = { fun = "abort", desc = "Abort the composition" }
 "[" = "tab-prev"
 "]" = "tab-next"
 "?" = "help"
 
 [schemes.vim.fuzzy]
-"j" = "fuzzy-down"
-"k" = "fuzzy-up"
+"j" = { fun = "fuzzy-down", desc = "Move to the next candidate" }
+"k" = { fun = "fuzzy-up", desc = "Move to the previous candidate" }
 "ctrl+n" = "fuzzy-down"
 "ctrl+p" = "fuzzy-up"
-"enter" = "fuzzy-select"
-"esc" = "fuzzy-cancel"
+"enter" = { fun = "fuzzy-select", desc = "Select the highlighted candidate" }
+"esc" = { fun = "fuzzy-cancel", desc = "Cancel the picker" }
 
 [schemes.emacs.index]
 "ctrl+n" = "cursor-down"

@@ -2379,6 +2379,29 @@ func TestPaintGateDeferredNavigation(t *testing.T) {
 	}
 }
 
+// TestPaintGateSkipsTheFrameBuild pins the model-side gate (the
+// vendored tea loop renders after every update - View owns the
+// coalescing): a deferred navigation's View returns the last painted
+// frame unchanged, and the tick's View builds the moved frame.
+func TestPaintGateSkipsTheFrameBuild(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	before := m.View().Content
+	m = press(t, m, "j")
+	if m.paint {
+		t.Fatal("a navigation must defer its paint")
+	}
+	if got := m.View().Content; got != before {
+		t.Fatal("a deferred View must return the last painted frame")
+	}
+	next, _ = m.Update(frameTick{})
+	m = next.(Model)
+	if got := m.View().Content; got == before {
+		t.Fatal("the tick's paint must build the moved frame")
+	}
+}
+
 // TestPaintGateImmediacy pins the exceptions: every message class
 // except navigation paints immediately, including the release that
 // resolves a held key.

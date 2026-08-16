@@ -175,6 +175,10 @@ type Model struct {
 	// repeated navigations inside one interval never pile timers up
 	// (the legendTickOn pattern).
 	frameTickOn bool
+	// frameCache is the last painted frame (View): the tea loop calls
+	// View on a copy of the model, so the cache lives behind a pointer
+	// - a deferred View returns it instead of rebuilding.
+	frameCache *frameCache
 	// legendMoves counts cursor moves: the tick carries the count from
 	// when it was armed and resolves only when it matches - a tick that
 	// finds newer moves re-arms, so the legend settles one debounce
@@ -262,7 +266,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), styleVer: 1}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -1758,11 +1762,24 @@ func (m Model) CursorIndex() int {
 	return idx
 }
 
+// frameCache holds the last painted frame. The vendored tea loop
+// renders after every update and never consults ShouldRender - the
+// coalescing gate lives here instead (a vendor patch was lost once to
+// a re-vendor; the model owns it now). The loop calls View on a copy
+// of the model, so the cache must sit behind a pointer to survive the
+// copy.
+type frameCache struct{ s string }
+
 // View wraps the rendered frame in the v2 view struct: the alt-screen
 // flag and the keyboard-enhancement request (kitty protocol release
 // reporting) are declarative View fields in v2 - no program options.
+// A deferred paint (navigation between frame ticks) returns the last
+// painted frame: one build per paint, not per keypress.
 func (m Model) View() tea.View {
-	v := tea.NewView(m.render())
+	if m.paint || m.frameCache.s == "" {
+		m.frameCache.s = m.render()
+	}
+	v := tea.NewView(m.frameCache.s)
 	v.AltScreen = true
 	// ReportEventTypes asks the terminal to report key repeat and
 	// release events; when supported, the program receives

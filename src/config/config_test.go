@@ -64,6 +64,29 @@ yazi = []
 	}
 }
 
+func TestLoadNotify(t *testing.T) {
+	cfg, err := Load(write(t, `
+[notify]
+command = ["notify-send", "notmutt", "{count} new mail"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Notify.Command) != 3 || cfg.Notify.Command[2] != "{count} new mail" {
+		t.Fatalf("notify = %+v", cfg.Notify.Command)
+	}
+}
+
+func TestLoadNotifyEmptyArgvErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[notify]
+command = [""]
+`))
+	if err == nil {
+		t.Fatal("expected error for an empty command element")
+	}
+}
+
 func TestLoadUnknownKeyErrors(t *testing.T) {
 	_, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nksy = true\n"))
 	if err == nil {

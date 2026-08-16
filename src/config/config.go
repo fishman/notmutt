@@ -107,6 +107,7 @@ type Config struct {
 	Send           Send                                     `toml:"send"`
 	Refresh        Refresh                                  `toml:"refresh"`
 	Filter         Filter                                   `toml:"filter"`
+	Notify         Notify                                   `toml:"notify"`
 	AttachCommands map[string][]string                      `toml:"attach-commands"`
 	Palette        Palette                                  `toml:"palette"`
 	Theme          Theme                                    `toml:"theme"`
@@ -159,6 +160,13 @@ type Filter struct {
 	Enabled     bool         `toml:"enabled"`
 	DryRun      bool         `toml:"dry-run"`
 	HeaderRules []HeaderRule `toml:"header-rules"`
+}
+
+// Notify configures the new-mail notification side effect (R2): an
+// argv command run once per processed batch, {count} replaced with
+// the processed entry count. No command = disabled.
+type Notify struct {
+	Command []string `toml:"command"`
 }
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it
@@ -1058,6 +1066,9 @@ func validate(cfg Config) error {
 		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
 		}
+	}
+	if len(cfg.Notify.Command) > 0 && strings.TrimSpace(cfg.Notify.Command[0]) == "" {
+		return fmt.Errorf("notify: command argv must not be empty")
 	}
 	for i, r := range cfg.Filter.HeaderRules {
 		if strings.TrimSpace(r.Query) == "" {

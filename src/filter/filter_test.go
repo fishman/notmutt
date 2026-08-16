@@ -318,6 +318,55 @@ func TestAlreadyTaggedMoves(t *testing.T) {
 	}
 }
 
+// TestMoverStripsMbsyncUID: an mbsync filename (the IMAP UID embedded
+// as ,U=NNN) moves WITHOUT the UID - a copy keeping it would collide
+// with mbsync's UID tracking on the next sync ("duplicate UID 1234").
+// Plain maildir names pass through untouched; detection is the
+// marker's presence, never a config option (afew rename=auto).
+func TestMoverStripsMbsyncUID(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"INBOX", "Archives"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mbsync := filepath.Join(root, "gmail", "INBOX", "cur", "1234567890_1_1.host:2,S,U=42")
+	if err := os.WriteFile(mbsync, []byte("mail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(root, "gmail", "INBOX", "cur", "1234567890_2_2.host:2,S")
+	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fakeWorker{}
+	rep := &Report{Entries: []Entry{
+		{ID: "m1", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/1234567890_1_1.host:2,S,U=42"}},
+		{ID: "m2", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/1234567890_2_2.host:2,S"}},
+	}}
+
+	mr, err := NewMover(w, cfg, root).Move(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"gmail/Archives/cur/1234567890_1_1.host:2,S", "gmail/Archives/cur/1234567890_2_2.host:2,S"}
+	for i, to := range want {
+		if mr.Moves[i].To != to {
+			t.Fatalf("move %d To = %q, want %q", i, mr.Moves[i].To, to)
+		}
+		if _, err := os.Stat(filepath.Join(root, to)); err != nil {
+			t.Fatalf("dest %s: %v", to, err)
+		}
+	}
+	if _, err := os.Stat(mbsync); err == nil {
+		t.Fatal("mbsync source still exists")
+	}
+}
+
 func equalOps(a, b []core.TagOp) bool {
 	if len(a) != len(b) {
 		return false

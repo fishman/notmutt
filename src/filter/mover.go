@@ -72,7 +72,7 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 		for _, f := range e.Paths {
 			me := MoveEntry{ID: e.ID, From: f}
 			rel := relPath(m.root, f)
-			dst := filepath.Join(target, filepath.Base(filepath.Dir(rel)), filepath.Base(rel))
+			dst := filepath.Join(target, filepath.Base(filepath.Dir(rel)), stripUID(filepath.Base(rel)))
 			if _, err := os.Stat(absPath(m.root, f)); err != nil {
 				me.Skip = "source gone"
 			} else {
@@ -200,6 +200,26 @@ func candidateTags(a config.Account) map[string][]string {
 		}
 	}
 	return out
+}
+
+// stripUID removes an mbsync UID marker (",U=NNN") from a maildir
+// basename, keeping the rest (unique part, flags, the ",S=" size
+// marker). mbsync embeds the IMAP UID in the filename; a move with
+// the UID intact collides with the destination's UID tracking
+// ("Maildir error: duplicate UID 1234"). Detection is the marker's
+// presence - never a config option - so offlineimap and plain maildir
+// names pass through untouched (afew rename=auto semantics,
+// MailMover.py:43-46).
+func stripUID(name string) string {
+	i := strings.Index(name, ",U=")
+	if i < 0 {
+		return name
+	}
+	end := i + 3
+	for end < len(name) && name[end] >= '0' && name[end] <= '9' {
+		end++
+	}
+	return name[:i] + name[end:]
 }
 
 // ResolveFolder is the reference _resolve_account_folder: the first

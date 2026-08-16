@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -225,6 +226,54 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "sent")); !os.IsNotExist(err) {
 		t.Fatal("a failed send must not create the sent dir")
+	}
+}
+
+// TestSendJobPassesEnvelopeRecipients pins the mutt sendmail
+// contract: the transport argv is the configured args plus the
+// envelope recipients (To + Cc + Bcc) - msmtp without them fails
+// with "no recipients found". The config's args slice is never
+// mutated.
+func TestSendJobPassesEnvelopeRecipients(t *testing.T) {
+	dir := t.TempDir()
+	argv := filepath.Join(dir, "argv")
+	stub := "#!/bin/sh\nprintf '%s\\n' \"$@\" > " + argv + "\ncat > /dev/null\n"
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub"), Args: []string{"--read-envelope-from"}}
+	cfg.Accounts["gmail"] = config.Account{SentFolder: filepath.Join(dir, "sent")}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab6"
+	st.To = []string{"alice@example.com"}
+	st.Cc = []string{"cc@example.org"}
+	st.Bcc = []string{"bcc@example.net"}
+	st.Subject = "x"
+	st.Body = "y"
+
+	sendJob(bus, w, view, cfg, *st)
+
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	data, err := os.ReadFile(argv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
+	want := []string{"--read-envelope-from", "alice@example.com", "cc@example.org", "bcc@example.net"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("transport argv = %v, want %v", got, want)
+	}
+	if len(cfg.Send.Args) != 1 || cfg.Send.Args[0] != "--read-envelope-from" {
+		t.Fatalf("the config args must not mutate: %v", cfg.Send.Args)
 	}
 }
 

@@ -14,6 +14,21 @@ import (
 	"notmutt/notmuch"
 )
 
+// sendArgs builds the transport argv (the mutt sendmail contract):
+// the configured args first, then the envelope recipients (To + Cc +
+// Bcc) - the transport cannot deliver without them (msmtp: "no
+// recipients found"). The message flows on stdin; msmtp resolves the
+// account from the From header (--read-envelope-from, the default
+// config). A fresh slice - the config's args never mutate.
+func sendArgs(cfg config.Send, st compose.State) []string {
+	args := make([]string, 0, len(cfg.Args)+len(st.To)+len(st.Cc)+len(st.Bcc))
+	args = append(args, cfg.Args...)
+	args = append(args, st.To...)
+	args = append(args, st.Cc...)
+	args = append(args, st.Bcc...)
+	return args
+}
+
 // sendJob runs the send (spec section 8): assemble once, transport
 // argv exec with the message on stdin and output captured (F4 - no
 // shell, no interpolation), then fcc + reindex + reply tag. Order is
@@ -30,7 +45,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	// snapshot the bytes: exec drains the buffer reading stdin, and the
 	// fcc must be the exact delivered bytes
 	data := buf.Bytes()
-	cmd := exec.Command(cfg.Send.Command, cfg.Send.Args...)
+	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
 	cmd.Stdin = bytes.NewReader(data)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

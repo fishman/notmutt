@@ -2,10 +2,15 @@ package app
 
 import (
 	"context"
+	"embed"
 	"fmt"
+	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,12 +20,19 @@ import (
 	"notmutt/core"
 	"notmutt/mail"
 	"notmutt/notmuch"
+	"notmutt/setup"
 	"notmutt/tui"
 )
 
 const lockBudget = 10 * time.Second
 
+//go:embed lua/templates/*.lua
+var templateFS embed.FS
+
 func Run() error {
+	if len(os.Args) > 1 && os.Args[1] == "setup" {
+		return setupAccounts()
+	}
 	cfg, err := config.Load(configPath())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -238,6 +250,112 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 			}
 		}
 	}
+}
+
+// setupAccounts is the `notmutt setup` subcommand: resolve the
+// notmuch mail root from the CLI config (argv-only, F4), detect the
+// accounts by their folder structure (the merged template set), and
+// write the generated config next to config.toml as accounts.toml
+// (0600, F5). Detection reads directory names only, never mail
+// content.
+func setupAccounts() error {
+	ctx := context.Background()
+	out, err := exec.CommandContext(ctx, "notmuch", "config", "get", "database.path").Output()
+	if err != nil {
+		return fmt.Errorf("setup: resolve database.path: %w", err)
+	}
+	accs, err := setup.Detect(strings.TrimSpace(string(out)), mergedTemplates())
+	if err != nil {
+		return fmt.Errorf("setup: %w", err)
+	}
+	var matched, unmatched []string
+	for _, a := range accs {
+		if a.Template == "" {
+			unmatched = append(unmatched, a.Name)
+		} else {
+			matched = append(matched, fmt.Sprintf("%s (%s)", a.Name, a.Template))
+		}
+	}
+	dir := filepath.Dir(configPath())
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("setup: %w", err)
+	}
+	seedTemplates(dir)
+	path := filepath.Join(dir, "accounts.toml")
+	if err := os.WriteFile(path, []byte(setup.Generate(accs)), 0600); err != nil {
+		return fmt.Errorf("setup: write %s: %w", path, err)
+	}
+	fmt.Printf("setup: accounts: %s\n", strings.Join(matched, ", "))
+	fmt.Printf("setup: no template match: %s\n", strings.Join(unmatched, ", "))
+	fmt.Printf("setup: wrote %s\n", path)
+	return nil
+}
+
+// seedTemplates copies the shipped example templates to
+// <configdir>/lua/templates on the first setup run: the place users
+// copy from to add a provider shape (a contributed template overrides
+// the built-in of the same name, R2). Never overwrites an existing
+// file - a customized layout stays untouched, missing files fill in.
+func seedTemplates(dir string) {
+	dst := filepath.Join(dir, "lua", "templates")
+	if err := os.MkdirAll(dst, 0700); err != nil {
+		log.Printf("setup: seed templates: %v", err)
+		return
+	}
+	entries, err := fs.ReadDir(templateFS, "lua/templates")
+	if err != nil {
+		log.Printf("setup: seed templates: %v", err)
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dst, e.Name())
+		if _, err := os.Stat(path); err == nil {
+			continue
+		}
+		src, err := fs.ReadFile(templateFS, "lua/templates/"+e.Name())
+		if err != nil {
+			continue
+		}
+		if err := os.WriteFile(path, src, 0600); err != nil {
+			log.Printf("setup: seed template %s: %v", e.Name(), err)
+		}
+	}
+}
+
+// mergedTemplates is the detection set: the built-ins (the lua build
+// evaluates the embedded template files, default builds the Go
+// fallback), then the contributed Lua templates from
+// <configdir>/lua/templates sorted by name. A Lua template replaces
+// the built-in of the same name (the R2 preset override rule).
+func mergedTemplates() []setup.Template {
+	base := builtinTemplates()
+	if len(base) == 0 {
+		base = setup.Templates
+	}
+	out := make([]setup.Template, 0, len(base)+1)
+	seen := map[string]bool{}
+	for _, t := range base {
+		out = append(out, t)
+		seen[t.Name] = true
+	}
+	var add []setup.Template
+	for _, t := range luaTemplates(filepath.Dir(configPath())) {
+		if !seen[t.Name] {
+			add = append(add, t)
+			continue
+		}
+		for i := range out {
+			if out[i].Name == t.Name {
+				out[i] = t
+				break
+			}
+		}
+	}
+	sort.Slice(add, func(i, j int) bool { return add[i].Name < add[j].Name })
+	return append(out, add...)
 }
 
 func configPath() string {

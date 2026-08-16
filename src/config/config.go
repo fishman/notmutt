@@ -614,12 +614,15 @@ type Send struct {
 // pattern as data. Folder defaults to the account name (the common
 // case: [accounts.dynamia] maps to the "dynamia" tag directly); the
 // pointer distinguishes unset from an explicitly empty value, which is
-// a load error.
+// a load error. Folders is the detected hard-tag folder map (the
+// `notmutt setup` output) - per-account tag -> folder-name for the
+// mover's folder resolution.
 type Account struct {
-	Folder           *string `toml:"folder"`
-	From             string  `toml:"from"`
-	SentFolder       string  `toml:"sent_folder"`
-	DefaultSignature string  `toml:"default_signature"`
+	Folder           *string           `toml:"folder"`
+	From             string            `toml:"from"`
+	SentFolder       string            `toml:"sent_folder"`
+	DefaultSignature string            `toml:"default_signature"`
+	Folders          map[string]string `toml:"folders"`
 }
 
 func (a Account) Tag(name string) string {

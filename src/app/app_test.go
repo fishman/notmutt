@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -49,5 +51,31 @@ func TestValidateBindings(t *testing.T) {
 	cfg.TagActions["scroll-down"] = "wip"
 	if err := validateBindings(&cfg); err != nil {
 		t.Fatalf("a pager-only action name must not collide with a tag action: %v", err)
+	}
+}
+
+func TestSeedTemplates(t *testing.T) {
+	dir := t.TempDir()
+	seedTemplates(dir)
+	dst := filepath.Join(dir, "lua", "templates")
+	got, err := os.ReadDir(dst)
+	if err != nil {
+		t.Fatalf("seed must create %s: %v", dst, err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("seed must copy the 4 shipped templates, got %d", len(got))
+	}
+	// a customized file must survive a re-run
+	edited := filepath.Join(dst, "gmail.lua")
+	if err := os.WriteFile(edited, []byte("return {}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seedTemplates(dir)
+	body, err := os.ReadFile(edited)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "return {}" {
+		t.Fatal("seed must never overwrite an existing template")
 	}
 }

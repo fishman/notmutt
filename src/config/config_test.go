@@ -712,3 +712,28 @@ folder = ""
 		t.Fatalf("want blank folder error, got %v", err)
 	}
 }
+
+func TestAccountFoldersStrictLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	body := `
+[accounts.gmail]
+folder = "gmail"
+
+[accounts.gmail.folders]
+inbox = "INBOX"
+deleted = "[Gmail]/Trash"
+`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NOTMUTT_CONFIG", path)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("the setup-generated accounts shape must load strictly: %v", err)
+	}
+	got := cfg.Accounts["gmail"].Folders
+	if got["inbox"] != "INBOX" || got["deleted"] != "[Gmail]/Trash" {
+		t.Fatalf("folders = %v, want the detected map", got)
+	}
+}

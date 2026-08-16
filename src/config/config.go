@@ -105,6 +105,7 @@ type Config struct {
 	TagActions     map[string]string                        `toml:"tag-actions"`
 	Accounts       map[string]Account                       `toml:"accounts"`
 	Send           Send                                     `toml:"send"`
+	Refresh        Refresh                                  `toml:"refresh"`
 	AttachCommands map[string][]string                      `toml:"attach-commands"`
 	Palette        Palette                                  `toml:"palette"`
 	Theme          Theme                                    `toml:"theme"`
@@ -136,6 +137,13 @@ type UI struct {
 	Keymap string `toml:"keymap"`
 	Tags   UITags `toml:"tags"`
 	Glyphs Glyphs `toml:"glyphs"`
+}
+
+// Refresh is the [refresh] section: the periodic new-mail poll (R2/R3).
+// The poll runs `notmuch new` and refreshes the view at the cadence.
+type Refresh struct {
+	// Interval is the poll cadence in seconds (default 5, min 1).
+	Interval int `toml:"interval"`
 }
 
 type UITags struct {
@@ -810,6 +818,9 @@ func Default() Config {
 			Command: "msmtp",
 			Args:    []string{"--read-envelope-from"},
 		},
+		Refresh: Refresh{
+			Interval: 5,
+		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 	}
@@ -970,6 +981,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
+	}
+	if cfg.Refresh.Interval < 1 {
+		return fmt.Errorf("refresh.interval: must be >= 1 second, got %d", cfg.Refresh.Interval)
 	}
 	for name, argv := range cfg.AttachCommands {
 		if strings.TrimSpace(name) == "" {

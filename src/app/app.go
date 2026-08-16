@@ -45,6 +45,9 @@ func Run() error {
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
 	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
 	st.Subscribe("theme", func() { bus.Publish(core.ConfigChanged{Section: "theme"}) })
+	st.Subscribe("refresh", func() { bus.Publish(core.ConfigChanged{Section: "refresh"}) })
+	openDiagLog()
+	go runDiagBus(bus)
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -244,26 +247,45 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 	}
 }
 
+// runRefresher is the refresh loop: the poll ticker runs `notmuch new`
+// and refreshes the view at the [refresh] interval (R2/R3 - the poll is
+// the trigger for the user's post-new classification pipeline, so the
+// cadence is configurable, default 5s). The ActNew itself publishes
+// WorkerDone, which triggers a second cycle; the running flag makes
+// overlapping cycles no-ops, and a post-ActNew cycle catches the
+// lastmod bumps of the classification tags. A [refresh] config change
+// re-arms the ticker; other sections reach onConfig.
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {
 	ch := bus.Subscribe()
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(refreshInterval(st))
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+			if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
+				diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
+			}
 			r.cycle()
 		case e := <-ch:
 			switch e := e.(type) {
 			case core.WorkerDone:
 				r.cycle()
 			case core.ConfigChanged:
+				if e.Section == "refresh" {
+					ticker.Reset(refreshInterval(st))
+				}
 				r.onConfig(st, e)
 			}
 		}
 	}
+}
+
+// refreshInterval is the [refresh] poll cadence as a duration
+// (validated >= 1s at load).
+func refreshInterval(st *config.Store) time.Duration {
+	return time.Duration(st.Config().Refresh.Interval) * time.Second
 }
 
 // setupAccounts is the `notmutt setup` subcommand: resolve the

@@ -204,6 +204,30 @@ func TestValidateSendCommand(t *testing.T) {
 	}
 }
 
+func TestRefreshDefaultInterval(t *testing.T) {
+	cfg := Default()
+	if cfg.Refresh.Interval != 5 {
+		t.Fatalf("default refresh interval = %d", cfg.Refresh.Interval)
+	}
+}
+
+func TestRefreshIntervalOverride(t *testing.T) {
+	cfg, err := Load(write(t, "\n[refresh]\ninterval = 3\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Refresh.Interval != 3 {
+		t.Fatalf("refresh interval = %d", cfg.Refresh.Interval)
+	}
+}
+
+func TestRefreshIntervalTooSmall(t *testing.T) {
+	_, err := Load(write(t, "\n[refresh]\ninterval = 0\n"))
+	if err == nil || !strings.Contains(err.Error(), "refresh.interval") {
+		t.Fatalf("want refresh.interval error, got %v", err)
+	}
+}
+
 func TestAccountSendFields(t *testing.T) {
 	cfg, err := Load(write(t, `
 [accounts.gmail]

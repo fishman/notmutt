@@ -70,10 +70,10 @@
 "?" = { fun = "help", show = true }
 
 [schemes.vim.compose]
-"j" = { fun = "form-down", desc = "Move to the next attachment", show = true }
-"k" = { fun = "form-up", desc = "Move to the previous attachment", show = true }
-"down" = { fun = "form-down", show = true }
-"up" = { fun = "form-up", show = true }
+"j" = { fun = "form-down", desc = "Move to the next attachment" }
+"k" = { fun = "form-up", desc = "Move to the previous attachment" }
+"down" = { fun = "form-down" }
+"up" = { fun = "form-up" }
 "ctrl+d" = { fun = "half-page-down" }
 "ctrl+u" = { fun = "half-page-up" }
 "ctrl+f" = { fun = "page-down" }
@@ -97,21 +97,21 @@
 "?" = { fun = "help", show = true }
 
 [schemes.vim.fuzzy]
-"j" = { fun = "fuzzy-down", desc = "Move to the next candidate", show = true }
-"k" = { fun = "fuzzy-up", desc = "Move to the previous candidate", show = true }
-"down" = { fun = "fuzzy-down", show = true }
-"up" = { fun = "fuzzy-up", show = true }
-"ctrl+n" = { fun = "fuzzy-down", show = true }
-"ctrl+p" = { fun = "fuzzy-up", show = true }
+"j" = { fun = "fuzzy-down", desc = "Move to the next candidate" }
+"k" = { fun = "fuzzy-up", desc = "Move to the previous candidate" }
+"down" = { fun = "fuzzy-down" }
+"up" = { fun = "fuzzy-up" }
+"ctrl+n" = { fun = "fuzzy-down" }
+"ctrl+p" = { fun = "fuzzy-up" }
 "enter" = { fun = "fuzzy-select", desc = "Select the highlighted candidate", show = true }
 "esc" = { fun = "fuzzy-cancel", desc = "Cancel the picker", show = true }
 
 [schemes.emacs.index]
-"ctrl+n" = { fun = "cursor-down", show = true }
-"ctrl+p" = { fun = "cursor-up", show = true }
-"down" = { fun = "cursor-down", show = true }
-"up" = { fun = "cursor-up", show = true }
-"enter" = { fun = "open", show = true }
+"ctrl+n" = { fun = "cursor-down" }
+"ctrl+p" = { fun = "cursor-up" }
+"down" = { fun = "cursor-down" }
+"up" = { fun = "cursor-up" }
+"enter" = { fun = "open" }
 "q" = { fun = "quit", show = true }
 "r" = { fun = "reply", show = true }
 "R" = { fun = "reply-all", show = true }
@@ -132,10 +132,10 @@
 "?" = { fun = "help", show = true }
 
 [schemes.emacs.pager]
-"ctrl+n" = { fun = "scroll-down", show = true }
-"ctrl+p" = { fun = "scroll-up", show = true }
-"down" = { fun = "scroll-down", show = true }
-"up" = { fun = "scroll-up", show = true }
+"ctrl+n" = { fun = "scroll-down" }
+"ctrl+p" = { fun = "scroll-up" }
+"down" = { fun = "scroll-down" }
+"up" = { fun = "scroll-up" }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
 "pgdown" = { fun = "page-down" }
@@ -147,10 +147,10 @@
 "?" = { fun = "help", show = true }
 
 [schemes.emacs.compose]
-"ctrl+n" = { fun = "form-down", show = true }
-"ctrl+p" = { fun = "form-up", show = true }
-"down" = { fun = "form-down", show = true }
-"up" = { fun = "form-up", show = true }
+"ctrl+n" = { fun = "form-down" }
+"ctrl+p" = { fun = "form-up" }
+"down" = { fun = "form-down" }
+"up" = { fun = "form-up" }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
 "t" = { fun = "edit-to", show = true }
@@ -172,11 +172,11 @@
 "?" = { fun = "help", show = true }
 
 [schemes.emacs.fuzzy]
-"j" = { fun = "fuzzy-down", show = true }
-"k" = { fun = "fuzzy-up", show = true }
-"down" = { fun = "fuzzy-down", show = true }
-"up" = { fun = "fuzzy-up", show = true }
-"ctrl+n" = { fun = "fuzzy-down", show = true }
-"ctrl+p" = { fun = "fuzzy-up", show = true }
+"j" = { fun = "fuzzy-down" }
+"k" = { fun = "fuzzy-up" }
+"down" = { fun = "fuzzy-down" }
+"up" = { fun = "fuzzy-up" }
+"ctrl+n" = { fun = "fuzzy-down" }
+"ctrl+p" = { fun = "fuzzy-up" }
 "enter" = { fun = "fuzzy-select", show = true }
 "esc" = { fun = "fuzzy-cancel", show = true }

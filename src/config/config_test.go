@@ -458,34 +458,36 @@ func TestBindingShowFlag(t *testing.T) {
 }
 
 // TestDefaultShownSet pins the base schemes: the keyhint row shows only
-// the command surface - the generic navigation keys (j/k, arrows, g
-// g/G, enter) and the paging keys stay out of it in both keymaps; the
-// command keys (quit/back) are shown. Compose movement (j/k and the
-// arrow equivalents) is command surface.
+// the command surface - the movement keys (j/k, arrows, ctrl+n/ctrl+p,
+// enter), the paging keys and g g/G stay out of it in every context and
+// both keymaps; the command keys (quit/back/send, ...) are shown.
 func TestDefaultShownSet(t *testing.T) {
 	cfg := Default()
-	for _, ctx := range []string{"index", "pager", "compose"} {
-		if cfg.Shown[ctx]["ctrl+d"] || cfg.Shown[ctx]["pgdown"] {
-			t.Fatalf("the paging keys must stay out of the vim %s hint", ctx)
+	for _, ctx := range []string{"index", "pager", "compose", "fuzzy"} {
+		for _, k := range []string{"j", "k", "up", "down", "ctrl+n", "ctrl+p", "ctrl+d", "pgdown"} {
+			if cfg.Shown[ctx][k] {
+				t.Fatalf("generic key %q must stay out of the vim %s hint", k, ctx)
+			}
 		}
 	}
-	if cfg.Shown["index"]["j"] || cfg.Shown["index"]["enter"] || cfg.Shown["index"]["g g"] || cfg.Shown["index"]["up"] {
-		t.Fatal("the generic navigation keys must stay out of the hint")
+	for _, k := range []string{"enter", "g g", "G"} {
+		if cfg.Shown["index"][k] {
+			t.Fatalf("generic navigation key %q must stay out of the index hint", k)
+		}
 	}
-	if !cfg.Shown["index"]["q"] || !cfg.Shown["pager"]["q"] {
-		t.Fatal("the command keys (quit/back) must be shown")
+	if !cfg.Shown["index"]["q"] || !cfg.Shown["pager"]["q"] || !cfg.Shown["compose"]["y"] || !cfg.Shown["fuzzy"]["enter"] {
+		t.Fatal("the command keys must be shown")
 	}
-	if !cfg.Shown["compose"]["j"] || !cfg.Shown["compose"]["up"] {
-		t.Fatal("compose movement is command surface: j/k and the arrows shown")
+	_, emacsShown := bindingsFromScheme(Default().Schemes["emacs"])
+	for _, ctx := range []string{"index", "pager", "compose", "fuzzy"} {
+		for _, k := range []string{"j", "k", "up", "down", "ctrl+n", "ctrl+p", "ctrl+v", "pgdown"} {
+			if emacsShown[ctx][k] {
+				t.Fatalf("generic key %q must stay out of the emacs %s hint", k, ctx)
+			}
+		}
 	}
-	emacs := Default()
-	emacs.UI.Keymap = "emacs"
-	_, emacs.Shown = bindingsFromScheme(emacs.Schemes["emacs"])
-	if emacs.Shown["pager"]["ctrl+v"] || emacs.Shown["index"]["pgdown"] {
-		t.Fatal("the emacs scheme keeps its paging keys out of the hint")
-	}
-	if !emacs.Shown["index"]["ctrl+n"] || !emacs.Shown["index"]["up"] {
-		t.Fatal("the emacs movement keys and their arrow equivalents must be shown")
+	if !emacsShown["index"]["q"] || !emacsShown["compose"]["t"] {
+		t.Fatal("the emacs command keys must be shown")
 	}
 }
 

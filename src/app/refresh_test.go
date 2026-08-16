@@ -24,7 +24,10 @@ type fakeWorker struct {
 	emits     atomic.Int32 // ActQuery emit chunks - the chunk cadence
 	threads   atomic.Int32 // ActThread calls - must stay zero in the load path
 	countErr  atomic.Value // error: fails every ActCount when set
+	pruneErr  atomic.Value // error: fails the prune intersect queries when set
 }
+
+func (f *fakeWorker) setPruneErr(err error) { f.pruneErr.Store(&err) }
 
 func (f *fakeWorker) set(uuid string, rev uint64) {
 	f.uuid.Store(uuid)
@@ -63,6 +66,11 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	case notmuch.ActQuery:
 		f.lastQuery.Store(a.Query)
 		f.queries.Add(1)
+		if strings.Contains(a.Query, " and (thread:") {
+			if v, ok := f.pruneErr.Load().(*error); ok && *v != nil {
+				return notmuch.Reply{ID: a.ID}, *v
+			}
+		}
 		if a.Emit == nil {
 			break
 		}
@@ -72,11 +80,13 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		} else if all, ok := f.msgs.Load().([]core.Message); ok {
 			msgs = all
 		}
-		// membership queries (the apply-path eviction check) carry the
-		// view query plus " and id:.../thread:..."; they match on the
-		// tag: terms, mirroring notmuch for the tag-only subset. Plain
-		// refresh queries pass through unfiltered.
-		if strings.Contains(a.Query, " and id:\"") || strings.Contains(a.Query, " and thread:") {
+		// membership queries carry the view query plus an identity
+		// term: the apply-path eviction check (" and id:...", " and
+		// thread:...") and the refresh prune's OR form (" and
+		// (thread:... or ...)"). They match on the tag: terms,
+		// mirroring notmuch for the tag-only subset. Plain refresh
+		// queries pass through unfiltered.
+		if strings.Contains(a.Query, " and id:\"") || strings.Contains(a.Query, " and thread:") || strings.Contains(a.Query, " and (thread:") {
 			msgs = matchTagQuery(msgs, a.Query)
 		}
 		if a.Limit > 0 && len(msgs) > a.Limit {
@@ -106,23 +116,29 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 }
 
 // matchTagQuery answers a membership query: the message must carry
-// every tag:X term AND match the id:.../thread:... identity term.
+// every tag:X term AND match an id:.../thread:... identity term. The
+// refresh prune's OR form collects every thread: term (parens stripped
+// from tokens).
 func matchTagQuery(msgs []core.Message, q string) []core.Message {
 	var terms []string
-	var wantID string
+	want := map[string]bool{}
 	for _, tok := range strings.Fields(q) {
+		tok = strings.Trim(tok, "()")
 		switch {
 		case strings.HasPrefix(tok, "tag:"):
 			terms = append(terms, strings.TrimPrefix(tok, "tag:"))
 		case strings.HasPrefix(tok, "id:\""):
-			wantID = strings.TrimSuffix(strings.TrimPrefix(tok, "id:\""), "\"")
+			want[strings.TrimSuffix(strings.TrimPrefix(tok, "id:\""), "\"")] = true
 		case strings.HasPrefix(tok, "thread:"):
-			wantID = "t:" + strings.TrimPrefix(tok, "thread:")
+			want["t:"+strings.TrimPrefix(tok, "thread:")] = true
 		}
 	}
 	out := make([]core.Message, 0, len(msgs))
 	for _, m := range msgs {
-		if hasAll(m.Tags, terms) && (wantID == "" || m.ID == wantID || "t:"+m.ThreadID == wantID) {
+		if !hasAll(m.Tags, terms) {
+			continue
+		}
+		if len(want) == 0 || want[m.ID] || want["t:"+m.ThreadID] {
 			out = append(out, m)
 		}
 	}
@@ -199,7 +215,7 @@ func TestCycleIncremental(t *testing.T) {
 		t.Fatalf("no-op cycle changed the view: %d threads", len(view.Threads))
 	}
 	// rev bump with a changed message: thread fetched and merged
-	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2"}})
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"inbox"}}})
 	fw.set("u", 11)
 	r.cycle()
 	if len(view.Threads) != 2 {
@@ -217,6 +233,92 @@ func TestCycleIncremental(t *testing.T) {
 	}
 	if r.rPrev != 12 || r.uuid != "u" {
 		t.Fatalf("state not advanced: %v %v", r.uuid, r.rPrev)
+	}
+}
+
+// TestCyclePrunesRetaggedOut pins the resurrection fix: a message
+// retagged out of the view query (the apply path archives it) still
+// bumps lastmod, so the changed set carries its thread - the prune
+// intersect drops it from the merge AND from the snapshot carry-over
+// (once its lastmod is consumed, no later changed set names it again).
+func TestCyclePrunesRetaggedOut(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u", 10)
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"inbox"}}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	r.cycle() // full reload: t2 loads
+	if !hasThread(view.Threads, "t2") {
+		t.Fatal("full reload must load t2")
+	}
+	// m2 changed: retagged out of the view query
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"archive"}}})
+	fw.set("u", 11)
+	r.cycle()
+	if hasThread(view.Threads, "t2") {
+		t.Fatal("a thread retagged out of the view query must not re-merge")
+	}
+	if len(r.snapshot) != 0 {
+		t.Fatalf("the pruned thread must leave the snapshot too: %d", len(r.snapshot))
+	}
+	if q, _ := fw.lastQuery.Load().(string); q != "(tag:inbox) and (thread:t2)" {
+		t.Fatalf("prune query = %q", q)
+	}
+}
+
+// TestCyclePruneKeepsMatching pins the positive prune: a changed
+// thread that still matches the view query merges with its reconciled
+// tags.
+func TestCyclePruneKeepsMatching(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u", 10)
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"inbox"}}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	r.cycle()
+	// soft change: the thread still matches the query
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"inbox", "unread"}}})
+	fw.set("u", 11)
+	r.cycle()
+	if !hasThread(view.Threads, "t2") {
+		t.Fatal("a still-matching thread must stay")
+	}
+	if tags := view.Tags("m2"); !slices.Equal(tags, []string{"inbox", "unread"}) {
+		t.Fatalf("reconciled tags = %v", tags)
+	}
+}
+
+// TestCyclePruneFailureKeepsStale pins the prune-failure path: a
+// failed intersect must not advance rPrev (an un-pruned changed set
+// would merge the removed thread back, and with rPrev advanced its
+// lastmod is consumed - permanent resurrection); the next cycle retries.
+func TestCyclePruneFailureKeepsStale(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u", 10)
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"inbox"}}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 0)
+	r.cycle()
+	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t2", Tags: []string{"archive"}}})
+	fw.set("u", 11)
+	fw.setPruneErr(errors.New("lock timeout"))
+	r.cycle()
+	if r.rPrev != 10 {
+		t.Fatalf("rPrev advanced past a failed prune: %d", r.rPrev)
+	}
+	if !hasThread(view.Threads, "t2") {
+		t.Fatal("a failed cycle must not merge anything")
+	}
+	fw.setPruneErr(nil)
+	r.cycle()
+	if hasThread(view.Threads, "t2") {
+		t.Fatal("the retried prune must drop the thread")
+	}
+	if r.rPrev != 11 {
+		t.Fatalf("rPrev = %d after the retry", r.rPrev)
 	}
 }
 

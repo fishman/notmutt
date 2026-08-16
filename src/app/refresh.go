@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	"notmutt/config"
@@ -44,6 +45,7 @@ func (r *refresher) cycle() {
 
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
 	if err != nil || rpl.Err != nil {
+		diag.Warn("refresh: revision", "err", fmt.Sprintf("%v %v", err, rpl.Err))
 		return
 	}
 	if rpl.UUID != r.uuid {
@@ -54,14 +56,12 @@ func (r *refresher) cycle() {
 	if rpl.Rev == r.rPrev {
 		return
 	}
-	// Drift is deliberate: messages retagged out of the view query still
-	// bump lastmod, so their threads re-merge and can linger with stale
-	// rows, while wholly deleted threads never appear in the changed set.
-	// The reconcile soak timer (periodic full reload, future work) is the net.
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
 		// Swallow is deliberate: a lock timeout already surfaced as
 		// WorkerLockTimeout on the bus; the view self-heals next cycle.
+		// rPrev stays stale, so the next cycle retries the same range.
+		diag.Warn("refresh: changed", "err", err.Error())
 		return
 	}
 	// The changed set IS the merge input: search summaries (thread-level
@@ -70,10 +70,94 @@ func (r *refresher) cycle() {
 	page := groupThreads(msgs)
 	sortThreads(page)
 	if len(page) > 0 {
-		r.merge(page)
+		kept, err := r.prune(page)
+		if err != nil {
+			// A failed prune must not advance rPrev: the un-pruned
+			// changed set would merge threads back that the apply path
+			// removed, and with rPrev advanced their lastmods are
+			// consumed - the resurrection would be permanent.
+			diag.Warn("refresh: prune", "err", err.Error())
+			return
+		}
+		r.merge(kept)
 	}
 	r.rPrev = rpl.Rev
 }
+
+// prune answers view-query membership for the changed threads: a
+// message retagged out of the view query still bumps lastmod, so the
+// changed set can carry threads that no longer belong. The apply path
+// removes them from the view at apply time; the refresh must not re-add
+// them - and once their lastmod is consumed, no later changed set names
+// them again, so the carry-over must forget them too. One batched
+// intersect query over the changed thread ids - notmuch answers
+// membership (R1), chunked so a mass retag cannot build an unbounded OR
+// query. Survivors are the merge input; the pruned ids leave the
+// snapshot now (a full reload reconciles any drift). A query failure
+// surfaces as an error - the caller keeps rPrev stale and retries.
+func (r *refresher) prune(changed []*core.Thread) ([]*core.Thread, error) {
+	if len(changed) == 0 {
+		return changed, nil
+	}
+	alive := make(map[string]bool, len(changed))
+	for lo := 0; lo < len(changed); lo += pruneChunk {
+		hi := min(lo+pruneChunk, len(changed))
+		var q strings.Builder
+		q.WriteByte('(')
+		q.WriteString(r.view.Query)
+		q.WriteString(") and (")
+		for i := lo; i < hi; i++ {
+			if i > lo {
+				q.WriteString(" or ")
+			}
+			q.WriteString("thread:")
+			q.WriteString(changed[i].ID)
+		}
+		q.WriteByte(')')
+		rpl, err := r.worker.Call(notmuch.Action{
+			Kind:  notmuch.ActQuery,
+			Query: q.String(),
+			Emit: func(chunk []core.Message) bool {
+				for i := range chunk {
+					alive[chunk[i].ThreadID] = true
+				}
+				return true
+			},
+		})
+		if err != nil || rpl.Err != nil {
+			return nil, fmt.Errorf("prune %s: %v %v", q.String(), err, rpl.Err)
+		}
+	}
+	kept := make([]*core.Thread, 0, len(changed))
+	for _, t := range changed {
+		if alive[t.ID] {
+			kept = append(kept, t)
+		}
+	}
+	if len(kept) != len(changed) {
+		gone := make(map[string]bool, len(changed)-len(kept))
+		for _, t := range changed {
+			if !alive[t.ID] {
+				gone[t.ID] = true
+			}
+		}
+		// the pruned threads leave the snapshot: the merge carry-over
+		// would resurrect them for good (their lastmod is consumed)
+		out := r.snapshot[:0]
+		for _, t := range r.snapshot {
+			if !gone[t.ID] {
+				out = append(out, t)
+			}
+		}
+		r.snapshot = out
+	}
+	return kept, nil
+}
+
+// pruneChunk bounds one intersect query: thread ids join an OR query,
+// and notmuch chokes on unbounded queries (a mass retag can change
+// thousands of threads at once).
+const pruneChunk = 1000
 
 // onConfig applies a runtime config change: a view-section change takes
 // the query from the store (the single write path, R8), then a full
@@ -83,10 +167,11 @@ func (r *refresher) cycle() {
 // (the store has no mutation caller); when one lands, onConfig must be
 // serialized against cycle - the running flag does not cover it.
 func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
-	if e.Section == "view" {
-		if v, ok := st.Config().Views[r.view.Name]; ok && v.Query != r.view.Query {
-			r.view.Query = v.Query
-		}
+	if e.Section != "view" {
+		return
+	}
+	if v, ok := st.Config().Views[r.view.Name]; ok && v.Query != r.view.Query {
+		r.view.Query = v.Query
 	}
 	r.fullReload()
 }

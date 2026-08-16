@@ -243,8 +243,13 @@ dialogue fields at assembly, never the editor (mutt's msgbody shape,
 
 ## 8. Send job
 
-y (send) transitions the state to sending; the job runs on the
-worker's action path:
+y (send) transitions the state to sending; the job runs ASYNC BY
+DEFAULT on its own goroutine (2026-08-16): the compose dialogue is a
+separate tab, so the UI just waits for the completion event while the
+mail surface keeps working - no sync mode, no `$sendmail_async`-style
+option (inverted from neomutt, where sync is the default and async is
+the opt-in flag). The dialogue waits in the sending phase; SendResult
+closes the tab (OK) or flips it to failed (error, output kept).
 
 1. Assemble: go-message writer into a buffer - From, To, Cc, Subject,
    Date, Message-ID, In-Reply-To/References (reply), text body part
@@ -267,6 +272,16 @@ worker's action path:
 Order is transport first, then fcc: what was not delivered is not
 stored. A missing `sent_folder` skips fcc with a visible status note.
 A missing `from` on the selected account is a send-time error.
+
+Delivery shape is mutt's exactly (2026-08-16, neomutt reference:
+header.c:632-636, send.c:1477-1483): the wire message carries NO Bcc
+header - Bcc rides the envelope only, the transport argv is
+configured args + To + Cc + Bcc, and the transport's own From
+resolution (msmtp --read-envelope-from) picks the account ($write_bcc
+defaults off, the wire drops the header after assembly). The fcc copy
+IS the full assembled bytes - Bcc kept (mutt's FCC mode always writes
+it): the sender's record shows the blind recipients, the delivered
+message does not.
 
 ## 9. Config surface
 

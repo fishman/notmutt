@@ -221,8 +221,18 @@ func TestRefreshIntervalOverride(t *testing.T) {
 	}
 }
 
-func TestRefreshIntervalTooSmall(t *testing.T) {
-	_, err := Load(write(t, "\n[refresh]\ninterval = 0\n"))
+func TestRefreshIntervalDisabled(t *testing.T) {
+	cfg, err := Load(write(t, "\n[refresh]\ninterval = 0\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Refresh.Interval != 0 {
+		t.Fatalf("interval 0 must load as disabled, got %d", cfg.Refresh.Interval)
+	}
+}
+
+func TestRefreshIntervalNegativeErrors(t *testing.T) {
+	_, err := Load(write(t, "\n[refresh]\ninterval = -1\n"))
 	if err == nil || !strings.Contains(err.Error(), "refresh.interval") {
 		t.Fatalf("want refresh.interval error, got %v", err)
 	}

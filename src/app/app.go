@@ -260,8 +260,16 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 // onConfig.
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store) {
 	ch := bus.Subscribe()
-	ticker := time.NewTicker(refreshInterval(st))
-	defer ticker.Stop()
+	// interval 0 = the automatic poll is off (a nil channel never
+	// fires in the select); the refresh key still runs the poll body
+	// on demand.
+	var tickCh <-chan time.Time
+	var ticker *time.Ticker
+	if st.Config().Refresh.Interval > 0 {
+		ticker = time.NewTicker(refreshInterval(st))
+		defer ticker.Stop()
+		tickCh = ticker.C
+	}
 	poll := func() {
 		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
 			// a backend without a New path (ErrUnsupported) is expected -
@@ -277,7 +285,7 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-tickCh:
 			poll()
 		case e := <-ch:
 			switch e := e.(type) {
@@ -287,7 +295,13 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 				r.cycle()
 			case core.ConfigChanged:
 				if e.Section == "refresh" {
-					ticker.Reset(refreshInterval(st))
+					if ticker != nil {
+						ticker.Reset(refreshInterval(st))
+					} else if st.Config().Refresh.Interval > 0 {
+						ticker = time.NewTicker(refreshInterval(st))
+						defer ticker.Stop()
+						tickCh = ticker.C
+					}
 				}
 				r.onConfig(st, e)
 			}

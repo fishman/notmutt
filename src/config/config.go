@@ -143,7 +143,8 @@ type UI struct {
 // The poll runs `notmuch new` and refreshes the view at the cadence
 // (default 20 min - the refresh key checks manually in between).
 type Refresh struct {
-	// Interval is the poll cadence in seconds (default 1200, min 1).
+	// Interval is the poll cadence in seconds (default 1200 = 20 min;
+	// 0 disables the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
 }
 
@@ -983,8 +984,8 @@ func validate(cfg Config) error {
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
 	}
-	if cfg.Refresh.Interval < 1 {
-		return fmt.Errorf("refresh.interval: must be >= 1 second, got %d", cfg.Refresh.Interval)
+	if cfg.Refresh.Interval < 0 {
+		return fmt.Errorf("refresh.interval: must be >= 0 seconds (0 disables the poll), got %d", cfg.Refresh.Interval)
 	}
 	for name, argv := range cfg.AttachCommands {
 		if strings.TrimSpace(name) == "" {

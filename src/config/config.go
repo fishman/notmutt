@@ -39,13 +39,16 @@ var bindingContexts = map[string]bool{
 
 // Binding is one keybinding entry: a plain string (the action), a
 // two-element array ["action", "description"], or a table
-// { fun = "...", desc = "..." }. The description travels with the
-// binding - there is no separate descriptions block; the help
-// vocabulary derives from these entries (R8).
+// { fun = "...", desc = "...", show = true }. The description travels
+// with the binding - there is no separate descriptions block; the
+// help vocabulary derives from these entries (R8). Visibility is
+// opt-in: every binding is hidden from the keyhint row by default,
+// only entries marked show = true appear there (the help dialog lists
+// every binding regardless).
 type Binding struct {
-	Fun    string
-	Desc   string
-	Hidden bool
+	Fun  string
+	Desc string
+	Show bool
 }
 
 func (b *Binding) UnmarshalTOML(v interface{}) error {
@@ -74,11 +77,11 @@ func (b *Binding) UnmarshalTOML(v interface{}) error {
 		if desc, ok := t["desc"].(string); ok {
 			b.Desc = desc
 		}
-		if hidden, ok := t["hidden"].(bool); ok {
-			b.Hidden = hidden
+		if show, ok := t["show"].(bool); ok {
+			b.Show = show
 		}
 		for k := range t {
-			if k != "fun" && k != "desc" && k != "hidden" {
+			if k != "fun" && k != "desc" && k != "show" {
 				return fmt.Errorf("binding: unknown key %q", k)
 			}
 		}
@@ -95,10 +98,10 @@ type Config struct {
 	Setup     Setup                        `toml:"setup"`
 	Lua       Lua                          `toml:"lua"`
 	Bindings  map[string]map[string]string `toml:"-"`
-	// Hidden is the per-context key set the keyhint row skips (the
+	// Shown is the per-context key set the keyhint row shows (the
 	// help dialog shows every binding): derived from the scheme
-	// entries' hidden flag, never a config block
-	Hidden         map[string]map[string]bool               `toml:"-"`
+	// entries' show flag - visibility is opt-in, never a config block
+	Shown          map[string]map[string]bool               `toml:"-"`
 	TagActions     map[string]string                        `toml:"tag-actions"`
 	Accounts       map[string]Account                       `toml:"accounts"`
 	Send           Send                                     `toml:"send"`
@@ -733,27 +736,28 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 // bindingsFromScheme flattens a scheme's entries to key -> action
-// plus the per-context hidden-key set (the keyhint row skips them,
+// plus the per-context shown-key set (the keyhint row shows them,
 // the help dialog shows every binding): the dispatch surface (the
-// tui switches on the action strings). The result is always a fresh
-// map set - a caller's rebind never touches the store or the next
-// Default.
+// tui switches on the action strings). Visibility is opt-in - an
+// entry without show = true is hidden from the keyhint. The result
+// is always a fresh map set - a caller's rebind never touches the
+// store or the next Default.
 func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[string]string, map[string]map[string]bool) {
 	out := make(map[string]map[string]string, len(scheme))
-	hidden := make(map[string]map[string]bool, len(scheme))
+	shown := make(map[string]map[string]bool, len(scheme))
 	for ctx, km := range scheme {
 		m := make(map[string]string, len(km))
-		h := make(map[string]bool, len(km))
+		s := make(map[string]bool, len(km))
 		for k, b := range km {
 			m[k] = b.Fun
-			if b.Hidden {
-				h[k] = true
+			if b.Show {
+				s[k] = true
 			}
 		}
 		out[ctx] = m
-		hidden[ctx] = h
+		shown[ctx] = s
 	}
-	return out, hidden
+	return out, shown
 }
 
 func Default() Config {
@@ -805,7 +809,7 @@ func Default() Config {
 	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
 		panic(err)
 	}
-	cfg.Bindings, cfg.Hidden = bindingsFromScheme(cfg.Schemes["vim"])
+	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes["vim"])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, "vim")
 	if err := validate(cfg); err != nil {
 		panic(err)
@@ -940,7 +944,7 @@ func Load(path string) (Config, error) {
 		}
 	}
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
-	cfg.Bindings, cfg.Hidden = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
+	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {
 		return cfg, err

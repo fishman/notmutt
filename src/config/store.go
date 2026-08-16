@@ -94,7 +94,7 @@ func (s *Store) SetKeymap(k string) error {
 	}
 	s.mu.Lock()
 	s.cfg.UI.Keymap = k
-	s.cfg.Bindings, s.cfg.Hidden = bindingsFromScheme(s.cfg.Schemes[k])
+	s.cfg.Bindings, s.cfg.Shown = bindingsFromScheme(s.cfg.Schemes[k])
 	s.cfg.Descriptions = deriveDescriptions(s.cfg.Schemes, k)
 	s.mu.Unlock()
 	s.notify("ui")

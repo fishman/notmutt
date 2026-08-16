@@ -235,7 +235,7 @@ func TestDefaultBindings(t *testing.T) {
 		t.Fatalf("Default must hand out fresh bindings, got %q", next.Bindings["index"]["j"])
 	}
 	wantCompose := map[string]string{
-		"j": "form-down", "k": "form-up",
+		"j": "form-down", "k": "form-up", "down": "form-down", "up": "form-up",
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
 		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
@@ -249,7 +249,7 @@ func TestDefaultBindings(t *testing.T) {
 		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)
 	}
 	wantFuzzy := map[string]string{
-		"j": "fuzzy-down", "k": "fuzzy-up",
+		"j": "fuzzy-down", "k": "fuzzy-up", "down": "fuzzy-down", "up": "fuzzy-up",
 		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
 		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
 	}
@@ -423,55 +423,69 @@ keymap = "emacs"
 	}
 }
 
-// TestBindingHiddenFlag pins the hidden flag: the table form carries
-// it, the derived Hidden set follows the selected keymap, and the
-// binding stays in the dispatch surface and the help vocabulary.
-func TestBindingHiddenFlag(t *testing.T) {
+// TestBindingShowFlag pins the show flag: the table form carries it,
+// the derived Shown set follows the selected keymap, the binding stays
+// in the dispatch surface and the help vocabulary, and the retired
+// hidden flag is a load error (the flip is opt-in, old configs fail
+// loudly).
+func TestBindingShowFlag(t *testing.T) {
 	cfg, err := Load(write(t, `
 [schemes.vim.index]
-"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", hidden = true }
-"x" = { fun = "open", desc = "Not hidden" }
+"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", show = true }
+"x" = { fun = "open", desc = "Not shown" }
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !cfg.Hidden["index"]["ctrl+d"] {
-		t.Fatal("the hidden key must land in the derived set")
+	if !cfg.Shown["index"]["ctrl+d"] {
+		t.Fatal("a show-marked key must land in the derived set")
 	}
-	if cfg.Hidden["index"]["x"] {
-		t.Fatal("a key without the flag must not be hidden")
+	if cfg.Shown["index"]["x"] {
+		t.Fatal("a key without the flag must not be shown")
 	}
 	if cfg.Bindings["index"]["ctrl+d"] != "half-page-down" {
-		t.Fatal("a hidden binding must stay in the dispatch surface")
+		t.Fatal("an unshown binding must stay in the dispatch surface")
 	}
 	if cfg.Descriptions["half-page-down"] == "" {
-		t.Fatal("a hidden binding keeps its description")
+		t.Fatal("an unshown binding keeps its description")
+	}
+	if _, err := Load(write(t, `
+[schemes.vim.index]
+"ctrl+d" = { fun = "half-page-down", hidden = true }
+`)); err == nil {
+		t.Fatal("the retired hidden flag must be a load error")
 	}
 }
 
-// TestDefaultHiddenPaging pins the base schemes: the generic paging
-// keys and the generic navigation keys (j/k, g g/G, enter) are hidden
-// in both keymaps - the keyhint shows the command surface, the help
-// dialog lists every binding. The command keys (quit/back) stay
-// visible.
-func TestDefaultHiddenPaging(t *testing.T) {
+// TestDefaultShownSet pins the base schemes: the keyhint row shows only
+// the command surface - the generic navigation keys (j/k, arrows, g
+// g/G, enter) and the paging keys stay out of it in both keymaps; the
+// command keys (quit/back) are shown. Compose movement (j/k and the
+// arrow equivalents) is command surface.
+func TestDefaultShownSet(t *testing.T) {
 	cfg := Default()
 	for _, ctx := range []string{"index", "pager", "compose"} {
-		if !cfg.Hidden[ctx]["ctrl+d"] && !cfg.Hidden[ctx]["pgdown"] && !cfg.Hidden[ctx]["ctrl+v"] {
-			t.Fatalf("the paging keys must be hidden in the vim %s context", ctx)
+		if cfg.Shown[ctx]["ctrl+d"] || cfg.Shown[ctx]["pgdown"] {
+			t.Fatalf("the paging keys must stay out of the vim %s hint", ctx)
 		}
 	}
-	if !cfg.Hidden["index"]["j"] || !cfg.Hidden["index"]["enter"] || !cfg.Hidden["index"]["g g"] {
-		t.Fatal("the generic navigation keys must be hidden too")
+	if cfg.Shown["index"]["j"] || cfg.Shown["index"]["enter"] || cfg.Shown["index"]["g g"] || cfg.Shown["index"]["up"] {
+		t.Fatal("the generic navigation keys must stay out of the hint")
 	}
-	if cfg.Hidden["index"]["q"] || cfg.Hidden["pager"]["q"] {
-		t.Fatal("the command keys (quit/back) must stay visible")
+	if !cfg.Shown["index"]["q"] || !cfg.Shown["pager"]["q"] {
+		t.Fatal("the command keys (quit/back) must be shown")
+	}
+	if !cfg.Shown["compose"]["j"] || !cfg.Shown["compose"]["up"] {
+		t.Fatal("compose movement is command surface: j/k and the arrows shown")
 	}
 	emacs := Default()
 	emacs.UI.Keymap = "emacs"
-	emacs.Bindings, emacs.Hidden = bindingsFromScheme(emacs.Schemes["emacs"])
-	if !emacs.Hidden["pager"]["ctrl+v"] || !emacs.Hidden["index"]["pgdown"] {
-		t.Fatal("the emacs scheme hides its paging keys too")
+	_, emacs.Shown = bindingsFromScheme(emacs.Schemes["emacs"])
+	if emacs.Shown["pager"]["ctrl+v"] || emacs.Shown["index"]["pgdown"] {
+		t.Fatal("the emacs scheme keeps its paging keys out of the hint")
+	}
+	if !emacs.Shown["index"]["ctrl+n"] || !emacs.Shown["index"]["up"] {
+		t.Fatal("the emacs movement keys and their arrow equivalents must be shown")
 	}
 }
 

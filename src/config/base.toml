@@ -6,10 +6,14 @@
 # "..." } (the reference shape - extra keys can grow per binding), an
 # array ["action", "description"], or a plain action string; the
 # description travels with the binding - the help dialog's one-line
-# texts (neomutt/help.c columns) derive from these entries, there is no
-# separate descriptions block. Descriptions are user data, ready for
-# translation; the vim scheme carries them, the other schemes inherit
-# by action.
+# texts (neomutt/help.c columns) derive from these entries, there is
+# no separate descriptions block. Descriptions are user data, ready
+# for translation; the vim scheme carries them, the other schemes
+# inherit by action. Keyhint visibility is opt-in: every binding is
+# hidden from the keyhint row unless its table marks show = true (the
+# help dialog lists every binding regardless). The generic navigation
+# and paging keys (j/k, arrows, g g/G, enter, page keys) stay
+# unmarked.
 
 [tag-actions]
 "toggle-read" = "unread"
@@ -19,144 +23,160 @@
 "pending" = "pending"
 
 [schemes.vim.index]
-"j" = { fun = "cursor-down", desc = "Move the cursor down", hidden = true }
-"k" = { fun = "cursor-up", desc = "Move the cursor up", hidden = true }
-"enter" = { fun = "open", desc = "Open the message under the cursor", hidden = true }
-"q" = { fun = "quit", desc = "Quit notmutt" }
-"r" = { fun = "reply", desc = "Reply to the sender" }
-"R" = { fun = "reply-all", desc = "Reply to all recipients" }
-"f" = { fun = "forward", desc = "Forward the message" }
-"m" = { fun = "compose", desc = "Write a new message" }
-"t" = "toggle-read"
-"a" = "archive"
-"d" = "delete"
-"u" = { fun = "undo", desc = "Discard the staged tag ops on this message" }
-"$" = { fun = "apply", desc = "Apply the staged tag ops" }
-"y" = "spam"
-"p" = "pending"
-"P" = { fun = "preview", desc = "Preview the message under the cursor" }
-"g g" = { fun = "cursor-top", desc = "Jump to the first row", hidden = true }
-"G" = { fun = "cursor-bottom", desc = "Jump to the last row", hidden = true }
-"g r" = "reply-all"
-"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page", hidden = true }
-"ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page", hidden = true }
-"pgdown" = { fun = "page-down", desc = "Scroll down one page", hidden = true }
-"pgup" = { fun = "page-up", desc = "Scroll up one page", hidden = true }
-"[" = { fun = "tab-prev", desc = "Switch to the previous tab" }
-"]" = { fun = "tab-next", desc = "Switch to the next tab" }
-"?" = { fun = "help", desc = "Show this help" }
+"j" = { fun = "cursor-down", desc = "Move the cursor down" }
+"k" = { fun = "cursor-up", desc = "Move the cursor up" }
+"down" = { fun = "cursor-down" }
+"up" = { fun = "cursor-up" }
+"enter" = { fun = "open", desc = "Open the message under the cursor" }
+"q" = { fun = "quit", desc = "Quit notmutt", show = true }
+"r" = { fun = "reply", desc = "Reply to the sender", show = true }
+"R" = { fun = "reply-all", desc = "Reply to all recipients", show = true }
+"f" = { fun = "forward", desc = "Forward the message", show = true }
+"m" = { fun = "compose", desc = "Write a new message", show = true }
+"t" = { fun = "toggle-read", show = true }
+"a" = { fun = "archive", show = true }
+"d" = { fun = "delete", show = true }
+"u" = { fun = "undo", desc = "Discard the staged tag ops on this message", show = true }
+"$" = { fun = "apply", desc = "Apply the staged tag ops", show = true }
+"y" = { fun = "spam", show = true }
+"p" = { fun = "pending", show = true }
+"P" = { fun = "preview", desc = "Preview the message under the cursor", show = true }
+"g g" = { fun = "cursor-top", desc = "Jump to the first row" }
+"G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
+"g r" = { fun = "reply-all", show = true }
+"ctrl+d" = { fun = "half-page-down", desc = "Scroll down half a page" }
+"ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page" }
+"pgdown" = { fun = "page-down", desc = "Scroll down one page" }
+"pgup" = { fun = "page-up", desc = "Scroll up one page" }
+"[" = { fun = "tab-prev", desc = "Switch to the previous tab", show = true }
+"]" = { fun = "tab-next", desc = "Switch to the next tab", show = true }
+"?" = { fun = "help", desc = "Show this help", show = true }
 
 [schemes.vim.pager]
-"j" = { fun = "scroll-down", desc = "Scroll down one line", hidden = true }
-"k" = { fun = "scroll-up", desc = "Scroll up one line", hidden = true }
-"space" = { fun = "page-down", hidden = true }
-"ctrl+d" = { fun = "half-page-down", hidden = true }
-"ctrl+u" = { fun = "half-page-up", hidden = true }
-"pgdown" = { fun = "page-down", hidden = true }
-"pgup" = { fun = "page-up", hidden = true }
-"g" = { fun = "scroll-top", desc = "Jump to the top", hidden = true }
-"G" = { fun = "scroll-bottom", desc = "Jump to the bottom", hidden = true }
-"q" = { fun = "back", desc = "Return to the message list" }
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"j" = { fun = "scroll-down", desc = "Scroll down one line" }
+"k" = { fun = "scroll-up", desc = "Scroll up one line" }
+"down" = { fun = "scroll-down" }
+"up" = { fun = "scroll-up" }
+"space" = { fun = "page-down" }
+"ctrl+d" = { fun = "half-page-down" }
+"ctrl+u" = { fun = "half-page-up" }
+"pgdown" = { fun = "page-down" }
+"pgup" = { fun = "page-up" }
+"g" = { fun = "scroll-top", desc = "Jump to the top" }
+"G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
+"q" = { fun = "back", desc = "Return to the message list", show = true }
+"[" = { fun = "tab-prev", show = true }
+"]" = { fun = "tab-next", show = true }
+"?" = { fun = "help", show = true }
 
 [schemes.vim.compose]
-"j" = { fun = "form-down", desc = "Move to the next attachment" }
-"k" = { fun = "form-up", desc = "Move to the previous attachment" }
-"ctrl+d" = { fun = "half-page-down", hidden = true }
-"ctrl+u" = { fun = "half-page-up", hidden = true }
-"ctrl+f" = { fun = "page-down", hidden = true }
-"ctrl+b" = { fun = "page-up", hidden = true }
-"t" = { fun = "edit-to", desc = "Edit the To list" }
-"s" = { fun = "edit-subject", desc = "Edit the subject" }
-"f" = { fun = "edit-from", desc = "Edit the From address" }
-"x" = { fun = "edit-cc", desc = "Edit the Cc list" }
-"b" = { fun = "edit-bcc", desc = "Edit the Bcc list" }
-"r" = { fun = "edit-replyto", desc = "Edit the Reply-To list" }
-"S" = { fun = "security", desc = "Cycle the security setting" }
-"e" = { fun = "edit", desc = "Edit the message body" }
-"a" = { fun = "attach", desc = "Attach a file" }
-"d" = { fun = "detach", desc = "Detach the attachment under the cursor" }
-"c" = { fun = "account", desc = "Choose the sender account" }
-"C" = { fun = "signature", desc = "Choose the signature" }
-"y" = { fun = "send", desc = "Send the message" }
-"q" = { fun = "abort", desc = "Abort the composition" }
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"j" = { fun = "form-down", desc = "Move to the next attachment", show = true }
+"k" = { fun = "form-up", desc = "Move to the previous attachment", show = true }
+"down" = { fun = "form-down", show = true }
+"up" = { fun = "form-up", show = true }
+"ctrl+d" = { fun = "half-page-down" }
+"ctrl+u" = { fun = "half-page-up" }
+"ctrl+f" = { fun = "page-down" }
+"ctrl+b" = { fun = "page-up" }
+"t" = { fun = "edit-to", desc = "Edit the To list", show = true }
+"s" = { fun = "edit-subject", desc = "Edit the subject", show = true }
+"f" = { fun = "edit-from", desc = "Edit the From address", show = true }
+"x" = { fun = "edit-cc", desc = "Edit the Cc list", show = true }
+"b" = { fun = "edit-bcc", desc = "Edit the Bcc list", show = true }
+"r" = { fun = "edit-replyto", desc = "Edit the Reply-To list", show = true }
+"S" = { fun = "security", desc = "Cycle the security setting", show = true }
+"e" = { fun = "edit", desc = "Edit the message body", show = true }
+"a" = { fun = "attach", desc = "Attach a file", show = true }
+"d" = { fun = "detach", desc = "Detach the attachment under the cursor", show = true }
+"c" = { fun = "account", desc = "Choose the sender account", show = true }
+"C" = { fun = "signature", desc = "Choose the signature", show = true }
+"y" = { fun = "send", desc = "Send the message", show = true }
+"q" = { fun = "abort", desc = "Abort the composition", show = true }
+"[" = { fun = "tab-prev", show = true }
+"]" = { fun = "tab-next", show = true }
+"?" = { fun = "help", show = true }
 
 [schemes.vim.fuzzy]
-"j" = { fun = "fuzzy-down", desc = "Move to the next candidate" }
-"k" = { fun = "fuzzy-up", desc = "Move to the previous candidate" }
-"ctrl+n" = "fuzzy-down"
-"ctrl+p" = "fuzzy-up"
-"enter" = { fun = "fuzzy-select", desc = "Select the highlighted candidate" }
-"esc" = { fun = "fuzzy-cancel", desc = "Cancel the picker" }
+"j" = { fun = "fuzzy-down", desc = "Move to the next candidate", show = true }
+"k" = { fun = "fuzzy-up", desc = "Move to the previous candidate", show = true }
+"down" = { fun = "fuzzy-down", show = true }
+"up" = { fun = "fuzzy-up", show = true }
+"ctrl+n" = { fun = "fuzzy-down", show = true }
+"ctrl+p" = { fun = "fuzzy-up", show = true }
+"enter" = { fun = "fuzzy-select", desc = "Select the highlighted candidate", show = true }
+"esc" = { fun = "fuzzy-cancel", desc = "Cancel the picker", show = true }
 
 [schemes.emacs.index]
-"ctrl+n" = "cursor-down"
-"ctrl+p" = "cursor-up"
-"enter" = "open"
-"q" = "quit"
-"r" = "reply"
-"R" = "reply-all"
-"f" = "forward"
-"m" = "compose"
-"t" = "toggle-read"
-"a" = "archive"
-"d" = "delete"
-"u" = "undo"
-"$" = "apply"
-"y" = "spam"
-"p" = "pending"
-"P" = "preview"
-"pgdown" = { fun = "page-down", hidden = true }
-"pgup" = { fun = "page-up", hidden = true }
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"ctrl+n" = { fun = "cursor-down", show = true }
+"ctrl+p" = { fun = "cursor-up", show = true }
+"down" = { fun = "cursor-down", show = true }
+"up" = { fun = "cursor-up", show = true }
+"enter" = { fun = "open", show = true }
+"q" = { fun = "quit", show = true }
+"r" = { fun = "reply", show = true }
+"R" = { fun = "reply-all", show = true }
+"f" = { fun = "forward", show = true }
+"m" = { fun = "compose", show = true }
+"t" = { fun = "toggle-read", show = true }
+"a" = { fun = "archive", show = true }
+"d" = { fun = "delete", show = true }
+"u" = { fun = "undo", show = true }
+"$" = { fun = "apply", show = true }
+"y" = { fun = "spam", show = true }
+"p" = { fun = "pending", show = true }
+"P" = { fun = "preview", show = true }
+"pgdown" = { fun = "page-down" }
+"pgup" = { fun = "page-up" }
+"[" = { fun = "tab-prev", show = true }
+"]" = { fun = "tab-next", show = true }
+"?" = { fun = "help", show = true }
 
 [schemes.emacs.pager]
-"ctrl+n" = "scroll-down"
-"ctrl+p" = "scroll-up"
-"ctrl+v" = { fun = "page-down", hidden = true }
-"alt+v" = { fun = "page-up", hidden = true }
-"pgdown" = { fun = "page-down", hidden = true }
-"pgup" = { fun = "page-up", hidden = true }
-"ctrl+g" = "back"
-"q" = "quit"
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"ctrl+n" = { fun = "scroll-down", show = true }
+"ctrl+p" = { fun = "scroll-up", show = true }
+"down" = { fun = "scroll-down", show = true }
+"up" = { fun = "scroll-up", show = true }
+"ctrl+v" = { fun = "page-down" }
+"alt+v" = { fun = "page-up" }
+"pgdown" = { fun = "page-down" }
+"pgup" = { fun = "page-up" }
+"ctrl+g" = { fun = "back", show = true }
+"q" = { fun = "quit", show = true }
+"[" = { fun = "tab-prev", show = true }
+"]" = { fun = "tab-next", show = true }
+"?" = { fun = "help", show = true }
 
 [schemes.emacs.compose]
-"ctrl+n" = "form-down"
-"ctrl+p" = "form-up"
-"ctrl+v" = { fun = "page-down", hidden = true }
-"alt+v" = { fun = "page-up", hidden = true }
-"t" = "edit-to"
-"s" = "edit-subject"
-"f" = "edit-from"
-"x" = "edit-cc"
-"b" = "edit-bcc"
-"r" = "edit-replyto"
-"S" = "security"
-"e" = "edit"
-"a" = "attach"
-"d" = "detach"
-"c" = "account"
-"C" = "signature"
-"y" = "send"
-"q" = "abort"
-"[" = "tab-prev"
-"]" = "tab-next"
-"?" = "help"
+"ctrl+n" = { fun = "form-down", show = true }
+"ctrl+p" = { fun = "form-up", show = true }
+"down" = { fun = "form-down", show = true }
+"up" = { fun = "form-up", show = true }
+"ctrl+v" = { fun = "page-down" }
+"alt+v" = { fun = "page-up" }
+"t" = { fun = "edit-to", show = true }
+"s" = { fun = "edit-subject", show = true }
+"f" = { fun = "edit-from", show = true }
+"x" = { fun = "edit-cc", show = true }
+"b" = { fun = "edit-bcc", show = true }
+"r" = { fun = "edit-replyto", show = true }
+"S" = { fun = "security", show = true }
+"e" = { fun = "edit", show = true }
+"a" = { fun = "attach", show = true }
+"d" = { fun = "detach", show = true }
+"c" = { fun = "account", show = true }
+"C" = { fun = "signature", show = true }
+"y" = { fun = "send", show = true }
+"q" = { fun = "abort", show = true }
+"[" = { fun = "tab-prev", show = true }
+"]" = { fun = "tab-next", show = true }
+"?" = { fun = "help", show = true }
 
 [schemes.emacs.fuzzy]
-"j" = "fuzzy-down"
-"k" = "fuzzy-up"
-"ctrl+n" = "fuzzy-down"
-"ctrl+p" = "fuzzy-up"
-"enter" = "fuzzy-select"
-"esc" = "fuzzy-cancel"
+"j" = { fun = "fuzzy-down", show = true }
+"k" = { fun = "fuzzy-up", show = true }
+"down" = { fun = "fuzzy-down", show = true }
+"up" = { fun = "fuzzy-up", show = true }
+"ctrl+n" = { fun = "fuzzy-down", show = true }
+"ctrl+p" = { fun = "fuzzy-up", show = true }
+"enter" = { fun = "fuzzy-select", show = true }
+"esc" = { fun = "fuzzy-cancel", show = true }

@@ -73,21 +73,23 @@ func (m Model) keyhintBuild() string {
 	return keyhintRow(continuations, m.width)
 }
 
-// visibleBindings is the active context's map minus its hidden keys:
-// the generic bindings (paging) stay out of the keyhint row, the help
-// dialog shows every binding (R9 - the hidden flag is binding data).
+// visibleBindings is the active context's map restricted to its shown
+// keys: visibility is opt-in (the show flag), the generic bindings
+// (paging, navigation) stay out of the keyhint row, the help dialog
+// shows every binding (R9 - the show flag is binding data). A store
+// without a Shown set (tests, pre-config) shows everything.
 func (m Model) visibleBindings() map[string]string {
 	km := m.activeBindings()
-	hidden := map[string]bool{}
-	if m.st != nil {
-		hidden = m.st.Config().Hidden[m.bindingCtx()]
-	}
-	if len(hidden) == 0 {
+	if m.st == nil {
 		return km
+	}
+	shown := m.st.Config().Shown[m.bindingCtx()]
+	if len(shown) == 0 {
+		return map[string]string{}
 	}
 	out := make(map[string]string, len(km))
 	for k, a := range km {
-		if !hidden[k] {
+		if shown[k] {
 			out[k] = a
 		}
 	}

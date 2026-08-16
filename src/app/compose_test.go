@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -9,7 +10,28 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/notmuch"
 )
+
+// threadBackend serves one canned thread for replyPrefill's fetch path.
+type threadBackend struct {
+	msgs []core.Message
+}
+
+func (t *threadBackend) Open(ctx context.Context, p string) error { return nil }
+func (t *threadBackend) Close(ctx context.Context) error          { return nil }
+func (t *threadBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+	return nil
+}
+func (t *threadBackend) Count(ctx context.Context, q string) (int, error) { return len(t.msgs), nil }
+func (t *threadBackend) Thread(ctx context.Context, id string) ([]core.Message, error) {
+	return t.msgs, nil
+}
+func (t *threadBackend) Tag(ctx context.Context, q string, ops []notmuch.TagOp) error { return nil }
+func (t *threadBackend) Revision(ctx context.Context) (string, uint64, error) {
+	return "uuid-1", 42, nil
+}
+func (t *threadBackend) New(ctx context.Context) error { return nil }
 
 func TestResolveAccountChain(t *testing.T) {
 	cfg := config.Default()
@@ -113,5 +135,85 @@ func TestBuildComposeReply(t *testing.T) {
 	}
 	if st := buildCompose(cfg, view, nil, "reply"); st != nil {
 		t.Fatal("reply without a message must return nil")
+	}
+}
+
+func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
+	dir := t.TempDir()
+	rootPath := filepath.Join(dir, "root.eml")
+	replyPath := filepath.Join(dir, "reply.eml")
+	root := "From: Alice <alice@example.com>\n" +
+		"To: Bob <bob@example.com>\n" +
+		"Subject: hello\n" +
+		"Message-Id: <m1@example.com>\n" +
+		"Date: Tue, 11 Aug 2026 10:00:00 +0000\n\n" +
+		"root body\n"
+	repl := "From: Dave <dave@example.com>\n" +
+		"To: Bob <bob@example.com>\n" +
+		"Subject: Re: hello\n" +
+		"Message-Id: <m2@example.com>\n" +
+		"Date: Wed, 12 Aug 2026 10:00:00 +0000\n\n" +
+		"reply body\n"
+	if err := os.WriteFile(rootPath, []byte(root), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(replyPath, []byte(repl), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := core.NewBus()
+	worker := notmuch.NewWorker(bus, &threadBackend{msgs: []core.Message{
+		{ID: "<m1@example.com>", ThreadID: "t1",
+			Timestamp: time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC).Unix(),
+			Author:    "Alice <alice@example.com>", Subject: "hello",
+			Tags: []string{"inbox", "gmail"}, Paths: []string{rootPath}},
+		{ID: "<m2@example.com>", ThreadID: "t1",
+			Timestamp: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC).Unix(),
+			Author:    "Dave <dave@example.com>", Subject: "Re: hello",
+			Tags: []string{"inbox", "gmail"}, Paths: []string{replyPath}},
+	}}, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Start(ctx)
+
+	cfg := config.Default()
+	g := cfg.Accounts["gmail"]
+	g.From = "Bob <bob@example.com>"
+	g.SentFolder = "/tmp/sent"
+	cfg.Accounts["gmail"] = g
+	view := core.NewView("inbox", "tag:inbox")
+	// the index row: thread summary only - no id, no paths
+	row := &core.Message{ThreadID: "t1",
+		Timestamp: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC).Unix(),
+		Author:    "Alice <alice@example.com>, Dave <dave@example.com>",
+		Subject:   "Re: hello", Tags: []string{"inbox", "gmail"}}
+
+	st := replyPrefill(cfg, view, worker, row, "reply")
+	if st == nil {
+		t.Fatal("index-row reply must fetch the thread and build")
+	}
+	if len(st.To) != 1 || st.To[0] != "dave@example.com" {
+		t.Fatalf("To = %v, want the newest message's sender", st.To)
+	}
+	if st.OriginalID != "<m2@example.com>" {
+		t.Fatalf("OriginalID = %q, want the newest message", st.OriginalID)
+	}
+	if st.Fcc != "/tmp/sent" {
+		t.Fatalf("Fcc = %q", st.Fcc)
+	}
+
+	st = replyPrefill(cfg, view, worker, row, "reply-all")
+	if st.Mode != compose.ModeReplyAll || len(st.Cc) != 0 {
+		t.Fatalf("reply-all: %+v", st)
+	}
+	st = replyPrefill(cfg, view, worker, row, "forward")
+	if st.Mode != compose.ModeForward || len(st.To) != 0 {
+		t.Fatalf("forward: %+v", st)
+	}
+	if st := replyPrefill(cfg, view, worker, row, "compose"); st.Mode != compose.ModeCompose {
+		t.Fatalf("blank compose must not fetch: %+v", st)
+	}
+	if st := replyPrefill(cfg, view, worker, nil, "reply"); st != nil {
+		t.Fatal("nil message must stay nil")
 	}
 }

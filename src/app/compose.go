@@ -11,6 +11,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/mail"
+	"notmutt/notmuch"
 )
 
 // sigDir is the signatures root (spec section 9): the send wiring
@@ -87,6 +88,34 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode st
 		st.Fcc = cfg.Accounts[account].SentFolder
 	}
 	return st
+}
+
+// replyPrefill builds the dialogue state for a reply-mode request:
+// buildCompose on the cursor message, falling back to a thread fetch
+// when the row carries no paths (index rows are thread summaries -
+// paths load with Thread, on open, R1). The thread's newest message is
+// the reply original: the overview line shows the newest date, and the
+// pager path always carries the real message.
+func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode string) *compose.State {
+	st := buildCompose(cfg, view, msg, mode)
+	if st != nil || msg == nil || msg.ThreadID == "" {
+		return st
+	}
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: msg.ThreadID})
+	if err != nil || rpl.Err != nil {
+		return nil
+	}
+	var newest *core.Message
+	for i := range rpl.Msgs {
+		if newest == nil || rpl.Msgs[i].Timestamp > newest.Timestamp {
+			m := rpl.Msgs[i]
+			newest = &m
+		}
+	}
+	if newest == nil {
+		return nil
+	}
+	return buildCompose(cfg, view, newest, mode)
 }
 
 func tagsOf(msg *core.Message) []string {

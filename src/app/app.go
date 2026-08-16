@@ -118,7 +118,7 @@ func Run() error {
 	// the tab
 	tui.SetReplyHandler(func(msg *core.Message, mode string) {
 		go func() {
-			st := buildCompose(cfg, view, msg, mode)
+			st := replyPrefill(cfg, view, worker, msg, mode)
 			if st == nil {
 				return
 			}

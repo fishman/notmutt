@@ -1982,6 +1982,49 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	}
 }
 
+// TestPromptTextCursor pins the v2 cursor contract: the terminal text
+// cursor shows only when the model declares it in View - the dialogue
+// input row while a prompt is live, the fuzzy matcher row while the
+// picker is open, nowhere otherwise.
+func TestPromptTextCursor(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	if c := m.View().Cursor; c != nil {
+		t.Fatalf("cursor without a prompt: %+v", c)
+	}
+	m = press(t, m, "a")
+	m = press(t, m, "xy")
+	c := m.View().Cursor
+	if c == nil {
+		t.Fatal("an open input prompt must declare the cursor")
+	}
+	// "attach path: " label + 2 typed cells, the box content row
+	// above the status line (Y = height-3), after the border (X = 1)
+	if c.X != 1+len("attach path: ")+2 || c.Y != 21 {
+		t.Fatalf("input cursor at (%d, %d), want (15, 21)", c.X, c.Y)
+	}
+	m = press(t, m, "esc")
+	if c := m.View().Cursor; c != nil {
+		t.Fatalf("cursor after closing the prompt: %+v", c)
+	}
+	// '?' on the empty attach prompt opens the command picker; the
+	// matcher row is the second frame line
+	SetAttachCommandSource(func() map[string][]string {
+		return map[string][]string{"yazi": {"yazi"}}
+	})
+	m = press(t, m, "a")
+	m = press(t, m, "?")
+	if m.fuzzy == nil {
+		t.Fatal("? must open the command picker")
+	}
+	m = press(t, m, "ya")
+	c = m.View().Cursor
+	if c == nil || c.X != len("attach command:")+1+2 || c.Y != 1 {
+		t.Fatalf("fuzzy cursor at %+v, want (18, 1)", c)
+	}
+}
+
 // TestFieldEditFrom pins the mutt compose field keys: f opens the From
 // prompt pre-filled with the current address, typing appends, enter
 // applies; esc cancels without touching the state.

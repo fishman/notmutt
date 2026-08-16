@@ -13,6 +13,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
 
 	"notmutt/compose"
@@ -1785,7 +1786,36 @@ func (m Model) View() tea.View {
 	// release events; when supported, the program receives
 	// KeyReleaseMsg and the legend resolves on the real keyup
 	v.KeyboardEnhancements.ReportEventTypes = true
+	if x, y, ok := m.textCursor(); ok {
+		v.Cursor = tea.NewCursor(x, y)
+	}
 	return v
+}
+
+// textCursor reports the live text-input cell (x, y) when an input is
+// open: the fuzzy picker's matcher row (the query is the input while
+// the picker is open), else the dialogue input row. The v2 renderer
+// shows the terminal cursor only when the view declares it; the
+// dialogue box splices 3 rows above the status line and the matcher
+// row is the second frame line.
+func (m Model) textCursor() (int, int, bool) {
+	if m.fuzzy != nil {
+		x := len(m.fuzzy.title) + 1 + len(m.fuzzy.query)
+		if x > m.width-1 {
+			x = m.width - 1
+		}
+		return x, 1, true
+	}
+	if m.dialogue != nil && m.dialogue.kind == dialogueInput && m.height >= 5 && m.width >= 3 {
+		inner := m.width - 2
+		budget := inner - len(m.dialogue.label)
+		if budget < 0 {
+			budget = 0
+		}
+		x := 1 + len(m.dialogue.label) + min(runewidth.StringWidth(m.dialogue.input), budget)
+		return x, m.height - 3, true
+	}
+	return 0, 0, false
 }
 
 // render builds the full frame. The frame must NOT end with a newline: the

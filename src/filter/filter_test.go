@@ -15,10 +15,11 @@ import (
 // fakeWorker serves the engine's reads from canned data and records the
 // ActTag writes.
 type fakeWorker struct {
-	delta  []core.Message
-	snaps  []core.Message
-	header map[string]bool // ids the header-rule query matches
-	tagged []notmuch.Action
+	delta   []core.Message
+	snaps   []core.Message
+	header  map[string]bool // ids the header-rule query matches
+	tagged  []notmuch.Action
+	pathOps []notmuch.Action
 }
 
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -43,6 +44,8 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		return notmuch.Reply{Msgs: f.snaps}, nil
 	case notmuch.ActTag:
 		f.tagged = append(f.tagged, a)
+	case notmuch.ActAddPaths, notmuch.ActRemovePaths:
+		f.pathOps = append(f.pathOps, a)
 	}
 	return notmuch.Reply{}, nil
 }
@@ -127,6 +130,93 @@ func TestEngineClassification(t *testing.T) {
 	}
 	if !rep.DryRun || len(rep.Entries) != 2 || len(dry.tagged) != 0 {
 		t.Fatalf("dry-run: report %+v, writes %d", rep, len(dry.tagged))
+	}
+}
+
+func TestMover(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	// the gmail account shape: INBOX and Archives exist (the resolved
+	// archive target - first candidate wins over "Archive"); AWS is an
+	// organizational folder the mover leaves alone.
+	for _, d := range []string{"INBOX", "Archives", "AWS"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
+	if err := os.WriteFile(src, []byte("mail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "2"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "AWS", "cur", "3"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "4"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "4"), []byte("x"), 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fakeWorker{}
+	rep := &Report{Entries: []Entry{
+		{ID: "m1", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/1"}},
+		{ID: "m2", Account: "gmail", Folder: "archive", Paths: []string{"gmail/Archives/cur/2"}},
+		{ID: "m3", Account: "gmail", Folder: "archive", Paths: []string{"gmail/AWS/cur/3"}},
+		{ID: "m4", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/4"}},
+		{ID: "m5", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/5"}},
+		{ID: "m6", Folder: ""},
+	}}
+
+	mr, err := NewMover(w, cfg, root).Move(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mr.Moves) != 5 {
+		t.Fatalf("moves = %d, want 5: %+v", len(mr.Moves), mr.Moves)
+	}
+	if got := mr.Moves[0]; got.To != "gmail/Archives/cur/1" || got.Skip != "" {
+		t.Fatalf("m1 = %+v, want move to gmail/Archives/cur/1", got)
+	}
+	wantSkips := []struct {
+		id, skip string
+	}{{"m2", "already home"}, {"m3", "not managed"}, {"m4", "dest exists"}, {"m5", "source gone"}}
+	for i, want := range wantSkips {
+		if got := mr.Moves[i+1]; got.ID != want.id || got.Skip != want.skip || got.To != "" {
+			t.Fatalf("move %d = %+v, want %s: %s", i+1, got, want.id, want.skip)
+		}
+	}
+	// copy-then-delete: the source moved (content preserved), and the
+	// database saw AddPaths before RemovePaths
+	got, err := os.ReadFile(filepath.Join(root, "gmail", "Archives", "cur", "1"))
+	if err != nil || string(got) != "mail" {
+		t.Fatalf("dest = %q, %v", got, err)
+	}
+	if _, err := os.Stat(src); err == nil {
+		t.Fatal("source still exists after the move")
+	}
+	if len(w.pathOps) != 2 || w.pathOps[0].Kind != notmuch.ActAddPaths || w.pathOps[1].Kind != notmuch.ActRemovePaths {
+		t.Fatalf("path ops = %+v, want add then remove", w.pathOps)
+	}
+	if len(w.pathOps[0].Paths) != 1 || w.pathOps[0].Paths[0] != filepath.Join(root, "gmail/Archives/cur/1") {
+		t.Fatalf("add paths = %v", w.pathOps[0].Paths)
+	}
+	if len(w.pathOps[1].Paths) != 1 || w.pathOps[1].Paths[0] != src {
+		t.Fatalf("remove paths = %v", w.pathOps[1].Paths)
+	}
+
+	// dry-run: the same report, zero writes
+	cfg.Filter.DryRun = true
+	src2 := filepath.Join(root, "gmail", "INBOX", "cur", "6")
+	os.WriteFile(src2, []byte("x"), 0o600)
+	w2 := &fakeWorker{}
+	rep2 := &Report{Entries: []Entry{{ID: "m7", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/6"}}}}
+	if _, err := NewMover(w2, cfg, root).Move(rep2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(src2); err != nil {
+		t.Fatal("dry-run removed the source")
+	}
+	if len(w2.pathOps) != 0 {
+		t.Fatalf("dry-run path ops = %d, want 0", len(w2.pathOps))
 	}
 }
 

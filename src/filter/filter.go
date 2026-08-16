@@ -89,6 +89,8 @@ func candidates(a config.Account, tag string) []string {
 type Entry struct {
 	ID      string
 	Account string
+	Folder  string       // the resolved folder-group winner with move candidates; empty = no move
+	Paths   []string     // the message's files, as notmuch reported them
 	Ops     []core.TagOp // the fully resolved op set (adds + exclusive-group removals)
 }
 
@@ -263,10 +265,22 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 	}
 	_, resolved := core.ResolveOps(m.Tags, ops, e.groups)
 	acc := ""
+	folder := ""
 	if ar != nil {
 		acc = ar.name
+		// the move tag: the resolved winner among the folder tags with
+		// candidates (inbox has no rule and never moves - the untag
+		// delivers it, the mover would no-op).
+		for _, op := range resolved {
+			if op.Add {
+				if _, ok := ar.rules[op.Tag]; ok {
+					folder = op.Tag
+					break
+				}
+			}
+		}
 	}
-	return Entry{ID: m.ID, Account: acc, Ops: resolved}
+	return Entry{ID: m.ID, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
 // norm strips the mail root prefix once per message: the path rules

@@ -4,7 +4,9 @@ import (
 	"context"
 	"embed"
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -571,14 +573,57 @@ func firstView(cfg config.Config) string {
 	return ""
 }
 
-// pollOnce is the headless poll (`notmutt poll`): the same poll body
-// as the client's interval and the in-TUI refresh key, run outside the
-// client for scripts and cron. The filter owns `notmuch new` when
-// enabled; a disabled filter degrades to a plain new. Dry-run config
-// is honored - the first runs against a real mailbox are always dry.
-// A successful run touches the poll stamp, waking every running
-// client's refresher so they display the update.
+// pollSpec is the poll command's run mode: a fixed (from, to] window
+// replays a stored diff (the reproducibility harness - the revision
+// moves with every new run, so reruns pin the window instead of
+// recapturing it), and apply overrides the dry-run config for this
+// run only, the config file untouched.
+type pollSpec struct {
+	apply    bool
+	from, to uint64
+	windowed bool
+}
+
+// parsePollSpec reads the poll flags: --apply (one-shot live override
+// of the dry-run config) and --from/--to (replay a fixed lastmod
+// window without a new run or a revision capture).
+func parsePollSpec(args []string) (pollSpec, error) {
+	var spec pollSpec
+	seen := map[string]bool{}
+	fs := flag.NewFlagSet("poll", flag.ContinueOnError)
+	fs.SetOutput(io.Discard) // the parse error surfaces once, via the caller
+	fs.BoolVar(&spec.apply, "apply", false, "apply the diff, overriding the dry-run config for this run")
+	fs.Uint64Var(&spec.from, "from", 0, "replay a fixed lastmod window (with -to)")
+	fs.Uint64Var(&spec.to, "to", 0, "replay a fixed lastmod window (with -from)")
+	if err := fs.Parse(args); err != nil {
+		return spec, err
+	}
+	fs.Visit(func(f *flag.Flag) { seen[f.Name] = true })
+	if seen["from"] != seen["to"] {
+		return spec, errors.New("poll: --from and --to must be given together")
+	}
+	spec.windowed = seen["from"]
+	if spec.windowed && spec.from > spec.to {
+		return spec, errors.New("poll: --from must not exceed --to")
+	}
+	return spec, nil
+}
+
+// pollOnce is the headless poll (`notmutt poll [--apply] [--from N
+// --to N]`): the same poll body as the client's interval and the
+// in-TUI refresh key, run outside the client for scripts and cron.
+// The filter owns `notmuch new` when enabled; a disabled filter
+// degrades to a plain new. Dry-run config is honored - the first runs
+// against a real mailbox are always dry; --apply overrides it for one
+// run. --from/--to replay a stored lastmod window without touching
+// notmuch (see the reproducibility harness, scripts/poll-repro.sh). A
+// successful run touches the poll stamp, waking every running client's
+// refresher so they display the update.
 func pollOnce() error {
+	spec, err := parsePollSpec(os.Args[2:])
+	if err != nil {
+		return err
+	}
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -598,43 +643,142 @@ func pollOnce() error {
 			return fmt.Errorf("poll: %w", err)
 		}
 	}
-	line, err := runPoll(worker, cfg, root)
+	line, diff, err := runPoll(worker, cfg, root, spec)
 	if err != nil {
 		return err
 	}
 	fmt.Println(line)
+	for _, l := range diff {
+		fmt.Println(l)
+	}
 	return nil
 }
 
-// runPoll is the poll body behind `notmutt poll`: the summary line
-// plus the stamp that wakes running clients. Shared with the tests;
-// pollOnce resolves the worker and the mail root, runPoll decides.
-func runPoll(worker workerAPI, cfg config.Config, root string) (string, error) {
+// runPoll is the poll body behind `notmutt poll`: the summary line,
+// the reviewable per-entry diff, and the stamp that wakes running
+// clients. Shared with the tests; pollOnce resolves the worker and the
+// mail root, runPoll decides. A fixed-window spec replays a stored
+// lastmod bracket without touching notmuch - no new run, no revision
+// capture - so the output must reproduce the stored diff exactly.
+func runPoll(worker workerAPI, cfg config.Config, root string, spec pollSpec) (string, []string, error) {
 	if !cfg.Filter.Enabled {
+		if spec.windowed {
+			return "", nil, errors.New("poll: the filter is disabled, no window to replay")
+		}
 		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-			return "", fmt.Errorf("notmuch new: %v %v", err, rpl.Err)
+			return "", nil, fmt.Errorf("notmuch new: %v %v", err, rpl.Err)
 		}
 		if err := touchPollStamp(); err != nil {
-			return "", err
+			return "", nil, err
 		}
-		return "poll: notmuch new (filter disabled)", nil
+		return "poll: notmuch new (filter disabled)", nil, nil
 	}
-	changed, rep, mr, err := runFilterPipeline(worker, cfg, root, nil)
+	if spec.apply {
+		cfg.Filter.DryRun = false // one-shot: the config file stays untouched
+	}
+	rep, mr, win, err := pollDiff(worker, cfg, root, spec, nil)
 	if err != nil {
-		return "", fmt.Errorf("poll: %w", err)
+		return "", nil, fmt.Errorf("poll: %w", err)
 	}
-	if !changed {
-		return "poll: no new mail", nil
+	if win == "" {
+		return "poll: no new mail", nil, nil
 	}
-	if err := touchPollStamp(); err != nil {
-		return "", err
+	// the stamp means "state changed, wake the clients": a fresh
+	// capture saw the revision move; a windowed replay only writes
+	// when applying.
+	if !spec.windowed || !rep.DryRun {
+		if err := touchPollStamp(); err != nil {
+			return "", nil, err
+		}
 	}
-	mode := "live"
+	mode := "applied"
 	if rep.DryRun {
 		mode = "dry-run"
 	}
 	moved, skipped := moveCounts(mr)
-	return fmt.Sprintf("poll: %s: %d entries, %d moved, %d skipped", mode, len(rep.Entries), moved, skipped), nil
+	summary := fmt.Sprintf("poll: %s: %s: %d entries, %d moved, %d skipped", mode, win, len(rep.Entries), moved, skipped)
+	return summary, pollDiffLines(rep, mr), nil
+}
+
+// pollDiff classifies the poll's window: a fresh capture (revision,
+// `notmuch new`, revision - the revision moving proves new mail) or
+// the fixed (from, to] bracket of a replay spec. Returns the window as
+// the summary reports it; a fresh capture on a quiet mailbox returns
+// an empty window and no classification pass.
+func pollDiff(worker workerAPI, cfg config.Config, root string, spec pollSpec, progress func(done, total int)) (*filter.Report, *filter.MoveReport, string, error) {
+	pre, cur := spec.from, spec.to
+	if !spec.windowed {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+		if err != nil || rpl.Err != nil {
+			return nil, nil, "", fmt.Errorf("revision: %v %v", err, rpl.Err)
+		}
+		pre = rpl.Rev
+		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
+			// a backend without a New path (ErrUnsupported) is expected - the
+			// filter then degrades to classifying external new runs
+			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+				return nil, nil, "", fmt.Errorf("new: %v %v", err, rpl.Err)
+			}
+		}
+		rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+		if err != nil || rpl.Err != nil {
+			return nil, nil, "", fmt.Errorf("revision: %v %v", err, rpl.Err)
+		}
+		cur = rpl.Rev
+		if cur == pre {
+			return nil, nil, "", nil // nothing new; no classification pass
+		}
+	}
+	rep, mr, err := classifyDelta(worker, cfg, root, pre, cur, progress)
+	if err != nil {
+		return rep, mr, "", err
+	}
+	return rep, mr, fmt.Sprintf("%d..%d", pre, cur), nil
+}
+
+// pollDiffLines renders the reviewable diff: per entry, the resolved
+// tag ops and the first path's move decision - the dry-run report's
+// review surface (what-would-happen; a live run reports the same).
+// Paths only, never message ids or subjects (F6). Capped like the
+// diag lines: a backfill must not drown the review, and the cap is
+// deterministic, so replayed outputs still compare byte-identical.
+const pollDiffLineCap = 100
+
+func pollDiffLines(rep *filter.Report, mr *filter.MoveReport) []string {
+	byFrom := map[string]filter.MoveEntry{}
+	for _, m := range mr.Moves {
+		byFrom[m.From] = m
+	}
+	var lines []string
+	n := 0
+	for _, e := range rep.Entries {
+		ops := make([]string, 0, len(e.Ops))
+		for _, op := range e.Ops {
+			if op.Add {
+				ops = append(ops, "+"+op.Tag)
+			} else {
+				ops = append(ops, "-"+op.Tag)
+			}
+		}
+		path := ""
+		if len(e.Paths) > 0 {
+			path = e.Paths[0]
+		}
+		line := strings.TrimSpace(strings.Join(ops, " ") + "  " + path)
+		if m, ok := byFrom[path]; ok {
+			if m.To != "" {
+				line += "  ->  " + m.To
+			} else if m.Skip != "" {
+				line += "  (skip: " + m.Skip + ")"
+			}
+		}
+		lines = append(lines, line)
+		if n++; n >= pollDiffLineCap {
+			lines = append(lines, fmt.Sprintf("# %d more entries", len(rep.Entries)-n))
+			break
+		}
+	}
+	return lines
 }
 
 // pollStampPath is the cross-process poll signal: `notmutt poll`

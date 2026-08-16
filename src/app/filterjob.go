@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"os/exec"
 	"strings"
 	"sync"
@@ -11,7 +9,6 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/filter"
-	"notmutt/notmuch"
 )
 
 // filterJob is the classification pipeline on the poll (R2): capture
@@ -75,43 +72,33 @@ func moveCounts(mr *filter.MoveReport) (moved, skipped int) {
 	return
 }
 
-// runFilterPipeline is the poll's classification body: capture the
-// revision, run `notmuch new`, capture it again, and classify the
-// (pre, cur] delta through the filter engine and the mover. Changed
-// reports whether the revision moved - a poll on a quiet mailbox
-// produces no classification pass. Shared by the filter job (bus
-// progress + FilterDone) and the headless `notmutt poll` command.
+// runFilterPipeline is the in-client poll body: the shared window
+// capture of pollDiff with the bus progress callback, reported as a
+// change boolean (the filter job's revision-stability gate).
 func runFilterPipeline(worker workerAPI, cfg config.Config, root string, progress func(done, total int)) (bool, *filter.Report, *filter.MoveReport, error) {
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-	if err != nil || rpl.Err != nil {
-		return false, nil, nil, fmt.Errorf("revision: %v %v", err, rpl.Err)
+	rep, mr, win, err := pollDiff(worker, cfg, root, pollSpec{}, progress)
+	if err != nil || win == "" {
+		return false, rep, mr, err
 	}
-	pre := rpl.Rev
-	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-		// a backend without a New path (ErrUnsupported) is expected - the
-		// filter then degrades to classifying external new runs
-		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
-			return false, nil, nil, fmt.Errorf("new: %v %v", err, rpl.Err)
-		}
-	}
-	rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-	if err != nil || rpl.Err != nil {
-		return false, nil, nil, fmt.Errorf("revision: %v %v", err, rpl.Err)
-	}
-	if rpl.Rev == pre {
-		return false, nil, nil, nil // nothing new; no classification pass
-	}
-	rep, err := filter.New(worker, cfg, root).Run(pre, rpl.Rev)
+	return true, rep, mr, nil
+}
+
+// classifyDelta runs the engine and the mover over the (pre, cur]
+// lastmod bracket - the shared body of the fresh-capture poll and the
+// fixed-window replay (the reproducibility harness reclassifies the
+// SAME bracket, so the same rules must produce the same diff).
+func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur uint64, progress func(done, total int)) (*filter.Report, *filter.MoveReport, error) {
+	rep, err := filter.New(worker, cfg, root).Run(pre, cur)
 	if err != nil {
-		return true, nil, nil, err
+		return nil, nil, err
 	}
 	mv := filter.NewMover(worker, cfg, root)
 	mv.Progress = progress
 	mr, err := mv.Move(rep)
 	if err != nil {
-		return true, rep, nil, err
+		return rep, nil, err
 	}
-	return true, rep, mr, nil
+	return rep, mr, nil
 }
 
 // prioritySubjects caps the [notify] priority payload: the subjects of

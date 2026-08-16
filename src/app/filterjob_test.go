@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -229,7 +230,7 @@ func TestRunPoll(t *testing.T) {
 	w.rev.Store(0)
 	w.bump.Store(5)
 
-	line, err := runPoll(w, cfg, root)
+	line, _, err := runPoll(w, cfg, root, pollSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +245,7 @@ func TestRunPoll(t *testing.T) {
 
 	// a quiet poll changes nothing, the stamp stays untouched
 	w.bump.Store(0)
-	line, err = runPoll(w, cfg, root)
+	line, _, err = runPoll(w, cfg, root, pollSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +259,7 @@ func TestRunPoll(t *testing.T) {
 
 	// a disabled filter degrades to a plain new that still stamps
 	cfg.Filter.Enabled = false
-	line, err = runPoll(w, cfg, root)
+	line, _, err = runPoll(w, cfg, root, pollSpec{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -267,5 +268,192 @@ func TestRunPoll(t *testing.T) {
 	}
 	if _, err := os.Stat(pollStampPath()); err != nil {
 		t.Fatalf("stamp missing after the plain-new poll: %v", err)
+	}
+	// ... and refuses a fixed-window replay
+	if _, _, err := runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5}); err == nil {
+		t.Fatal("a replay on a disabled filter must fail")
+	}
+}
+
+// TestRunPollWindow: the reproducibility contract - a fixed (from, to]
+// window skips the new run and the revision capture (the replay of a
+// stored diff), reclassifies the SAME bracket, and must produce
+// byte-identical output on every replay. --apply is the one-shot live
+// override of the dry-run config, the config untouched, and stamps.
+func TestRunPollWindow(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"Archives", "INBOX"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}},
+			{ID: "m2", Tags: []string{"inbox", "spam"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	w.rev.Store(5)
+
+	// replay 1: the stored window, dry-run
+	line, diff, err := runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "poll: dry-run: 0..5: 2 entries, 0 moved, 1 skipped" {
+		t.Fatalf("summary = %q", line)
+	}
+	if w.rev.Load() != 5 {
+		t.Fatalf("window replay touched the revision: %d", w.rev.Load())
+	}
+	if w.tagged.Load() != 0 {
+		t.Fatalf("dry-run replay wrote tags: %d", w.tagged.Load())
+	}
+	if _, err := os.Stat(pollStampPath()); err == nil {
+		t.Fatal("a dry-run replay must not touch the stamp")
+	}
+	want := []string{
+		"+archive +gmail -inbox  gmail/Archives/cur/1  (skip: already home)",
+		"+gmail -spam  gmail/INBOX/cur/2",
+	}
+	if strings.Join(diff, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("diff = %q, want %q", diff, want)
+	}
+
+	// replay 2: the same window must reproduce the same output
+	line2, diff2, err := runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line2 != line || strings.Join(diff2, "\n") != strings.Join(diff, "\n") {
+		t.Fatalf("replay differs:\n%q\n%q", line, line2)
+	}
+
+	// apply: the one-shot live override, the config untouched
+	line, _, err = runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5, apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "poll: applied: 0..5: 2 entries, 0 moved, 1 skipped" {
+		t.Fatalf("summary = %q", line)
+	}
+	if w.tagged.Load() == 0 {
+		t.Fatal("apply wrote no tags")
+	}
+	if cfg.Filter.DryRun != true {
+		t.Fatal("--apply must not touch the config")
+	}
+	if _, err := os.Stat(pollStampPath()); err != nil {
+		t.Fatal("an applied replay must stamp")
+	}
+}
+
+func TestParsePollSpec(t *testing.T) {
+	ok := func(args ...string) pollSpec {
+		spec, err := parsePollSpec(args)
+		if err != nil {
+			t.Fatalf("parsePollSpec(%v): %v", args, err)
+		}
+		return spec
+	}
+	if spec := ok(); spec.windowed || spec.apply {
+		t.Fatalf("bare poll = %+v, want the default", spec)
+	}
+	if spec := ok("--apply"); !spec.apply || spec.windowed {
+		t.Fatalf("--apply = %+v", spec)
+	}
+	if spec := ok("--from", "5", "--to", "10"); !spec.windowed || spec.from != 5 || spec.to != 10 {
+		t.Fatalf("window = %+v", spec)
+	}
+	if _, err := parsePollSpec([]string{"--from", "5"}); err == nil {
+		t.Fatal("--from alone must fail")
+	}
+	if _, err := parsePollSpec([]string{"--to", "5"}); err == nil {
+		t.Fatal("--to alone must fail")
+	}
+	if _, err := parsePollSpec([]string{"--from", "10", "--to", "5"}); err == nil {
+		t.Fatal("an inverted window must fail")
+	}
+	if _, err := parsePollSpec([]string{"--bogus"}); err == nil {
+		t.Fatal("an unknown flag must fail")
+	}
+}
+
+// TestPollReproScript: the harness contract - diff stores the poll
+// output, check replays the stored window and must reproduce it, and
+// apply passes --apply. The notmutt binary is a stub that mirrors the
+// poll's deterministic output for any poll invocation, so the match
+// and mismatch paths are exercised against it.
+func TestPollReproScript(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	stub := filepath.Join(cache, "notmutt-stub")
+	stubBody := "#!/bin/sh\n" +
+		"case \"$*\" in\n" +
+		"*--apply*) echo \"$@\" ;;\n" +
+		"*poll*) echo \"poll: dry-run: 1..5: 1 entries, 0 moved, 0 skipped\"; echo \"+archive gmail/INBOX/cur/1\" ;;\n" +
+		"*) echo \"$@\" ;;\n" +
+		"esac\n"
+	os.WriteFile(stub, []byte(stubBody), 0o700)
+	t.Setenv("NOTMUTT", stub)
+
+	script := filepath.Join("..", "..", "scripts", "poll-repro.sh")
+	run := func(args ...string) (string, error) {
+		out, err := exec.Command("sh", append([]string{script}, args...)...).CombinedOutput()
+		return string(out), err
+	}
+
+	// diff: the bare poll invocation, output stored
+	if out, err := run(); err != nil {
+		t.Fatalf("diff: %v: %s", err, out)
+	}
+	diffFile := filepath.Join(cache, "notmutt", "poll-repro", "diff.txt")
+	stored := "poll: dry-run: 1..5: 1 entries, 0 moved, 0 skipped\n+archive gmail/INBOX/cur/1\n"
+	got, err := os.ReadFile(diffFile)
+	if err != nil || string(got) != stored {
+		t.Fatalf("diff.txt = %q (err %v), want the stored poll output", got, err)
+	}
+
+	// check: replays the stored window and reproduces it
+	out, err := run("check")
+	if err != nil || !strings.Contains(out, "reproducible") {
+		t.Fatalf("check = %q (err %v), want reproducible", out, err)
+	}
+
+	// tampering breaks the reproduction
+	f, err := os.OpenFile(diffFile, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.WriteString("tampered\n")
+	f.Close()
+	out, err = run("check")
+	if err == nil || !strings.Contains(out, "MISMATCH") {
+		t.Fatalf("tampered check = %q (err %v), want MISMATCH and a nonzero exit", out, err)
+	}
+
+	// apply: replays the stored window with --apply
+	os.WriteFile(diffFile, []byte(stored), 0o600)
+	out, err = run("apply")
+	if err != nil || !strings.Contains(out, "--apply") {
+		t.Fatalf("apply = %q (err %v), want the --apply invocation", out, err)
+	}
+
+	// an unknown command is usage, a missing diff is an error
+	if out, err = run("bogus"); err == nil || !strings.Contains(out, "poll-repro") {
+		t.Fatalf("bogus = %q (err %v), want usage", out, err)
+	}
+	os.Remove(diffFile)
+	if out, err = run("check"); err == nil {
+		t.Fatalf("check without a stored diff = %q, want an error", out)
 	}
 }

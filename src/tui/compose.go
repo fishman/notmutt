@@ -36,14 +36,12 @@ func (m *Model) renderCompose() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
-	// the abort confirm and the attach prompt swap the keyhint row
-	// 1:1 (the frame height invariant); the prompt shows the typed
-	// path - pasted text can carry ESC, sanitized at render (F1)
+	// the dialogue swaps the keyhint row 1:1 (the frame height
+	// invariant); it shows the typed text - pasted text can carry ESC,
+	// sanitized at render (F1)
 	switch {
-	case st.Phase == compose.PhaseAborting:
-		b.WriteString(padRow("abort? q to confirm, any other key to cancel", m.width, m.styles.Indicator))
-	case m.prompt != nil:
-		b.WriteString(padRow(core.SanitizeControls(m.prompt.label+m.prompt.input), m.width, m.styles.Indicator))
+	case m.dialogue != nil:
+		b.WriteString(padRow(core.SanitizeControls(m.dialogue.label+m.dialogue.input), m.width, m.styles.Indicator))
 	default:
 		b.WriteString(m.keyhint())
 	}

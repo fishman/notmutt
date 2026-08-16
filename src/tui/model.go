@@ -195,10 +195,9 @@ type Model struct {
 	preview       bool
 	previewThread string
 	previewTitle  string
-	// prompt is the compose input row: the attach path prompt and the
-	// inline field editors (edit-from/to/subject); non-nil captures
-	// the prompt keys and replaces the compose keyhint row.
-	prompt *formPrompt
+	// dialogue is the modal prompt box; non-nil captures the dialogue
+	// keys in every mode
+	dialogue *dialogue
 	// opened tracks every attached dialogue's TabID: the bus's
 	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
 	// closed dialogue can never resurrect on a later keypress.
@@ -280,8 +279,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fuzzyKey(msg, m.bindings["fuzzy"])
 			return m, nil
 		}
-		if m.prompt != nil {
-			return m, m.promptKey(msg)
+		if m.dialogue != nil {
+			return m.dialogueKey(msg)
 		}
 		if m.help {
 			// the help surface borrows the pager keys (neomutt renders
@@ -434,7 +433,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			for i := range m.tabs { // the tab may have closed meanwhile
 				if m.tabs[i].ID == msg.tabID {
-					m.prompt = &formPrompt{kind: "attach", label: "attach path: ", input: "@" + msg.name}
+					m.dialogue = &dialogue{kind: dialogueInput, field: "attach", label: "attach path: ", input: "@" + msg.name}
 					break
 				}
 			}
@@ -660,9 +659,6 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 	case "tab-next":
 		m.tabNext()
 	case "form-down":
-		if m.composeTab().Phase == compose.PhaseAborting {
-			m.composeTab().Phase = compose.PhaseEditing
-		}
 		m.formIdx++
 		if max := 8 + len(m.composeTab().Attachments); m.formIdx > max {
 			m.formIdx = max
@@ -691,16 +687,17 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		case 0:
 			m.openPicker("account")
 		case 3, 4, 6:
-			f := &formPrompt{kind: "field", field: map[int]string{3: "cc", 4: "bcc", 6: "replyto"}[m.formIdx]}
-			switch f.field {
+			f := map[int]string{3: "cc", 4: "bcc", 6: "replyto"}[m.formIdx]
+			d := &dialogue{kind: dialogueInput, field: f}
+			switch f {
 			case "cc":
-				f.label, f.input = "Cc: ", strings.Join(m.composeTab().Cc, ", ")
+				d.label, d.input = "Cc: ", strings.Join(m.composeTab().Cc, ", ")
 			case "bcc":
-				f.label, f.input = "Bcc: ", strings.Join(m.composeTab().Bcc, ", ")
+				d.label, d.input = "Bcc: ", strings.Join(m.composeTab().Bcc, ", ")
 			case "replyto":
-				f.label, f.input = "Reply-To: ", strings.Join(m.composeTab().ReplyTo, ", ")
+				d.label, d.input = "Reply-To: ", strings.Join(m.composeTab().ReplyTo, ", ")
 			}
-			m.prompt = f
+			m.dialogue = d
 		case 7:
 			m.composeTab().Security = m.composeTab().Security.Next()
 		default:
@@ -717,7 +714,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
-			m.prompt = &formPrompt{kind: "attach", label: "attach path: "}
+			m.dialogue = &dialogue{kind: dialogueInput, field: "attach", label: "attach path: "}
 		}
 	case "detach":
 		t := m.composeTab()
@@ -735,16 +732,16 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 				m.composeTab().Phase = compose.PhaseEditing
 			}
 			st := m.composeTab()
-			f := &formPrompt{kind: "field", field: strings.TrimPrefix(action, "edit-")}
-			switch f.field {
+			d := &dialogue{kind: dialogueInput, field: strings.TrimPrefix(action, "edit-")}
+			switch d.field {
 			case "from":
-				f.label, f.input = "From: ", st.From
+				d.label, d.input = "From: ", st.From
 			case "subject":
-				f.label, f.input = "Subject: ", st.Subject
+				d.label, d.input = "Subject: ", st.Subject
 			case "to":
-				f.label, f.input = "To: ", strings.Join(st.To, ", ")
+				d.label, d.input = "To: ", strings.Join(st.To, ", ")
 			}
-			m.prompt = f
+			m.dialogue = d
 		}
 	case "account":
 		m.openPicker("account")
@@ -774,6 +771,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.closeComposeTab(m.tabIdx - 1)
 		default:
 			st.Phase = compose.PhaseAborting
+			m.dialogue = &dialogue{kind: dialogueConfirm, label: "Abort composition?", action: "abort"}
 		}
 	case "help":
 		m.help = true
@@ -1747,43 +1745,57 @@ func (m Model) statusData() statusData {
 	return d
 }
 
-// formPrompt is one compose input row: the attach path prompt (kind
-// "attach") and the inline field editors (kind "field", field names
-// the dialogue field: from/to/subject). The label is the rendered
-// prefix; the input the current text.
-type formPrompt struct {
-	kind  string // "attach" | "field"
-	field string // field prompt: from/to/subject
-	label string // rendered prefix ("attach path: ", "From: ", ...)
-	input string
+// dialogue is the modal prompt box: confirm (enter to confirm, esc to
+// cancel) or input (typed text delivered to the field consumer). The
+// label is the rendered prefix; the input the current text. The field
+// names the input consumer (attach | from | to | subject | cc | bcc |
+// replyto); the action the confirm's landing action (the binding
+// vocabulary, dispatched through dispatchAction).
+type dialogueKind int
+
+const (
+	dialogueConfirm dialogueKind = iota
+	dialogueInput
+)
+
+type dialogue struct {
+	kind   dialogueKind
+	field  string
+	label  string
+	input  string
+	action string
 }
 
-// promptKey captures the prompt keys: printable text appends,
+// dialogueKey captures the dialogue keys: printable text appends,
 // backspace pops, enter resolves (attach: invalid paths keep the
-// prompt open; field: the value replaces the dialogue field), esc
-// cancels. The prompt only exists while a dialogue is attached (the
-// compose-context actions), so the direct index is safe.
-// promptKey drives the prompt row; it returns the tea.Cmd to run when
-// the enter key arms one (an attach command exec - a path enter has no
-// side command). Update forwards the cmd, so the prompt can hand back
-// a subprocess run without escaping the message loop.
-func (m *Model) promptKey(msg tea.KeyPressMsg) tea.Cmd {
-	p := m.prompt
+// dialogue open; field: the value replaces the dialogue field; confirm:
+// dispatches the action), esc cancels. The dialogue only exists while
+// a compose tab is attached, so the direct tab index is safe.
+// dialogueKey returns the model and the tea.Cmd to run when enter arms
+// one (an attach command exec - a path enter has no side command).
+// Update forwards both, so the dialogue can hand back a subprocess run
+// without escaping the message loop.
+func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	d := m.dialogue
 	switch {
 	case msg.String() == "enter":
-		input := strings.TrimSpace(p.input)
-		if p.kind == "attach" {
+		input := strings.TrimSpace(d.input)
+		if d.kind == dialogueConfirm {
+			m.dialogue = nil
+			return m.dispatchAction(d.action, 1)
+		}
+		if d.field == "attach" {
 			if strings.HasPrefix(input, "@") {
-				return m.runAttachCommand(strings.TrimPrefix(input, "@"))
+				return m, m.runAttachCommand(strings.TrimPrefix(input, "@"))
 			}
 			path := compose.ExpandHome(input)
 			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
-				m.prompt = nil
+				m.dialogue = nil
 			}
-			return nil
+			return m, nil
 		}
 		st := &m.tabs[m.tabIdx-1]
-		switch p.field {
+		switch d.field {
 		case "from":
 			st.From = input
 		case "subject":
@@ -1797,23 +1809,28 @@ func (m *Model) promptKey(msg tea.KeyPressMsg) tea.Cmd {
 		case "replyto":
 			st.ReplyTo = compose.SplitAddrs(input)
 		}
-		m.prompt = nil
+		m.dialogue = nil
 	case msg.String() == "esc":
-		m.prompt = nil
-	case msg.String() == "backspace":
-		if p.input != "" {
-			p.input = p.input[:len(p.input)-1]
+		m.dialogue = nil
+		if m.mode == "compose" && m.composeTab().Phase == compose.PhaseAborting {
+			m.composeTab().Phase = compose.PhaseEditing
 		}
-	case msg.Text == "?" && p.kind == "attach" && p.input == "":
+	case msg.String() == "backspace":
+		if d.input != "" {
+			d.input = d.input[:len(d.input)-1]
+		}
+	case msg.Text == "?" && d.field == "attach" && d.input == "":
 		// a path can legally contain '?' - the list key is only the
 		// empty-prompt '?'; anything else appends
 		if names := attachCommandNames(); len(names) > 0 {
 			m.fuzzy = newFuzzy("attachcmd", "attach command:", names)
 		}
 	case msg.Text != "":
-		p.input += msg.Text
+		if d.kind == dialogueInput {
+			d.input += msg.Text
+		}
 	}
-	return nil
+	return m, nil
 }
 
 // runAttachCommand arms the command exec (the $EDITOR pattern): the
@@ -1836,7 +1853,7 @@ func (m *Model) runAttachCommand(name string) tea.Cmd {
 	f.Close() // the subprocess writes it
 	st := m.composeTab()
 	cmd := exec.Command(argv[0], append(argv[1:], f.Name())...)
-	m.prompt = nil
+	m.dialogue = nil
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		return attachCmdDoneMsg{err: err, path: f.Name(), tabID: st.ID, name: name}
 	})
@@ -1893,8 +1910,8 @@ func (m *Model) fuzzySelect() {
 	}
 	if m.fuzzy.kind == "attachcmd" {
 		// the selection arms the attach prompt: enter runs it
-		if m.prompt != nil && m.prompt.kind == "attach" {
-			m.prompt.input = "@" + entry
+		if m.dialogue != nil && m.dialogue.kind == dialogueInput && m.dialogue.field == "attach" {
+			m.dialogue.input = "@" + entry
 		}
 		m.fuzzy = nil
 		return
@@ -1995,7 +2012,7 @@ func (m *Model) composeTab() *compose.State {
 }
 
 func (m *Model) attachTab() {
-	m.fuzzy, m.prompt = nil, nil
+	m.fuzzy, m.dialogue = nil, nil
 	if m.tabIdx > 0 {
 		m.mode = "compose"
 		return

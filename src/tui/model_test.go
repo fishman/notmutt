@@ -231,7 +231,7 @@ func TestSendGatesDetachAttachDuringSending(t *testing.T) {
 		t.Fatalf("d during PhaseSending must not mutate the attachments: %+v", m.tabs[0].Attachments)
 	}
 	m = press(t, m, "a")
-	if m.prompt != nil {
+	if m.dialogue != nil {
 		t.Fatal("a during PhaseSending must not open the prompt")
 	}
 	if m.tabs[0].Phase != compose.PhaseSending {
@@ -1708,20 +1708,27 @@ func TestSendArmsSeam(t *testing.T) {
 	}
 }
 
-func TestAbortTwoPress(t *testing.T) {
+func TestAbortConfirmDialogue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "q")
 	if m.tabs[0].Phase != compose.PhaseAborting {
-		t.Fatalf("first q arms aborting: %v", m.tabs[0].Phase)
+		t.Fatalf("q arms aborting: %v", m.tabs[0].Phase)
 	}
-	m = press(t, m, "j")
-	if m.tabs[0].Phase != compose.PhaseEditing {
-		t.Fatalf("any other key cancels the abort: %v", m.tabs[0].Phase)
+	if m.dialogue == nil || m.dialogue.kind != dialogueConfirm || m.dialogue.action != "abort" {
+		t.Fatalf("q must arm the abort confirm dialogue: %+v", m.dialogue)
+	}
+	m = press(t, m, "j") // text keys are ignored while the confirm is open
+	if m.dialogue == nil || m.tabs[0].Phase != compose.PhaseAborting {
+		t.Fatalf("the confirm dialogue must capture keys: %v %v", m.dialogue, m.tabs[0].Phase)
+	}
+	m = press(t, m, "esc")
+	if m.dialogue != nil || m.tabs[0].Phase != compose.PhaseEditing {
+		t.Fatalf("esc cancels the abort: %v %v", m.dialogue, m.tabs[0].Phase)
 	}
 	m = press(t, m, "q")
-	m = press(t, m, "q")
+	m = press(t, m, "enter")
 	if len(m.tabs) != 0 || m.mode != "index" {
-		t.Fatalf("second q confirms: %d %q", len(m.tabs), m.mode)
+		t.Fatalf("enter confirms the abort: %d %q", len(m.tabs), m.mode)
 	}
 }
 
@@ -1732,7 +1739,7 @@ func TestAttachPromptAndDetach(t *testing.T) {
 		t.Fatal(err)
 	}
 	m = press(t, m, "a")
-	if m.prompt == nil {
+	if m.dialogue == nil {
 		t.Fatal("a must open the prompt")
 	}
 	// type the absolute path rune by rune (the prompt appends each Text)
@@ -1740,7 +1747,7 @@ func TestAttachPromptAndDetach(t *testing.T) {
 		m = press(t, m, string(r))
 	}
 	m = pressType(t, m, '\r') // String() resolves to "enter"
-	if m.prompt != nil {
+	if m.dialogue != nil {
 		t.Fatal("enter must close the prompt")
 	}
 	if len(m.tabs[0].Attachments) != 1 || m.tabs[0].Attachments[0].Name != "att.txt" {
@@ -1762,20 +1769,20 @@ func TestAttachPromptAndDetach(t *testing.T) {
 func TestFieldEditFrom(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "f")
-	if m.prompt == nil || m.prompt.field != "from" {
-		t.Fatalf("f must open the From field prompt: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.field != "from" {
+		t.Fatalf("f must open the From field prompt: %+v", m.dialogue)
 	}
-	if m.prompt.input != "Bob <bob@example.com>" {
-		t.Fatalf("the From field must pre-fill: %q", m.prompt.input)
+	if m.dialogue.input != "Bob <bob@example.com>" {
+		t.Fatalf("the From field must pre-fill: %q", m.dialogue.input)
 	}
 	m = pressType(t, m, tea.KeyEsc)
-	if m.prompt != nil || m.tabs[0].From != "Bob <bob@example.com>" {
-		t.Fatalf("esc must cancel the field edit: prompt=%v From=%q", m.prompt != nil, m.tabs[0].From)
+	if m.dialogue != nil || m.tabs[0].From != "Bob <bob@example.com>" {
+		t.Fatalf("esc must cancel the field edit: prompt=%v From=%q", m.dialogue != nil, m.tabs[0].From)
 	}
 	m = press(t, m, "f")
 	m = press(t, m, "x") // typing appends to the pre-filled input
 	m = pressType(t, m, '\r')
-	if m.prompt != nil {
+	if m.dialogue != nil {
 		t.Fatal("enter must close the field prompt")
 	}
 	if m.tabs[0].From != "Bob <bob@example.com>x" {
@@ -1789,8 +1796,8 @@ func TestFieldEditFrom(t *testing.T) {
 func TestFieldEditToSplitsAddrs(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "t")
-	if m.prompt == nil || m.prompt.input != "a@b.c" {
-		t.Fatalf("t must pre-fill the To list: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.input != "a@b.c" {
+		t.Fatalf("t must pre-fill the To list: %+v", m.dialogue)
 	}
 	for _, r := range ", d@e.f" {
 		m = press(t, m, string(r))
@@ -1822,7 +1829,7 @@ func TestAttachPromptRendersRow(t *testing.T) {
 	if !strings.Contains(stripANSI(m.render()), "attach path: hi") {
 		t.Fatalf("typed input must render in the prompt row:\n%s", m.render())
 	}
-	m.prompt.input = "x\x1b[31m"
+	m.dialogue.input = "x\x1b[31m"
 	if out := m.render(); strings.Contains(out, "\x1b[31m") {
 		t.Fatalf("control chars leaked into the prompt row:\n%q", out)
 	}
@@ -2156,8 +2163,8 @@ func TestAttachPromptCommandPicker(t *testing.T) {
 	}
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "a")
-	if m.prompt == nil || m.prompt.kind != "attach" {
-		t.Fatalf("a must open the attach prompt: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != "attach" {
+		t.Fatalf("a must open the attach prompt: %+v", m.dialogue)
 	}
 	m = press(t, m, "?")
 	if m.fuzzy == nil || m.fuzzy.kind != "attachcmd" {
@@ -2171,15 +2178,15 @@ func TestAttachPromptCommandPicker(t *testing.T) {
 	if m.fuzzy != nil {
 		t.Fatal("select must close the picker")
 	}
-	if m.prompt == nil || m.prompt.input != "@yazi" {
-		t.Fatalf("the selection must arm the prompt: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.input != "@yazi" {
+		t.Fatalf("the selection must arm the prompt: %+v", m.dialogue)
 	}
 	next, cmd := m.Update(tea.KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
 	m = next.(Model)
 	if cmd == nil {
 		t.Fatal("enter must return the command exec")
 	}
-	if m.prompt != nil {
+	if m.dialogue != nil {
 		t.Fatal("the command run must close the prompt")
 	}
 }
@@ -2195,8 +2202,8 @@ func TestAttachCmdUnknownKeepsPrompt(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("an unknown command must not exec")
 	}
-	if m.prompt == nil || m.prompt.input != "@nope" {
-		t.Fatalf("the prompt must stay open with the text: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.input != "@nope" {
+		t.Fatalf("the prompt must stay open with the text: %+v", m.dialogue)
 	}
 }
 
@@ -2234,8 +2241,8 @@ func TestAttachCmdFailureReopensPrompt(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
 	m = next.(Model)
-	if m.prompt == nil || m.prompt.kind != "attach" || m.prompt.input != "@yazi" {
-		t.Fatalf("the prompt must re-open prefilled: %+v", m.prompt)
+	if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != "attach" || m.dialogue.input != "@yazi" {
+		t.Fatalf("the prompt must re-open prefilled: %+v", m.dialogue)
 	}
 }
 
@@ -2250,8 +2257,8 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 	}
 	next, _ = m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
 	m = next.(Model)
-	if m.prompt != nil {
-		t.Fatalf("a stale result must not resurrect the prompt: %+v", m.prompt)
+	if m.dialogue != nil {
+		t.Fatalf("a stale result must not resurrect the prompt: %+v", m.dialogue)
 	}
 }
 
@@ -2391,15 +2398,15 @@ func TestComposeSlotEditFieldPrompts(t *testing.T) {
 	} {
 		m.formIdx = tc.slot
 		m = press(t, m, "e")
-		if m.prompt == nil || m.prompt.kind != "field" || m.prompt.field != tc.field {
-			t.Fatalf("slot %d must open the %s prompt: %+v", tc.slot, tc.field, m.prompt)
+		if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != tc.field {
+			t.Fatalf("slot %d must open the %s prompt: %+v", tc.slot, tc.field, m.dialogue)
 		}
-		if m.prompt.label != tc.label {
-			t.Fatalf("slot %d prompt label = %q, want %q", tc.slot, m.prompt.label, tc.label)
+		if m.dialogue.label != tc.label {
+			t.Fatalf("slot %d prompt label = %q, want %q", tc.slot, m.dialogue.label, tc.label)
 		}
 		m = press(t, m, "x@y.z, q@w.e")
 		m = press(t, m, "enter")
-		if m.prompt != nil {
+		if m.dialogue != nil {
 			t.Fatal("enter must close the prompt")
 		}
 	}

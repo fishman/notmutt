@@ -22,16 +22,14 @@ type statusSegment struct {
 // statusData is the status line's input state; the model builds it
 // from the view and progress state.
 type statusData struct {
-	view      string
-	visible   int
-	prog      *core.Progress // nil = no job on
-	on        bool
-	legend    string // icon library: "icon name" pairs for the view's tags
-	account   string // the cursor message's account tag (R2), empty on none
-	notice    string // transient :lua/plugin-action result (R8), empty on none
-	noticeErr bool   // styles the notice with the error style
-	msg       string // transient status message (R4 send results), empty on none
-	msgErr    bool   // styles the status message with the error style
+	view    string
+	visible int
+	prog    *core.Progress // nil = no job on
+	on      bool
+	legend  string // icon library: "icon name" pairs for the view's tags
+	account string // the cursor message's account tag (R2), empty on none
+	msg     string // the status line's last log entry, empty on none
+	msgErr  bool   // styles the status message with the error style
 }
 
 // statusLine renders the status row at the default width.
@@ -68,19 +66,11 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 			right = append(right, msgSegment(d.msg, budget, d.msgErr, st))
 		}
 	}
-	// The notice (R8) and the legend share the leftover slot: the notice
-	// wins while present (it clears on the next keypress), the legend
-	// returns immediately after. Both are pre-fitted to the leftover
+	// The legend takes the leftover slot, pre-fitted to the leftover
 	// width, truncated wcwidth-aware (R11 slot reservation); the drop
 	// loop stays as the backstop when a future segment overruns. The
 	// footprint is content + two inner gaps + the bar gap before it.
-	if d.notice != "" {
-		fixed := groupWidth(left)
-		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
-		if budget > 0 {
-			left = append(left, noticeSegment(d.notice, budget, d.noticeErr, st))
-		}
-	} else if d.legend != "" {
+	if d.legend != "" {
 		fixed := groupWidth(left)
 		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
 		if budget > 0 {

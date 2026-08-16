@@ -69,6 +69,15 @@ func TestActionsCoverComposeAndFuzzy(t *testing.T) {
 			t.Errorf("bindings[%q] must bind ? to help", ctx)
 		}
 	}
+	// the log overlay (~) is bound and builtin in every tabbed context
+	for _, ctx := range []string{"index", "pager", "compose"} {
+		if !Actions[ctx]["log"] {
+			t.Errorf("Actions[%q] must define log", ctx)
+		}
+		if km[ctx]["~"] != "log" {
+			t.Errorf("bindings[%q] must bind ~ to log", ctx)
+		}
+	}
 }
 
 // TestChainDataCompletes pins the data-driven chain resolver: the
@@ -199,6 +208,140 @@ func TestHelpListsBindings(t *testing.T) {
 	}
 	if m.CursorIndex() != 0 {
 		t.Fatalf("the closing key must be consumed (cursor unmoved), idx=%d", m.CursorIndex())
+	}
+}
+
+// TestLogEntryStatus pins the log write path: a lua result appends to
+// the session log and shows as the status line's last entry, and the
+// entry survives the next keypress - the status message is persistent,
+// not transient. An error entry replaces it styled as error.
+func TestLogEntryStatus(t *testing.T) {
+	m := model()
+	next, _ := m.Update(EventMsg{Event: core.LuaResult{Output: "hello"}})
+	m = next.(Model)
+	if m.statusMsg != "hello" || m.statusMsgErr {
+		t.Fatalf("the lua result must surface as the last log entry: %q err=%v", m.statusMsg, m.statusMsgErr)
+	}
+	if len(m.log) != 1 || m.log[0].text != "hello" || m.log[0].err {
+		t.Fatalf("log = %+v", m.log)
+	}
+	m = press(t, m, "j")
+	if m.statusMsg != "hello" {
+		t.Fatalf("a keypress must not clear the log entry, got %q", m.statusMsg)
+	}
+	next, _ = m.Update(EventMsg{Event: core.LuaResult{Err: errors.New("boom")}})
+	m = next.(Model)
+	if m.statusMsg != "lua: boom" || !m.statusMsgErr {
+		t.Fatalf("the lua error must replace the entry styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
+	}
+}
+
+// TestJobErrorSurfaces pins the JobError and lock-timeout surfaces: a
+// failed background job logs an error entry (previously the TUI
+// dropped both events).
+func TestJobErrorSurfaces(t *testing.T) {
+	m := model()
+	next, _ := m.Update(EventMsg{Event: core.JobError{Job: "apply", Err: errors.New("lock wait")}})
+	m = next.(Model)
+	if m.statusMsg != "apply: lock wait" || !m.statusMsgErr {
+		t.Fatalf("the job error must surface styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
+	}
+	next, _ = m.Update(EventMsg{Event: core.WorkerLockTimeout{Kind: "tag"}})
+	m = next.(Model)
+	if m.statusMsg != "lock timeout: tag" || !m.statusMsgErr {
+		t.Fatalf("the lock timeout must surface styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
+	}
+}
+
+// TestLogRingCaps pins the ring cap: beyond logCap entries the oldest
+// drop.
+func TestLogRingCaps(t *testing.T) {
+	m := model()
+	for i := 0; i < logCap+5; i++ {
+		next, _ := m.Update(EventMsg{Event: core.LuaResult{Output: "e"}})
+		m = next.(Model)
+	}
+	if len(m.log) != logCap {
+		t.Fatalf("the log ring must cap at %d, got %d", logCap, len(m.log))
+	}
+	if m.statusMsg != "e" {
+		t.Fatalf("the last entry must surface, got %q", m.statusMsg)
+	}
+}
+
+// TestLogOverlay pins the ~ overlay: the session log opens over the
+// frame (the help mechanism - pager scroll keys navigate, any other
+// key closes), and opening one overlay closes the other.
+func TestLogOverlay(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	for i := 0; i < 3; i++ {
+		next, _ = m.Update(EventMsg{Event: core.LuaResult{Output: fmt.Sprintf("entry %d", i)}})
+		m = next.(Model)
+	}
+	m = press(t, m, "~")
+	if !m.logOpen {
+		t.Fatal("~ must open the log overlay")
+	}
+	frame := stripANSI(m.render())
+	if strings.Count(frame, "\n")+1 != 24 {
+		t.Fatalf("the log frame must be exactly 24 lines, got %d", strings.Count(frame, "\n")+1)
+	}
+	for _, want := range []string{"log", "entry 0", "entry 1", "entry 2"} {
+		if !strings.Contains(frame, want) {
+			t.Fatalf("the log must render %q:\n%s", want, frame)
+		}
+	}
+	// the overlays intercept keys before dispatch (the help behavior):
+	// ? closes the log, ~ closes the help; each re-opens on its own
+	// next press - never both open at once
+	m = press(t, m, "?")
+	if m.logOpen || m.help {
+		t.Fatal("? must close the log overlay")
+	}
+	m = press(t, m, "?")
+	if !m.help {
+		t.Fatal("? must open the help")
+	}
+	m = press(t, m, "~")
+	if m.logOpen || m.help {
+		t.Fatal("~ must close the help overlay")
+	}
+	// a non-pager key closes; the closing key is consumed
+	m = press(t, m, "x")
+	if m.logOpen {
+		t.Fatal("a keypress must close the log")
+	}
+	if m.CursorIndex() != 0 {
+		t.Fatalf("the closing key must be consumed (cursor unmoved), idx=%d", m.CursorIndex())
+	}
+}
+
+// TestLogOverlayScroll pins the overlay's viewport: enough entries to
+// overflow, opened pinned to the tail, ctrl+u scrolls to the top,
+// ctrl+d returns half a window.
+func TestLogOverlayScroll(t *testing.T) {
+	m := model()
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	m = next.(Model)
+	for i := 0; i < 30; i++ {
+		next, _ = m.Update(EventMsg{Event: core.LuaResult{Output: fmt.Sprintf("entry %d", i)}})
+		m = next.(Model)
+	}
+	m = press(t, m, "~")
+	if m.logView.offset != 10 { // 30 entries in a 20-row window, tail-pinned
+		t.Fatalf("the log must open at the tail, offset=%d", m.logView.offset)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if m.logView.offset != 0 {
+		t.Fatalf("ctrl+u must scroll the log to the top, offset=%d", m.logView.offset)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if m.logView.offset != 10 {
+		t.Fatalf("ctrl+d must scroll the log back half a window, offset=%d", m.logView.offset)
 	}
 }
 

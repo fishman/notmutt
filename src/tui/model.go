@@ -48,7 +48,7 @@ var Actions = map[string]map[string]bool{
 		"open": true, "preview": true, "quit": true, "undo": true, "apply": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true, "command": true,
+		"help": true, "log": true, "command": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -57,7 +57,7 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true, "command": true,
+		"help": true, "log": true, "command": true,
 	},
 	"compose": {
 		"form-down": true, "form-up": true,
@@ -72,7 +72,7 @@ var Actions = map[string]map[string]bool{
 		"account":  true, "signature": true,
 		"send": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true, "command": true,
+		"help": true, "log": true, "command": true,
 	},
 	"fuzzy": {
 		"fuzzy-down": true, "fuzzy-up": true,
@@ -97,19 +97,18 @@ type Model struct {
 	job        string
 	progress   core.Progress
 	progressOn bool
-	// luaNotice is the transient :lua/plugin-action result (R8): set
-	// by LuaResult, cleared by the next keypress. It renders on the
-	// status line - never mail content, only output the plugin printed
-	// or the error text. luaErr styles it with the error style.
-	luaNotice string
-	luaErr    bool
-	// statusMsg is the transient status message on the status line's
-	// reserved right slot ("sent to ...", send failures - the R4 send
-	// completions): set by the send result, cleared by the next
-	// keypress like the lua notice. msgErr styles it with the error
-	// style.
+	// statusMsg is the status line's last log entry (the R4 send
+	// results, the R8 lua results, job errors, lock timeouts):
+	// logEntry is the single write path, an entry survives until the
+	// next one replaces it. msgErr styles it with the error style.
 	statusMsg    string
 	statusMsgErr bool
+	// log is the session log ring (logEntry appends, logCap caps);
+	// logOpen is the ~ overlay flag, logView its viewport (the pager
+	// widget, same as the help overlay).
+	log     []logLine
+	logOpen bool
+	logView viewport
 	// spin is the send dialogue spinner's frame index (sendTick
 	// advances it while a send is in flight).
 	spin int
@@ -247,6 +246,7 @@ type Model struct {
 	hintLayer   *layer
 	statusLayer *layer
 	helpLayer   *layer
+	logLayer    *layer
 	// styleVer bumps when the theme re-resolves: every cache key carries
 	// it, so a variant switch invalidates at the next render.
 	styleVer int
@@ -261,7 +261,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), styleVer: 1}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), styleVer: 1}
 }
 
 func (m Model) Init() tea.Cmd {
@@ -312,12 +312,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.helpView.setSize(m.width, h)
 		}
+		if m.logOpen {
+			h := m.height - 4
+			if h < 1 {
+				h = 1
+			}
+			m.logView.setSize(m.width, h)
+		}
 	case tea.KeyPressMsg:
-		// a keypress consumes the transient notices (R8/R4)
-		m.luaNotice = ""
-		m.luaErr = false
-		m.statusMsg = ""
-		m.statusMsgErr = false
 		// the picker outranks the prompt: the attach '?' picker arms the
 		// attach prompt (input = "@name"), so both can be live at once
 		if m.fuzzy != nil {
@@ -326,6 +328,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.dialogue != nil {
 			return m.dialogueKey(msg)
+		}
+		if m.logOpen {
+			// the log overlay borrows the pager keys like the help: the
+			// scroll keys drive the viewport, anything else closes
+			// without firing
+			switch actionForKey(msg, m.bindings["pager"]) {
+			case "scroll-down":
+				m.logView.scrollDown(1)
+			case "scroll-up":
+				m.logView.scrollUp(1)
+			case "scroll-top":
+				m.logView.scrollTop()
+			case "scroll-bottom":
+				m.logView.scrollBottom()
+			case "page-down":
+				m.logView.pageDown()
+			case "page-up":
+				m.logView.pageUp()
+			case "half-page-down":
+				m.logView.halfPageDown()
+			case "half-page-up":
+				m.logView.halfPageUp()
+			default:
+				m.logOpen = false
+				m.logView = viewport{}
+			}
+			return m, nil
 		}
 		if m.help {
 			// the help surface borrows the pager keys (neomutt renders
@@ -546,14 +575,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case core.AddressIndex:
 			m.onAddressIndex(e)
 		case core.LuaResult:
-			// the :lua command or plugin action notice: the output or
-			// the error on the status line until the next keypress
+			// the :lua command or plugin action result: the output or
+			// the error goes into the session log and surfaces as the
+			// status line's last entry (R8 - never mail content)
 			if e.Err != nil {
-				m.luaNotice = "lua: " + e.Err.Error()
-				m.luaErr = true
+				m.logEntry("lua: "+e.Err.Error(), true)
 			} else {
-				m.luaNotice = e.Output
+				m.logEntry(e.Output, false)
 			}
+		case core.JobError:
+			// a failed background job logs with its kind (R15)
+			m.logEntry(e.Job+": "+e.Err.Error(), true)
+		case core.WorkerLockTimeout:
+			m.logEntry("lock timeout: "+e.Kind, true)
 		}
 		m.refreshProgress()
 		m.rows = m.view.Rows()
@@ -860,12 +894,23 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 	case "help":
 		m.help = true
+		m.logOpen = false
 		h := m.height - 4
 		if h < 1 {
 			h = 1
 		}
 		m.helpView.setLines(m.helpRows())
 		m.helpView.setSize(m.width, h)
+	case "log":
+		m.logOpen = true
+		m.help = false
+		h := m.height - 4
+		if h < 1 {
+			h = 1
+		}
+		m.logView.setLines(m.logRows())
+		m.logView.setSize(m.width, h)
+		m.logView.scrollBottom()
 	case "command":
 		// the command line: ": lua <code>" runs a Lua chunk, plugin
 		// action names dispatch to their registered functions (R8)
@@ -994,11 +1039,11 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 }
 
 // onSendResult applies a send result to its dialogue: OK closes the
-// tab with the "sent to ..." status message on the reserved right slot
-// (the fcc note rides along); a failure keeps the tab open, opens the
-// error dialogue with Output for review, and flags the status message.
-// Addressed by tab ID, so a closed tab's ID is a no-op (idempotent -
-// the same result may arrive via the channel and the bus snapshot).
+// tab with the "sent to ..." log entry on the status line (the fcc
+// note rides along); a failure keeps the tab open, opens the error
+// dialogue with Output for review, and logs "send failed". Addressed
+// by tab ID, so a closed tab's ID is a no-op (idempotent - the same
+// result may arrive via the channel and the bus snapshot).
 func (m *Model) onSendResult(e core.SendResult) {
 	for i := range m.tabs {
 		if m.tabs[i].ID == e.TabID {
@@ -1010,7 +1055,7 @@ func (m *Model) onSendResult(e core.SendResult) {
 				if e.Output != "" {
 					msg += " (" + e.Output + ")"
 				}
-				m.statusMsg = core.SanitizeControls(msg)
+				m.logEntry(core.SanitizeControls(msg), false)
 				m.closeComposeTab(i)
 			} else {
 				m.tabs[i].Phase = compose.PhaseFailed
@@ -1018,8 +1063,7 @@ func (m *Model) onSendResult(e core.SendResult) {
 				if e.Err != nil && m.tabs[i].Output == "" {
 					m.tabs[i].Output = e.Err.Error()
 				}
-				m.statusMsg = "send failed"
-				m.statusMsgErr = true
+				m.logEntry("send failed", true)
 				m.dialogue = &dialogue{
 					kind: dialogueError, label: "send failed",
 					input: m.tabs[i].Output, tabID: e.TabID,
@@ -1721,6 +1765,9 @@ func (m Model) render() string {
 	if m.help {
 		return m.renderHelp()
 	}
+	if m.logOpen {
+		return m.renderLog()
+	}
 	if m.mode == "compose" {
 		return m.renderCompose()
 	}
@@ -2030,8 +2077,7 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	if d.prog != nil {
 		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
 	}
-	sig += "|" + d.legend + "|" + d.account + "|" + d.notice + "|" + strconv.FormatBool(d.noticeErr) +
-		"|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
+	sig += "|" + d.legend + "|" + d.account + "|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
 		"|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
@@ -2056,8 +2102,6 @@ func (m Model) statusData() statusData {
 	// resolution (the flattening CursorRow at 33k rows)
 	d.legend = m.legend
 	d.account = m.account
-	d.notice = m.luaNotice
-	d.noticeErr = m.luaErr
 	d.msg = m.statusMsg
 	d.msgErr = m.statusMsgErr
 	return d

@@ -45,4 +45,7 @@ const (
 	// visible window; small scroll steps stay inside it and never touch
 	// the styling pass.
 	pagerStyleMargin = 20
+	// logCap caps the session log ring (the status line shows the last
+	// entry, the ~ overlay scrolls the rest).
+	logCap = 200
 )

@@ -46,22 +46,11 @@ func legendSegment(legend string, budget int) statusSegment {
 	return statusSegment{content: truncCells(legend, budget), priority: 3}
 }
 
-// noticeSegment is the transient :lua/plugin-action result (R8):
-// plugin print output or the error text, pre-fitted like the legend
-// (never mail content, F6). err styles it with the error style.
-func noticeSegment(notice string, budget int, err bool, st Styles) statusSegment {
-	s := statusSegment{content: truncCells(notice, budget), priority: 4}
-	if err {
-		s.style = st.Error
-	}
-	return s
-}
-
-// msgSegment is the transient status message (R4): the send result
-// ("sent to ...", "send failed") on the status line's reserved right
-// slot. Pre-fitted like the notice; err styles it with the error
-// style. Priority 0 - it drops with the progress region first when
-// the row overruns.
+// msgSegment is the status line's last log entry (the send result,
+// the lua result, a job error - the logEntry surface) on the status
+// line's reserved right slot. Pre-fitted to the leftover width; err
+// styles it with the error style. Priority 0 - it drops with the
+// progress region first when the row overruns.
 func msgSegment(msg string, budget int, err bool, st Styles) statusSegment {
 	s := statusSegment{content: truncCells(msg, budget), priority: 0}
 	if err {

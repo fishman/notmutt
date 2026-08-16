@@ -51,6 +51,7 @@
 "[" = { fun = "tab-prev", desc = "Switch to the previous tab", show = true }
 "]" = { fun = "tab-next", desc = "Switch to the next tab", show = true }
 "?" = { fun = "help", desc = "Show this help", show = true }
+"~" = { fun = "log", desc = "Show the session log", show = true }
 
 [schemes.vim.pager]
 "j" = { fun = "scroll-down", desc = "Scroll down one line" }
@@ -68,6 +69,7 @@
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
+"~" = { fun = "log", show = true }
 
 [schemes.vim.compose]
 "j" = { fun = "form-down", desc = "Move to the next attachment" }
@@ -95,6 +97,7 @@
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
+"~" = { fun = "log", show = true }
 
 [schemes.vim.fuzzy]
 "j" = { fun = "fuzzy-down", desc = "Move to the next candidate" }
@@ -130,6 +133,7 @@
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
+"~" = { fun = "log", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }
@@ -145,6 +149,7 @@
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
+"~" = { fun = "log", show = true }
 
 [schemes.emacs.compose]
 "ctrl+n" = { fun = "form-down" }
@@ -170,6 +175,7 @@
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
+"~" = { fun = "log", show = true }
 
 [schemes.emacs.fuzzy]
 "j" = { fun = "fuzzy-down" }

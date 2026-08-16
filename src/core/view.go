@@ -396,6 +396,52 @@ func (v *View) SetThreadTags(threadID string, tags []string) {
 	}
 }
 
+// Remove drops an identity from the snapshot (R13 materialized-view
+// discipline): a message leaves its thread's tree (the thread stays
+// when other messages remain), a thread identity removes the whole
+// thread. The apply path calls it when notmuch reports the identity
+// no longer matches the view query; a later refresh reconciles truth.
+func (v *View) Remove(identity string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if strings.HasPrefix(identity, "t:") {
+		for i, t := range v.Threads {
+			if t.ID == identity[2:] {
+				v.Threads = append(v.Threads[:i], v.Threads[i+1:]...)
+				v.dirty = true
+				return
+			}
+		}
+		return
+	}
+	var empty string
+	for _, t := range v.Threads {
+		msgs := t.msgs[:0]
+		for _, m := range t.msgs {
+			if m.ID != identity {
+				msgs = append(msgs, m)
+			}
+		}
+		if len(msgs) != len(t.msgs) {
+			t.msgs = msgs
+			t.Root = buildTree(t.msgs)
+			if len(msgs) == 0 {
+				empty = t.ID
+			}
+			v.dirty = true
+			break
+		}
+	}
+	if empty != "" {
+		for i, t := range v.Threads {
+			if t.ID == empty {
+				v.Threads = append(v.Threads[:i], v.Threads[i+1:]...)
+				break
+			}
+		}
+	}
+}
+
 // buildTree attaches each message under the nearest present reference;
 // messages without a present parent become roots. Multiple roots get a
 // synthetic ghost root (mutt "[...]" row).

@@ -62,8 +62,36 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI) erro
 			view.SetTags(identity, newTags)
 		}
 		view.ClearStaged(identity, gen)
+		// the view is a materialized mirror of the query output (R13):
+		// once the DB op landed, notmuch answers whether the identity
+		// still matches the view query - a miss drops the row from the
+		// snapshot now (the inbox row disappears on apply, no refresh).
+		// A check error keeps the row; the next refresh reconciles.
+		if !keptBy(view, worker, identity) {
+			view.Remove(identity)
+		}
 	}
 	return applyErr
+}
+
+// keptBy asks notmuch whether the identity still matches the view
+// query: one limit-1 search, the truth path (R1). The identity query
+// is the apply's own (idQuery) - DRY with the op that just landed.
+func keptBy(view *core.View, worker workerAPI, identity string) bool {
+	if view.Query == "" {
+		return true
+	}
+	keep := false
+	_, err := worker.Call(notmuch.Action{
+		Kind:  notmuch.ActQuery,
+		Query: view.Query + " and " + idQuery(identity),
+		Limit: 1,
+		Emit:  func(msgs []core.Message) bool { keep = len(msgs) > 0; return false },
+	})
+	if err != nil {
+		return true
+	}
+	return keep
 }
 
 // idQuery turns a staged identity into a notmuch query: message ids

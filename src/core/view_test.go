@@ -535,3 +535,39 @@ func TestMergeBatchNestedAndUnbalanced(t *testing.T) {
 		t.Fatal("EndMerge without an open batch must not mark dirty")
 	}
 }
+
+// TestRemoveMessageRebuildsTree pins the apply-path eviction (R13):
+// removing one message rebuilds its thread's tree (the thread stays
+// with the rest), removing the last message or a thread identity drops
+// the whole thread.
+func TestRemoveMessageRebuildsTree(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{
+		NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")}),
+		NewThread("t2", []*Message{msg("other", 300)}),
+	})
+	v.Remove("kid")
+	rows := v.Rows()
+	if len(rows) != 2 || rows[0].Msg.ID != "other" || rows[1].Msg.ID != "root" {
+		t.Fatalf("removal must keep the thread with its tree: %+v", rows)
+	}
+	v.Remove("root")
+	rows = v.Rows()
+	if len(rows) != 1 || rows[0].Msg.ID != "other" {
+		t.Fatalf("emptied thread must leave the view: %+v", rows)
+	}
+	v.Remove("t:t2")
+	if len(v.Rows()) != 0 {
+		t.Fatalf("thread identity removes the whole thread: %+v", v.Rows())
+	}
+}
+
+func TestRemoveUnknownIdentity(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("m1", 100)})})
+	v.Remove("nope")
+	v.Remove("t:nope")
+	if len(v.Rows()) != 1 {
+		t.Fatalf("unknown identities must be no-ops: %+v", v.Rows())
+	}
+}

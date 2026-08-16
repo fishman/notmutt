@@ -2,7 +2,9 @@ package app
 
 import (
 	"errors"
+	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -70,6 +72,13 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		} else if all, ok := f.msgs.Load().([]core.Message); ok {
 			msgs = all
 		}
+		// membership queries (the apply-path eviction check) carry the
+		// view query plus " and id:.../thread:..."; they match on the
+		// tag: terms, mirroring notmuch for the tag-only subset. Plain
+		// refresh queries pass through unfiltered.
+		if strings.Contains(a.Query, " and id:\"") || strings.Contains(a.Query, " and thread:") {
+			msgs = matchTagQuery(msgs, a.Query)
+		}
 		if a.Limit > 0 && len(msgs) > a.Limit {
 			msgs = msgs[:a.Limit]
 		}
@@ -94,6 +103,39 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.Msgs = msgs
 	}
 	return r, nil
+}
+
+// matchTagQuery answers a membership query: the message must carry
+// every tag:X term AND match the id:.../thread:... identity term.
+func matchTagQuery(msgs []core.Message, q string) []core.Message {
+	var terms []string
+	var wantID string
+	for _, tok := range strings.Fields(q) {
+		switch {
+		case strings.HasPrefix(tok, "tag:"):
+			terms = append(terms, strings.TrimPrefix(tok, "tag:"))
+		case strings.HasPrefix(tok, "id:\""):
+			wantID = strings.TrimSuffix(strings.TrimPrefix(tok, "id:\""), "\"")
+		case strings.HasPrefix(tok, "thread:"):
+			wantID = "t:" + strings.TrimPrefix(tok, "thread:")
+		}
+	}
+	out := make([]core.Message, 0, len(msgs))
+	for _, m := range msgs {
+		if hasAll(m.Tags, terms) && (wantID == "" || m.ID == wantID || "t:"+m.ThreadID == wantID) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func hasAll(tags, want []string) bool {
+	for _, w := range want {
+		if !slices.Contains(tags, w) {
+			return false
+		}
+	}
+	return true
 }
 
 type tagCall struct {

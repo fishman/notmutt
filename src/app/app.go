@@ -79,8 +79,9 @@ func Run() error {
 		go func() {
 			if err := applyStaged(view, groups, worker); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
-				return
 			}
+			// the view changed either way (applied drops and baselines);
+			// a partial failure still renders the succeeded entries
 			bus.Publish(core.ViewDiff{View: view.Name})
 		}()
 	})

@@ -364,3 +364,46 @@ Gaps matcha leaves open (design around these):
   in-process and never send content anywhere; the UI-side render hook
   gets the already-rendered (sanitized, F1) display string plus a
   preview-budgeted raw slice, never whole mail files (F6).
+
+## 21. Platform notifications: beeep, auto-detected (2026-08-17)
+
+Decision: the [notify] side effect (R2) gains a platform backend
+alongside the argv command. "beeep" (gen2brain, v0.11.2) is the
+backend: cross-platform by construction (Linux via esiqveland/notify
+on DBus, macOS via osascript, Windows via toast), static title, body
+built client-side. The backend is AUTO-DETECTED, not configured or
+build-gated (the R12 build tag was dropped at the user's direction -
+the reference ~/.config/mutt/notmuch-notification.sh needs no setup
+and neither should the client): empty `[notify] backend` (the
+default) resolves once at startup to "beeep" when a notification
+daemon is reachable, "command" otherwise; explicit config always
+wins. The probe is a session-bus call to
+org.freedesktop.Notifications.GetServerInformation with a 1s budget
+(darwin always - osascript is part of the OS; elsewhere never).
+beeep keeps its own dbus -> notify-send -> kdialog fallback per show
+either way, so a daemon that dies mid-session degrades, never
+silently drops.
+
+Why beeep over alternatives: a pure DBus notification client
+(godbus+org.freedesktop.Notifications) is fewer lines today but
+Windows/macOS would need a second backend - the user's stated
+forward goal is macOS support; beeep is one pinned dependency with a
+platform switch inside. The argv backend stays reachable: any
+command (dunst, notify-send, swaync) keeps working, tokens
+{count}/{subjects} in argv - the notmuch-notification.sh shape
+(count + up to N newest subjects via notify-send) is the payload
+reference, not a copy.
+
+Payload: the count plus the subjects of entries carrying a priority
+tag ([notify] priority = ["urgent", "work"] - soft tags, matched
+against the entry's RESOLVED tag set, so group exclusivity counts),
+capped at [notify] max (default 3, 0 disables subjects). Subjects are
+the maximum content the notification ever carries (F6 - never bodies
+or ids); the subject arrives on the delta query (the snapshot fetch,
+zero file opens) and flows Entry -> FilterDone -> notify. The beeep
+body is the same payload, newline-joined.
+
+The aerc/matcha survey verdict (2026-08-17): neither has a
+classifiable notification surface; aerc notifies via command hooks,
+matcha has no notify path. The argv backend (the muttrc/notify
+command shape) is the reference, not a library.

@@ -59,13 +59,17 @@ func TestRenderHTMLLinks(t *testing.T) {
 	body := "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>" +
 		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n" +
 		"<p>bare https://delta.example.com/d word</p>\n" +
-		"<p><a>no href</a> and <a href=\"https://gamma.example.com\"></a></p>\n"
+		"<p><a>no href</a> and <a href=\"https://gamma.example.com\"></a></p>\n" +
+		"<table><tr><td><a href=\"https://table.example.com/t\">table link</a>" +
+		" and bare https://cell.example.com/w word</td></tr></table>\n"
 	lines, links := RenderHTMLWithLinks(body, nil, 80)
 	want := []string{
 		"https://alpha.example.com/x",
 		"https://beta.example.com/b",
 		"https://delta.example.com/d",
 		"https://gamma.example.com",
+		"https://table.example.com/t",
+		"https://cell.example.com/w",
 	}
 	if len(links) != len(want) {
 		t.Fatalf("links = %v, want %v", links, want)

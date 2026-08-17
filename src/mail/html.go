@@ -424,7 +424,7 @@ func resolveImage(c *html.Node, atts []Attachment) *core.Image {
 // each column to its widest cell, wrapped at a per-column cap). Cell
 // content is extracted as word-lines, so styles survive into the rows.
 func (w *htmlWalker) table(t *html.Node, st *styleProps) {
-	rows := cellRows(t, st, w.rules)
+	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks)
 	if len(rows) == 0 {
 		return
 	}
@@ -542,14 +542,14 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 // lines (block boundaries and <br> inside a cell start a new line).
 // The HTML5 parser inserts an implicit tbody between the table and
 // its rows, so the row groups descend into it.
-func cellRows(t *html.Node, st *styleProps, rules []cssRule) [][][]cellLine {
+func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
 		if r.Type != html.ElementNode {
 			continue
 		}
 		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
-			rows = append(rows, cellRows(r, st, rules)...)
+			rows = append(rows, cellRows(r, st, rules, links, labelLinks)...)
 			continue
 		}
 		if r.Data != "tr" {
@@ -560,7 +560,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule) [][][]cellLine {
 			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
 				continue
 			}
-			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules))
+			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks))
 		}
 		if len(cells) > 0 {
 			rows = append(rows, cells)
@@ -576,8 +576,10 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule) [][][]cellLine {
 // old skip) emptied the article. Only an explicitly right-aligned
 // cell starts a new line under that alignment (the READ-IN-APP
 // column); inherited text-align - the align="center" button scaffolds
-// inside the row - never re-aligns a line.
-func collectCell(n *html.Node, st *styleProps, rules []cssRule) []cellLine {
+// inside the row - never re-aligns a line. Link mode (labelLinks)
+// labels anchors and bare URLs inside cells like the main walk - the
+// layout-table era wraps every link in a td.
+func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool) []cellLine {
 	var out []cellLine
 	var cur []word
 	align := ""
@@ -621,6 +623,12 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule) []cellLine {
 			switch c.Type {
 			case html.TextNode:
 				for _, f := range strings.Fields(c.Data) {
+					if labelLinks {
+						if ls := core.Links(f, true); len(ls) > 0 {
+							*links = append(*links, ls[0])
+							cur = append(cur, word{text: fmt.Sprintf("[%d]", len(*links)), st: st, label: true})
+						}
+					}
 					cur = append(cur, word{text: sanitize(f), st: st})
 				}
 			case html.ElementNode:
@@ -677,6 +685,18 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule) []cellLine {
 						blankPending = true
 						blockSeen = false
 					}
+				case tag == "a":
+					// the F key's link label in a cell: same rule as the
+					// main walk - the anchor's href gets its "[N]" label
+					// inline; an anchor without an href is plain text
+					if labelLinks {
+						if href := attr(c, "href"); href != "" {
+							href = sanitize(href)
+							*links = append(*links, href)
+							cur = append(cur, word{text: fmt.Sprintf("[%d]", len(*links)), st: cs, label: true})
+						}
+					}
+					walk(c, cs)
 				default:
 					walk(c, cs)
 				}

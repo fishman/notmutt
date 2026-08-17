@@ -149,6 +149,53 @@ func TestDepth3Chain(t *testing.T) {
 	}
 }
 
+func TestFilterNarrowsRows(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{
+		NewThread("t1", []*Message{{ID: "m1", ThreadID: "t1", Author: "Ann", Subject: "meeting notes", Tags: []string{"inbox", "work"}}}),
+		NewThread("t2", []*Message{{ID: "m2", ThreadID: "t2", Author: "Bob", Subject: "lunch", Tags: []string{"inbox"}}}),
+		NewThread("t3", []*Message{{ID: "m3", ThreadID: "t3", Author: "Ann", Subject: "receipt", Tags: []string{"inbox", "receipt"}}}),
+	})
+	v.SetFilter("meeting")
+	if rows := v.Rows(); len(rows) != 1 || rows[0].Msg.ID != "m1" {
+		t.Fatalf("subject filter: %d rows", len(rows))
+	}
+	v.SetFilter("ann") // author match, case-insensitive
+	if rows := v.Rows(); len(rows) != 2 {
+		t.Fatalf("author filter: %d rows", len(rows))
+	}
+	v.SetFilter("receipt") // tag match
+	if rows := v.Rows(); len(rows) != 1 {
+		t.Fatalf("tag filter: %d rows", len(rows))
+	}
+	v.SetFilter("")
+	if rows := v.Rows(); len(rows) != 3 {
+		t.Fatalf("clear must restore all rows: %d rows", len(rows))
+	}
+}
+
+func TestFilterCursorMapping(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{
+		NewThread("t1", []*Message{{ID: "m1", ThreadID: "t1", Author: "Ann", Subject: "meeting", Tags: []string{"inbox"}}}),
+		NewThread("t2", []*Message{{ID: "m2", ThreadID: "t2", Author: "Bob", Subject: "lunch", Tags: []string{"inbox"}}}),
+		NewThread("t3", []*Message{{ID: "m3", ThreadID: "t3", Author: "Ann", Subject: "receipt", Tags: []string{"inbox"}}}),
+	})
+	v.SetCursor("m2")  // full-space row 1
+	v.SetFilter("ann") // m1 and m3 remain
+	v.Rows()
+	if idx := v.CursorRowIndex(); idx != 0 {
+		t.Fatalf("a hidden cursor must map to the first visible row, got %d", idx)
+	}
+	// the UI move pattern: re-anchor the id, step in filtered space
+	v.SetCursor("m3")
+	v.SetCursorIndex(1) // filtered-space row 1 = m3 (full row 2)
+	v.SetFilter("")
+	if rows := v.Rows(); rows[v.CursorRowIndex()].Msg.ID != "m3" {
+		t.Fatalf("cursor must survive the filter clear at its message: %q", rows[v.CursorRowIndex()].Msg.ID)
+	}
+}
+
 func TestCursorClamps(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	t1 := NewThread("t1", []*Message{msg("m1", 100)})

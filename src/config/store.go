@@ -113,6 +113,22 @@ func (s *Store) SetThemeVariant(name string) error {
 	return nil
 }
 
+// SetActiveView moves the active-view pointer (the view switch's
+// single write path, R8): the refresher re-reads the entry and
+// full-reloads the new query. The views themselves are config data -
+// this only selects among them.
+func (s *Store) SetActiveView(name string) error {
+	s.mu.Lock()
+	if _, ok := s.cfg.Views[name]; !ok {
+		s.mu.Unlock()
+		return fmt.Errorf("view %q: no such view", name)
+	}
+	s.cfg.ActiveView = name
+	s.mu.Unlock()
+	s.notify("view")
+	return nil
+}
+
 func (s *Store) SetViewQuery(name, q string) error {
 	if strings.TrimSpace(q) == "" {
 		return fmt.Errorf("view %q: query must not be empty", name)

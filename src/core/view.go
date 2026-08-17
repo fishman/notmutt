@@ -28,6 +28,16 @@ type View struct {
 	stagedGen uint64
 	rows      []Row // memoized flatten; rebuilt only when dirty
 	dirty     bool
+	// display filter (F): narrows the flattened rows at materialization.
+	// filterRows/filterIdx are parallel (filtered row -> full index);
+	// filterMap maps full index -> filtered index for the cursor. The
+	// filter is display-only: the thread set and the query are
+	// untouched, the maps re-derive on every dirty rebuild (R1 - the
+	// view stays a notmuch query).
+	filter     string
+	filterRows []Row
+	filterIdx  []int
+	filterMap  map[int]int
 	// mergeDepth/mergeDirty gate the dirty-mark during refresh fills
 	// (BeginMerge/EndMerge): merges inside an open batch never mark
 	// dirty individually, so the flatten stays stable across the
@@ -38,6 +48,20 @@ type View struct {
 
 func NewView(name, query string) *View {
 	return &View{Name: name, Query: query, staged: map[string][]TagOp{}}
+}
+
+// Reset drops the view's rows for a full re-load: a view switch renders
+// empty until the new query's first chunk lands, never the previous
+// view's rows. Staged ops survive - the buffer is keyed by message
+// identity, not position or view (R14).
+func (v *View) Reset() {
+	v.mu.Lock()
+	v.Threads = nil
+	v.rows = nil
+	v.dirty = true
+	v.cursorID = ""
+	v.lastRow = 0
+	v.mu.Unlock()
 }
 
 // NewThread builds a thread with a reference tree. msgs are sorted by
@@ -124,7 +148,65 @@ func (v *View) rowsLocked() []Row {
 			rows[i].StagedTags, _ = ResolveOps(msg.Tags, ops, v.groups)
 		}
 	}
-	return rows
+	if v.filter == "" {
+		v.filterRows, v.filterIdx, v.filterMap = nil, nil, nil
+		return rows
+	}
+	// the display filter: rows that match stay, the rest drop. The
+	// cursor stays on its message when the filter hides it - the
+	// mapping falls back to the first visible row.
+	full := rows
+	v.filterRows = v.filterRows[:0]
+	v.filterIdx = v.filterIdx[:0]
+	v.filterMap = make(map[int]int, len(full))
+	for i, r := range full {
+		if !rowMatches(r, v.filter) {
+			continue
+		}
+		v.filterMap[i] = len(v.filterRows)
+		v.filterRows = append(v.filterRows, r)
+		v.filterIdx = append(v.filterIdx, i)
+	}
+	return v.filterRows
+}
+
+// rowMatches is the filter predicate: a case-insensitive substring
+// over the row's index data - author, subject, and tag names (the F
+// filter's "text or other data that exists in the index view").
+func rowMatches(r Row, f string) bool {
+	msg := r.Msg
+	if msg == nil {
+		return false // ghost rows carry no index data
+	}
+	if strings.Contains(strings.ToLower(msg.Author), f) ||
+		strings.Contains(strings.ToLower(msg.Subject), f) {
+		return true
+	}
+	for _, tag := range msg.Tags {
+		if strings.Contains(tag, f) {
+			return true
+		}
+	}
+	return false
+}
+
+// SetFilter narrows the displayed rows to the ones matching the text
+// (case-insensitive substring over author, subject, and tags - the
+// live F filter). Display-only (R1): the query and the thread set are
+// untouched; merges keep feeding the view and re-derive the filter at
+// the next materialization.
+func (v *View) SetFilter(f string) {
+	v.mu.Lock()
+	v.filter = strings.ToLower(f)
+	v.dirty = true
+	v.mu.Unlock()
+}
+
+// Filter is the active display filter text (empty = no filter).
+func (v *View) Filter() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.filter
 }
 
 func flattenThread(t *Thread, collapsed bool) []Row {
@@ -277,15 +359,29 @@ func (v *View) SetCursor(id string) {
 func (v *View) SetCursorIndex(idx int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	// while a filter is active the caller steps in filtered space:
+	// store the full-space index
+	if v.filter != "" && v.filterIdx != nil && idx >= 0 && idx < len(v.filterIdx) {
+		idx = v.filterIdx[idx]
+	}
 	v.lastRow = idx
 }
 
 // CursorRowIndex returns the last known cursor row index - the
 // fallback CursorRow/CursorIndex use when the cursor id is empty or
-// gone (stub rows and post-merge drift).
+// gone (stub rows and post-merge drift). While a filter is active the
+// index is the filtered-space one (the row list the caller renders);
+// a cursor whose message the filter hides reports the first visible
+// row.
 func (v *View) CursorRowIndex() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.filter != "" && v.filterMap != nil {
+		if fi, ok := v.filterMap[v.lastRow]; ok {
+			return fi
+		}
+		return 0
+	}
 	return v.lastRow
 }
 

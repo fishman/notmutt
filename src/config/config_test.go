@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -19,6 +20,86 @@ func write(t *testing.T, content string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// TestDeriveAccountViews pins the per-account view derivation (R1:
+// virtual views are tag queries; the muttrc folder:/^<folder>\//
+// account-tag pattern as data). Every account - read-only included, a
+// view is a query, never a write (R2's rules govern writes only) -
+// owns a view over its account tag, numbered by sorted account name in
+// the vim index scheme (g1..gN), and the account tag respects the
+// folder override.
+func TestDeriveAccountViews(t *testing.T) {
+	dir := write(t, "")
+	os.WriteFile(filepath.Join(dir, "accounts.toml"), []byte(`
+[accounts.acme]
+from = "Ann <ann@example.com>"
+folder = "acme-folder"
+
+[accounts.atlas]
+from = "Ann <ann@atlas.example.com>"
+
+[accounts.gmail]
+from = "Ann <ann@gmail.example.com>"
+
+[accounts.toptal]
+from = "Ann <ann@toptal.example.com>"
+readonly = true
+`), 0600)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"acme-folder", "atlas", "gmail", "toptal"} {
+		v, ok := cfg.Views[tag]
+		if !ok {
+			t.Fatalf("view %q not derived", tag)
+		}
+		if v.Query != "tag:"+tag {
+			t.Fatalf("view %q query = %q", tag, v.Query)
+		}
+	}
+	if _, ok := cfg.Views["acme"]; ok {
+		t.Fatal("view must use the account folder, not the account name")
+	}
+	// g1..gN by sorted account name: acme-folder, atlas, gmail, toptal
+	for n, tag := range []string{"acme-folder", "atlas", "gmail", "toptal"} {
+		if act := cfg.Bindings["index"][fmt.Sprintf("g %d", n+1)]; act != "goto-"+tag {
+			t.Fatalf("g %d = %q, want goto-%s", n+1, act, tag)
+		}
+	}
+	if cfg.ActiveView != "inbox" {
+		t.Fatalf("active view = %q", cfg.ActiveView)
+	}
+}
+
+// TestDeriveAccountViewsUserOverride pins the precedence: a [view]
+// entry with the account's tag wins over the derivation, and a key the
+// user already bound is never replaced. Derivation is idempotent - the
+// second Load sees the merged accounts and no-op's on existing entries.
+func TestDeriveAccountViewsUserOverride(t *testing.T) {
+	dir := write(t, "")
+	os.WriteFile(filepath.Join(dir, "accounts.toml"), []byte(`
+[accounts.gmail]
+from = "Ann <ann@example.com>"
+
+[view.gmail]
+query = "tag:inbox"
+`), 0600)
+	os.WriteFile(filepath.Join(dir, "binds.toml"), []byte(`
+[schemes.vim.index]
+"g 1" = { fun = "cursor-top" }
+`), 0600)
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Views["gmail"].Query != "tag:inbox" {
+		t.Fatalf("user view must win: %+v", cfg.Views["gmail"])
+	}
+	if cfg.Bindings["index"]["g 1"] != "cursor-top" {
+		t.Fatalf("user key must win: %q", cfg.Bindings["index"]["g 1"])
+	}
 }
 
 func TestLoadValid(t *testing.T) {
@@ -402,6 +483,11 @@ func TestDefaultBindings(t *testing.T) {
 	// the default bindings ARE the embedded vim scheme (base.toml),
 	// context for context - the Go side derives, never re-declares
 	bs, _ := bindingsFromScheme(baseConfig.Schemes["vim"])
+	// the per-account goto keys derive from the accounts table, not the
+	// base scheme: drop them before the equality check
+	for key := range cfg.DerivedGKeys {
+		delete(cfg.Bindings["index"], key)
+	}
 	if !maps.EqualFunc(cfg.Bindings, bs, maps.Equal) {
 		t.Fatalf("default bindings = %v, want the embedded vim scheme %v", cfg.Bindings, baseConfig.Schemes["vim"])
 	}
@@ -417,7 +503,7 @@ func TestDefaultBindings(t *testing.T) {
 		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"c": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
-		"e": "edit", "a": "attach", "d": "detach",
+		"e": "edit", "a": "attach", "tab": "attach", "d": "detach",
 		"A": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help", "~": "log",

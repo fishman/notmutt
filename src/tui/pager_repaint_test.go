@@ -68,6 +68,29 @@ func show(s string) string {
 	return b.String()
 }
 
+// TestQuoteColorDepthMapping pins the quote color rules: depth 0
+// (plain body text) renders the normal text color - a plain mail never
+// shares a custom color with the first reply layer quote - and quote
+// depths 1-5 keep their own colors, five distinct layers.
+func TestQuoteColorDepthMapping(t *testing.T) {
+	cfg := config.Default()
+	st := ResolveStyles(cfg.Theme, cfg.Palette)
+	sg := sgrSetOf(st)
+	if got := quoteColor(sg, 0); got != sg.normal {
+		t.Fatal("depth 0 must render the normal text color")
+	}
+	if got := quoteColor(sg, 1); got == sg.normal {
+		t.Fatal("the first quote layer must be distinct from the normal text")
+	}
+	seen := map[sgr]bool{}
+	for d := 1; d <= 5; d++ {
+		seen[quoteColor(sg, d)] = true
+	}
+	if len(seen) != 5 {
+		t.Fatalf("quote depths 1-5 must keep 5 distinct colors, got %d", len(seen))
+	}
+}
+
 // TestRepaintPagerScroll pins the double-press regression: the pre-glow
 // pager moved a read-position indicator whose style-only change diffed
 // to ZERO emitted bytes (the indicator wrap was overridden by the

@@ -19,7 +19,13 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 	if err != nil {
 		t.Skip(err)
 	}
-	lines := RenderHTML(string(html), nil)
+	lines := RenderHTML(string(html), nil, 0)
+	narrow := RenderHTML(string(html), nil, 40)
+	for _, l := range narrow {
+		if cells := textWidth(l.Text); cells > 40 {
+			t.Fatalf("a narrow render must wrap at the requested width, got %d cells", cells)
+		}
+	}
 
 	lead := func(l core.Line) int { return len(l.Text) - len(strings.TrimLeft(l.Text, " ")) }
 	trim := func(l core.Line) string { return strings.TrimSpace(l.Text) }

@@ -199,11 +199,47 @@ type SendResult struct {
 // did NOT mark the thread read, and the TUI shows the popup instead of
 // switching to the pager - a stale preview reply (closed or
 // re-targeted meanwhile) drops in onThreadLoaded.
+// RenderMode selects the pager's view of a message: the plain parts,
+// the rendered html part, or the html part's raw source (the ctrl+u
+// key). The view falls back to what the message actually carries - the
+// html view of a plain-only message and the plain view of an html-only
+// message render the parts that exist; the Mime label of the reply
+// says what actually rendered.
+type RenderMode int
+
+const (
+	RenderPlain RenderMode = iota
+	RenderHTML
+	RenderSource
+)
+
 type ThreadLoaded struct {
 	ThreadID string
 	Preview  bool
-	Lines    []Line
-	Err      error
+	// RenderMode names the view the lines were rendered with (the
+	// toggle-render and source keys): the TUI compares it against its
+	// own mode so a same-thread reload with another view replaces the
+	// pager content instead of being dropped as a duplicate.
+	RenderMode RenderMode
+	// Headers echoes the open's header toggle (the h key): the full
+	// header block renders at the top of the plain view.
+	Headers bool
+	// Mime is the rendered content's mime label (text/plain or
+	// text/html) for the status bar - what is on screen, resolved
+	// against the message's actual parts, never the requested view.
+	Mime  string
+	Lines []Line
+	Err   error
+}
+
+// ImageFetched carries one remote image fetch (the render-images
+// remote mode): the bytes for the URL, or the error - the TUI attaches
+// them to the image lines. Data is an image blob, never message text
+// (F6).
+type ImageFetched struct {
+	URL  string
+	Data []byte
+	Err  error
 }
 
 // JobError surfaces a failed background job (R15 error surface); the

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	netmail "net/mail"
 	"os"
 	"path/filepath"
@@ -95,27 +96,29 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 // when the row carries no paths (index rows are thread summaries -
 // paths load with Thread, on open, R1). The thread's newest message is
 // the reply original: the overview line shows the newest date, and the
-// pager path always carries the real message.
-func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode, root string) *compose.State {
-	st := buildCompose(cfg, view, msg, mode, root)
-	if st != nil || msg == nil || msg.ThreadID == "" {
-		return st
+// pager path always carries the real message. Messages are tried in
+// recency order - a broken newest (unreadable file, a path that
+// vanished) falls through to the next parseable one. A non-nil error
+// means nothing could be built and the caller surfaces it (session
+// log + JobError) - a reply must never fail silently.
+func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode, root string) (*compose.State, error) {
+	if st := buildCompose(cfg, view, msg, mode, root); st != nil {
+		return st, nil
+	}
+	if msg == nil || msg.ThreadID == "" {
+		return nil, nil
 	}
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: msg.ThreadID})
 	if err != nil || rpl.Err != nil {
-		return nil
+		return nil, fmt.Errorf("thread %s: %v %v", msg.ThreadID, err, rpl.Err)
 	}
-	var newest *core.Message
+	sort.Slice(rpl.Msgs, func(i, j int) bool { return rpl.Msgs[i].Timestamp > rpl.Msgs[j].Timestamp })
 	for i := range rpl.Msgs {
-		if newest == nil || rpl.Msgs[i].Timestamp > newest.Timestamp {
-			m := rpl.Msgs[i]
-			newest = &m
+		if st := buildCompose(cfg, view, &rpl.Msgs[i], mode, root); st != nil {
+			return st, nil
 		}
 	}
-	if newest == nil {
-		return nil
-	}
-	return buildCompose(cfg, view, newest, mode, root)
+	return nil, fmt.Errorf("thread %s: no parseable message", msg.ThreadID)
 }
 
 func tagsOf(msg *core.Message) []string {

@@ -431,6 +431,41 @@ func TestOnConfig(t *testing.T) {
 	}
 }
 
+func TestOnConfigSwitchesView(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeWorker{}
+	fw.set("u", 1)
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1"}})
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{{ID: "m1", ThreadID: "t1"}})})
+	r := newRefresher(bus, fw, view, 0)
+	view.Reset()
+	if len(view.Threads) != 0 {
+		t.Fatalf("Reset must drop the view rows, %d threads left", len(view.Threads))
+	}
+	st := config.NewStore(config.Default())
+	if err := st.SetActiveView("archive"); err != nil {
+		t.Fatal(err)
+	}
+	r.onConfig(st, core.ConfigChanged{Section: "view"})
+	if r.view.Name != "archive" || r.view.Query != "tag:archive" {
+		t.Fatalf("view not switched: name %q query %q", r.view.Name, r.view.Query)
+	}
+	if q, _ := fw.lastQuery.Load().(string); q != "tag:archive" {
+		t.Fatalf("reload must query the new view, got %q", q)
+	}
+	readProgress(t, ch)
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ViewDiff); !ok {
+			t.Fatalf("expected ViewDiff after view switch, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ViewDiff after view switch")
+	}
+}
+
 func TestCycleQuiet(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}

@@ -77,10 +77,8 @@ func Run() error {
 		}
 	}
 
-	name := firstView(cfg)
-	view := core.NewView(name, cfg.Views[name].Query)
+	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
 	refresher := newRefresher(bus, worker, view, 0)
-	go refresher.cycle() // initial load streams in via ViewDiff; the TUI starts immediately
 
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)
@@ -113,9 +111,25 @@ func Run() error {
 	// transforms, and the TUI attaches the lines on ThreadLoaded (R13
 	// two-step - content loads on open only). The preview variant (the
 	// p key) skips the read-marking; the TUI keeps the index surface
-	// for the popup.
-	tui.SetOpenHandler(func(threadID string, preview bool) {
-		go openThread(worker, bus, threadID, preview)
+	// for the popup. The headers flag is the h key: the render includes
+	// the full header block.
+	tui.SetOpenHandler(func(threadID string, preview, headers bool, width int) {
+		go openThread(worker, bus, threadID, preview, core.RenderPlain, headers, width)
+	})
+
+	// the render toggle (the v key in the pager) and the source view
+	// (ctrl+u): the same open path with the other view - the worker
+	// refetches the thread (the open job is the render owner, R13; the
+	// TUI never renders)
+	tui.SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, width int) {
+		go openThread(worker, bus, threadID, false, mode, headers, width)
+	})
+
+	// the remote image fetch (the render-images remote mode): http(s)
+	// srcs fetch ONLY on the key, capped and off the render path
+	// (imgfetch.go); the TUI publishes the url through this seam
+	tui.SetImageFetchHandler(func(url string) {
+		go fetchImage(bus, url)
 	})
 
 	// the signatures root (spec section 9): ONE path, both halves of
@@ -134,14 +148,19 @@ func Run() error {
 	// registrations (later, per-plugin load order) - both land in the
 	// registry; the TUI reads it through the seam
 	loadConfigAttachCommands(cfg)
-	tui.SetAttachCommandSource(func() map[string][]string { return attachCommandSnapshot() })
+	tui.SetAttachCommandSource(func() []tui.AttachCommand { return attachCommandSnapshot() })
 
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches
 	// the tab
 	tui.SetReplyHandler(func(msg *core.Message, mode string) {
 		go func() {
-			st := replyPrefill(cfg, view, worker, msg, mode, root)
+			st, err := replyPrefill(cfg, view, worker, msg, mode, root)
+			if err != nil {
+				diag.Warn("reply", "err", err.Error())
+				bus.Publish(core.JobError{Job: "reply", Err: err})
+				return
+			}
 			if st == nil {
 				return
 			}
@@ -154,6 +173,12 @@ func Run() error {
 	// closes the tab or keeps it failed
 	tui.SetSendHandler(func(st compose.State) {
 		go sendJob(bus, worker, view, cfg, root, st)
+	})
+
+	// draft: the abort confirm's d key - a local write, runs inline;
+	// the error keeps the composition open
+	tui.SetDraftHandler(func(st compose.State) error {
+		return saveDraft(bus, worker, view, cfg, root, st)
 	})
 
 	// address completion: the compose Tab trigger (lazy, debounced in
@@ -259,7 +284,7 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // the refresh cycle reconciles it into the view). The tag failure
 // keeps the thread open - the fetch already succeeded - and surfaces
 // as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) {
+func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
@@ -269,13 +294,13 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool) 
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	lines, err := mail.RenderThread(rpl.Msgs)
+	lines, mime, err := mail.RenderThread(rpl.Msgs, mode, headers, width)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Lines: lines})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, RenderMode: mode, Headers: headers, Mime: mime, Lines: lines})
 	if !preview {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,
@@ -342,6 +367,12 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 	}
 	watch := time.NewTicker(pollWatchInterval)
 	defer watch.Stop()
+	// the initial load runs in this event-loop goroutine: cycle and
+	// onConfig are serialized by construction - the store's first view
+	// change cannot race the startup walk (the startup caller used to
+	// launch cycle() unsynchronized; goto keys made the store a live
+	// writer, so the initial load moved in here)
+	r.cycle()
 	for {
 		select {
 		case <-ctx.Done():
@@ -561,13 +592,6 @@ func cachePath() string {
 		return "mime-cache.db"
 	}
 	return filepath.Join(base, "notmutt", "mime-cache.db")
-}
-
-func firstView(cfg config.Config) string {
-	for name := range cfg.Views {
-		return name
-	}
-	return ""
 }
 
 // pollSpec is the poll command's run mode: a fixed (from, to] window
@@ -807,6 +831,14 @@ func validateBindings(cfg *config.Config) error {
 	for context, km := range cfg.Bindings {
 		for key, action := range km {
 			if tui.Actions[context][action] {
+				continue
+			}
+			if strings.HasPrefix(action, "goto-") {
+				// a view switch: the view name rides in the action
+				// (goto-<view>; the per-account keys derive at load)
+				if _, ok := cfg.Views[strings.TrimPrefix(action, "goto-")]; !ok {
+					return fmt.Errorf("bindings.%s: key %q: %q: no such view", context, key, action)
+				}
 				continue
 			}
 			if context != "index" {

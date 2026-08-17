@@ -153,6 +153,11 @@ fuzzed or tested, not trusted.
 7. dbus watcher value handling with malformed variant/signal corpus
    (build-tag gated, F11)
 8. MIME cache payload parse with corrupt/truncated corpus (R13, F5)
+9. HTML mail renderer (x/net/html parse + CSS cascade + flow walk;
+   panic-freedom and line-budget properties) - landed with the
+   renderer, caught a byte-prefix slice overrun in the hard-split path
+10. CSS declarations/stylesheet parser (declaration folding, cascadia
+    selector parse, color normalization)
 
 ## Agent rules (mirrors AGENTS.md)
 

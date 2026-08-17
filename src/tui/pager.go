@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"notmutt/core"
@@ -26,6 +28,10 @@ type pager struct {
 	threadID   string
 	lines      []core.Line
 	styled     []string // styled text per line; "" = not styled yet
+	doc        []string // the expanded document: image lines span Image.Rows rows
+	imgFrom    []int    // per doc row: the source line index
+	imgRow     []bool   // per doc row: an image expansion row (no text)
+	images     bool     // the render-images toggle: expand image lines
 	styleKey   string   // the style set the cache was built with (sgr opens)
 	width      int
 	styleWidth int // the width the cache was styled at (0 = none)
@@ -48,33 +54,123 @@ func (p *pager) setSize(w, h int, st Styles) {
 	if key := st.sgr.pagerKey; w != p.styleWidth || key != p.styleKey {
 		p.styleWidth, p.styleKey = w, key
 		clear(p.styled)
+		clear(p.doc)
 	}
 	p.ensureStyled()
+}
+
+// relayout rebuilds the expanded document: an image line (only when
+// images is on AND the image has decoded dims) spans Image.Rows empty
+// rows - the terminal paint fills them - every other line maps 1:1.
+// The per-line styled cache survives: doc rows resolve to lines via
+// imgFrom, so the toggle and a decode-gained resize never re-style.
+func (p *pager) relayout() {
+	n := len(p.lines)
+	if p.images {
+		for _, l := range p.lines {
+			if l.Image != nil && l.Image.Rows > 0 {
+				n += l.Image.Rows - 1
+			}
+		}
+	}
+	doc := make([]string, n)
+	from := make([]int, n)
+	isImg := make([]bool, n)
+	j := 0
+	for i := range p.lines {
+		expanded := p.images && p.lines[i].Image != nil && p.lines[i].Image.Rows > 0
+		rows := 1
+		if expanded {
+			rows = p.lines[i].Image.Rows
+		}
+		for r := 0; r < rows; r++ {
+			from[j] = i
+			isImg[j] = expanded
+			j++
+		}
+	}
+	p.doc, p.imgFrom, p.imgRow = doc, from, isImg
+	p.vp.setLines(doc)
+	p.vp.clamp()
 }
 
 // ensureStyled styles the visible window plus a margin above and
 // below, so small scroll movements never touch the styled lines; lines
 // outside the range stay unstyled until scrolled into it. The styled
 // slice doubles as the viewport's content, so the clamp and window
-// math see the full document.
+// math see the full document. Image expansion rows carry no text and
+// are never styled - the terminal paint fills them.
 func (p *pager) ensureStyled() {
+	if p.doc == nil {
+		p.relayout()
+	}
 	if len(p.styled) != len(p.lines) {
 		p.styled = make([]string, len(p.lines))
 	}
-	first := p.vp.offset - pagerStyleMargin
-	if first < 0 {
-		first = 0
-	}
-	last := p.vp.offset + p.vp.height + pagerStyleMargin
-	if last > len(p.lines) {
-		last = len(p.lines)
-	}
+	first := max(0, p.vp.offset-pagerStyleMargin)
+	last := min(len(p.doc), p.vp.offset+p.vp.height+pagerStyleMargin)
 	for i := first; i < last; i++ {
-		if p.styled[i] == "" {
-			p.styled[i] = p.styleLine(p.lines[i])
+		if p.imgRow[i] {
+			continue
 		}
+		li := p.imgFrom[i]
+		if p.styled[li] == "" {
+			p.styled[li] = p.styleLine(p.lines[li])
+		}
+		p.doc[i] = p.styled[li]
 	}
-	p.vp.setLines(p.styled)
+	p.vp.setLines(p.doc)
+}
+
+// setImages switches the image expansion (the render-images key): on
+// expands decoded image lines to Image.Rows rows, off collapses them
+// to their single Alt row.
+func (p *pager) setImages(on bool) {
+	if p.images == on {
+		return
+	}
+	p.images = on
+	p.relayout()
+}
+
+// imgBlock is one visible image block: the source line, its doc row
+// (first expanded row - the paint crop anchor), and the cell dims
+// (0 until the decode runs).
+type imgBlock struct {
+	line int
+	doc  int
+	cols int
+	rows int
+}
+
+// visibleImages lists the window's image lines, one block per image:
+// the expanded block (its rows walked back to the first doc row for
+// the anchor) or the collapsed Alt row (Rows 0 - listed as the
+// decoder's trigger, painted as text). The dims may still be 0 - the
+// decode pass fills them.
+func (p *pager) visibleImages() []imgBlock {
+	if p.imgRow == nil {
+		return nil
+	}
+	var out []imgBlock
+	seen := map[int]bool{}
+	for i := p.vp.offset; i < len(p.imgRow) && i < p.vp.offset+p.vp.height; i++ {
+		li := p.imgFrom[i]
+		if seen[li] {
+			continue
+		}
+		l := &p.lines[li]
+		if l.Image == nil {
+			continue
+		}
+		seen[li] = true
+		doc := i
+		for doc > 0 && p.imgFrom[doc-1] == li {
+			doc--
+		}
+		out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows})
+	}
+	return out
 }
 
 // styleLine maps one structured line to styled text: subject ->
@@ -84,6 +180,18 @@ func (p *pager) ensureStyled() {
 // slot-reservation rule - alignment never shifts per line). The
 // styles' SGR fragments are precomputed (p.st.sgr), so a line is
 // plain string joins, never a Style.Render.
+//
+// quoteColor maps the line's quote depth to the style table: depth 0
+// (plain body text) is the normal text color - a plain mail must not
+// share a custom color with the first reply layer quote; depths 1-5
+// keep their own colors (quoted0-4, the mutt surface).
+func quoteColor(sg sgrSet, quoted int) sgr {
+	if quoted <= 0 {
+		return sg.normal
+	}
+	return sg.pagerQuoted[quoted-1]
+}
+
 func (p *pager) styleLine(l core.Line) string {
 	sg := p.st.sgr
 	var g sgr
@@ -93,7 +201,7 @@ func (p *pager) styleLine(l core.Line) string {
 	case core.LineHeader:
 		g = sg.pagerDef
 	case core.LineBody:
-		g = sg.pagerQuoted[l.Quoted]
+		g = quoteColor(sg, l.Quoted)
 	case core.LineSignature:
 		g = sg.pagerSig
 	case core.LineAttachment:
@@ -103,11 +211,95 @@ func (p *pager) styleLine(l core.Line) string {
 	default:
 		g = sg.normal
 	}
-	text := g.render(l.Text)
+	// the line's default background (the html view's mail-declared
+	// body color) covers the pad and the blank rows; a trailing run
+	// background (a colored block) extends over the pad too
+	outer := g
+	if l.Bg != "" {
+		outer.open += "\x1b[48;2;" + hexRGB(l.Bg) + "m"
+	}
+	var text string
+	if len(l.Runs) > 0 {
+		text = p.styleRuns(l.Runs)
+		if last := l.Runs[len(l.Runs)-1]; last.Bg != "" {
+			outer.open += "\x1b[48;2;" + hexRGB(last.Bg) + "m"
+		}
+	} else {
+		text = outer.render(l.Text)
+	}
 	if p.width > 0 {
-		text = padRowSGR(text, p.width, g)
+		text = padRowSGR(text, p.width, outer)
 	}
 	return text
+}
+
+// styleRuns joins the run fragments into one styled string: each run
+// emits its own SGR open + text, and a reset closes a styled run only
+// (the open of an unstyled run would be redundant). padRowSGR re-applies
+// the line's base style after every reset, so the quoted/header color
+// covers the gaps and the pad; a trailing background run closes with a
+// reset so its bg does not leak into the pad region.
+func (p *pager) styleRuns(runs []core.Run) string {
+	var b strings.Builder
+	for i, r := range runs {
+		if i > 0 {
+			prev := runs[i-1]
+			if prev.Fg != "" || prev.Bg != "" || prev.Attrs != 0 {
+				b.WriteString("\x1b[0m")
+			}
+		}
+		if open := runSGR(r); open != "" {
+			b.WriteString(open)
+		}
+		b.WriteString(r.Text)
+	}
+	if last := runs[len(runs)-1]; last.Bg != "" {
+		b.WriteString("\x1b[0m")
+	}
+	return b.String()
+}
+
+// runSGR maps a run's style to its SGR open (truecolor fg/bg, the attr
+// bits); "" when the run carries no style, so the line style shows
+// through.
+func runSGR(r core.Run) string {
+	var b strings.Builder
+	if h := hexRGB(r.Fg); h != "" {
+		b.WriteString("\x1b[38;2;")
+		b.WriteString(h)
+		b.WriteString("m")
+	}
+	if h := hexRGB(r.Bg); h != "" {
+		b.WriteString("\x1b[48;2;")
+		b.WriteString(h)
+		b.WriteString("m")
+	}
+	if r.Attrs&core.AttrBold != 0 {
+		b.WriteString("\x1b[1m")
+	}
+	if r.Attrs&core.AttrItalic != 0 {
+		b.WriteString("\x1b[3m")
+	}
+	if r.Attrs&core.AttrUnderline != 0 {
+		b.WriteString("\x1b[4m")
+	}
+	if r.Attrs&core.AttrReverse != 0 {
+		b.WriteString("\x1b[7m")
+	}
+	return b.String()
+}
+
+// hexRGB parses a #rrggbb color to its "r;g;b" channel form; "" for
+// anything unparseable - a bad color drops, never reaches the terminal.
+func hexRGB(hex string) string {
+	if len(hex) != 7 || hex[0] != '#' {
+		return ""
+	}
+	n, err := strconv.ParseUint(hex[1:], 16, 32)
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("%d;%d;%d", n>>16&255, n>>8&255, n&255)
 }
 
 // scrollDown/scrollUp move the window by n lines (j / k / a count).

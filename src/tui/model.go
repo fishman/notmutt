@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"image"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,8 +47,9 @@ var Actions = map[string]map[string]bool{
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
-		"open": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
-		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
+		"filter": true,
+		"reply":  true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
@@ -56,7 +58,8 @@ var Actions = map[string]map[string]bool{
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
-		"back": true, "quit": true,
+		"back": true, "quit": true, "toggle-images": true,
+		"toggle-render": true, "show-source": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
@@ -95,9 +98,31 @@ type Model struct {
 	height     int
 	mode       string // "index" default; "pager" while a thread is open
 	pager      *pager
-	job        string
-	progress   core.Progress
-	progressOn bool
+	// renderMode is the pager's requested view (the toggle-render and
+	// source keys): the plain parts, the rendered html part, or the raw
+	// html source. renderMime is the last reply's mime label for the
+	// status bar - what actually rendered, resolved against the
+	// message's parts. showHeaders is the h key: the full header block
+	// renders at the top of the plain view. The mode/headers mirrors
+	// the last ThreadLoaded - a same-thread reload with another view
+	// replaces the pager content.
+	renderMode  core.RenderMode
+	renderMime  string
+	showHeaders bool
+	// imgProto is the terminal's image protocol ("" = unsupported:
+	// images stay collapsed); imgCache holds the decoded+scaled window
+	// images; painted the rects the terminal currently holds (the
+	// paint-diff source). imgMode is the render-images cycle (0 off,
+	// 1 local - cid:/data: bytes only, 2 remote - http(s) srcs fetch
+	// on the key); imgFetching single-flights the in-flight fetches.
+	imgProto    string
+	imgCache    map[*core.Image]image.Image
+	painted     map[*core.Image]cellRect
+	imgMode     int
+	imgFetching map[string]bool
+	job         string
+	progress    core.Progress
+	progressOn  bool
 	// statusMsg is the status line's last log entry (the R4 send
 	// results, the R8 lua results, job errors, lock timeouts):
 	// logEntry is the single write path, an entry survives until the
@@ -214,9 +239,6 @@ type Model struct {
 	// changes, so scroll position survives edits and tab switches.
 	previewPager   *pager
 	previewContent string
-	// fuzzy is the selector popup (account/signature); non-nil
-	// renders the popup frame and captures the fuzzy context.
-	fuzzy *fuzzy
 	// help is the ? overlay (a viewport over the binding rows - the
 	// pager widget): the pager scroll keys navigate it, any other
 	// keypress closes it (the check runs before dispatch, so the
@@ -232,9 +254,13 @@ type Model struct {
 	preview       bool
 	previewThread string
 	previewTitle  string
-	// dialogue is the modal prompt box; non-nil captures the dialogue
-	// keys in every mode
-	dialogue *dialogue
+	// dialogue is the modal prompt box (R4); non-nil captures the
+	// dialogue keys in every mode. The concrete type decides the keys
+	// and the frame (a text/confirm/error box, a list/file chooser).
+	dialogue dialogue
+	// fileDir is the built-in chooser's current directory (the file
+	// dialogue descends into directories and comes back up on esc)
+	fileDir string
 	// opened tracks every attached dialogue's TabID: the bus's
 	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
 	// closed dialogue can never resurrect on a later keypress.
@@ -262,7 +288,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgProto: detectImageProtocol(), imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
 }
 
 func (m Model) Init() Cmd {
@@ -296,6 +322,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 	switch msg := msg.(type) {
 	case WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.resetImages() // the cell math changed: dims and rects are stale
 		if m.pager != nil {
 			// the keyhint bar (R9) and the status row sit below the
 			// pager window (height-2). Re-size and re-style even in
@@ -321,14 +348,13 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.logView.setSize(m.width, h)
 		}
 	case KeyPressMsg:
-		// the picker outranks the prompt: the attach '?' picker arms the
-		// attach prompt (input = "@name"), so both can be live at once
-		if m.fuzzy != nil {
-			m.fuzzyKey(msg, m.bindings["fuzzy"])
-			return m, nil
-		}
+		// the active dialogue owns the keys (R4): it can close (nil),
+		// swap itself out (a chooser over its prompt), or hand back a
+		// Cmd (an attach command exec, the addr harvest tick)
 		if m.dialogue != nil {
-			return m.dialogueKey(msg)
+			d, cmd := m.dialogue.handle(&m, msg)
+			m.dialogue = d
+			return m, cmd
 		}
 		if m.logOpen {
 			// the log overlay borrows the pager keys like the help: the
@@ -398,7 +424,11 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		// the context leaves unbound. A counted "g" keeps its jump
 		// semantic (12g = row 12) - the chain data never sees it.
 		r := msg.Text
-		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' {
+		cand := m.pendingPrefix + " " + r
+		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' &&
+			!(km[cand] != "" || chainContinuation(km, cand)) {
+			// an armed chain gets its digit (g 1 is a chain key);
+			// otherwise digits accumulate a count
 			m.pendingPrefix = ""
 			m.count += r
 			return m, nil
@@ -507,9 +537,11 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				}
 			}
 		} else {
-			for i := range m.tabs { // the tab may have closed meanwhile
+			// the chooser failed: the error box offers a retry (y
+			// re-runs the command - the tab may have closed meanwhile)
+			for i := range m.tabs {
 				if m.tabs[i].ID == msg.tabID {
-					m.dialogue = &dialogue{kind: dialogueInput, field: "attach", label: "attach path: ", input: "@" + msg.name}
+					m.dialogue = &errorDialogue{label: "attach failed: " + msg.name, output: msg.err.Error(), name: msg.name}
 					break
 				}
 			}
@@ -569,6 +601,13 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 		case core.ThreadLoaded:
 			m.onThreadLoaded(e)
+		case core.ImageFetched:
+			// a fetch reply for the remote images mode; stale replies
+			// (the mode cycled away meanwhile) drop - network data
+			// never feeds the decode outside the remote mode
+			if m.imgMode == 2 {
+				m.attachFetched(e)
+			}
 		case core.ComposeOpened:
 			m.onComposeOpened(e)
 		case core.SendResult:
@@ -658,6 +697,16 @@ func (m *Model) anySending() bool {
 // here too - the chain machinery dispatches the completed chain's
 // action, and "?" opens the help overlay.
 func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
+	// a view switch (goto-<view>, R9 data-first): the store is the
+	// single write path (R8); the refresher re-reads the active view
+	// and re-fetches. Unknown views are a no-op - load validation
+	// already rejected them at startup.
+	if strings.HasPrefix(action, "goto-") {
+		if m.st != nil {
+			m.st.SetActiveView(strings.TrimPrefix(action, "goto-"))
+		}
+		return m, nil
+	}
 	// navigation defers its paint to the frame tick: paint=false
 	// gates the render (ShouldRender), renderDue lets the tick re-arm
 	// it, and the tail arms a single tick
@@ -682,6 +731,14 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferred = true
 	case "open":
 		if m.mode == "index" {
+			m.openCursorThread()
+		}
+	case "open-headers":
+		// the h key: flip the header-block toggle and open - the
+		// request rides the same open seam, the flag adopts only
+		// when the reply lands (the onThreadLoaded guard)
+		if m.mode == "index" {
+			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
 		}
 	case "preview":
@@ -784,7 +841,43 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "back":
 		if m.mode == "pager" {
+			m.clearImageRects() // before the frame: the index renders over the pager area
 			m.mode = "index"
+		}
+	case "toggle-images":
+		// the privacy gate: images render ONLY on this key (no
+		// protocol - no unsupported terminal - keeps the Alt row). The
+		// cycle: off -> local (cid:/data: bytes only, never the
+		// network) -> remote (http(s) srcs fetch, gated by this key)
+		// -> off.
+		if m.mode == "pager" && m.pager != nil && m.imgProto != "" {
+			m.setImgMode((m.imgMode + 1) % 3)
+			deferPaint()
+			deferred = true
+		}
+	case "toggle-render":
+		// the html/txt toggle: the app re-opens the thread with the
+		// other html-part view and publishes a fresh ThreadLoaded
+		// (the render always runs on the async open job, R13). The
+		// flag flips only when the reply lands - the reply's mode
+		// must differ from the CURRENT content's to replace it. The
+		// source view (ctrl+u) is not in the cycle - v leaves it.
+		if m.mode == "pager" && m.pager != nil {
+			mode := core.RenderHTML
+			if m.renderMode == core.RenderHTML {
+				mode = core.RenderPlain
+			}
+			onToggleRender(pagerThreadID(m.pager), mode, m.showHeaders, m.width)
+			deferPaint()
+			deferred = true
+		}
+	case "show-source":
+		// the raw html source view (ctrl+u): re-opens the thread in
+		// the source view unless it is already showing it.
+		if m.mode == "pager" && m.pager != nil && m.renderMode != core.RenderSource {
+			onToggleRender(pagerThreadID(m.pager), core.RenderSource, m.showHeaders, m.width)
+			deferPaint()
+			deferred = true
 		}
 	case "reply":
 		m.openReply("reply")
@@ -834,7 +927,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		})
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
-			m.dialogue = &dialogue{kind: dialogueInput, field: "attach", label: "attach path: "}
+			m.dialogue = &textDialogue{field: "attach", label: "attach path: "}
 		}
 	case "detach":
 		t := m.composeTab()
@@ -856,7 +949,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				m.composeTab().Phase = compose.PhaseEditing
 			}
 			st := m.composeTab()
-			d := &dialogue{kind: dialogueInput, field: strings.TrimPrefix(action, "edit-")}
+			d := &textDialogue{field: strings.TrimPrefix(action, "edit-")}
 			switch d.field {
 			case "from":
 				d.label, d.input = "From: ", st.From
@@ -871,6 +964,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			case "replyto":
 				d.label, d.input = "Reply-To: ", strings.Join(st.ReplyTo, ", ")
 			}
+			d.cur = len(d.input)
 			m.dialogue = d
 		}
 	case "account":
@@ -905,7 +999,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.closeComposeTab(m.tabIdx - 1)
 		default:
 			st.Phase = compose.PhaseAborting
-			m.dialogue = &dialogue{kind: dialogueConfirm, label: "Abort composition?", action: "abort"}
+			m.dialogue = &confirmDialogue{label: "Abort composition?", action: "abort", draft: true}
 		}
 	case "help":
 		m.help = true
@@ -929,7 +1023,16 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "command":
 		// the command line: ": lua <code>" runs a Lua chunk, plugin
 		// action names dispatch to their registered functions (R8)
-		m.dialogue = &dialogue{kind: dialogueInput, field: "command", label: ": "}
+		m.dialogue = &textDialogue{field: "command", label: ": "}
+	case "filter":
+		// the live display filter (F): the prompt edits the view's
+		// filter on every key, esc restores the pre-open text
+		if m.mode == "index" {
+			d := &textDialogue{field: "filter",
+				label: "filter: ", input: m.view.Filter(), saved: m.view.Filter()}
+			d.cur = len(d.input)
+			m.dialogue = d
+		}
 	default:
 		// a plugin-registered action (R8): the app runs it in the
 		// plugin's VM with the cursor thread as msg() context
@@ -1042,14 +1145,25 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.mode, m.pager = "index", nil
 		return
 	}
-	if e.ThreadID != pagerThreadID(m.pager) {
+	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders {
+		m.renderMode, m.showHeaders = e.RenderMode, e.Headers
 		m.pager = newPager(e.ThreadID, e.Lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
 		m.pager.setSize(w, h, m.styles)
 	}
+	m.renderMime = e.Mime
 	m.mode = "pager"
+	// the render-images mode survives an open: a fresh pager re-arms
+	// the expansion and re-triggers the visible remote fetches (the
+	// decode runs per frame in renderBase)
+	if m.imgMode != 0 {
+		m.pager.setImages(true)
+		if m.imgMode == 2 {
+			m.fetchVisibleImages()
+		}
+	}
 	m.legendPending = true
 }
 
@@ -1079,9 +1193,8 @@ func (m *Model) onSendResult(e core.SendResult) {
 					m.tabs[i].Output = e.Err.Error()
 				}
 				m.logEntry("send failed", true)
-				m.dialogue = &dialogue{
-					kind: dialogueError, label: "send failed",
-					input: m.tabs[i].Output, tabID: e.TabID,
+				m.dialogue = &errorDialogue{
+					label: "send failed", output: m.tabs[i].Output, tabID: e.TabID,
 				}
 			}
 			break
@@ -1102,59 +1215,96 @@ func (m *Model) activateTab(id string) {
 	}
 }
 
-// addrLookup resolves a Tab completion trigger: a loaded corpus opens
-// the picker immediately; otherwise the lazy harvest fires after the
-// debounce (single-flight - repeated triggers never pile up requests).
-func (m *Model) addrLookup() Cmd {
+// addrLookup resolves a Tab completion trigger: a loaded corpus swaps
+// the completion picker over the prompt; otherwise the lazy harvest
+// fires after the debounce (single-flight - repeated triggers never
+// pile up requests). The prompt stays when the picker is gated.
+func (m *Model) addrLookup() (dialogue, Cmd) {
 	if len(m.addrs) > 0 {
-		m.openAddrPicker()
-		return nil
+		if p := m.addrPicker(); p != nil {
+			return p, nil
+		}
+		return m.dialogue, nil
 	}
 	if m.addrPending {
-		return nil
+		return m.dialogue, nil
 	}
 	m.addrPending = true
 	m.addrReqAt = time.Now()
-	return addrReqTickCmd()
+	return m.dialogue, addrReqTickCmd()
 }
 
 // onAddressIndex stores the harvested sender corpus and resolves a
-// pending trigger: if an address field is still open with at least 4
-// characters, the picker opens now with the corpus (the lazy
-// trigger's pickup).
+// pending trigger: if an address field is still open, the picker swaps
+// over it now with the corpus (the lazy trigger's pickup; addrPicker
+// owns the completion gate).
 func (m *Model) onAddressIndex(e core.AddressIndex) {
 	m.addrs = e.Addrs
 	m.addrPending = false
 	m.addrSeen = true
-	if m.fuzzy == nil && m.dialogue != nil && m.dialogue.kind == dialogueInput &&
-		isAddrField(m.dialogue.field) && len(m.dialogue.input) >= 4 {
-		m.openAddrPicker()
+	if p := m.addrPicker(); p != nil {
+		m.dialogue = p
 	}
 }
 
-// openAddrPicker opens the address completion picker: the corpus
-// entries are pre-filtered by the field's current input (one pass -
-// the picker then narrows as the user keeps typing), and the picker
-// query starts at the input so the filter bar reads it back.
-func (m *Model) openAddrPicker() {
-	if m.dialogue == nil || m.dialogue.kind != dialogueInput || !isAddrField(m.dialogue.field) {
-		return
+// addrSection splits an address field's input at the edit cursor into
+// the fixed head, the section under completion, and the fixed tail:
+// the section is the text between the surrounding commas (the field
+// holds several senders, one per comma - SplitAddrs; the picker
+// completes only the section the cursor is in, never the whole line).
+// head keeps the leading "..., " prefix, tail the trailing ", ..."
+// suffix; both empty when absent.
+func addrSection(input string, cur int) (head, section, tail string) {
+	if cur > len(input) {
+		cur = len(input)
 	}
-	q := m.dialogue.input
+	prev := strings.LastIndex(input[:cur], ",")
+	next := strings.Index(input[cur:], ",")
+	end := len(input)
+	if next >= 0 {
+		end = cur + next
+	}
+	section = strings.TrimSpace(input[prev+1 : end])
+	if prev >= 0 {
+		head = strings.TrimSpace(input[:prev+1])
+	}
+	if next >= 0 {
+		tail = strings.TrimSpace(input[cur+next+1:])
+	}
+	return head, section, tail
+}
+
+// addrPicker builds the address completion picker over the current
+// text dialogue (its back reference), or nil when gated: the active
+// dialogue must be an address field, and the section under completion
+// at least 4 characters. The corpus entries are pre-filtered by the
+// section (one pass - the picker then narrows as the user keeps
+// typing), and the picker query starts at the section so the filter
+// bar reads it back.
+func (m *Model) addrPicker() dialogue {
+	d, ok := m.dialogue.(*textDialogue)
+	if !ok || !isAddrField(d.field) {
+		return nil
+	}
+	_, q, _ := addrSection(d.input, d.cur)
+	if len(q) < 4 {
+		return nil
+	}
 	var disp []string
 	for _, a := range m.addrs {
-		d := a.Addr
+		addr := a.Addr
 		if a.Name != "" {
-			d = a.Name + " <" + a.Addr + ">"
+			addr = a.Name + " <" + a.Addr + ">"
 		}
-		disp = append(disp, d)
+		disp = append(disp, addr)
 	}
 	entries := make([]string, 0, len(disp))
 	for _, mt := range sfuzzy.Find(q, disp) {
 		entries = append(entries, disp[mt.Index])
 	}
-	m.fuzzy = newFuzzy("address", "address:", entries)
-	m.fuzzy.query = q
+	f := newFuzzy("address", "address:", entries)
+	f.query = q
+	return &listDialogue{f: f, back: d}
 }
 
 // isAddrField reports whether the dialogue field carries addresses -
@@ -1208,11 +1358,13 @@ func (m *Model) cursorThreadID() (tid, subject string) {
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the
-// app loads it, marks it read, and publishes ThreadLoaded).
+// app loads it, marks it read, and publishes ThreadLoaded). The
+// headers flag is the h toggle: the open renders the full header
+// block.
 func (m *Model) openCursorThread() {
 	tid, _ := m.cursorThreadID()
 	if tid != "" {
-		onOpen(tid, false)
+		onOpen(tid, false, m.showHeaders, m.width)
 	}
 }
 
@@ -1237,7 +1389,7 @@ func (m *Model) previewCursorThread() {
 	m.pager = newPager("", nil)
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
-	onOpen(tid, true)
+	onOpen(tid, true, m.showHeaders, m.width)
 }
 
 // previewKey drives the popup: the pager scroll actions scroll the
@@ -1257,7 +1409,7 @@ func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 		} else {
 			m.pager = nil
 		}
-		onOpen(tid, false)
+		onOpen(tid, false, m.showHeaders, m.width)
 		return m, nil
 	}
 	switch actionForKey(msg, m.bindings["pager"]) {
@@ -1758,31 +1910,18 @@ func (m Model) View() string {
 	return m.frameCache.s
 }
 
-// textCursor reports the live text-input cell (x, y) when an input is
-// open: the fuzzy picker's matcher row (the query is the input while
-// the picker is open), else the dialogue input row. The v2 renderer
-// shows the terminal cursor only when the view declares it; the
-// dialogue box splices 3 rows above the keyhint bar (the input row is
-// the box's content row) and the matcher row is the second frame
-// line.
+// textCursor reports the live text-input cell (x, y) when the active
+// dialogue has an editable text row: the list chooser's matcher row
+// (the query is the input while the picker is open), else the prompt's
+// input row. The v2 renderer shows the terminal cursor only when the
+// view declares it; the prompt box splices 3 rows above the keyhint
+// bar (the input row is the box's content row) and the matcher row is
+// the second frame line.
 func (m Model) textCursor() (int, int, bool) {
-	if m.fuzzy != nil {
-		x := len(m.fuzzy.title) + 1 + len(m.fuzzy.query)
-		if x > m.width-1 {
-			x = m.width - 1
-		}
-		return x, 1, true
+	if m.dialogue == nil {
+		return 0, 0, false
 	}
-	if m.dialogue != nil && m.dialogue.kind == dialogueInput && m.height >= 5 && m.width >= 3 {
-		inner := m.width - 2
-		budget := inner - len(m.dialogue.label)
-		if budget < 0 {
-			budget = 0
-		}
-		x := 1 + len(m.dialogue.label) + min(runewidth.StringWidth(m.dialogue.input), budget)
-		return x, m.height - 4, true
-	}
-	return 0, 0, false
+	return m.dialogue.cursor(&m)
 }
 
 // render builds the full frame. The frame must NOT end with a newline: the
@@ -1791,6 +1930,15 @@ func (m Model) textCursor() (int, int, bool) {
 // and shifts every line - the diff then matches nothing and the whole page
 // repaints on every keypress.
 func (m Model) render() string {
+	if m.dialogue != nil {
+		// the dialogue renders its own frame: a box spliced over the
+		// base frame, or the full-frame list chooser
+		return m.dialogue.render(&m)
+	}
+	return m.renderBase()
+}
+
+func (m Model) renderBase() string {
 	if m.help {
 		return m.renderHelp()
 	}
@@ -1801,6 +1949,7 @@ func (m Model) render() string {
 		return m.renderCompose()
 	}
 	if m.mode == "pager" && m.pager != nil {
+		m.prepareImages() // decode-gained expansion lands in THIS frame
 		var b strings.Builder
 		b.WriteString(m.tabBar())
 		b.WriteByte('\n')
@@ -1809,7 +1958,7 @@ func (m Model) render() string {
 		b.WriteString(m.keyhint())
 		b.WriteString("\n")
 		b.WriteString(m.statusLineWith(m.styles, m.ui))
-		return m.overlayDialogue(b.String())
+		return b.String()
 	}
 	if m.rows == nil {
 		m.rows = m.view.Rows()
@@ -1841,7 +1990,7 @@ func (m Model) render() string {
 		b.WriteString(m.keyhint())
 		b.WriteByte('\n')
 		b.WriteString(m.statusLineWith(st, m.ui))
-		return m.overlayDialogue(m.overlayPreview(b.String()))
+		return m.overlayPreview(b.String())
 	}
 	cur := m.CursorIndex()
 	// the window is ANCHORED at indexOffset (the read-position model):
@@ -1933,56 +2082,69 @@ func (m Model) render() string {
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
-	return m.overlayDialogue(m.overlayPreview(b.String()))
+	return m.overlayPreview(b.String())
 }
 
-// overlayDialogue splices the prompt dialogue box over the frame: a
-// lipgloss-bordered box (border, content rows, border) whose rows
-// replace whole frame lines above the keyhint bar, so the splice
-// never cuts an SGR sequence and the hotkey row survives the overlay.
-// The derivation is the preview popup's: config border glyphs (R11),
-// the indicator's background as the border color, the content rows
-// indicator-styled. The error kind shows the failure output (capped
-// rows - the failed tab keeps the full text in its preview) plus the
-// keyhint. A terminal too small (height < 5, width < 3) leaves the
-// frame untouched.
-func (m Model) overlayDialogue(frame string) string {
-	if m.dialogue == nil {
-		return frame
+// listFrame renders the list-choose dialogue (the fuzzy picker
+// surface): the matcher row on top (title + filter input - the title
+// doubles as the prompt, no standalone title line), then the ranked
+// matches, then the fuzzy keyhint and status rows. Exactly m.height
+// lines - the frame replaces the underlying frame (a clean diff,
+// never an overlay). The matcher row always renders - the user's
+// filter input stays visible mid-type - and the match list clips to
+// fill the frame (large lists scroll later).
+func (m Model) listFrame(f *fuzzy) string {
+	rows := m.height - 3
+	if rows < 1 {
+		rows = 1
 	}
-	lines := strings.Split(frame, "\n")
+	var b strings.Builder
+	b.WriteString(m.tabBar())
+	b.WriteByte('\n')
+	lines := []string{padRow(f.title+" "+f.query, m.width, m.styles.Indicator)}
+	matchRows := rows - 1
+	if matchRows < 0 {
+		matchRows = 0
+	}
+	matches := f.filtered()
+	if matchRows > len(matches) {
+		matchRows = len(matches)
+	}
+	for i := 0; i < matchRows; i++ {
+		outer := m.styles.Normal
+		if i == f.sel {
+			outer = m.styles.Indicator
+		}
+		lines = append(lines, padRow(f.entries[matches[i]], m.width, outer))
+	}
+	for len(lines) < rows {
+		lines = append(lines, padRow("", m.width, m.styles.Normal))
+	}
+	for _, l := range lines[:rows] {
+		b.WriteString(l)
+		b.WriteByte('\n')
+	}
+	b.WriteString(keyhintRow(m.bindings["fuzzy"], m.width))
+	b.WriteByte('\n')
+	b.WriteString(m.statusLineWith(m.styles, m.ui))
+	return b.String()
+}
+
+// dialogueBox splices the prompt dialogue box over the base frame: a
+// lipgloss-bordered box (border, content rows, border) whose rows
+// replace whole frame lines above the keyhint bar, so the splice never
+// cuts an SGR sequence and the hotkey row survives the overlay. The
+// derivation is the preview popup's: config border glyphs (R11), the
+// indicator's background as the border color, the content rows
+// indicator-styled. The content is the dialogue type's own frame. A
+// terminal too small (height < 5, width < 3) leaves the frame
+// untouched.
+func (m Model) dialogueBox(content []string) string {
+	lines := strings.Split(m.renderBase(), "\n")
 	if m.height < 5 || m.width < 3 || len(lines) < 4 {
-		return frame
+		return strings.Join(lines, "\n")
 	}
 	lines = padFrameTail(lines, m.height)
-	inner := m.width - 2
-	label := core.SanitizeControls(m.dialogue.label)
-	entry := core.SanitizeControls(m.dialogue.input)
-	var content []string
-	switch m.dialogue.kind {
-	case dialogueConfirm:
-		content = []string{label + " (enter = confirm, esc = cancel)"}
-	case dialogueError:
-		content = append(content, m.styles.ComposeLabel.Render(label))
-		for i, l := range strings.Split(entry, "\n") {
-			if i >= errBoxRows {
-				content = append(content, "...")
-				break
-			}
-			content = append(content, truncCells(l, inner))
-		}
-		content = append(content, "(enter/esc = close, y = retry, e = edit)")
-	default: // dialogueInput: labels are ASCII constants, so byte
-		// length is cell width; the entry truncates to the remaining
-		// inner width - the line never exceeds it and the box never
-		// word-wraps to a different height
-		budget := inner - len(label)
-		if budget < 0 {
-			budget = 0
-		}
-		content = []string{m.styles.ComposeLabel.Render(label) +
-			m.styles.Normal.Render(truncCells(entry, budget))}
-	}
 	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
 }
 
@@ -2113,7 +2275,7 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	if d.prog != nil {
 		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
 	}
-	sig += "|" + d.legend + "|" + d.account + "|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
+	sig += "|" + d.legend + "|" + d.account + "|" + d.mime + "|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
 		"|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
@@ -2138,90 +2300,92 @@ func (m Model) statusData() statusData {
 	// resolution (the flattening CursorRow at 33k rows)
 	d.legend = m.legend
 	d.account = m.account
+	if m.mode == "pager" {
+		d.mime = m.renderMime
+	}
 	d.msg = m.statusMsg
 	d.msgErr = m.statusMsgErr
 	return d
 }
 
-// dialogue is the modal prompt box: confirm (enter to confirm, esc to
-// cancel), input (typed text delivered to the field consumer), or
-// error (the send failure - enter/esc close, y retry, e edit). The
-// label is the rendered prefix; the input the current text (for the
-// error kind, the failure output). The field names the input consumer
-// (attach | from | to | subject | cc | bcc | replyto); the action the
-// confirm's landing action (the binding vocabulary, dispatched through
-// dispatchAction); tabID the dialogue's compose tab (the error kind -
-// retry/edit land on the failed tab wherever the result found the
-// user).
-type dialogueKind int
-
-const (
-	dialogueConfirm dialogueKind = iota
-	dialogueInput
-	dialogueError
-)
-
-type dialogue struct {
-	kind   dialogueKind
-	field  string
-	label  string
-	input  string
-	action string
-	tabID  string
+// dialogue is a modal compose dialogue (R4): a concrete type owns its
+// state and handles keys until it closes (handle returns nil) or
+// swaps itself out (the attach text prompt opens the file chooser on
+// Tab; a chooser selection or cancel swaps back to the prompt it came
+// from). The Model routes keys through the active dialogue and asks
+// it for its frame and cursor; a new dialogue type implements the
+// interface and the Model switches no further.
+type dialogue interface {
+	// handle processes one key press; the returned dialogue replaces
+	// the current one (nil closes), the Cmd runs after the update.
+	handle(m *Model, msg KeyPressMsg) (dialogue, Cmd)
+	// render draws the full frame with the dialogue on top: a box
+	// spliced over the underlying frame (text/confirm/error) or a
+	// full-frame replacement (the list/file choosers).
+	render(m *Model) string
+	// cursor reports the text cursor cell (x, y) or ok = false when
+	// the dialogue has no editable text.
+	cursor(m *Model) (x, y int, ok bool)
 }
 
-// dialogueKey captures the dialogue keys: printable text appends,
-// backspace pops, enter resolves (attach: invalid paths keep the
-// dialogue open; field: the value replaces the dialogue field; confirm:
-// dispatches the action), esc cancels. The dialogue only exists while
-// a compose tab is attached, so the direct tab index is safe.
-// dialogueKey returns the model and the Cmd to run when enter arms
-// one (an attach command exec - a path enter has no side command).
-// Update forwards both, so the dialogue can hand back a subprocess run
-// without escaping the message loop.
-func (m Model) dialogueKey(msg KeyPressMsg) (Model, Cmd) {
-	d := m.dialogue
-	if d.kind == dialogueError {
-		switch msg.String() {
-		case "enter", "esc":
-			// close the box; the failed tab keeps the failure note in
-			// its preview (y retries, e edits from there)
-			m.dialogue = nil
-		case "y": // retry: re-attach the failed tab, re-enter the gate
-			m.dialogue = nil
-			m.activateTab(d.tabID)
-			return m.dispatchAction("send", 1)
-		case "e": // edit the body of the failed tab
-			m.dialogue = nil
-			m.activateTab(d.tabID)
-			return m.dispatchAction("edit", 1)
-		}
-		return m, nil
+// textDialogue is the form-entry prompt (R4): a label, an editable
+// line with mutt-style cursor editing, and a field-determined commit.
+// The editor keys live here: left/right move, c-w kills the word
+// before the cursor, c-u clears the line, alt-f/alt-b jump by words,
+// backspace deletes before the cursor, typing inserts at it. enter
+// resolves per field (attach: a path or @command; a field commit: the
+// value replaces the dialogue field; filter: closes - applied live;
+// command: the Lua layer), esc and ctrl+g cancel (the filter restores
+// its pre-open text). tab opens the field's chooser (the address
+// completion picker, the attach command/file chooser).
+type textDialogue struct {
+	field string
+	label string
+	input string
+	// cur is the byte offset of the edit cursor into input
+	cur   int
+	saved string // the state the prompt opened with (the filter text): esc restores it
+}
+
+// cancelDialogue resets the abort gate (q opened the confirm with the
+// phase Aborting - any cancel returns to Editing) and closes the box.
+func (m *Model) cancelDialogue() {
+	m.dialogue = nil
+	if m.mode == "compose" && m.composeTab().Phase == compose.PhaseAborting {
+		m.composeTab().Phase = compose.PhaseEditing
 	}
-	switch {
-	case msg.String() == "enter":
+}
+
+func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	switch msg.String() {
+	case "enter":
 		input := strings.TrimSpace(d.input)
-		if d.kind == dialogueConfirm {
-			m.dialogue = nil
-			return m.dispatchAction(d.action, 1)
-		}
-		if d.field == "attach" {
+		switch d.field {
+		case "attach":
 			if strings.HasPrefix(input, "@") {
-				return m, m.runAttachCommand(strings.TrimPrefix(input, "@"))
+				// the exec takes over; the chooser result re-opens the
+				// error box on failure. An unknown command arms no exec
+				// - the prompt keeps the text for correction.
+				cmd := m.runAttachCommand(strings.TrimPrefix(input, "@"))
+				if cmd == nil {
+					return d, nil
+				}
+				return nil, cmd
 			}
 			path := compose.ExpandHome(input)
 			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
-				m.dialogue = nil
+				return nil, nil
 			}
-			return m, nil
-		}
-		if d.field == "command" {
-			m.dialogue = nil
+			return d, nil
+		case "command":
 			if input != "" {
 				tid, _ := m.cursorThreadID()
 				onLuaCommand(input, tid)
 			}
-			return m, nil
+			return nil, nil
+		case "filter":
+			// the filter applied live per key - enter only closes
+			return nil, nil
 		}
 		st := &m.tabs[m.tabIdx-1]
 		switch d.field {
@@ -2238,37 +2402,437 @@ func (m Model) dialogueKey(msg KeyPressMsg) (Model, Cmd) {
 		case "replyto":
 			st.ReplyTo = compose.SplitAddrs(input)
 		}
-		m.dialogue = nil
-	case msg.String() == "esc":
-		m.dialogue = nil
-		if m.mode == "compose" && m.composeTab().Phase == compose.PhaseAborting {
-			m.composeTab().Phase = compose.PhaseEditing
+		return nil, nil
+	case "esc", "ctrl+g":
+		// ctrl+g cancels like esc (the readline convention)
+		if d.field == "filter" {
+			m.view.SetFilter(d.saved)
+			m.rows = m.view.Rows()
 		}
-	case msg.String() == "tab" && d.kind == dialogueInput && isAddrField(d.field):
-		// address completion: Tab with at least 4 typed characters
-		// opens the fuzzy picker over the harvested sender corpus;
-		// the corpus loads lazily on the first trigger (debounced -
-		// a Tab storm coalesces into one harvest)
-		if len(d.input) >= 4 {
-			return m, m.addrLookup()
+		m.cancelDialogue()
+		return nil, nil
+	case "tab":
+		if isAddrField(d.field) {
+			// address completion: the picker opens over the harvested
+			// sender corpus for the section under completion (gated on
+			// its length); the corpus loads lazily on the first trigger
+			return m.addrLookup()
 		}
-	case msg.String() == "backspace":
-		if d.input != "" {
-			d.input = d.input[:len(d.input)-1]
+		if d.field == "attach" {
+			// Tab runs the default chooser when one is registered
+			// (yazi, ranger, else any command - attach commands are all
+			// file choosers), and the built-in directory chooser
+			// otherwise
+			if name := defaultChooser(attachCommands()); name != "" {
+				cmd := m.runAttachCommand(name)
+				if cmd == nil {
+					return d, nil // the send gate is armed: no exec
+				}
+				return nil, cmd
+			}
+			return m.filePicker(d), nil
 		}
-	case msg.Text == "?" && d.field == "attach" && d.input == "":
-		// a path can legally contain '?' - the list key is only the
+	case "?":
+		// a path can legally contain '?' - the command list is only the
 		// empty-prompt '?'; anything else appends
-		if names := attachCommandNames(); len(names) > 0 {
-			m.fuzzy = newFuzzy("attachcmd", "attach command:", names)
+		if d.field == "attach" && d.input == "" {
+			if names := attachCommandNames(); len(names) > 0 {
+				return &listDialogue{f: newFuzzy("attachcmd", "attach command:", names), back: d}, nil
+			}
 		}
-	case msg.Text != "":
-		if d.kind == dialogueInput {
-			d.input += msg.Text
+	case "left":
+		if d.cur > 0 {
+			d.cur--
+		}
+	case "right":
+		if d.cur < len(d.input) {
+			d.cur++
+		}
+	case "backspace":
+		if d.cur > 0 {
+			d.input = d.input[:d.cur-1] + d.input[d.cur:]
+			d.cur--
+			d.changed(m)
+		}
+	case "ctrl+w": // delete the word before the cursor
+		d.killWord()
+		d.changed(m)
+	case "ctrl+u": // clear the line (the mutt prompt convention)
+		d.input = ""
+		d.cur = 0
+		d.changed(m)
+	case "alt+f": // forward a word
+		d.forwardWord()
+	case "alt+b": // back a word
+		d.backWord()
+	default:
+		if msg.Text != "" {
+			d.input = d.input[:d.cur] + msg.Text + d.input[d.cur:]
+			d.cur += len(msg.Text)
+			d.changed(m)
 		}
 	}
-	return m, nil
+	return d, nil
 }
+
+// changed applies an edit's live side effects: the filter prompt
+// narrows the view per key.
+func (d *textDialogue) changed(m *Model) {
+	if d.field == "filter" {
+		m.view.SetFilter(d.input)
+		m.rows = m.view.Rows()
+	}
+}
+
+// killWord deletes the word before the cursor (c-w): whitespace then
+// word characters, so "a b|c" leaves "a |".
+func (d *textDialogue) killWord() {
+	i := d.cur
+	for i > 0 && d.input[i-1] == ' ' {
+		i--
+	}
+	for i > 0 && d.input[i-1] != ' ' {
+		i--
+	}
+	d.input = d.input[:i] + d.input[d.cur:]
+	d.cur = i
+}
+
+// backWord moves the cursor to the start of the previous word (alt-b).
+func (d *textDialogue) backWord() {
+	i := d.cur
+	for i > 0 && d.input[i-1] == ' ' {
+		i--
+	}
+	for i > 0 && d.input[i-1] != ' ' {
+		i--
+	}
+	d.cur = i
+}
+
+// forwardWord moves the cursor to the end of the next word (alt-f).
+func (d *textDialogue) forwardWord() {
+	n := len(d.input)
+	i := d.cur
+	for i < n && d.input[i] == ' ' {
+		i++
+	}
+	for i < n && d.input[i] != ' ' {
+		i++
+	}
+	d.cur = i
+}
+
+// listDialogue is the list-choose dialogue (R4): a fuzzy-filtered
+// entry list (account, signature, the address completion, the attach
+// command picker). back is the dialogue to return to on select or
+// cancel (the address/attach-command pickers swap back to the prompt
+// they came from; the account/signature pickers open from the form,
+// back is nil and a cancel closes). kind decides the select behavior.
+type listDialogue struct {
+	f    *fuzzy
+	back dialogue
+}
+
+func (d *listDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
+		switch a {
+		case "fuzzy-down":
+			d.f.move(1)
+		case "fuzzy-up":
+			d.f.move(-1)
+		case "fuzzy-select":
+			return d.selectEntry(m)
+		case "fuzzy-cancel":
+			m.cancelDialogue()
+			return d.back, nil
+		}
+		return d, nil
+	}
+	d.typeKey(msg)
+	return d, nil
+}
+
+// typeKey narrows the filter: printable text appends, backspace trims
+// it; the selection resets to the top.
+func (d *listDialogue) typeKey(msg KeyPressMsg) bool {
+	switch {
+	case msg.String() == "backspace":
+		if d.f.query != "" {
+			d.f.query = d.f.query[:len(d.f.query)-1]
+		}
+	case msg.Text != "":
+		d.f.query += msg.Text
+	default:
+		return false
+	}
+	d.f.sel = 0
+	return true
+}
+
+// selectEntry applies the selection (kind decides): an account switch
+// sets Account and From; a signature switch loads the file; the
+// address picker merges the selection into the prompt it came from;
+// the attach-command picker arms the prompt with "@name".
+func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
+	entry, ok := d.f.selected()
+	if !ok {
+		return d.back, nil
+	}
+	switch d.f.kind {
+	case "attachcmd":
+		back, ok := d.back.(*textDialogue)
+		if !ok {
+			return nil, nil
+		}
+		back.input = "@" + entry
+		back.cur = len(back.input)
+		return back, nil
+	case "address":
+		back, ok := d.back.(*textDialogue)
+		if !ok {
+			return nil, nil
+		}
+		head, _, tail := addrSection(back.input, back.cur)
+		back.input = entry
+		if head != "" {
+			back.input = head + " " + entry
+		}
+		if tail != "" {
+			back.input += ", " + tail
+		}
+		back.cur = len(back.input)
+		return back, nil
+	}
+	st := &m.tabs[m.tabIdx-1]
+	if d.f.kind == "account" {
+		a := m.st.Config().Accounts[entry]
+		st.Account, st.From = entry, a.From
+	} else {
+		if data, err := os.ReadFile(filepath.Join(sigDir, st.Account, entry)); err == nil {
+			st.SetSignature(entry, strings.TrimSuffix(string(data), "\n"))
+		}
+	}
+	m.cancelDialogue()
+	return nil, nil
+}
+
+// fileDialogue is the built-in file-choose dialogue (the chooser
+// fallback when no attach command is registered): a fuzzy listing of
+// the current directory - a directory entry descends, a file attaches
+// and closes; esc walks back up and closes at the root. back is the
+// attach prompt the dialogue returns to.
+type fileDialogue struct {
+	listDialogue
+}
+
+func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
+		switch a {
+		case "fuzzy-down":
+			d.f.move(1)
+		case "fuzzy-up":
+			d.f.move(-1)
+		case "fuzzy-select":
+			return d.selectEntry(m)
+		case "fuzzy-cancel":
+			m.cancelDialogue()
+			if up := filepath.Dir(m.fileDir); up != m.fileDir {
+				m.fileDir = up
+				return m.filePicker(d.back), nil
+			}
+			return d.back, nil
+		}
+		return d, nil
+	}
+	d.typeKey(msg)
+	return d, nil
+}
+
+func (d *fileDialogue) selectEntry(m *Model) (dialogue, Cmd) {
+	entry, ok := d.f.selected()
+	if !ok {
+		return d.back, nil
+	}
+	path := filepath.Join(m.fileDir, entry)
+	if strings.HasSuffix(entry, "/") {
+		m.fileDir = path
+		return m.filePicker(d.back), nil
+	}
+	if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) != nil {
+		return d.back, nil
+	}
+	return nil, nil
+}
+
+// confirmDialogue asks yes/no (R4): enter dispatches the action, esc
+// cancels. The abort confirmation is the current user.
+type confirmDialogue struct {
+	label  string
+	action string
+	draft  bool // the abort confirm: d saves the composition and quits
+}
+
+func (d *confirmDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	switch msg.String() {
+	case "enter":
+		// the abort phase must survive to dispatchAction: it was armed
+		// by the q that opened the box, and the confirm lands it
+		m.dialogue = nil
+		mm, cmd := m.dispatchAction(d.action, 1)
+		*m = mm
+		return nil, cmd
+	case "esc":
+		m.cancelDialogue()
+		return nil, nil
+	case "d":
+		if !d.draft {
+			break
+		}
+		// save as draft and quit: the write is local (no transport),
+		// it runs inline - an error keeps the composition open, the
+		// tab's phase resets so the user can fix or abort again
+		if err := onDraft(*m.composeTab()); err != nil {
+			m.composeTab().Phase = compose.PhaseEditing
+			return &errorDialogue{label: "draft failed", output: err.Error()}, nil
+		}
+		m.dialogue = nil
+		m.closeComposeTab(m.tabIdx - 1)
+		return nil, nil
+	}
+	return d, nil
+}
+
+// errorDialogue shows a failure with a retry (R4): the send failure's
+// output (y re-enters the send gate, e edits the body) or an attach
+// command's exec error (y re-runs the command). name is the attach
+// command to re-run; empty means the send job (tabID the failed tab).
+type errorDialogue struct {
+	label  string
+	output string
+	tabID  string
+	name   string
+}
+
+func (d *errorDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	switch msg.String() {
+	case "enter", "esc":
+		// close the box; the failed tab keeps the failure note in its
+		// preview (y retries, e edits from there)
+		return nil, nil
+	case "y":
+		if d.name != "" {
+			return nil, m.runAttachCommand(d.name)
+		}
+		m.cancelDialogue()
+		m.activateTab(d.tabID)
+		mm, cmd := m.dispatchAction("send", 1)
+		*m = mm
+		return nil, cmd
+	case "e":
+		if d.name == "" {
+			m.cancelDialogue()
+			m.activateTab(d.tabID)
+			mm, cmd := m.dispatchAction("edit", 1)
+			*m = mm
+			return nil, cmd
+		}
+	}
+	return d, nil
+}
+
+// The render surface: a boxed dialogue splices its content over the
+// base frame (dialogueBox), the list choosers replace the frame with
+// the matcher + matches frame (listFrame). Sanitize runs on the label
+// and entry here - dialogue text is user-typed, not the pre-sanitized
+// mail path (F1).
+func (d *textDialogue) render(m *Model) string {
+	inner := m.width - 2
+	label := core.SanitizeControls(d.label)
+	entry := core.SanitizeControls(d.input)
+	// labels are ASCII constants, so byte length is cell width; the
+	// entry truncates to the remaining inner width - the line never
+	// exceeds it and the box never word-wraps to a different height
+	budget := inner - len(label)
+	if budget < 0 {
+		budget = 0
+	}
+	return m.dialogueBox([]string{m.styles.ComposeLabel.Render(label) +
+		m.styles.Normal.Render(truncCells(entry, budget))})
+}
+
+func (d *confirmDialogue) render(m *Model) string {
+	hint := "enter = confirm, esc = cancel"
+	if d.draft {
+		hint = "enter = quit, esc = cancel, d = save draft"
+	}
+	return m.dialogueBox([]string{core.SanitizeControls(d.label) + " (" + hint + ")"})
+}
+
+func (d *errorDialogue) render(m *Model) string {
+	inner := m.width - 2
+	// the box grows upward: the output is capped only by the frame
+	// rows above the keyhint/status lines, never a fixed count (the
+	// failed tab's preview keeps the full text)
+	outRows := m.height - 7 // label + hint + the two border rows
+	if outRows < 1 {
+		outRows = 1
+	}
+	out := strings.Split(d.output, "\n")
+	for i := range out {
+		out[i] = core.SanitizeControls(out[i])
+	}
+	if len(out) > outRows {
+		out = append(out[:outRows-1], "...")
+	}
+	content := []string{m.styles.ComposeLabel.Render(core.SanitizeControls(d.label))}
+	for _, l := range out {
+		content = append(content, truncCells(l, inner))
+	}
+	hint := "(enter/esc = close"
+	if d.tabID != "" || d.name != "" {
+		hint += ", y = retry"
+	}
+	if d.tabID != "" {
+		hint += ", e = edit"
+	}
+	content = append(content, hint+")")
+	return m.dialogueBox(content)
+}
+
+func (d *listDialogue) render(m *Model) string {
+	return m.listFrame(d.f)
+}
+
+// The cursor surface: the text prompt's input row (the box splices 3
+// rows above the keyhint bar), the list chooser's matcher row.
+func (d *textDialogue) cursor(m *Model) (int, int, bool) {
+	if m.height < 5 || m.width < 3 {
+		return 0, 0, false
+	}
+	inner := m.width - 2
+	budget := inner - len(d.label)
+	if budget < 0 {
+		budget = 0
+	}
+	cur := d.cur
+	if cur > len(d.input) {
+		cur = len(d.input)
+	}
+	x := 1 + len(d.label) + min(runewidth.StringWidth(d.input[:cur]), budget)
+	return x, m.height - 4, true
+}
+
+func (d *listDialogue) cursor(m *Model) (int, int, bool) {
+	x := len(d.f.title) + 1 + len(d.f.query)
+	if x > m.width-1 {
+		x = m.width - 1
+	}
+	return x, 1, true
+}
+
+func (d *confirmDialogue) cursor(m *Model) (int, int, bool) { return 0, 0, false }
+func (d *errorDialogue) cursor(m *Model) (int, int, bool)   { return 0, 0, false }
 
 // runAttachCommand arms the command exec (the $EDITOR pattern): the
 // chooser temp file is appended to the command's argv (F4 - argv only,
@@ -2279,8 +2843,14 @@ func (m *Model) runAttachCommand(name string) Cmd {
 	if m.composeTab().Phase == compose.PhaseSending {
 		return nil
 	}
-	argv, ok := attachCommands()[name]
-	if !ok {
+	var argv []string
+	for _, c := range attachCommands() {
+		if c.Name == name {
+			argv = c.Argv
+			break
+		}
+	}
+	if argv == nil {
 		return nil
 	}
 	f, err := os.CreateTemp("", "notmutt-chooser-*")
@@ -2299,80 +2869,55 @@ func (m *Model) runAttachCommand(name string) Cmd {
 // attachCommandNames lists the registered attach commands, sorted (the
 // picker entry list contract).
 func attachCommandNames() []string {
-	names := make([]string, 0, len(attachCommands()))
-	for name := range attachCommands() {
-		names = append(names, name)
+	cmds := attachCommands()
+	names := make([]string, 0, len(cmds))
+	for _, c := range cmds {
+		names = append(names, c.Name)
 	}
 	sort.Strings(names)
 	return names
 }
 
-// fuzzyKey captures the fuzzy context: bound actions dispatch,
-// unbound printable keys filter the query, backspace trims it.
-func (m *Model) fuzzyKey(msg KeyPressMsg, km map[string]string) bool {
-	if a := actionForKey(msg, km); a != "" {
-		switch a {
-		case "fuzzy-down":
-			m.fuzzy.move(1)
-		case "fuzzy-up":
-			m.fuzzy.move(-1)
-		case "fuzzy-select":
-			m.fuzzySelect()
-		case "fuzzy-cancel":
-			m.fuzzy = nil
-		}
-		return true
+// defaultChooser is the attach command Tab runs: the first registered
+// command. Registration order is the preference - the Lua plugin
+// script that registers the choosers controls Tab by call order (the
+// script is data, never compiled). Empty when none are registered:
+// Tab falls back to the built-in directory picker.
+func defaultChooser(cmds []AttachCommand) string {
+	if len(cmds) == 0 {
+		return ""
 	}
-	switch {
-	case msg.String() == "backspace":
-		if m.fuzzy.query != "" {
-			m.fuzzy.query = m.fuzzy.query[:len(m.fuzzy.query)-1]
-		}
-	case msg.Text != "":
-		m.fuzzy.query += msg.Text
-	}
-	m.fuzzy.sel = 0
-	return true
+	return cmds[0].Name
 }
 
-// fuzzySelect applies the picker's selection to the dialogue: an
-// account switch sets Account and From; a signature switch loads the
-// file and attaches it. The picker only exists while a dialogue is
-// attached (the account/signature actions are compose-context).
-func (m *Model) fuzzySelect() {
-	entry, ok := m.fuzzy.selected()
-	if !ok {
-		m.fuzzy = nil
-		return
+// filePicker builds the built-in fallback chooser: a fuzzy picker
+// over the directory listing (directories carry a trailing "/" and
+// descend on select, esc walks up; at the root it closes and returns
+// to back). Empty dir resumes the last position, else the working
+// directory. The attach prompt is the back reference the chooser
+// returns to.
+func (m *Model) filePicker(back dialogue) dialogue {
+	dir := m.fileDir
+	if dir == "" {
+		dir = "."
 	}
-	if m.fuzzy.kind == "attachcmd" {
-		// the selection arms the attach prompt: enter runs it
-		if m.dialogue != nil && m.dialogue.kind == dialogueInput && m.dialogue.field == "attach" {
-			m.dialogue.input = "@" + entry
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return &errorDialogue{label: "cannot read " + dir, output: err.Error()}
+	}
+	m.fileDir = dir
+	disp := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
 		}
-		m.fuzzy = nil
-		return
-	}
-	st := &m.tabs[m.tabIdx-1]
-	if m.fuzzy.kind == "address" {
-		// the selection lands in the field dialogue as the address
-		// line (the display form; enter parses it back into the
-		// field's address list)
-		if m.dialogue != nil && m.dialogue.kind == dialogueInput && isAddrField(m.dialogue.field) {
-			m.dialogue.input = entry
+		n := e.Name()
+		if e.IsDir() {
+			n += "/"
 		}
-		m.fuzzy = nil
-		return
+		disp = append(disp, n)
 	}
-	if m.fuzzy.kind == "account" {
-		a := m.st.Config().Accounts[entry]
-		st.Account, st.From = entry, a.From
-	} else {
-		if data, err := os.ReadFile(filepath.Join(sigDir, st.Account, entry)); err == nil {
-			st.SetSignature(entry, strings.TrimSuffix(string(data), "\n"))
-		}
-	}
-	m.fuzzy = nil
+	return &fileDialogue{listDialogue{f: newFuzzy("file", dir+":", disp), back: back}}
 }
 
 // openPicker opens the account or signature selector: the entries are
@@ -2384,7 +2929,7 @@ func (m *Model) openPicker(kind string) {
 		for n := range m.st.Config().Accounts {
 			names = append(names, n)
 		}
-		m.fuzzy = newFuzzy("account", "account:", names)
+		m.dialogue = &listDialogue{f: newFuzzy("account", "account:", names)}
 		return
 	}
 	var names []string
@@ -2397,7 +2942,7 @@ func (m *Model) openPicker(kind string) {
 			}
 		}
 	}
-	m.fuzzy = newFuzzy("signature", "signature:", names)
+	m.dialogue = &listDialogue{f: newFuzzy("signature", "signature:", names)}
 }
 
 // openReply hands the reply context to the app seam: the cursor row's
@@ -2408,6 +2953,11 @@ func (m *Model) openReply(mode string) {
 	if m.mode == "index" {
 		if row, ok := m.view.CursorRow(); ok {
 			msg = row.Msg
+			// ghost rows (multi-root threads) carry the thread id only -
+			// the app's thread-fetch fallback rehydrates the original
+			if msg == nil && row.ThreadID != "" {
+				msg = &core.Message{ThreadID: row.ThreadID}
+			}
 		}
 	} else if m.mode == "pager" && m.pager != nil {
 		for _, r := range m.rows {
@@ -2421,6 +2971,9 @@ func (m *Model) openReply(mode string) {
 		if msg == nil {
 			return
 		}
+	}
+	if m.mode == "pager" {
+		m.clearImageRects() // the compose frame covers the pager area
 	}
 	onReply(msg, mode)
 }
@@ -2459,7 +3012,7 @@ func (m *Model) composeTab() *compose.State {
 }
 
 func (m *Model) attachTab() {
-	m.fuzzy, m.dialogue = nil, nil
+	m.dialogue = nil
 	if m.tabIdx > 0 {
 		m.mode = "compose"
 		return

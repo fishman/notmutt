@@ -27,6 +27,28 @@ func TestStoreSetKeymapRejects(t *testing.T) {
 	}
 }
 
+func TestStoreSetActiveViewNotifies(t *testing.T) {
+	s := NewStore(Default())
+	got := false
+	s.Subscribe("view", func() { got = true })
+	if err := s.SetActiveView("archive"); err != nil {
+		t.Fatal(err)
+	}
+	if !got {
+		t.Fatal("view observer not notified")
+	}
+	if c := s.Config(); c.ActiveView != "archive" {
+		t.Fatalf("active view = %q", c.ActiveView)
+	}
+}
+
+func TestStoreSetActiveViewUnknownViewErrors(t *testing.T) {
+	s := NewStore(Default())
+	if err := s.SetActiveView("nope"); err == nil {
+		t.Fatal("expected error for unknown view")
+	}
+}
+
 func TestStoreSetViewQueryNotifies(t *testing.T) {
 	s := NewStore(Default())
 	got := false

@@ -28,6 +28,7 @@ type statusData struct {
 	on      bool
 	legend  string // icon library: "icon name" pairs for the view's tags
 	account string // the cursor message's account tag (R2), empty on none
+	mime    string // the pager's rendered mime label, empty outside pager mode
 	msg     string // the status line's last log entry, empty on none
 	msgErr  bool   // styles the status message with the error style
 }
@@ -50,6 +51,9 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 	left := []statusSegment{viewSegment(d.view, st), countSegment(d.visible, st)}
 	if d.account != "" {
 		left = append(left, accountSegment(d.account, st))
+	}
+	if d.mime != "" {
+		left = append(left, mimeSegment(d.mime))
 	}
 	var right []statusSegment
 	if d.on && d.prog != nil {

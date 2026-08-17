@@ -35,9 +35,6 @@ const (
 	// progressWidth is the progress region's cell budget in the status
 	// row.
 	progressWidth = 40
-	// errBoxRows caps the error dialogue's output rows (the failed
-	// tab's preview keeps the full text).
-	errBoxRows = 4
 	// defaultStatusWidth is the width the width-less statusLine variant
 	// renders at (tests and callers without a window size).
 	defaultStatusWidth = 80

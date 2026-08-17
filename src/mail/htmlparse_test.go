@@ -52,7 +52,7 @@ func TestHTMLParseShapes(t *testing.T) {
 // lines' default bg, a mail without one gets the light default - the
 // html view never renders on the theme's dark surface.
 func TestRenderHTMLBackground(t *testing.T) {
-	lines := RenderHTML("<p>hi</p>", nil)
+	lines := RenderHTML("<p>hi</p>", nil, 0)
 	if len(lines) == 0 || lines[0].Bg != "#ffffff" {
 		t.Fatalf("the no-background mail must default to white: %+v", lines)
 	}
@@ -61,14 +61,14 @@ func TestRenderHTMLBackground(t *testing.T) {
 		"css body":     `<body style="background-color:#f0f0f0"><p>hi</p></body>`,
 		"bgcolor body": `<body bgcolor="#e8e8e8"><p>hi</p></body>`,
 	} {
-		lines = RenderHTML(body, nil)
+		lines = RenderHTML(body, nil, 0)
 		if len(lines) == 0 || lines[0].Bg == "" || lines[0].Bg == "#ffffff" {
 			t.Fatalf("%s: the declared background must be respected: %+v", name, lines[0])
 		}
 	}
 	// a nested colored block (bgcolor table) paints its OWN runs over
 	// the region default: the cell run carries the table's bg
-	tbl := RenderHTML(`<table bgcolor="#dddddd"><tr><td>cell</td></tr></table>`, nil)
+	tbl := RenderHTML(`<table bgcolor="#dddddd"><tr><td>cell</td></tr></table>`, nil, 0)
 	found := false
 	for _, l := range tbl {
 		for _, r := range l.Runs {
@@ -80,13 +80,13 @@ func TestRenderHTMLBackground(t *testing.T) {
 	if !found {
 		t.Fatalf("the bgcolor table's cells must carry their own bg: %+v", tbl)
 	}
-	if !strings.Contains(RenderHTML("<p>hi</p>", nil)[0].Bg, "#") {
+	if !strings.Contains(RenderHTML("<p>hi</p>", nil, 0)[0].Bg, "#") {
 		t.Fatal("the bg must be a hex color")
 	}
 
 	// the body background propagates to blank lines too (the block
 	// spacing row between paragraphs carries it)
-	lines = RenderHTML("<body style=\"background-color:#f0f0f0\"><p>a</p><p>b</p></body>", nil)
+	lines = RenderHTML("<body style=\"background-color:#f0f0f0\"><p>a</p><p>b</p></body>", nil, 0)
 	blanks := 0
 	for _, l := range lines {
 		if l.Text == "" {
@@ -101,7 +101,7 @@ func TestRenderHTMLBackground(t *testing.T) {
 	}
 
 	// a nested colored block still paints its own runs over the base
-	lines = RenderHTML(`<body style="background-color:#ffffff"><p style="background-color:#dddddd">x</p></body>`, nil)
+	lines = RenderHTML(`<body style="background-color:#ffffff"><p style="background-color:#dddddd">x</p></body>`, nil, 0)
 	nested := false
 	for _, l := range lines {
 		for _, r := range l.Runs {

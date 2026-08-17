@@ -27,16 +27,23 @@ const (
 )
 
 // RenderHTML renders an HTML mail body to pager lines. Returns nil for
-// an empty result (the caller falls back to the raw text).
-func RenderHTML(body string, atts []Attachment) []core.Line {
+// an empty result (the caller falls back to the raw text). width is the
+// caller's terminal width: the wrap caps at htmlWrapWidth, so a wide
+// terminal keeps the fixed-width layout and a narrow one reflows; 0
+// means the cap.
+func RenderHTML(body string, atts []Attachment, width int) []core.Line {
 	doc, err := html.Parse(strings.NewReader(body))
 	if err != nil {
 		return nil // x/net/html recovers from malformed input by spec; guard anyway
+	}
+	if width <= 0 || width > htmlWrapWidth {
+		width = htmlWrapWidth
 	}
 	w := &htmlWalker{
 		atts:      atts,
 		rules:     collectStyleBlocks(doc),
 		linesLeft: maxHTMLLines,
+		width:     width,
 	}
 	w.walk(doc, &styleProps{})
 	w.flush()
@@ -65,6 +72,7 @@ type htmlWalker struct {
 	cells int
 	align string
 	pre   bool
+	width int
 	// block spacing: one blank line between content blocks
 	blankPending bool
 	blockSeen    bool
@@ -234,8 +242,8 @@ func (w *htmlWalker) addWord(text string, st *styleProps) {
 	text = sanitize(text) // F1: DOM text is raw - ESC/C0 never reach the pager
 	tw := textWidth(text)
 	// a single word wider than the line hard-splits into chunks
-	for tw > htmlWrapWidth {
-		chunk := takeCells(text, htmlWrapWidth)
+	for tw > w.width {
+		chunk := takeCells(text, w.width)
 		if w.cells > 0 {
 			w.flush()
 		}
@@ -247,7 +255,7 @@ func (w *htmlWalker) addWord(text string, st *styleProps) {
 			w.flush()
 		}
 	}
-	if w.cells > 0 && w.cells+1+tw > htmlWrapWidth {
+	if w.cells > 0 && w.cells+1+tw > w.width {
 		w.flush()
 	}
 	if w.cells > 0 {
@@ -279,11 +287,11 @@ func (w *htmlWalker) flush() {
 	var runs []core.Run
 	switch w.align {
 	case "center":
-		if pad := (htmlWrapWidth - w.cells) / 2; pad > 0 {
+		if pad := (w.width - w.cells) / 2; pad > 0 {
 			runs = append(runs, core.Run{Text: strings.Repeat(" ", pad)})
 		}
 	case "right":
-		if pad := htmlWrapWidth - w.cells; pad > 0 {
+		if pad := w.width - w.cells; pad > 0 {
 			runs = append(runs, core.Run{Text: strings.Repeat(" ", pad)})
 		}
 	}
@@ -409,7 +417,7 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 	if content == 0 {
 		return
 	}
-	colCap := htmlWrapWidth / content
+	colCap := (w.width - 2*(ncols-1)) / content
 	if colCap < 8 {
 		colCap = 8
 	}

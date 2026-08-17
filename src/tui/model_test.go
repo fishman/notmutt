@@ -328,8 +328,8 @@ func TestLogOverlay(t *testing.T) {
 }
 
 // TestLogOverlayScroll pins the overlay's viewport: enough entries to
-// overflow, opened pinned to the tail, ctrl+u scrolls to the top,
-// ctrl+d returns half a window.
+// overflow, opened pinned to the tail, g scrolls to the top, ctrl+d
+// returns half a window.
 func TestLogOverlayScroll(t *testing.T) {
 	m := model()
 	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
@@ -342,10 +342,9 @@ func TestLogOverlayScroll(t *testing.T) {
 	if m.logView.offset != 10 { // 30 entries in a 20-row window, tail-pinned
 		t.Fatalf("the log must open at the tail, offset=%d", m.logView.offset)
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
-	m = next
+	m = press(t, m, "g") // scroll-top (the pager binding the overlay borrows)
 	if m.logView.offset != 0 {
-		t.Fatalf("ctrl+u must scroll the log to the top, offset=%d", m.logView.offset)
+		t.Fatalf("g must scroll the log to the top, offset=%d", m.logView.offset)
 	}
 	next, _ = m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
 	m = next
@@ -441,6 +440,26 @@ func model() Model {
 	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(cfg), cfg.UI)
 }
 
+// TestOpenReplyGhostRow: reply on a ghost row (nil Msg, multi-root
+// thread) must hand the thread id to the app seam - the app's
+// thread-fetch fallback rehydrates the original instead of a silent
+// no-op.
+func TestOpenReplyGhostRow(t *testing.T) {
+	var gotMsg *core.Message
+	var gotMode string
+	old := onReply
+	onReply = func(msg *core.Message, mode string) {
+		gotMsg, gotMode = msg, mode
+	}
+	defer func() { onReply = old }()
+
+	m := ghostModel() // cursor starts on the ghost root row
+	press(t, m, "r")
+	if gotMode != "reply" || gotMsg == nil || gotMsg.ThreadID != "t1" {
+		t.Fatalf("ghost reply must pass the thread id, got mode=%q msg=%+v", gotMode, gotMsg)
+	}
+}
+
 // ghostModel builds a thread whose messages share no reference chain:
 // core emits a synthetic ghost root row (Msg == nil) at the thread start.
 func ghostModel() Model {
@@ -464,6 +483,25 @@ func pressType(t *testing.T, m Model, k rune) Model {
 	t.Helper()
 	next, _ := m.Update(KeyPressMsg{Code: k})
 	return next
+}
+
+// textD returns the active text dialogue (the form-entry prompt), or
+// nil when the dialogue is another type.
+func textD(m Model) *textDialogue {
+	d, _ := m.dialogue.(*textDialogue)
+	return d
+}
+
+// picker returns the active list-choose dialogue's fuzzy (the picker
+// surface), or nil when the dialogue is not a chooser.
+func picker(m Model) *fuzzy {
+	switch d := m.dialogue.(type) {
+	case *listDialogue:
+		return d.f
+	case *fileDialogue:
+		return d.f // promoted
+	}
+	return nil
 }
 
 // stubModel builds the step-one fill state: search summaries (message id
@@ -535,6 +573,85 @@ func TestCursorMoves(t *testing.T) {
 	m = press(t, m, "k")
 	if m.CursorIndex() != 0 {
 		t.Fatalf("cursor after k = %d", m.CursorIndex())
+	}
+}
+
+// TestGotoDispatch pins the goto-<view> dispatch: the action drives
+// the store (the single write path, R8), an unknown view is a no-op
+// (load validation rejects it at startup), and the derived account key
+// resolves through the chain machinery (g 1 -> goto-gmail from the
+// placeholder account).
+func TestGotoDispatch(t *testing.T) {
+	m := model()
+	m, _ = m.dispatchAction("goto-archive", 0)
+	if m.st.Config().ActiveView != "archive" {
+		t.Fatalf("active view = %q", m.st.Config().ActiveView)
+	}
+	m, _ = m.dispatchAction("goto-nope", 0)
+	if m.st.Config().ActiveView != "archive" {
+		t.Fatalf("unknown view must be a no-op: %q", m.st.Config().ActiveView)
+	}
+	m2 := model()
+	m2 = press(t, m2, "g")
+	m2 = press(t, m2, "1")
+	if m2.st.Config().ActiveView != "gmail" {
+		t.Fatalf("g 1 must go to the gmail view, active = %q", m2.st.Config().ActiveView)
+	}
+}
+
+// TestFilterPrompt pins the live F filter: the prompt narrows the view
+// on every key, backspace widens, esc restores the pre-open filter and
+// closes, and the rows the model renders are the filtered set.
+func TestFilterPrompt(t *testing.T) {
+	m := stubModel() // two threads: "hello" (Ann), "re: hello" (Bob); both carry the inbox tag, so the filter text must hit the author field to discriminate
+	m = press(t, m, "F")
+	if d := textD(m); d == nil || d.field != "filter" {
+		t.Fatalf("F must open the filter prompt: %+v", m.dialogue)
+	}
+	m = press(t, m, "bob")
+	if len(m.rows) != 1 || m.rows[0].Msg.Author != "Bob" {
+		t.Fatalf("typing must narrow live: %d rows", len(m.rows))
+	}
+	m = press(t, m, "x")
+	if len(m.rows) != 0 {
+		t.Fatalf("'bobx' must match nothing: %d rows", len(m.rows))
+	}
+	m = pressType(t, m, KeyBackspace)
+	if len(m.rows) != 1 {
+		t.Fatalf("backspace must widen again: %d rows", len(m.rows))
+	}
+	m = pressType(t, m, KeyEsc)
+	if m.dialogue != nil {
+		t.Fatal("esc must close the prompt")
+	}
+	if len(m.rows) != 2 {
+		t.Fatalf("esc must restore the pre-open filter: %d rows", len(m.rows))
+	}
+	// the committed filter survives a reopen-edit cycle: enter keeps the
+	// live filter, F reopens prefilled, esc restores the committed text
+	m = press(t, m, "F")
+	m = press(t, m, "a")
+	if len(m.rows) != 1 {
+		t.Fatalf("typing 'a' must narrow to Ann: %d rows", len(m.rows))
+	}
+	m = pressType(t, m, KeyEnter)
+	if m.dialogue != nil {
+		t.Fatal("enter must close the prompt")
+	}
+	if len(m.rows) != 1 {
+		t.Fatalf("enter must keep the live filter: %d rows", len(m.rows))
+	}
+	m = press(t, m, "F")
+	m = press(t, m, "b")
+	if len(m.rows) != 0 {
+		t.Fatalf("the reopened prompt must prefill 'a': %d rows", len(m.rows))
+	}
+	m = pressType(t, m, KeyEsc)
+	if m.dialogue != nil {
+		t.Fatal("esc must close the prompt")
+	}
+	if len(m.rows) != 1 {
+		t.Fatalf("esc must restore the committed filter: %d rows", len(m.rows))
 	}
 }
 
@@ -928,7 +1045,7 @@ func TestDialogueKeepsKeyhint(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
-	m.dialogue = &dialogue{kind: dialogueConfirm, label: "abort?", action: "abort"}
+	m.dialogue = &confirmDialogue{label: "abort?", action: "abort"}
 	strip := stripANSI(m.View())
 	lines := strings.Split(strip, "\n")
 	if len(lines) != 24 {
@@ -1033,7 +1150,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.width, m.height = 80, 24
 	path := fixtureMsg(t, "body line\n")
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1192,7 +1309,7 @@ func rowsModel(n int) Model {
 // attaches lines, it never renders).
 func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 	t.Helper()
-	lines, err := mail.RenderThread(msgs)
+	lines, _, err := mail.RenderThread(msgs, core.RenderHTML, false, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1204,7 +1321,7 @@ func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 // carries the pager state.
 func openPager(t *testing.T, m Model, path string) Model {
 	t.Helper()
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1387,17 +1504,16 @@ func TestPagerPageKeys(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
-	// real ctrl+d/ctrl+u keys: KeyMsg.String() resolves to "ctrl+d" and
-	// the dispatch finds the page-down/page-up bindings
+	// a real ctrl+d key: KeyMsg.String() resolves to "ctrl+d" and the
+	// dispatch finds the half-page-down binding
 	next, _ := m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
 	m = next
 	if m.pager.vp.offset != 3 {
 		t.Fatalf("ctrl+d must scroll half a window, offset=%d", m.pager.vp.offset)
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
-	m = next
+	m = press(t, m, "g") // scroll-top
 	if m.pager.vp.offset != 0 {
-		t.Fatalf("ctrl+u must scroll back half a window, offset=%d", m.pager.vp.offset)
+		t.Fatalf("g must scroll back to the top, offset=%d", m.pager.vp.offset)
 	}
 }
 
@@ -1405,7 +1521,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1440,7 +1556,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1643,7 +1759,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 	}
 	m := model()
 	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}}),
@@ -1663,7 +1779,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
 		m = next
 	})
@@ -1927,7 +2043,7 @@ func TestAbortConfirmDialogue(t *testing.T) {
 	if m.tabs[0].Phase != compose.PhaseAborting {
 		t.Fatalf("q arms aborting: %v", m.tabs[0].Phase)
 	}
-	if m.dialogue == nil || m.dialogue.kind != dialogueConfirm || m.dialogue.action != "abort" {
+	if d, ok := m.dialogue.(*confirmDialogue); !ok || d.action != "abort" {
 		t.Fatalf("q must arm the abort confirm dialogue: %+v", m.dialogue)
 	}
 	m = press(t, m, "j") // text keys are ignored while the confirm is open
@@ -1942,6 +2058,63 @@ func TestAbortConfirmDialogue(t *testing.T) {
 	m = press(t, m, "enter")
 	if len(m.tabs) != 0 || m.mode != "index" {
 		t.Fatalf("enter confirms the abort: %d %q", len(m.tabs), m.mode)
+	}
+}
+
+// TestAbortConfirmSaveDraft pins the confirm dialogue's d key: the
+// draft handler receives the composition, the tab closes; a handler
+// error keeps the tab open with the error box and resets the phase.
+func TestAbortConfirmSaveDraft(t *testing.T) {
+	var got *compose.State
+	SetDraftHandler(func(st compose.State) error {
+		st2 := st
+		got = &st2
+		return nil
+	})
+	defer SetDraftHandler(nil)
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	m.tabs[0].Subject = "draft me"
+	m = press(t, m, "q")
+	if d, ok := m.dialogue.(*confirmDialogue); !ok || !d.draft {
+		t.Fatalf("the abort confirm must arm the draft option: %+v", m.dialogue)
+	}
+	if s := stripANSI(m.render()); !strings.Contains(s, "d = save draft") {
+		t.Fatal("the confirm must advertise the draft key")
+	}
+	m = press(t, m, "d")
+	if len(m.tabs) != 0 || m.mode != "index" {
+		t.Fatalf("d must close the tab: %d %q", len(m.tabs), m.mode)
+	}
+	if got == nil || got.Subject != "draft me" {
+		t.Fatalf("the draft handler must receive the composition: %+v", got)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("d must close the dialogue: %+v", m.dialogue)
+	}
+}
+
+// TestAbortConfirmDraftFailure keeps the composition on a failed
+// draft write: the error box opens, the phase resets so the user can
+// fix or abort again.
+func TestAbortConfirmDraftFailure(t *testing.T) {
+	SetDraftHandler(func(st compose.State) error {
+		return errors.New("no such file")
+	})
+	defer SetDraftHandler(nil)
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "q")
+	m = press(t, m, "d")
+	if len(m.tabs) != 1 {
+		t.Fatalf("a failed draft must keep the tab: %d", len(m.tabs))
+	}
+	if m.tabs[0].Phase != compose.PhaseEditing {
+		t.Fatalf("a failed draft must reset the phase: %v", m.tabs[0].Phase)
+	}
+	d, ok := m.dialogue.(*errorDialogue)
+	if !ok || d.output != "no such file" {
+		t.Fatalf("a failed draft must open the error box: %+v", m.dialogue)
 	}
 }
 
@@ -2042,12 +2215,12 @@ func TestPromptTextCursor(t *testing.T) {
 	}
 	// '?' on the empty attach prompt opens the command picker; the
 	// matcher row is the second frame line
-	SetAttachCommandSource(func() map[string][]string {
-		return map[string][]string{"yazi": {"yazi"}}
+	SetAttachCommandSource(func() []AttachCommand {
+		return []AttachCommand{{Name: "yazi", Argv: []string{"yazi"}}}
 	})
 	m = press(t, m, "a")
 	m = press(t, m, "?")
-	if m.fuzzy == nil {
+	if picker(m) == nil {
 		t.Fatal("? must open the command picker")
 	}
 	m = press(t, m, "ya")
@@ -2063,11 +2236,11 @@ func TestPromptTextCursor(t *testing.T) {
 func TestFieldEditFrom(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "f")
-	if m.dialogue == nil || m.dialogue.field != "from" {
+	if d := textD(m); d == nil || d.field != "from" {
 		t.Fatalf("f must open the From field prompt: %+v", m.dialogue)
 	}
-	if m.dialogue.input != "Bob <bob@example.com>" {
-		t.Fatalf("the From field must pre-fill: %q", m.dialogue.input)
+	if d := textD(m); d == nil || d.input != "Bob <bob@example.com>" {
+		t.Fatalf("the From field must pre-fill: %+v", m.dialogue)
 	}
 	m = pressType(t, m, KeyEsc)
 	if m.dialogue != nil || m.tabs[0].From != "Bob <bob@example.com>" {
@@ -2090,7 +2263,7 @@ func TestFieldEditFrom(t *testing.T) {
 func TestFieldEditToSplitsAddrs(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "t")
-	if m.dialogue == nil || m.dialogue.input != "a@b.c" {
+	if d := textD(m); d == nil || d.input != "a@b.c" {
 		t.Fatalf("t must pre-fill the To list: %+v", m.dialogue)
 	}
 	for _, r := range ", d@e.f" {
@@ -2130,7 +2303,7 @@ func TestAttachPromptRendersBox(t *testing.T) {
 	if !strings.Contains(stripANSI(m.render()), "attach path: hi") {
 		t.Fatalf("typed input must render in the box:\n%s", m.render())
 	}
-	m.dialogue.input = "x\x1b[31m"
+	textD(m).input = "x\x1b[31m"
 	if out := m.render(); strings.Contains(out, "\x1b[31m") {
 		t.Fatalf("control chars leaked into the dialogue box:\n%q", out)
 	}
@@ -2153,7 +2326,7 @@ func TestConfirmBoxRendersHint(t *testing.T) {
 	if !strings.Contains(row, "Abort composition?") {
 		t.Fatalf("the confirm label must render in the box content row:\n%s", frame)
 	}
-	if !strings.Contains(row, "(enter = confirm, esc = cancel)") {
+	if !strings.Contains(row, "(enter = quit, esc = cancel, d = save draft)") {
 		t.Fatalf("the confirm hint must render in the box content row:\n%s", frame)
 	}
 }
@@ -2166,7 +2339,7 @@ func TestDialogueBoxRendersInIndex(t *testing.T) {
 	m := model()
 	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
 	m = next
-	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
+	m.dialogue = &textDialogue{label: "go: "}
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
@@ -2195,7 +2368,7 @@ func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 	m.view.MergeThreads(threads)
 	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
 	m = next
-	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
+	m.dialogue = &textDialogue{label: "go: "}
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
@@ -2234,8 +2407,8 @@ func TestEditGatedDuringSending(t *testing.T) {
 func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "A")
-	if m.fuzzy == nil || m.fuzzy.kind != "account" {
-		t.Fatalf("c must open the account picker: %+v", m.fuzzy)
+	if p := picker(m); p == nil || p.kind != "account" {
+		t.Fatalf("A must open the account picker: %+v", m.dialogue)
 	}
 	m = press(t, m, "j") // sel = 1: past a narrowed list's end
 	// type-to-filter, one key at a time
@@ -2243,7 +2416,7 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 		m = press(t, m, string(r))
 	}
 	m = pressType(t, m, KeyEnter) // enter selects
-	if m.fuzzy != nil {
+	if picker(m) != nil {
 		t.Fatal("enter must close the picker")
 	}
 	if m.tabs[0].Account != "alpha" {
@@ -2561,30 +2734,30 @@ func TestPaintGateHoldBurst(t *testing.T) {
 func TestAttachPromptCommandPicker(t *testing.T) {
 	saved := attachCommands
 	defer func() { attachCommands = saved }()
-	attachCommands = func() map[string][]string {
-		return map[string][]string{
-			"yazi": {"yazi", "--chooser-file"},
-			"fzf":  {"fzf"},
+	attachCommands = func() []AttachCommand {
+		return []AttachCommand{
+			{Name: "yazi", Argv: []string{"yazi", "--chooser-file"}},
+			{Name: "fzf", Argv: []string{"fzf"}},
 		}
 	}
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "a")
-	if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != "attach" {
+	if d := textD(m); d == nil || d.field != "attach" {
 		t.Fatalf("a must open the attach prompt: %+v", m.dialogue)
 	}
 	m = press(t, m, "?")
-	if m.fuzzy == nil || m.fuzzy.kind != "attachcmd" {
-		t.Fatalf("? must open the command picker: %+v", m.fuzzy)
+	if p := picker(m); p == nil || p.kind != "attachcmd" {
+		t.Fatalf("? must open the command picker: %+v", m.dialogue)
 	}
-	if got := strings.Join(m.fuzzy.entries, ","); got != "fzf,yazi" {
+	if got := strings.Join(picker(m).entries, ","); got != "fzf,yazi" {
 		t.Fatalf("entries = %q, want sorted fzf,yazi", got)
 	}
 	m = press(t, m, "j") // fzf -> yazi
 	m = press(t, m, "enter")
-	if m.fuzzy != nil {
+	if picker(m) != nil {
 		t.Fatal("select must close the picker")
 	}
-	if m.dialogue == nil || m.dialogue.input != "@yazi" {
+	if d := textD(m); d == nil || d.input != "@yazi" {
 		t.Fatalf("the selection must arm the prompt: %+v", m.dialogue)
 	}
 	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
@@ -2608,7 +2781,7 @@ func TestAttachCmdUnknownKeepsPrompt(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("an unknown command must not exec")
 	}
-	if m.dialogue == nil || m.dialogue.input != "@nope" {
+	if d := textD(m); d == nil || d.input != "@nope" {
 		t.Fatalf("the prompt must stay open with the text: %+v", m.dialogue)
 	}
 }
@@ -2641,14 +2814,27 @@ func TestAttachCmdResultAddsFiles(t *testing.T) {
 	}
 }
 
-// TestAttachCmdFailureReopensPrompt pins the failure path: the prompt
-// comes back prefilled with "@name" for a retry.
-func TestAttachCmdFailureReopensPrompt(t *testing.T) {
+// TestAttachCmdFailureErrorBox pins the failure path: the error box
+// opens with the command's output, and y re-runs the command.
+func TestAttachCmdFailureErrorBox(t *testing.T) {
+	SetAttachCommandSource(func() []AttachCommand {
+		return []AttachCommand{{Name: "yazi", Argv: []string{"yazi", "--chooser-file"}}}
+	})
+	defer SetAttachCommandSource(nil)
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
 	m = next
-	if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != "attach" || m.dialogue.input != "@yazi" {
-		t.Fatalf("the prompt must re-open prefilled: %+v", m.dialogue)
+	d, ok := m.dialogue.(*errorDialogue)
+	if !ok || d.name != "yazi" || d.output != "boom" {
+		t.Fatalf("the failure must open the error box: %+v", m.dialogue)
+	}
+	next, cmd := m.Update(KeyPressMsg{Text: "y", Code: 'y'})
+	m = next
+	if cmd == nil {
+		t.Fatal("y must re-arm the attach command exec")
+	}
+	if m.dialogue != nil {
+		t.Fatalf("y must close the error box: %+v", m.dialogue)
 	}
 }
 
@@ -2817,11 +3003,11 @@ func TestComposeSlotEditFieldPrompts(t *testing.T) {
 		{"r", "replyto", "Reply-To: "},
 	} {
 		m = press(t, m, tc.key)
-		if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != tc.field {
+		if d := textD(m); d == nil || d.field != tc.field {
 			t.Fatalf("%s must open the %s prompt: %+v", tc.key, tc.field, m.dialogue)
 		}
-		if m.dialogue.label != tc.label {
-			t.Fatalf("%s prompt label = %q, want %q", tc.key, m.dialogue.label, tc.label)
+		if d := textD(m); d == nil || d.label != tc.label {
+			t.Fatalf("%s prompt label = %q, want %q", tc.key, textD(m).label, tc.label)
 		}
 		m = press(t, m, "x@y.z, q@w.e")
 		m = press(t, m, "enter")
@@ -2948,8 +3134,8 @@ func TestFieldHotkeysPrefill(t *testing.T) {
 		{"r", "replyto", "r@old"},
 	} {
 		m = press(t, m, tc.key)
-		if m.dialogue == nil || m.dialogue.input != tc.want {
-			t.Fatalf("%s must prefill the %s value, input = %q, want %q", tc.key, tc.field, m.dialogue.input, tc.want)
+		if d := textD(m); d == nil || d.input != tc.want {
+			t.Fatalf("%s must prefill the %s value, input = %q, want %q", tc.key, tc.field, textD(m).input, tc.want)
 		}
 		m = press(t, m, "esc")
 	}
@@ -2965,7 +3151,7 @@ func TestEditUnconditionalAtAnySlot(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("e at slot 0 must arm the body editor")
 	}
-	if m.fuzzy != nil {
+	if picker(m) != nil {
 		t.Fatal("e must not open the account picker")
 	}
 }
@@ -3147,7 +3333,7 @@ func TestSendErrorDialogue(t *testing.T) {
 	defer SetSendHandler(func(st compose.State) {})
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: "boom"}})
 	m = next
-	if m.dialogue == nil || m.dialogue.kind != dialogueError || m.dialogue.input != "boom" {
+	if d, ok := m.dialogue.(*errorDialogue); !ok || d.output != "boom" {
 		t.Fatalf("failure must open the error dialogue: %+v", m.dialogue)
 	}
 	if !m.statusMsgErr || m.statusMsg != "send failed" {
@@ -3165,6 +3351,53 @@ func TestSendErrorDialogue(t *testing.T) {
 	m = press(t, m, "y")
 	if m.dialogue != nil || m.tabs[0].Phase != compose.PhaseSending || calls != 1 {
 		t.Fatalf("y must re-enter the send gate: %+v", m.tabs[0])
+	}
+}
+
+// TestErrorBoxGrowsUpward pins the overflow rule: a long failure
+// output grows the box upward instead of truncating at a fixed row
+// count - every output line renders, the status line survives below
+// the box, and beyond the frame capacity the tail indicator takes
+// over.
+func TestErrorBoxGrowsUpward(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	lines := make([]string, 6)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i)
+	}
+	next, _ = m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: strings.Join(lines, "\n")}})
+	m = next
+	got := strings.Split(stripANSI(m.render()), "\n")
+	found := 0
+	for _, l := range got {
+		if strings.Contains(l, "line ") {
+			found++
+		}
+	}
+	if found != 6 {
+		t.Fatalf("the box must grow to show all 6 output lines, found %d:\n%s", found, strings.Join(got, "\n"))
+	}
+	if !strings.Contains(got[23], "compose") {
+		t.Fatalf("the status line must survive the grown box:\n%s", strings.Join(got, "\n"))
+	}
+	big := make([]string, 30)
+	for i := range big {
+		big[i] = fmt.Sprintf("err %d", i)
+	}
+	next, _ = m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: strings.Join(big, "\n")}})
+	m = next
+	got = strings.Split(stripANSI(m.render()), "\n")
+	hasTail := false
+	for _, l := range got {
+		hasTail = hasTail || strings.Contains(l, "...")
+	}
+	if !hasTail {
+		t.Fatalf("the overflow must end in the tail indicator:\n%s", strings.Join(got, "\n"))
+	}
+	if !strings.Contains(got[23], "compose") {
+		t.Fatalf("the status line must survive the capped box:\n%s", strings.Join(got, "\n"))
 	}
 }
 
@@ -3197,22 +3430,23 @@ func TestAddrCompletion(t *testing.T) {
 	m = next
 	// "t" opens the To field prefilled with the dialogue's To (a@b.c)
 	m = press(t, m, "t")
-	if m.dialogue == nil || m.dialogue.field != "to" || m.dialogue.input != "a@b.c" {
+	if d := textD(m); d == nil || d.field != "to" || d.input != "a@b.c" {
 		t.Fatalf("the To field must be open prefilled: %+v", m.dialogue)
 	}
 	m = press(t, m, "tab")
-	if m.fuzzy == nil || m.fuzzy.kind != "address" {
+	p := picker(m)
+	if p == nil || p.kind != "address" {
 		t.Fatalf("Tab with >= 4 chars must open the address picker")
 	}
-	if len(m.fuzzy.entries) != 1 || m.fuzzy.entries[0] != "Ann <a@b.c>" {
-		t.Fatalf("entries must be pre-filtered by the input: %v", m.fuzzy.entries)
+	if len(p.entries) != 1 || p.entries[0] != "Ann <a@b.c>" {
+		t.Fatalf("entries must be pre-filtered by the input: %v", p.entries)
 	}
-	if m.fuzzy.query != "a@b.c" {
-		t.Fatalf("the picker query must read back the input: %q", m.fuzzy.query)
+	if p.query != "a@b.c" {
+		t.Fatalf("the picker query must read back the input: %q", p.query)
 	}
 	// enter selects: the field lands the display form
 	m = press(t, m, "enter")
-	if m.dialogue == nil || m.dialogue.input != "Ann <a@b.c>" {
+	if d := textD(m); d == nil || d.input != "Ann <a@b.c>" {
 		t.Fatalf("the selection must fill the field: %+v", m.dialogue)
 	}
 	// a bare address entry displays as the address only
@@ -3222,11 +3456,259 @@ func TestAddrCompletion(t *testing.T) {
 		m = press(t, m, string(r))
 	}
 	m = press(t, m, "tab")
-	if m.fuzzy == nil {
+	p = picker(m)
+	if p == nil {
 		t.Fatalf("Tab with >= 4 chars must open the picker")
 	}
-	if len(m.fuzzy.entries) != 1 || m.fuzzy.entries[0] != "bob@x.io" {
-		t.Fatalf("bare addresses must match by address: %v", m.fuzzy.entries)
+	if len(p.entries) != 1 || p.entries[0] != "bob@x.io" {
+		t.Fatalf("bare addresses must match by address: %v", p.entries)
+	}
+	// a multi-sender line completes only the section after the last
+	// comma: the earlier senders stay, and the gate counts the section
+	m = press(t, m, "enter")    // select bob@x.io, closing the picker
+	m = pressType(t, m, KeyEsc) // close the Bcc field
+	m = press(t, m, "t")        // the To field, prefilled with the dialogue's To
+	for _, r := range ", b" {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "tab")
+	if picker(m) != nil {
+		t.Fatalf("a short section must not open the picker")
+	}
+	for _, r := range "ob@" {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "tab")
+	if p := picker(m); p == nil || p.query != "bob@" {
+		t.Fatalf("the picker must complete the section after the last comma: %+v", m.dialogue)
+	}
+	m = press(t, m, "enter")
+	if d := textD(m); d == nil || d.input != "a@b.c, bob@x.io" {
+		t.Fatalf("the selection must replace only the section: %+v", m.dialogue)
+	}
+	// the section under completion follows the edit cursor, not the last
+	// comma: with the cursor inside the middle section, the picker
+	// completes that one and preserves the trailing section
+	m = pressType(t, m, KeyEsc) // close the To field
+	m = press(t, m, "t")
+	for _, r := range ", bob@, ca" {
+		m = press(t, m, string(r))
+	}
+	for i := 0; i < 5; i++ { // cursor from the end into "bob@"
+		m = press(t, m, "left")
+	}
+	m = press(t, m, "tab")
+	if p := picker(m); p == nil || p.query != "bob@" {
+		t.Fatalf("the picker must complete the cursor's section, not the last one: %+v", m.dialogue)
+	}
+	m = press(t, m, "enter")
+	if d := textD(m); d == nil || d.input != "a@b.c, bob@x.io, ca" {
+		t.Fatalf("the selection must replace only the cursor's section: %+v", m.dialogue)
+	}
+}
+
+// TestDialogueCursorEditing pins the mutt-style edit cursor: typing and
+// backspace land at the cursor, left/right move it, and enter commits
+// the edited line.
+func TestDialogueCursorEditing(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "b") // the Bcc field, empty
+	for _, r := range "abcde" {
+		m = press(t, m, string(r))
+	}
+	d := textD(m)
+	if d.cur != 5 {
+		t.Fatalf("the cursor must start at the end: cur=%d", d.cur)
+	}
+	m = press(t, m, "left")
+	m = press(t, m, "left")
+	m = press(t, m, "backspace") // deletes before the cursor
+	if d.input != "abde" || d.cur != 2 {
+		t.Fatalf("backspace must delete before the cursor: %q cur=%d", d.input, d.cur)
+	}
+	m = press(t, m, "X") // inserts at the cursor
+	if d.input != "abXde" || d.cur != 3 {
+		t.Fatalf("typing must insert at the cursor: %q cur=%d", d.input, d.cur)
+	}
+	m = press(t, m, "right")
+	m = press(t, m, "backspace")
+	if d.input != "abXe" || d.cur != 3 {
+		t.Fatalf("right then backspace must delete the moved-to char: %q cur=%d", d.input, d.cur)
+	}
+	m = pressType(t, m, KeyEnter)
+	if m.dialogue != nil {
+		t.Fatal("enter must close the prompt")
+	}
+	if st := &m.tabs[m.tabIdx-1]; len(st.Bcc) != 1 || st.Bcc[0] != "abXe" {
+		t.Fatalf("enter must commit the edited line: %+v", st.Bcc)
+	}
+	// cursor clamping: left and backspace at position 0 are no-ops (the
+	// reopened Bcc field prefills with the committed "abXe")
+	m = press(t, m, "b")
+	d = textD(m)             // the reopen is a fresh dialogue object
+	for i := 0; i < 6; i++ { // from the end past position 0
+		m = press(t, m, "left")
+	}
+	if d.cur != 0 {
+		t.Fatalf("left must clamp at 0: cur=%d", d.cur)
+	}
+	m = press(t, m, "backspace")
+	if d.input != "abXe" || d.cur != 0 {
+		t.Fatalf("backspace at 0 must be a no-op: %q cur=%d", d.input, d.cur)
+	}
+}
+
+// TestDialogueEditorKeys pins the readline word keys: c-w kills the
+// word before the cursor, c-u clears the line, alt-f/alt-b move by
+// word (alt-f lands on the word END, alt-b on the previous START).
+func TestDialogueEditorKeys(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "b") // the Bcc field
+	for _, r := range "one two three" {
+		m = press(t, m, string(r))
+	}
+	d := textD(m)
+	m = press(t, m, "ctrl+w")
+	if d.input != "one two " || d.cur != 8 {
+		t.Fatalf("c-w must kill the word before the cursor: %q cur=%d", d.input, d.cur)
+	}
+	m = press(t, m, "ctrl+w")
+	m = press(t, m, "ctrl+w")
+	if d.input != "" || d.cur != 0 {
+		t.Fatalf("c-w must kill back to the line start: %q cur=%d", d.input, d.cur)
+	}
+	for _, r := range "a b c" {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "alt+b") // from the end to the start of "c"
+	if d.cur != 4 {
+		t.Fatalf("alt-b must land on the previous word start: cur=%d", d.cur)
+	}
+	m = press(t, m, "alt+b") // to the start of "b"
+	if d.cur != 2 {
+		t.Fatalf("alt-b must step back one word: cur=%d", d.cur)
+	}
+	m = press(t, m, "alt+b") // to the start of "a"
+	if d.cur != 0 {
+		t.Fatalf("alt-b must land on the line start: cur=%d", d.cur)
+	}
+	m = press(t, m, "alt+f") // to the end of "a"
+	if d.cur != 1 {
+		t.Fatalf("alt-f must land on the word end: cur=%d", d.cur)
+	}
+	m = press(t, m, "right")
+	m = press(t, m, "right") // past "b": mid-word kill splices around the cursor
+	m = press(t, m, "ctrl+w")
+	if d.input != "a  c" || d.cur != 2 {
+		t.Fatalf("c-w mid-line must splice: %q cur=%d", d.input, d.cur)
+	}
+	m = press(t, m, "ctrl+u")
+	if d.input != "" || d.cur != 0 {
+		t.Fatalf("c-u must clear the line: %q cur=%d", d.input, d.cur)
+	}
+}
+
+// TestCtrlGCancels pins ctrl+g as the readline cancel: it cancels an
+// edit prompt exactly like esc - the filter restores its pre-open text,
+// a field prompt just closes without committing.
+func TestCtrlGCancels(t *testing.T) {
+	m := stubModel() // two threads
+	m = press(t, m, "F")
+	m = press(t, m, "bob")
+	if len(m.rows) != 1 {
+		t.Fatalf("typing must narrow live: %d rows", len(m.rows))
+	}
+	next, _ := m.Update(KeyPressMsg{Code: 'g', Mod: modCtrl})
+	m = next
+	if m.dialogue != nil {
+		t.Fatal("ctrl+g must cancel the filter prompt")
+	}
+	if len(m.rows) != 2 {
+		t.Fatalf("ctrl+g must restore the pre-open filter: %d rows", len(m.rows))
+	}
+	m = openDialogue(t, model(), "t1")
+	st := &m.tabs[m.tabIdx-1]
+	before := st.Subject
+	m = press(t, m, "s") // the Subject field, prefilled
+	m = press(t, m, "x")
+	if d := textD(m); d == nil || d.input != before+"x" {
+		t.Fatalf("the subject prompt must be open with input: %+v", m.dialogue)
+	}
+	next, _ = m.Update(KeyPressMsg{Code: 'g', Mod: modCtrl})
+	m = next
+	if m.dialogue != nil {
+		t.Fatal("ctrl+g must cancel the subject prompt")
+	}
+	if st.Subject != before {
+		t.Fatalf("cancelling must not commit the edit: %q", st.Subject)
+	}
+}
+
+// TestDefaultChooser pins the Tab preference: registration order IS
+// the preference (the Lua script's call order decides, not a compiled
+// list - the script is data).
+func TestDefaultChooser(t *testing.T) {
+	if d := defaultChooser([]AttachCommand{{Name: "yazi", Argv: []string{"yazi"}}, {Name: "ranger", Argv: []string{"ranger"}}}); d != "yazi" {
+		t.Fatalf("the first registered chooser must win, got %q", d)
+	}
+	if d := defaultChooser([]AttachCommand{{Name: "ranger", Argv: []string{"ranger"}}, {Name: "yazi", Argv: []string{"yazi"}}}); d != "ranger" {
+		t.Fatalf("call order must decide, got %q", d)
+	}
+	if d := defaultChooser(nil); d != "" {
+		t.Fatalf("no commands must yield no chooser, got %q", d)
+	}
+}
+
+// TestAttachTabChooser pins Tab in the attach prompt: with a
+// registered command it runs the default chooser (the first
+// registered), and without one it opens the built-in directory
+// picker, which descends into directories and attaches a selected
+// file.
+func TestAttachTabChooser(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	// with a registered yazi, Tab returns an exec cmd and closes the
+	// prompt (the returned Cmd is never invoked in tests)
+	SetAttachCommandSource(func() []AttachCommand {
+		return []AttachCommand{
+			{Name: "ranger", Argv: []string{"ranger"}},
+			{Name: "yazi", Argv: []string{"yazi", "--chooser-file"}},
+		}
+	})
+	m = press(t, m, "a")
+	next, cmd := m.Update(KeyPressMsg{Text: "tab", Code: 't'})
+	m = next
+	if m.dialogue != nil {
+		t.Fatal("Tab with a chooser must close the prompt")
+	}
+	if cmd == nil {
+		t.Fatal("Tab must arm the chooser exec")
+	}
+	// without any command, Tab opens the built-in picker over the
+	// current directory; a directory entry descends, a file attaches
+	SetAttachCommandSource(func() []AttachCommand { return nil })
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "sub")
+	os.Mkdir(sub, 0o700)
+	os.WriteFile(filepath.Join(dir, "alpha.txt"), []byte("x"), 0o600)
+	os.WriteFile(filepath.Join(sub, "beta.txt"), []byte("y"), 0o600)
+	m.fileDir = dir
+	m = press(t, m, "a")
+	m = press(t, m, "tab")
+	if _, ok := m.dialogue.(*fileDialogue); !ok {
+		t.Fatalf("Tab without a chooser must open the built-in picker: %+v", m.dialogue)
+	}
+	m = press(t, m, "j") // the second entry: sub/ (ReadDir sorts)
+	m = press(t, m, "enter")
+	if _, ok := m.dialogue.(*fileDialogue); !ok || m.fileDir != filepath.Join(dir, "sub") {
+		t.Fatalf("a directory must descend: dir=%q", m.fileDir)
+	}
+	m = press(t, m, "enter") // beta.txt
+	if m.dialogue != nil {
+		t.Fatal("selecting a file must close the prompt")
+	}
+	st := &m.tabs[m.tabIdx-1]
+	if len(st.Attachments) != 1 || st.Attachments[0].Name != "beta.txt" {
+		t.Fatalf("the selection must attach: %+v", st.Attachments)
 	}
 }
 
@@ -3241,7 +3723,7 @@ func TestAddrCompletionLengthGate(t *testing.T) {
 	m = press(t, m, "b") // the Bcc field, empty
 	m = pressType(t, m, 'a')
 	m = press(t, m, "tab")
-	if m.fuzzy != nil {
+	if picker(m) != nil {
 		t.Fatalf("Tab with < 4 chars must not open the picker")
 	}
 }
@@ -3289,7 +3771,125 @@ func TestAddrCompletionLazyDebounce(t *testing.T) {
 	if m.addrPending {
 		t.Fatal("the result must clear the in-flight flag")
 	}
-	if m.fuzzy == nil || m.fuzzy.kind != "address" || len(m.fuzzy.entries) != 1 {
-		t.Fatalf("the result must open the picker on the pending field: %+v", m.fuzzy)
+	p := picker(m)
+	if p == nil || p.kind != "address" || len(p.entries) != 1 {
+		t.Fatalf("the result must open the picker on the pending field: %+v", m.dialogue)
+	}
+}
+
+// TestModelToggleRender runs the render toggle (the v key): the
+// dispatch asks the app for the other part view, and the re-open's
+// ThreadLoaded reply replaces the pager content.
+func TestModelToggleRender(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   threadID,
+			RenderMode: core.RenderPlain,
+			Mime:       "text/plain",
+			Lines:      []core.Line{{Text: "plain view"}},
+		}})
+		m = next
+	})
+	var got string
+	var gotMode core.RenderMode
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int) {
+		got, gotMode = threadID, mode
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "plain view") {
+		t.Fatalf("the pager must show the plain view:\n%s", out)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "text/plain") {
+		t.Fatalf("the status bar must show the rendered mime:\n%s", out)
+	}
+
+	// the toggle asks for the html view of the open thread
+	m = press(t, m, "v")
+	if got != "t1" || gotMode != core.RenderHTML {
+		t.Fatalf("toggle must ask for the html view, got %q mode=%v", got, gotMode)
+	}
+
+	// the app's re-open reply replaces the content
+	next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      []core.Line{{Text: "rendered html view"}},
+	}})
+	m = next
+	if out := stripANSI(m.View()); !strings.Contains(out, "rendered html view") {
+		t.Fatalf("the reply must replace the pager content:\n%s", out)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "text/html") {
+		t.Fatalf("the mime label must follow the render:\n%s", out)
+	}
+
+	// toggling back asks for the plain view
+	m = press(t, m, "v")
+	if gotMode != core.RenderPlain {
+		t.Fatalf("second toggle must ask for the plain view, got %v", gotMode)
+	}
+
+	// the source key asks for the raw html source (outside the cycle)
+	m = press(t, m, "ctrl+u")
+	if gotMode != core.RenderSource {
+		t.Fatalf("ctrl+u must ask for the source view, got %v", gotMode)
+	}
+
+	// the source reply replaces the content
+	next, _ = m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		RenderMode: core.RenderSource,
+		Mime:       "text/html",
+		Lines:      []core.Line{{Text: "raw source"}},
+	}})
+	m = next
+	if out := stripANSI(m.View()); !strings.Contains(out, "raw source") {
+		t.Fatalf("the source reply must replace the pager content:\n%s", out)
+	}
+}
+
+// TestModelOpenHeaders pins the h key: it flips the header-block
+// toggle AND opens - the toggle state rides the open seam, and every
+// subsequent open (enter, preview promotion) carries it.
+func TestModelOpenHeaders(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	var gotTID string
+	var gotPreview, gotHeaders bool
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		gotTID, gotPreview, gotHeaders = threadID, preview, headers
+	})
+	m = press(t, m, "h")
+	if gotTID != "t1" || gotPreview || !gotHeaders {
+		t.Fatalf("h must open with the headers, got %q preview=%v headers=%v", gotTID, gotPreview, gotHeaders)
+	}
+	if !m.showHeaders {
+		t.Fatalf("h must arm the header toggle")
+	}
+	m = press(t, m, "enter") // a normal open keeps the toggled state
+	if gotTID != "t1" || gotPreview || !gotHeaders {
+		t.Fatalf("enter must open with the armed headers, got %q preview=%v headers=%v", gotTID, gotPreview, gotHeaders)
+	}
+	m = press(t, m, "h") // h again flips back
+	if gotHeaders {
+		t.Fatalf("the second h must open without headers")
 	}
 }

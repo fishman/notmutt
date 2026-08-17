@@ -68,6 +68,75 @@ func TestSendJobFccStateWins(t *testing.T) {
 // TestSendJobNoFccSkipsCopy: an account with no_fcc (the server keeps
 // a sent copy itself - Gmail-family providers) writes no client fcc;
 // the send still delivers.
+// TestSaveDraft lands the composition in the account's draft folder
+// (the preset candidates, the muttrc $postponed path as data) in the
+// maildir new/ slot and reindexes; the assemble happens on the same
+// state the send would deliver.
+func TestSaveDraft(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{Preset: "gmail"}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab1"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "x"
+	st.Body = "draft body"
+
+	if err := saveDraft(bus, w, view, cfg, dir, *st); err != nil {
+		t.Fatal(err)
+	}
+	draftDir := filepath.Join(dir, "gmail", "[Gmail]", "Drafts", "new")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("the draft must land in the account draft folder: %v %v", entries, err)
+	}
+	if !maildirNameRe.MatchString(entries[0].Name()) {
+		t.Fatalf("the draft file must carry the maildir name shape: %q", entries[0].Name())
+	}
+	data, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil || !strings.Contains(string(data), "draft body") {
+		t.Fatalf("the draft must carry the composition: %v", err)
+	}
+	if len(w.actions) != 1 || w.actions[0].Kind != notmuch.ActNew {
+		t.Fatalf("the draft must reindex: %+v", w.actions)
+	}
+	if _, ok := (<-ch).(core.ViewDiff); !ok {
+		t.Fatal("the draft must publish a refresh")
+	}
+}
+
+// TestSaveDraftFailsKeepsBuffer: a missing mail root and a bad
+// address both error - the composition stays open, nothing is lost.
+func TestSaveDraftFailsKeepsBuffer(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{Preset: "gmail"}
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab1"
+	st.To = []string{"alice@example.com"}
+	st.Body = "y"
+
+	if err := saveDraft(bus, w, view, cfg, "", *st); err == nil {
+		t.Fatal("a missing mail root must error")
+	}
+	st.To = []string{"not an address"}
+	if err := saveDraft(bus, w, view, cfg, t.TempDir(), *st); err == nil {
+		t.Fatal("a bad address must error")
+	}
+	if len(w.actions) != 0 {
+		t.Fatalf("a failed draft must not reindex: %+v", w.actions)
+	}
+}
+
 func TestSendJobNoFccSkipsCopy(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")

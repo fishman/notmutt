@@ -159,20 +159,29 @@ func (r *refresher) prune(changed []*core.Thread) ([]*core.Thread, error) {
 // thousands of threads at once).
 const pruneChunk = 1000
 
-// onConfig applies a runtime config change: a view-section change takes
-// the query from the store (the single write path, R8), then a full
-// reload re-fetches. Runs in runRefresher's event-loop goroutine, which
-// is unsynchronized against cycle(): an in-flight initial load touches
-// the same r.view.Query and r.snapshot. ConfigChanged cannot fire in M1
-// (the store has no mutation caller); when one lands, onConfig must be
-// serialized against cycle - the running flag does not cover it.
+// onConfig applies a runtime config change: a view-section change moves
+// the shared view pointer to the store's active view (the single write
+// path, R8) and re-fetches. Reset drops the old query's rows - the
+// switch renders empty until the reload's first chunk lands, never the
+// previous view's rows. Runs in runRefresher's event-loop goroutine,
+// which also owns the initial load - cycle and onConfig are serialized
+// by construction.
 func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
 	if e.Section != "view" {
 		return
 	}
-	if v, ok := st.Config().Views[r.view.Name]; ok && v.Query != r.view.Query {
+	name := st.Config().ActiveView
+	v, ok := st.Config().Views[name]
+	if !ok {
+		return
+	}
+	if r.view.Name != name {
+		r.view.Name = name
+	}
+	if v.Query != r.view.Query {
 		r.view.Query = v.Query
 	}
+	r.view.Reset()
 	r.fullReload()
 }
 

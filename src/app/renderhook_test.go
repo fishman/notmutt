@@ -41,7 +41,7 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 		return append(lines, core.Line{Text: "hook two", Kind: core.LineBody}), nil
 	})
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:
@@ -79,7 +79,7 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 		return append(lines, core.Line{Text: "never seen", Kind: core.LineBody}), context.DeadlineExceeded
 	})
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:
@@ -127,7 +127,7 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 		return lines, ctx.Err()
 	})
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:
@@ -159,7 +159,7 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	ch := bus.Subscribe()
 	fw := emptyThreadWorker{}
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:

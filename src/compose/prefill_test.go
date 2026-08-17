@@ -78,6 +78,32 @@ func TestReplyAllPrefill(t *testing.T) {
 	}
 }
 
+// TestReplyAllCcBuild pins the neomutt Cc rules: own-address exclusion
+// by mailbox part (case-insensitive - a case variant is still the own
+// address), dedupe, xrefs (entries already in the To are not repeated),
+// and the Cc-to-To swap when the To ends up empty.
+func TestReplyAllCcBuild(t *testing.T) {
+	if got := replyAllCc([]string{"Carol@Example.org"}, []string{"bob@example.com"}, "carol@example.org", nil); len(got) != 1 || got[0] != "bob@example.com" {
+		t.Fatalf("case variant of the own address must be excluded: %v", got)
+	}
+	if got := replyAllCc([]string{"dave@example.com"}, []string{"dave@example.com"}, "me@example.com", nil); len(got) != 1 {
+		t.Fatalf("a duplicate across To and Cc appears once: %v", got)
+	}
+	if got := replyAllCc([]string{"dave@example.com"}, nil, "me@example.com", []string{"dave@example.com"}); len(got) != 0 {
+		t.Fatalf("entries already in the To are not repeated in the Cc: %v", got)
+	}
+	if got := replyAllCc([]string{"me@example.com"}, nil, "me@example.com", nil); len(got) != 0 {
+		t.Fatalf("the own address as the only recipient: no Cc: %v", got)
+	}
+	// the From parse failed (To = [""]): the Cc becomes the To
+	orig, _ := fixture()
+	parsed := &mail.Message{From: "", MessageID: "<m3@example.com>", To: []string{"dave@example.com"}}
+	s := ReplyAll(orig, parsed, "gmail", "Bob <bob@example.com>", "carol@example.org", "gmail", "bob")
+	if len(s.To) != 1 || s.To[0] != "dave@example.com" || len(s.Cc) != 0 {
+		t.Fatalf("empty To must take the Cc: To=%v Cc=%v", s.To, s.Cc)
+	}
+}
+
 func TestForwardPrefill(t *testing.T) {
 	orig, parsed := fixture()
 	s := Forward(orig, parsed, "gmail", "Bob <bob@example.com>", "gmail", "bob")

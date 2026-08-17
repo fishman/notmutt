@@ -17,11 +17,33 @@ func SetApplyHandler(fn func()) {
 // open key hands the thread id to the app, which loads the thread's
 // messages and publishes ThreadLoaded); the default is a no-op so the
 // model works in tests. preview=true is the preview fetch - the app
-// skips the read-marking, the model keeps the index mode.
-var onOpen = func(threadID string, preview bool) {}
+// skips the read-marking, the model keeps the index mode. headers is
+// the h key: the render includes the full header block. width is the
+// pager's terminal width: the html wrap caps at 120, narrower
+// terminals reflow.
+var onOpen = func(threadID string, preview, headers bool, width int) {}
 
-func SetOpenHandler(fn func(string, bool)) {
+func SetOpenHandler(fn func(string, bool, bool, int)) {
 	onOpen = fn
+}
+
+// onToggleRender is the render-toggle seam (the v key in the pager)
+// and the source view (ctrl+u): the app re-runs the open path with
+// the requested view and publishes a fresh ThreadLoaded; the default
+// is a no-op so the model works in tests.
+var onToggleRender = func(threadID string, mode core.RenderMode, headers bool, width int) {}
+
+func SetRenderHandler(fn func(string, core.RenderMode, bool, int)) {
+	onToggleRender = fn
+}
+
+// onImageFetch is the image-fetch seam (the render-images remote
+// mode): the app fetches the http(s) src and publishes ImageFetched;
+// the default is a no-op so the model works in tests.
+var onImageFetch = func(url string) {}
+
+func SetImageFetchHandler(fn func(string)) {
+	onImageFetch = fn
 }
 
 // onReply is the reply seam: the app builds the prefill (account
@@ -39,6 +61,15 @@ var onSend = func(st compose.State) {}
 
 func SetSendHandler(fn func(compose.State)) {
 	onSend = fn
+}
+
+// onDraft is the draft seam: the app writes the dialogue state into
+// the account's draft folder (maildir new/ slot, same shape as the
+// fcc) and reindexes; the error keeps the composition open.
+var onDraft = func(st compose.State) error { return nil }
+
+func SetDraftHandler(fn func(compose.State) error) {
+	onDraft = fn
 }
 
 // onAddrRequest is the address-harvest request seam: the compose Tab
@@ -59,12 +90,23 @@ func SetSignaturesDir(dir string) {
 	sigDir = dir
 }
 
-// attachCommands is the attach-command registry seam (R8): the app
-// wires it with SetAttachCommandSource; nil map = no commands.
-// Read-only after wiring.
-var attachCommands = func() map[string][]string { return nil }
+// AttachCommand is one registered attach command (R8): the name the
+// user types (after @), and the argv (F4 - argv only; the runner
+// appends the chooser file path). The slice order is the registration
+// order - and registration order IS the Tab preference: the Lua
+// plugin script that registers the choosers controls which one Tab
+// runs by call order.
+type AttachCommand struct {
+	Name string
+	Argv []string
+}
 
-func SetAttachCommandSource(fn func() map[string][]string) {
+// attachCommands is the attach-command registry seam (R8): the app
+// wires it with SetAttachCommandSource; nil = no commands. Read-only
+// after wiring.
+var attachCommands = func() []AttachCommand { return nil }
+
+func SetAttachCommandSource(fn func() []AttachCommand) {
 	if fn != nil {
 		attachCommands = fn
 	}

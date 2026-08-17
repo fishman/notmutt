@@ -102,6 +102,57 @@ func TestAssemble(t *testing.T) {
 	}
 }
 
+// TestAssembleWireShapes pins the neomutt wire shapes on the raw
+// bytes (send/send.c:2712, send/header.c:830): a bare body is ONE
+// text/plain part with no multipart wrapper and no
+// Content-Disposition anywhere; an attachment wraps the message in
+// multipart/mixed and only the attachment part carries
+// Content-Disposition. A body part tagged inline is what makes
+// Betterbird render a phantom attachment.
+func TestAssembleWireShapes(t *testing.T) {
+	single := NewCompose("gmail", "bob@example.com", "", "")
+	single.To = []string{"alice@example.com"}
+	single.Subject = "x"
+	single.Body = "hello"
+	var buf bytes.Buffer
+	if err := single.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	raw := strings.ToLower(buf.String())
+	if strings.Contains(raw, "multipart") || strings.Contains(raw, "content-disposition") {
+		t.Fatalf("a bare body must be one plain part:\n%s", buf.String())
+	}
+	if !strings.Contains(raw, "content-type: text/plain") || !strings.Contains(raw, "content-transfer-encoding: quoted-printable") {
+		t.Fatalf("the single part must carry its type and encoding:\n%s", buf.String())
+	}
+
+	att := filepath.Join(t.TempDir(), "doc.txt")
+	if err := os.WriteFile(att, []byte("attachment bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	with := NewCompose("gmail", "bob@example.com", "", "")
+	with.To = []string{"alice@example.com"}
+	with.Subject = "x"
+	with.Body = "hello"
+	if err := with.AddAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+	buf.Reset()
+	if err := with.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	raw = strings.ToLower(buf.String())
+	if !strings.Contains(raw, "multipart/mixed") {
+		t.Fatalf("attachments must wrap in multipart/mixed:\n%s", buf.String())
+	}
+	if strings.Contains(raw, "content-disposition: inline") {
+		t.Fatalf("the body part must carry no disposition:\n%s", buf.String())
+	}
+	if n := strings.Count(raw, "content-disposition: attachment"); n != 1 {
+		t.Fatalf("exactly the attachment must carry disposition, found %d:\n%s", n, buf.String())
+	}
+}
+
 func TestAssembleMarkdownBody(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"a@b.c"}

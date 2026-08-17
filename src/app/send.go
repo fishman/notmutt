@@ -118,3 +118,41 @@ func sentPath(root, name string, a config.Account) string {
 	}
 	return filepath.Join(root, filter.ResolveFolder(root, a.Tag(name), cs))
 }
+
+// saveDraft writes the composition into the account's draft folder
+// (the muttrc $postponed path as data, the same writeFcc shape - the
+// draft lands in the maildir new/ slot and notmuch new picks it up
+// with the draft folder rule). The write is local, no transport; the
+// error keeps the composition open. A missing mail root (unresolvable
+// at startup) is an error - dropping the buffer silently loses the
+// mail.
+func saveDraft(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) error {
+	var buf bytes.Buffer
+	if err := st.Assemble(&buf); err != nil {
+		return err
+	}
+	dir := draftPath(root, st.Account, cfg.Accounts[st.Account])
+	if dir == "" {
+		return fmt.Errorf("no mail root - the draft folder is unresolvable")
+	}
+	if err := writeFcc(dir, buf.Bytes()); err != nil {
+		return err
+	}
+	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	bus.Publish(core.ViewDiff{View: view.Name})
+	return nil
+}
+
+// draftPath derives the account's draft folder like sentPath ("draft"
+// candidates from the preset/account data, the muttrc $postponed
+// reference).
+func draftPath(root, name string, a config.Account) string {
+	if root == "" {
+		return ""
+	}
+	cs := filter.Candidates(a, "draft")
+	if len(cs) == 0 {
+		cs = []string{"Drafts"}
+	}
+	return filepath.Join(root, filter.ResolveFolder(root, a.Tag(name), cs))
+}

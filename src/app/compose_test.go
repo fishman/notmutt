@@ -201,9 +201,9 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 		Author:    "Alice <alice@example.com>, Dave <dave@example.com>",
 		Subject:   "Re: hello", Tags: []string{"inbox", "gmail"}}
 
-	st := replyPrefill(cfg, view, worker, row, "reply", mroot)
-	if st == nil {
-		t.Fatal("index-row reply must fetch the thread and build")
+	st, err := replyPrefill(cfg, view, worker, row, "reply", mroot)
+	if st == nil || err != nil {
+		t.Fatalf("index-row reply must fetch the thread and build: st=%v err=%v", st, err)
 	}
 	if len(st.To) != 1 || st.To[0] != "dave@example.com" {
 		t.Fatalf("To = %v, want the newest message's sender", st.To)
@@ -215,18 +215,97 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 		t.Fatalf("Fcc = %q, want the derived sent folder", st.Fcc)
 	}
 
-	st = replyPrefill(cfg, view, worker, row, "reply-all", mroot)
-	if st.Mode != compose.ModeReplyAll || len(st.Cc) != 0 {
-		t.Fatalf("reply-all: %+v", st)
+	st, err = replyPrefill(cfg, view, worker, row, "reply-all", mroot)
+	if err != nil || st.Mode != compose.ModeReplyAll || len(st.Cc) != 0 {
+		t.Fatalf("reply-all: st=%+v err=%v", st, err)
 	}
-	st = replyPrefill(cfg, view, worker, row, "forward", mroot)
-	if st.Mode != compose.ModeForward || len(st.To) != 0 {
-		t.Fatalf("forward: %+v", st)
+	st, err = replyPrefill(cfg, view, worker, row, "forward", mroot)
+	if err != nil || st.Mode != compose.ModeForward || len(st.To) != 0 {
+		t.Fatalf("forward: st=%+v err=%v", st, err)
 	}
-	if st := replyPrefill(cfg, view, worker, row, "compose", mroot); st.Mode != compose.ModeCompose {
-		t.Fatalf("blank compose must not fetch: %+v", st)
+	st, err = replyPrefill(cfg, view, worker, row, "compose", mroot)
+	if err != nil || st.Mode != compose.ModeCompose {
+		t.Fatalf("blank compose must not fetch: st=%+v err=%v", st, err)
 	}
-	if st := replyPrefill(cfg, view, worker, nil, "reply", mroot); st != nil {
-		t.Fatal("nil message must stay nil")
+	st, err = replyPrefill(cfg, view, worker, nil, "reply", mroot)
+	if st != nil || err != nil {
+		t.Fatalf("nil message must stay nil: st=%v err=%v", st, err)
+	}
+}
+
+// TestReplyPrefillFallsThroughBrokenNewest pins the recency fallback:
+// the thread's newest message has a vanished file, so the reply must
+// build from the older parseable message instead of failing silently.
+func TestReplyPrefillFallsThroughBrokenNewest(t *testing.T) {
+	dir := t.TempDir()
+	mroot := filepath.Join(dir, "mail")
+	rootPath := filepath.Join(dir, "root.eml")
+	root := "From: Alice <alice@example.com>\n" +
+		"To: Bob <bob@example.com>\n" +
+		"Subject: hello\n" +
+		"Message-Id: <m1@example.com>\n" +
+		"Date: Tue, 11 Aug 2026 10:00:00 +0000\n\n" +
+		"root body\n"
+	if err := os.WriteFile(rootPath, []byte(root), 0600); err != nil {
+		t.Fatal(err)
+	}
+	bus := core.NewBus()
+	worker := notmuch.NewWorker(bus, &threadBackend{msgs: []core.Message{
+		{ID: "<m1@example.com>", ThreadID: "t1",
+			Timestamp: time.Date(2026, 8, 11, 10, 0, 0, 0, time.UTC).Unix(),
+			Author:    "Alice <alice@example.com>", Subject: "hello",
+			Tags: []string{"inbox", "gmail"}, Paths: []string{rootPath}},
+		{ID: "<m2@example.com>", ThreadID: "t1",
+			Timestamp: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC).Unix(),
+			Author:    "Dave <dave@example.com>", Subject: "Re: hello",
+			Tags: []string{"inbox", "gmail"}, Paths: []string{filepath.Join(dir, "gone.eml")}},
+	}}, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Start(ctx)
+
+	cfg := config.Default()
+	g := cfg.Accounts["gmail"]
+	g.From = "Bob <bob@example.com>"
+	cfg.Accounts["gmail"] = g
+	view := core.NewView("inbox", "tag:inbox")
+	row := &core.Message{ThreadID: "t1",
+		Timestamp: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC).Unix(),
+		Subject:   "Re: hello", Tags: []string{"inbox", "gmail"}}
+
+	st, err := replyPrefill(cfg, view, worker, row, "reply", mroot)
+	if err != nil || st == nil {
+		t.Fatalf("an older parseable message must build: st=%v err=%v", st, err)
+	}
+	if st.OriginalID != "<m1@example.com>" {
+		t.Fatalf("OriginalID = %q, want the older parseable message", st.OriginalID)
+	}
+	if len(st.To) != 1 || st.To[0] != "alice@example.com" {
+		t.Fatalf("To = %v", st.To)
+	}
+}
+
+// TestReplyPrefillNoParseable pins the loud failure: when no thread
+// message parses the prefill returns an error (the handler logs it and
+// publishes JobError) - a reply never fails silently.
+func TestReplyPrefillNoParseable(t *testing.T) {
+	bus := core.NewBus()
+	worker := notmuch.NewWorker(bus, &threadBackend{msgs: []core.Message{
+		{ID: "<m2@example.com>", ThreadID: "t1",
+			Timestamp: time.Date(2026, 8, 12, 10, 0, 0, 0, time.UTC).Unix(),
+			Author:    "Dave <dave@example.com>", Subject: "Re: hello",
+			Tags: []string{"inbox", "gmail"}, Paths: []string{"/nonexistent/msg.eml"}},
+	}}, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go worker.Start(ctx)
+
+	cfg := config.Default()
+	view := core.NewView("inbox", "tag:inbox")
+	row := &core.Message{ThreadID: "t1", Timestamp: 0}
+
+	st, err := replyPrefill(cfg, view, worker, row, "reply", "")
+	if st != nil || err == nil {
+		t.Fatalf("no parseable message must error: st=%v err=%v", st, err)
 	}
 }

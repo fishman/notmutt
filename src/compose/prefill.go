@@ -97,7 +97,7 @@ func Reply(orig core.Message, parsed *mail.Message, account, from, sigName, sigB
 		From:          from,
 		To:            []string{parsed.From},
 		Subject:       subjectPrefix(parsed.Subject, "Re: "),
-		Body:          Quote(orig, parsed.Parts),
+		Body:          Quote(orig, mail.QuoteParts(parsed.Parts, 0)),
 		Signature:     sigName,
 		SignatureBody: sigBody,
 		MessageID:     parsed.MessageID,
@@ -106,23 +106,63 @@ func Reply(orig core.Message, parsed *mail.Message, account, from, sigName, sigB
 	}
 }
 
-// ReplyAll adds the original's To+Cc minus the account's own address
-// (milestone 1 matches the exact bare address - normalization is
-// future work) as the Cc. The original's From stays the To.
+// ReplyAll builds the recipients per neomutt's mutt_fetch_recips /
+// mutt_fix_reply_recipients: the original's From stays the To; the
+// original's To+Cc minus the account's own address becomes the Cc
+// (mailbox-part compare, case-insensitive - a case variant of the own
+// address is still the own address), deduped, with entries already in
+// the To dropped. When the To ends up empty the Cc becomes the To
+// (neomutt's swap).
 func ReplyAll(orig core.Message, parsed *mail.Message, account, from, own string, sigName, sigBody string) *State {
 	s := Reply(orig, parsed, account, from, sigName, sigBody)
 	s.Mode = ModeReplyAll
-	for _, a := range parsed.To {
-		if a != own {
-			s.Cc = append(s.Cc, a)
+	s.Cc = replyAllCc(parsed.To, parsed.Cc, own, s.To)
+	// a failed From parse leaves To = [""] - treat it as empty, the Cc
+	// becomes the To (neomutt's swap)
+	empty := true
+	for _, t := range s.To {
+		if t != "" {
+			empty = false
+			break
 		}
 	}
-	for _, a := range parsed.Cc {
-		if a != own {
-			s.Cc = append(s.Cc, a)
-		}
+	if len(s.Cc) > 0 && empty {
+		s.To = s.Cc
+		s.Cc = nil
 	}
 	return s
+}
+
+// replyAllCc is the Cc build above: the own address (EqualFold on the
+// mailbox part - addresses arrive as bare addr-specs from the parse)
+// never lands in the Cc, entries appear once, and entries already in
+// the To are not repeated in the Cc.
+func replyAllCc(to, cc []string, own string, inTo []string) []string {
+	var out []string
+	for _, a := range append(append([]string{}, to...), cc...) {
+		if a == "" || strings.EqualFold(a, own) {
+			continue
+		}
+		dup := false
+		for _, o := range out {
+			if strings.EqualFold(a, o) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			for _, t := range inTo {
+				if strings.EqualFold(a, t) {
+					dup = true
+					break
+				}
+			}
+		}
+		if !dup {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // Forward prefills a forward: no recipients, one "Fwd: " prefix, the
@@ -137,7 +177,7 @@ func Forward(orig core.Message, parsed *mail.Message, account, from, sigName, si
 		Account:       account,
 		From:          from,
 		Subject:       subjectPrefix(parsed.Subject, "Fwd: "),
-		Body:          Quote(orig, parsed.Parts),
+		Body:          Quote(orig, mail.QuoteParts(parsed.Parts, 0)),
 		Signature:     sigName,
 		SignatureBody: sigBody,
 		MessageID:     parsed.MessageID,

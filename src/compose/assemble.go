@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 )
 
@@ -58,6 +59,15 @@ func DropBcc(data []byte) []byte {
 // render-only, F1). References is written verbatim - the prefill
 // already carries the full chain including the original's own
 // message-id (spec section 6).
+//
+// The wire shape follows neomutt (send/send.c, send/multipart.c,
+// send/header.c): a bare body is a SINGLE text/plain part - no
+// multipart wrapper, no Content-Disposition; attachments wrap the
+// message in multipart/mixed and only the attachment parts carry
+// Content-Disposition: attachment. The mail package's Writer would
+// force multipart/mixed plus a Content-Disposition: inline on the
+// body part on every message - clients (Betterbird) read that as an
+// attached body file.
 func (s *State) Assemble(w io.Writer) error {
 	hdr := mail.Header{}
 	setAddrs := func(name string, addrs []string) error {
@@ -100,44 +110,58 @@ func (s *State) Assemble(w io.Writer) error {
 			hdr.Set("References", strings.Join(s.References, " "))
 		}
 	}
-	mw, err := mail.CreateWriter(w, hdr)
-	if err != nil {
-		return err
-	}
-	ih := mail.InlineHeader{}
 	f := InlineFacts(s)
-	ih.Set("Content-Type", f.Type+"; charset="+f.Charset)
-	ih.Set("Content-Transfer-Encoding", f.Encoding)
-	b, err := mw.CreateSingleInline(ih)
+	body := BodyWithSig(s.Body, s.SignatureBody)
+	if len(s.Attachments) == 0 {
+		hdr.Set("Content-Type", f.Type+"; charset="+f.Charset)
+		hdr.Set("Content-Transfer-Encoding", f.Encoding)
+		mw, err := message.CreateWriter(w, hdr.Header)
+		if err != nil {
+			return err
+		}
+		if _, err := io.WriteString(mw, body); err != nil {
+			return err
+		}
+		return mw.Close()
+	}
+	hdr.Set("Content-Type", "multipart/mixed")
+	mw, err := message.CreateWriter(w, hdr.Header)
 	if err != nil {
 		return err
 	}
-	if _, err := io.WriteString(b, BodyWithSig(s.Body, s.SignatureBody)); err != nil {
+	bh := message.Header{}
+	bh.Set("Content-Type", f.Type+"; charset="+f.Charset)
+	bh.Set("Content-Transfer-Encoding", f.Encoding)
+	bp, err := mw.CreatePart(bh)
+	if err != nil {
 		return err
 	}
-	if err := b.Close(); err != nil {
+	if _, err := io.WriteString(bp, body); err != nil {
+		return err
+	}
+	if err := bp.Close(); err != nil {
 		return err
 	}
 	for _, a := range s.Attachments {
-		f, err := os.Open(a.Path)
+		af, err := os.Open(a.Path)
 		if err != nil {
 			return err
 		}
 		ah := mail.AttachmentHeader{}
-		af := AttachmentFacts(a)
-		ah.Set("Content-Type", af.Type)
-		ah.Set("Content-Transfer-Encoding", af.Encoding)
+		afacts := AttachmentFacts(a)
+		ah.Set("Content-Type", afacts.Type)
+		ah.Set("Content-Transfer-Encoding", afacts.Encoding)
 		ah.SetFilename(a.Name)
-		ab, err := mw.CreateAttachment(ah)
+		ab, err := mw.CreatePart(ah.Header)
 		if err != nil {
-			f.Close()
+			af.Close()
 			return err
 		}
-		if _, err := io.Copy(ab, f); err != nil {
-			f.Close()
+		if _, err := io.Copy(ab, af); err != nil {
+			af.Close()
 			return err
 		}
-		f.Close()
+		af.Close()
 		if err := ab.Close(); err != nil {
 			return err
 		}

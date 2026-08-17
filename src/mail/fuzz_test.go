@@ -17,7 +17,7 @@ func FuzzRenderHTML(f *testing.F) {
 	f.Add("<img src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==\">")
 	f.Add("<pre>  spaced\n\tlines\n</pre>")
 	f.Fuzz(func(t *testing.T, body string) {
-		lines := RenderHTML(body, nil)
+		lines := RenderHTML(body, nil, 0)
 		if len(lines) > 2*maxHTMLLines+1 {
 			t.Fatalf("render exceeded the line budget: %d lines", len(lines))
 		}

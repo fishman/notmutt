@@ -94,12 +94,18 @@ func (b *Binding) UnmarshalTOML(v interface{}) error {
 }
 
 type Config struct {
-	UI        UI                           `toml:"ui"`
-	Views     map[string]View              `toml:"view"`
-	TagGroups map[string]core.TagGroup     `toml:"tag-groups"`
-	Setup     Setup                        `toml:"setup"`
-	Lua       Lua                          `toml:"lua"`
-	Bindings  map[string]map[string]string `toml:"-"`
+	UI         UI              `toml:"ui"`
+	Views      map[string]View `toml:"view"`
+	ActiveView string          `toml:"-"`
+	// DerivedGKeys tracks the per-account goto keys deriveAccountViews
+	// added (key -> tag): the next derivation run removes them first,
+	// so re-numbering over the merged accounts never collides with
+	// stale Default-time entries (toml:"-": session state, not config)
+	DerivedGKeys map[string]string            `toml:"-"`
+	TagGroups    map[string]core.TagGroup     `toml:"tag-groups"`
+	Setup        Setup                        `toml:"setup"`
+	Lua          Lua                          `toml:"lua"`
+	Bindings     map[string]map[string]string `toml:"-"`
 	// Shown is the per-context key set the keyhint row shows (the
 	// help dialog shows every binding): derived from the scheme
 	// entries' show flag - visibility is opt-in, never a config block
@@ -828,6 +834,61 @@ func deriveDescriptions(schemes map[string]map[string]map[string]Binding, keymap
 	return out
 }
 
+// deriveAccountViews derives the per-account views and their goto keys
+// from the accounts table (R1: virtual views are tag queries; the
+// muttrc folder:/^<folder>\// account-tag pattern as data). Every
+// account owns a view over its account tag, numbered by sorted account
+// name (g1..gN in the vim index scheme). A user [view] entry with the
+// same name wins; a key the user already bound wins. Read-only
+// accounts are included - a view is a query, never a write (R2's
+// classification rules govern writes only). Runs in Default() (the
+// placeholder accounts) and again in Load() over the merged accounts:
+// the keys it added last run are removed first, so the numbering
+// re-derives from the merged set instead of colliding with the
+// Default-time entries.
+func deriveAccountViews(cfg *Config) {
+	if cfg.DerivedGKeys == nil {
+		cfg.DerivedGKeys = map[string]string{}
+	}
+	index := cfg.Schemes["vim"]["index"]
+	if index == nil {
+		index = map[string]Binding{}
+		cfg.Schemes["vim"]["index"] = index
+	}
+	for key, tag := range cfg.DerivedGKeys {
+		// a user-replaced entry is not ours to remove
+		if e, ok := index[key]; ok && e.Fun == "goto-"+tag {
+			delete(index, key)
+		}
+	}
+	cfg.DerivedGKeys = map[string]string{}
+	i := 0
+	for _, name := range sortedKeys(cfg.Accounts) {
+		i++
+		tag := cfg.Accounts[name].Tag(name)
+		if _, ok := cfg.Views[tag]; !ok {
+			cfg.Views[tag] = View{Query: "tag:" + tag, Threads: true}
+		}
+		key := fmt.Sprintf("g %d", i)
+		if _, ok := index[key]; !ok {
+			index[key] = Binding{Fun: "goto-" + tag, Desc: "Show the " + tag + " view", Show: true}
+			cfg.DerivedGKeys[key] = tag
+		}
+	}
+}
+
+// defaultView is the startup view: "inbox" when present, else the
+// first in sorted name order - never map iteration order.
+func defaultView(cfg Config) string {
+	if _, ok := cfg.Views["inbox"]; ok {
+		return "inbox"
+	}
+	if names := sortedKeys(cfg.Views); len(names) > 0 {
+		return names[0]
+	}
+	return ""
+}
+
 // sortedKeys is the deterministic iteration order map lookups need
 // (map iteration is not).
 func sortedKeys[V any](m map[string]V) []string {
@@ -889,7 +950,14 @@ func Default() Config {
 			},
 		},
 		Views: map[string]View{
-			"inbox": {Query: "tag:inbox", Threads: true},
+			"inbox":   {Query: "tag:inbox", Threads: true},
+			"unread":  {Query: "tag:unread", Threads: true},
+			"pending": {Query: "tag:pending", Threads: true},
+			"sent":    {Query: "tag:sent", Threads: true},
+			"spam":    {Query: "tag:spam", Threads: true},
+			"deleted": {Query: "tag:deleted", Threads: true},
+			"draft":   {Query: "tag:draft", Threads: true},
+			"archive": {Query: "tag:archive", Threads: true},
 		},
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
@@ -924,6 +992,8 @@ func Default() Config {
 	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
 		panic(err)
 	}
+	deriveAccountViews(&cfg)
+	cfg.ActiveView = defaultView(cfg)
 	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes["vim"])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, "vim")
 	if err := validate(cfg); err != nil {
@@ -1071,6 +1141,8 @@ func Load(dir string) (Config, error) {
 		return cfg, err
 	}
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
+	deriveAccountViews(&cfg)
+	cfg.ActiveView = defaultView(cfg)
 	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
 	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {

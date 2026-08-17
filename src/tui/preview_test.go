@@ -14,8 +14,8 @@ import (
 // the keyhint derives the pager keys (activeBindings flips with the
 // popup).
 func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview bool) {})
-	defer SetOpenHandler(func(threadID string, preview bool) {})
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
 	m.width, m.height = 80, 24
 	m = press(t, m, "P")
@@ -45,8 +45,8 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 // the pager. A long fixture body makes the preview window movable
 // (the box is only 14 rows at 80x24).
 func TestPreviewScrollsAndCloses(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview bool) {})
-	defer SetOpenHandler(func(threadID string, preview bool) {})
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
 	m.width, m.height = 80, 24
 	m = press(t, m, "P")
@@ -80,10 +80,10 @@ func TestPreviewScrollsAndCloses(t *testing.T) {
 // height invariant.
 func TestPreviewOpensFull(t *testing.T) {
 	var calls []string
-	SetOpenHandler(func(threadID string, preview bool) {
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		calls = append(calls, fmt.Sprintf("%s:%v", threadID, preview))
 	})
-	defer SetOpenHandler(func(threadID string, preview bool) {})
+	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
 	m.width, m.height = 80, 24
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
@@ -109,8 +109,8 @@ func TestPreviewOpensFull(t *testing.T) {
 // TestPreviewStaleReplyDrops pins the async guard: a preview reply
 // landing after the popup closed must not force the thread open.
 func TestPreviewStaleReplyDrops(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview bool) {})
-	defer SetOpenHandler(func(threadID string, preview bool) {})
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
 	m.width, m.height = 80, 24
 	m = press(t, m, "P") // fetch in flight
@@ -125,8 +125,8 @@ func TestPreviewStaleReplyDrops(t *testing.T) {
 // open for another thread landing mid-preview must not stick - the
 // preview target's reply re-asserts the popup over the index.
 func TestPreviewTargetWinsOverRacingOpen(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview bool) {})
-	defer SetOpenHandler(func(threadID string, preview bool) {})
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
 	m.width, m.height = 80, 24
 	m = press(t, m, "P") // preview fetch in flight

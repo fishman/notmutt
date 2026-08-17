@@ -37,6 +37,15 @@ func accountSegment(name string, st Styles) statusSegment {
 	return statusSegment{content: name, style: st.Account, priority: 6}
 }
 
+// mimeSegment labels what the pager renders (text/plain or text/html,
+// resolved against the message's actual parts - the ctrl+u and
+// toggle-render surface). The zero style inherits the status
+// background. Priority 5, like the count: drops with it when the row
+// overruns.
+func mimeSegment(mime string) statusSegment {
+	return statusSegment{content: mime, priority: 5}
+}
+
 // legendSegment is the icon library: the pre-fitted "icon name" pairs
 // for the view's tags. budget is the cells it may occupy; the content
 // truncates wcwidth-aware so the row never shifts with its content

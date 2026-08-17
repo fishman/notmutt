@@ -45,9 +45,6 @@ func partCell(f compose.PartFacts, size int64) string {
 // open. The frame is ALWAYS exactly m.height lines - the frame
 // discipline applies to the compose surface like everywhere else.
 func (m *Model) renderCompose() string {
-	if m.fuzzy != nil {
-		return m.renderFuzzy()
-	}
 	st := m.tabs[m.tabIdx-1]
 	rows := m.height - 3
 	if rows < 1 {
@@ -109,11 +106,10 @@ func (m *Model) renderCompose() string {
 		b.WriteByte('\n')
 	}
 	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	frame := m.overlayDialogue(b.String())
 	if m.composeTab().Phase == compose.PhaseSending {
-		return m.sendOverlay(frame)
+		return m.sendOverlay(b.String())
 	}
-	return frame
+	return b.String()
 }
 
 // sendOverlay replaces the compose frame's body rows with the send box
@@ -291,49 +287,4 @@ func formRowOf(form []composeForm, slot int) int {
 		}
 	}
 	return -1
-}
-
-// renderFuzzy builds the selector popup frame: the matcher row on
-// top (title + filter input - the title doubles as the prompt, no
-// standalone title line), then the ranked matches, then the fuzzy
-// keyhint and status rows. Exactly m.height lines - the popup
-// replaces the compose frame (a clean diff, never an overlay). The
-// matcher row always renders - the user's filter input stays visible
-// mid-type - and the match list clips to fill the frame (large lists
-// scroll later).
-func (m *Model) renderFuzzy() string {
-	rows := m.height - 3
-	if rows < 1 {
-		rows = 1
-	}
-	var b strings.Builder
-	b.WriteString(m.tabBar())
-	b.WriteByte('\n')
-	lines := []string{padRow(m.fuzzy.title+" "+m.fuzzy.query, m.width, m.styles.Indicator)}
-	matchRows := rows - 1
-	if matchRows < 0 {
-		matchRows = 0
-	}
-	matches := m.fuzzy.filtered()
-	if matchRows > len(matches) {
-		matchRows = len(matches)
-	}
-	for i := 0; i < matchRows; i++ {
-		outer := m.styles.Normal
-		if i == m.fuzzy.sel {
-			outer = m.styles.Indicator
-		}
-		lines = append(lines, padRow(m.fuzzy.entries[matches[i]], m.width, outer))
-	}
-	for len(lines) < rows {
-		lines = append(lines, padRow("", m.width, m.styles.Normal))
-	}
-	for _, l := range lines[:rows] {
-		b.WriteString(l)
-		b.WriteByte('\n')
-	}
-	b.WriteString(keyhintRow(m.bindings["fuzzy"], m.width))
-	b.WriteByte('\n')
-	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	return m.overlayDialogue(b.String())
 }

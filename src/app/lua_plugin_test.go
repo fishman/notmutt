@@ -27,6 +27,7 @@ func pluginDir(t *testing.T, files map[string]string) string {
 func TestLuaRegisterAttachCommand(t *testing.T) {
 	attachcmdsMu.Lock()
 	attachcmds = map[string][]string{}
+	attachcmdsOrder = nil // the order slice survives a map swap - stale names leak empty argv
 	attachcmdsMu.Unlock()
 
 	dir := pluginDir(t, map[string]string{"attach.lua": `
@@ -35,7 +36,8 @@ register_attach_command("yazi", {"yazi", "--chooser-file"})
 	loadLuaPlugins(dir)
 
 	snap := attachCommandSnapshot()
-	if argv := snap["yazi"]; len(argv) != 2 || argv[0] != "yazi" || argv[1] != "--chooser-file" {
+	if len(snap) != 1 || snap[0].Name != "yazi" || len(snap[0].Argv) != 2 ||
+		snap[0].Argv[0] != "yazi" || snap[0].Argv[1] != "--chooser-file" {
 		t.Fatalf("lua-registered command = %+v", snap)
 	}
 }
@@ -58,7 +60,7 @@ end
 `})
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:
@@ -95,7 +97,7 @@ end
 `})
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 
 	select {
 	case e := <-ch:
@@ -135,7 +137,7 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {

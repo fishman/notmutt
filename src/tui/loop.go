@@ -1,11 +1,16 @@
 package tui
 
 import (
+	"os"
+
 	"github.com/gdamore/tcell/v3"
 )
 
 // Run starts the loop: the real screen, then runLoop (the test entry
-// point drives runLoop with a simulation screen).
+// point drives runLoop with a simulation screen). The image paint
+// sink is /dev/tty - the tcell screen cannot emit raw image
+// protocols, and the direct fd writes after a frame flush are ordered
+// and safe (the draw clobbers the cursor position on the next frame).
 func Run(model Model, quitCh <-chan struct{}) error {
 	s, err := tcell.NewScreen()
 	if err != nil {
@@ -15,6 +20,13 @@ func Run(model Model, quitCh <-chan struct{}) error {
 		return err
 	}
 	defer s.Fini()
+	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
+		imageWriter = tty
+		defer func() {
+			imageWriter = nil
+			tty.Close()
+		}()
+	}
 	return runLoop(model, s, quitCh)
 }
 
@@ -84,6 +96,7 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 		if m.ShouldRender() {
 			x, y, show := m.textCursor()
 			pushFrame(s, m.View(), x, y, show)
+			m.paintImages() // pixels after the text frame, never before
 		}
 	}
 }

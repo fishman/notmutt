@@ -285,12 +285,20 @@ func (b *CLIBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return fields[1], rev, nil
 }
 
-func (b *CLIBackend) New(ctx context.Context) error {
+func (b *CLIBackend) New(ctx context.Context) (uint64, uint64, error) {
+	_, pre, err := b.Revision(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
 	out, err := b.run(ctx, "notmuch", []string{"new"})
 	if err != nil {
-		return fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
+		return 0, 0, fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	_, cur, err := b.Revision(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return pre, cur, nil
 }
 
 // AddPaths/RemovePaths are unsupported on the CLI backend: there is no

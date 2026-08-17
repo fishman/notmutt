@@ -50,6 +50,7 @@ type Reply struct {
 	Msgs  []core.Message
 	Count int
 	UUID  string
+	Pre   uint64
 	Rev   uint64
 	Paths []string
 	Addrs []core.AddressEntry
@@ -151,7 +152,7 @@ func (w *Worker) handle(a Action) {
 	case ActAddresses:
 		r.Addrs, err = w.backend.Addresses(ctx, a.Query)
 	case ActNew:
-		err = w.backend.New(ctx)
+		r.Pre, r.Rev, err = w.backend.New(ctx)
 		if err == nil {
 			w.bus.Publish(core.WorkerDone{Job: "new"})
 		}

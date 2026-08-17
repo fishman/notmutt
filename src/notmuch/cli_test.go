@@ -184,6 +184,34 @@ func TestCLIRevision(t *testing.T) {
 	}
 }
 
+// TestCLINewBracket pins the wrapper's subprocess ordering: the pre
+// revision is captured before `new`, the post revision after - the
+// poll's classification window.
+func TestCLINewBracket(t *testing.T) {
+	b := NewCLI()
+	var calls []string
+	n := 0
+	fakeRun(b, func(name string, args []string) ([]byte, error) {
+		calls = append(calls, strings.Join(args, " "))
+		if args[0] == "count" {
+			n += 11 // revisions tick per count
+			return []byte(fmt.Sprintf("0\tuuid\t%d\n", n)), nil
+		}
+		return nil, nil
+	})
+	pre, cur, err := b.New(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"count --lastmod ", "new", "count --lastmod "}
+	if strings.Join(calls, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("subprocess order wrong: %v", calls)
+	}
+	if pre != 11 || cur != 22 {
+		t.Fatalf("bracket wrong: %d..%d", pre, cur)
+	}
+}
+
 func TestCLITagArgs(t *testing.T) {
 	b := NewCLI()
 	var got []string

@@ -284,12 +284,43 @@ func (b *CGOBackend) RemovePaths(ctx context.Context, paths []string) error {
 // on the revision delta after this returns, and the migration empties
 // the hook file once the engine owns the pipeline (early overlap is
 // guarded, never double-worked).
-func (b *CGOBackend) New(ctx context.Context) error {
+//
+// The read handle is stale across an external commit - the revision
+// is cached at open and the Xapian snapshot hides the new messages -
+// so the handle reopens around the run: the pre read and every read
+// after the new (the poll's delta query) must see the commit.
+func (b *CGOBackend) New(ctx context.Context) (uint64, uint64, error) {
+	if err := b.reopen(ctx); err != nil {
+		return 0, 0, err
+	}
+	_, pre, err := b.Revision(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
 	out, err := b.run(ctx, "notmuch", []string{"new"})
 	if err != nil {
-		return fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
+		return 0, 0, fmt.Errorf("notmuch new: %w: %s", err, strings.TrimSpace(string(out)))
 	}
-	return nil
+	if err := b.reopen(ctx); err != nil {
+		return 0, 0, err
+	}
+	_, cur, err := b.Revision(ctx)
+	if err != nil {
+		return 0, 0, err
+	}
+	return pre, cur, nil
+}
+
+// reopen refreshes the read snapshot: an external commit (the new run
+// itself, another notmutt instance, a CLI new from a hook) is
+// invisible to a snapshot taken earlier - cached revision and query
+// results both go stale until notmuch_database_reopen (Xapian reopen
+// plus _load_database_state in lib/open.cc) replaces it.
+func (b *CGOBackend) reopen(ctx context.Context) error {
+	if b.db == nil {
+		return fmt.Errorf("notmuch new: database not open")
+	}
+	return b.db.Reopen(nm.DBReadOnly)
 }
 
 // QueryMsgs walks a message-level query (the filter engine's delta

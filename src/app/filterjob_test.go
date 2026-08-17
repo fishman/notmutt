@@ -16,7 +16,7 @@ import (
 
 // fjWorker serves the filter job's revision bracket and canned
 // snapshots, and records the writes. When hold is set, the first
-// ActRevision signals on entered and blocks until the test closes hold
+// ActNew signals on entered and blocks until the test closes hold
 // (the guard-overlap test pins the job mid-run).
 type fjWorker struct {
 	rev     atomic.Uint64
@@ -31,12 +31,6 @@ type fjWorker struct {
 func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	switch a.Kind {
 	case notmuch.ActRevision:
-		if f.hold != nil {
-			close(f.entered)
-			f.entered = nil
-			<-f.hold
-			f.hold = nil
-		}
 		return notmuch.Reply{Rev: f.rev.Load()}, nil
 	case notmuch.ActQueryMsgs:
 		if a.Emit != nil {
@@ -47,9 +41,17 @@ func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	case notmuch.ActTag:
 		f.tagged.Add(1)
 	case notmuch.ActNew:
+		if f.hold != nil {
+			close(f.entered)
+			f.entered = nil
+			<-f.hold
+			f.hold = nil
+		}
+		pre := f.rev.Load()
 		if f.bump.Load() > 0 {
 			f.rev.Add(f.bump.Load())
 		}
+		return notmuch.Reply{Pre: pre, Rev: f.rev.Load()}, nil
 	}
 	return notmuch.Reply{}, nil
 }

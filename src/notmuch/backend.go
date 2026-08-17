@@ -76,7 +76,13 @@ type Backend interface {
 	AddPaths(ctx context.Context, paths []string) error
 	RemovePaths(ctx context.Context, paths []string) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)
-	New(ctx context.Context) error
+	// New runs `notmuch new` and returns the lastmod bracket around it
+	// (pre before, cur after) - the poll's classification window.
+	// The bracket is captured in one call because a revision read
+	// through a stale handle reports the value cached at open; the
+	// cgo backend reopens its read handle around the run so the
+	// bracket reads and every later read see the commit.
+	New(ctx context.Context) (pre, cur uint64, err error)
 }
 
 // runFn abstracts one CLI invocation: the cgo backend runs `notmuch

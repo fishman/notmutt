@@ -11,9 +11,10 @@ import (
 	"notmutt/filter"
 )
 
-// filterJob is the classification pipeline on the poll (R2): capture
-// the revision, run `notmuch new`, capture it again, and classify the
-// (pre, cur] delta through the filter engine and the mover. The
+// filterJob is the classification pipeline on the poll (R2): run
+// `notmuch new` (the backend's wrapper returns the (pre, cur]
+// bracket) and classify the delta through the filter engine and the
+// mover. The
 // running guard makes overlapping polls no-ops - a backfill takes
 // minutes and the cadence must not pile jobs. ActNew's WorkerDone
 // cycles the view; the engine's own tag bumps land in later cycles.

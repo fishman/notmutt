@@ -42,7 +42,7 @@ func (t *threadBackend) RemovePaths(ctx context.Context, paths []string) error  
 func (t *threadBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return "uuid-1", 42, nil
 }
-func (t *threadBackend) New(ctx context.Context) error { return nil }
+func (t *threadBackend) New(ctx context.Context) (uint64, uint64, error) { return 41, 42, nil }
 
 func TestResolveAccountChain(t *testing.T) {
 	cfg := config.Default()

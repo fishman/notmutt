@@ -700,31 +700,25 @@ func runPoll(worker workerAPI, cfg config.Config, root string, spec pollSpec) (s
 	return summary, pollDiffLines(rep, mr), nil
 }
 
-// pollDiff classifies the poll's window: a fresh capture (revision,
-// `notmuch new`, revision - the revision moving proves new mail) or
-// the fixed (from, to] bracket of a replay spec. Returns the window as
-// the summary reports it; a fresh capture on a quiet mailbox returns
-// an empty window and no classification pass.
+// pollDiff classifies the poll's window: a fresh capture (ActNew -
+// the backend's new wrapper returns the (pre, cur] bracket, the
+// revision moving proves new mail) or the fixed (from, to] bracket of
+// a replay spec. Returns the window as the summary reports it; a
+// fresh capture on a quiet mailbox returns an empty window and no
+// classification pass.
 func pollDiff(worker workerAPI, cfg config.Config, root string, spec pollSpec, progress func(done, total int)) (*filter.Report, *filter.MoveReport, string, error) {
 	pre, cur := spec.from, spec.to
 	if !spec.windowed {
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew})
 		if err != nil || rpl.Err != nil {
-			return nil, nil, "", fmt.Errorf("revision: %v %v", err, rpl.Err)
-		}
-		pre = rpl.Rev
-		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-			// a backend without a New path (ErrUnsupported) is expected - the
-			// filter then degrades to classifying external new runs
 			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
 				return nil, nil, "", fmt.Errorf("new: %v %v", err, rpl.Err)
 			}
+			// a backend without a New path (ErrUnsupported): no
+			// bracket, no classification - the poll reports no new mail
+			return nil, nil, "", nil
 		}
-		rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
-		if err != nil || rpl.Err != nil {
-			return nil, nil, "", fmt.Errorf("revision: %v %v", err, rpl.Err)
-		}
-		cur = rpl.Rev
+		pre, cur = rpl.Pre, rpl.Rev
 		if cur == pre {
 			return nil, nil, "", nil // nothing new; no classification pass
 		}

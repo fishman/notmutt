@@ -45,7 +45,12 @@ func (f *fakeBackend) RemovePaths(ctx context.Context, paths []string) error { r
 func (f *fakeBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return "uuid-1", 42, f.err
 }
-func (f *fakeBackend) New(ctx context.Context) error { return f.err }
+func (f *fakeBackend) New(ctx context.Context) (uint64, uint64, error) {
+	if f.err != nil {
+		return 0, 0, f.err
+	}
+	return 41, 42, nil
+}
 
 func TestWorkerCallQuery(t *testing.T) {
 	bus := core.NewBus()
@@ -127,7 +132,7 @@ func (b *blockingBackend) RemovePaths(ctx context.Context, paths []string) error
 func (b *blockingBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.inner.Revision(ctx)
 }
-func (b *blockingBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
+func (b *blockingBackend) New(ctx context.Context) (uint64, uint64, error) { return b.inner.New(ctx) }
 
 // TestWorkerLockTimeout pins the WRITER budget: tag holds notmuch's
 // write lock, so a hung tag errors out as ErrLockTimeout after the
@@ -206,7 +211,7 @@ func (b *killBackend) RemovePaths(ctx context.Context, paths []string) error {
 func (b *killBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.inner.Revision(ctx)
 }
-func (b *killBackend) New(ctx context.Context) error { return b.inner.New(ctx) }
+func (b *killBackend) New(ctx context.Context) (uint64, uint64, error) { return b.inner.New(ctx) }
 func (b *killBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
 	return b.inner.Addresses(ctx, q)
 }

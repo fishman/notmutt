@@ -27,7 +27,7 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	}
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
 		Lines: []core.Line{{Kind: core.LineBody, Text: "body line"}}})
-	out := stripANSI(m.View().Content)
+	out := stripANSI(m.View())
 	// the scroll hint lists every pager scroll key, arrows included
 	// (the live config's arrow overlay is part of the fixture)
 	for _, want := range []string{m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
@@ -100,7 +100,7 @@ func TestPreviewOpensFull(t *testing.T) {
 	if len(calls) != 2 || calls[0] != "t1:true" || calls[1] != "t1:false" {
 		t.Fatalf("P must preview then enter must open: %v", calls)
 	}
-	out := m.View().Content
+	out := m.View()
 	if got := strings.Count(out, "\n") + 1; got != m.height {
 		t.Fatalf("the promoted pager frame must keep the height invariant, got %d want %d", got, m.height)
 	}

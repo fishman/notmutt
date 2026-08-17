@@ -3,12 +3,12 @@ package tui
 import "notmutt/core"
 
 // layer caches one frame region's rendered string; the region rebuilds
-// only when its signature changes. The vendored bubbletea v2 has no
-// layer API - the View is one flat string - so the frame's regions are
-// cached model-side: the keyhint row, the status line, the help
-// overlay. Layers are *layer fields on the Model: the program holds
-// the model by value and render runs on a copy, so render-time cache
-// writes persist only through reference fields.
+// only when its signature changes. The View is one flat string - no
+// layer API in the runtime (tea v2 or tcell alike) - so the frame's
+// regions are cached model-side: the keyhint row, the status line, the
+// help overlay. Layers are *layer fields on the Model: View runs on a
+// copy of the model, so render-time cache writes persist only through
+// reference fields.
 type layer struct {
 	sig string
 	s   string

@@ -9,7 +9,7 @@ import "time"
 const (
 	// legendDebounce is how long the cursor must rest before the status
 	// legend resolves on terminals without release reporting (the
-	// KeyReleaseMsg path resolves immediately, no debounce). tea.Tick
+	// KeyReleaseMsg path resolves immediately, no debounce). tickCmd
 	// is a one-shot with no cancellation, so key auto-repeat piles
 	// ticks up; the settle guard in the legendTick handler makes a tick
 	// resolve only when no move happened since it was armed - a

@@ -15,8 +15,6 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
@@ -197,18 +195,17 @@ func Run() error {
 	}()
 
 	busCh := bus.Subscribe()
-	// WithFPS(120) aligns the renderer's write tick with the model's 8ms
-	// paint cadence (ShouldRender gate): at the 60fps default a paint waits
-	// up to 16.6ms for the next write tick, and the release-settle paint
-	// lands a frame late. Idle ticks are free (the renderer skips unchanged
-	// frames), so the higher rate costs nothing when nothing moves.
-	prog := tea.NewProgram(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), tea.WithFPS(120))
+	// The loop owns the screen (tcell, record 23): keys and resizes
+	// come from its event channel, the model's EventCmd re-arms the
+	// bus. The loop paints on ShouldRender, so the model's 8ms frame
+	// tick IS the paint cadence - no renderer tick to align (the
+	// WithFPS machinery died with tea).
+	quitCh := make(chan struct{})
 	go func() {
 		<-ctx.Done()
-		prog.Quit()
+		close(quitCh)
 	}()
-	_, err = prog.Run()
-	return err
+	return tui.Run(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), quitCh)
 }
 
 // BodyRenderHook is the render-transform boundary (R8's Lua layer

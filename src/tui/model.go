@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
@@ -166,9 +165,9 @@ type Model struct {
 	keyReleases bool
 	// paint is the ShouldRender gate's state: a navigation defers its
 	// paint (false) and the frame tick turns it back on one
-	// frameInterval later, so the tea loop skips every intermediate
-	// render (one paint per frame window, not one per keypress).
-	// Every other message paints immediately.
+	// frameInterval later, so the loop skips every intermediate render
+	// (one paint per frame window, not one per keypress). Every other
+	// message paints immediately.
 	paint bool
 	// renderDue is a deferred paint waiting on the frame tick.
 	renderDue bool
@@ -176,8 +175,8 @@ type Model struct {
 	// repeated navigations inside one interval never pile timers up
 	// (the legendTickOn pattern).
 	frameTickOn bool
-	// frameCache is the last painted frame (View): the tea loop calls
-	// View on a copy of the model, so the cache lives behind a pointer
+	// frameCache is the last painted frame (View): View's value
+	// receiver copies the model, so the cache lives behind a pointer
 	// - a deferred View returns it instead of rebuilding.
 	frameCache *frameCache
 	// legendMoves counts cursor moves: the tick carries the count from
@@ -270,11 +269,11 @@ func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]s
 	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1}
 }
 
-func (m Model) Init() tea.Cmd {
+func (m Model) Init() Cmd {
 	return EventCmd(m.ch)
 }
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) Update(msg any) (Model, Cmd) {
 	// the bus keeps last-value snapshots of the compose events (the
 	// LatestProgress pattern, R15): a completion dropped from the
 	// channel under backpressure still resolves the dialogue on the
@@ -299,7 +298,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// case itself overrides this after the fact
 	m.paint = true
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	case WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		if m.pager != nil {
 			// the keyhint bar (R9) and the status row sit below the
@@ -325,7 +324,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.logView.setSize(m.width, h)
 		}
-	case tea.KeyPressMsg:
+	case KeyPressMsg:
 		// the picker outranks the prompt: the attach '?' picker arms the
 		// attach prompt (input = "@name"), so both can be live at once
 		if m.fuzzy != nil {
@@ -459,7 +458,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, chainTickCmd()
 		}
 		return m.dispatchAction(actionForKey(msg, km), n)
-	case tea.KeyReleaseMsg:
+	case KeyReleaseMsg:
 		// the real keyup (kitty keyboard protocol release reporting):
 		// the legend resolves at the release, no debounce needed.
 		// Terminals without release reporting never send this; the
@@ -474,7 +473,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// a second paint
 		m.renderDue = false
 		return m, nil
-	case tea.KeyboardEnhancementsMsg:
+	case KeyboardEnhancementsMsg:
 		// the terminal's answer to the ReportEventTypes request (model
 		// View): release reporting on means the KeyReleaseMsg handler
 		// resolves the legend, so movement must never arm the debounce
@@ -607,10 +606,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.rows = m.view.Rows()
 		if m.legendPending && !m.legendTickOn && !m.keyReleases {
 			m.legendTickOn = true
-			return m, tea.Batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
+			return m, batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
 		}
 		if m.progressOn {
-			return m, tea.Batch(EventCmd(m.ch), progressTickCmd())
+			return m, batch(EventCmd(m.ch), progressTickCmd())
 		}
 		return m, EventCmd(m.ch)
 	case progressTick:
@@ -627,7 +626,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.anySending() {
 			m.spin++
 			m.sendTickOn = true
-			return m, tea.Batch(EventCmd(m.ch), sendTickCmd())
+			return m, batch(EventCmd(m.ch), sendTickCmd())
 		}
 		m.sendTickOn = false
 		return m, nil
@@ -662,7 +661,7 @@ func (m *Model) anySending() bool {
 // cmds (quit, edit) return them directly. Multi-key chains resolve
 // here too - the chain machinery dispatches the completed chain's
 // action, and "?" opens the help overlay.
-func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
+func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	// navigation defers its paint to the frame tick: paint=false
 	// gates the render (ShouldRender), renderDue lets the tick re-arm
 	// it, and the tail arms a single tick
@@ -694,7 +693,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.previewCursorThread()
 		}
 	case "quit":
-		return m, tea.Quit
+		return m, quitCmd()
 	case "undo":
 		if m.undo() {
 			m.moveCursor(1)
@@ -834,7 +833,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		}
 		t.BodyPath = path
 		tabID := t.ID
-		return m, tea.ExecProcess(editorCmd(path), func(err error) tea.Msg {
+		return m, execCmd(editorCmd(path), func(err error) any {
 			return editorDoneMsg{err: err, path: path, tabID: tabID}
 		})
 	case "attach":
@@ -951,7 +950,7 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 			m.moveCursor(1)
 		}
 	}
-	var cmds []tea.Cmd
+	var cmds []Cmd
 	if deferred {
 		cmds = append(cmds, m.armFrameTick())
 	}
@@ -967,14 +966,14 @@ func (m Model) dispatchAction(action string, n int) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, sendTickCmd())
 	}
 	if len(cmds) > 0 {
-		return m, tea.Batch(cmds...)
+		return m, batch(cmds...)
 	}
 	return m, nil
 }
 
 // armFrameTick starts the frame tick once; deferrals while one is in
 // flight return no cmd (the single-in-flight pattern).
-func (m *Model) armFrameTick() tea.Cmd {
+func (m *Model) armFrameTick() Cmd {
 	if !m.frameTickOn {
 		m.frameTickOn = true
 		return frameTickCmd()
@@ -1110,7 +1109,7 @@ func (m *Model) activateTab(id string) {
 // addrLookup resolves a Tab completion trigger: a loaded corpus opens
 // the picker immediately; otherwise the lazy harvest fires after the
 // debounce (single-flight - repeated triggers never pile up requests).
-func (m *Model) addrLookup() tea.Cmd {
+func (m *Model) addrLookup() Cmd {
 	if len(m.addrs) > 0 {
 		m.openAddrPicker()
 		return nil
@@ -1251,7 +1250,7 @@ func (m *Model) previewCursorThread() {
 // promotion keeps the loaded pager (content and scroll position
 // survive via the reload guard); an in-flight load rebuilds fresh
 // instead.
-func (m Model) previewKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 	if actionForKey(msg, m.bindings["index"]) == "open" {
 		tid := m.previewThread
 		m.preview, m.previewThread, m.previewTitle = false, "", ""
@@ -1327,7 +1326,7 @@ func (m Model) previewContentSize() (int, int) {
 // actionForKey resolves the pressed key: runes first (plain keys),
 // then BubbleTea's canonical name ("ctrl+n", "alt+v", ...) so control
 // keys are bindable.
-func actionForKey(msg tea.KeyPressMsg, km map[string]string) string {
+func actionForKey(msg KeyPressMsg, km map[string]string) string {
 	if a, ok := km[msg.Text]; ok {
 		return a
 	}
@@ -1357,16 +1356,40 @@ func (m *Model) refreshProgress() {
 	}
 }
 
+// WindowSizeMsg is the terminal size report: the loop's resize events
+// and its initial size query.
+type WindowSizeMsg struct{ Width, Height int }
+
+// KeyboardEnhancementsMsg mirrors the tea v2 shape (the release path
+// stays wired and tested): SupportsEventTypes reports release
+// reporting on. tcell delivers no such message - no kitty keyboard
+// protocol (verified at implementation time, record 23) - the
+// legendTick fallback covers terminals without it.
+type KeyboardEnhancementsMsg struct {
+	Flags uint32
+}
+
+func (m KeyboardEnhancementsMsg) SupportsEventTypes() bool {
+	return m.Flags&kittyReportEventTypes != 0
+}
+
+// kitty enhancement flags the message carries; only the release
+// reporting bit gates the release path.
+const (
+	kittyReportEventTypes uint32 = 1 << iota
+	kittyDisambiguateEscapeCodes
+)
+
 type progressTick struct{}
 
-func progressTickCmd() tea.Cmd {
-	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg { return progressTick{} })
+func progressTickCmd() Cmd {
+	return tickCmd(progressTickInterval, func(time.Time) any { return progressTick{} })
 }
 
 type sendTick struct{}
 
-func sendTickCmd() tea.Cmd {
-	return tea.Tick(sendTickInterval, func(time.Time) tea.Msg { return sendTick{} })
+func sendTickCmd() Cmd {
+	return tickCmd(sendTickInterval, func(time.Time) any { return sendTick{} })
 }
 
 // addrReqTick is the address harvest trigger's debounce tick (the
@@ -1374,14 +1397,14 @@ func sendTickCmd() tea.Cmd {
 // Tab triggers settle.
 type addrReqTick struct{}
 
-func addrReqTickCmd() tea.Cmd {
-	return tea.Tick(addrDebounce, func(time.Time) tea.Msg { return addrReqTick{} })
+func addrReqTickCmd() Cmd {
+	return tickCmd(addrDebounce, func(time.Time) any { return addrReqTick{} })
 }
 
 type legendTick struct{ moves int }
 
-func legendTickCmd(moves int) tea.Cmd {
-	return tea.Tick(legendDebounce, func(time.Time) tea.Msg { return legendTick{moves} })
+func legendTickCmd(moves int) Cmd {
+	return tickCmd(legendDebounce, func(time.Time) any { return legendTick{moves} })
 }
 
 // frameTick lands one frameInterval after a navigation defers its
@@ -1389,8 +1412,8 @@ func legendTickCmd(moves int) tea.Cmd {
 // update, so the paint lands at the fixed cadence.
 type frameTick struct{}
 
-func frameTickCmd() tea.Cmd {
-	return tea.Tick(frameInterval, func(time.Time) tea.Msg { return frameTick{} })
+func frameTickCmd() Cmd {
+	return tickCmd(frameInterval, func(time.Time) any { return frameTick{} })
 }
 
 // chainTick lands chainTimeout after a chain is armed; the handler
@@ -1399,14 +1422,13 @@ func frameTickCmd() tea.Cmd {
 // the chain times out.
 type chainTick struct{}
 
-func chainTickCmd() tea.Cmd {
-	return tea.Tick(chainTimeout, func(time.Time) tea.Msg { return chainTick{} })
+func chainTickCmd() Cmd {
+	return tickCmd(chainTimeout, func(time.Time) any { return chainTick{} })
 }
 
-// ShouldRender is the tea loop's optional paint gate (the vendored
-// loop consults it when the model implements it): false skips the
-// render after an update, so a deferred paint lands on the frame tick
-// instead of on every keypress of a hold.
+// ShouldRender is the loop's paint gate: false skips the render after
+// an update, so a deferred paint lands on the frame tick instead of on
+// every keypress of a hold.
 func (m Model) ShouldRender() bool { return m.paint }
 
 // resolveStatus computes the status-line legend and account for the
@@ -1771,25 +1793,19 @@ func (m Model) CursorIndex() int {
 // copy.
 type frameCache struct{ s string }
 
-// View wraps the rendered frame in the v2 view struct: the alt-screen
-// flag and the keyboard-enhancement request (kitty protocol release
-// reporting) are declarative View fields in v2 - no program options.
-// A deferred paint (navigation between frame ticks) returns the last
-// painted frame: one build per paint, not per keypress.
-func (m Model) View() tea.View {
+// View returns the rendered frame. The loop owns the screen (tcell,
+// record 23): the alt-screen flag and the keyboard-enhancement request
+// were declarative View fields in tea v2 - tcell covers the alt screen
+// at init, and has no kitty keyboard protocol (verified at
+// implementation time), so the release path's types survive only for
+// the legendTick fallback's tests. A deferred paint (navigation
+// between frame ticks) returns the last painted frame: one build per
+// paint, not per keypress.
+func (m Model) View() string {
 	if m.paint || m.frameCache.s == "" {
 		m.frameCache.s = m.render()
 	}
-	v := tea.NewView(m.frameCache.s)
-	v.AltScreen = true
-	// ReportEventTypes asks the terminal to report key repeat and
-	// release events; when supported, the program receives
-	// KeyReleaseMsg and the legend resolves on the real keyup
-	v.KeyboardEnhancements.ReportEventTypes = true
-	if x, y, ok := m.textCursor(); ok {
-		v.Cursor = tea.NewCursor(x, y)
-	}
-	return v
+	return m.frameCache.s
 }
 
 // textCursor reports the live text-input cell (x, y) when an input is
@@ -1948,7 +1964,7 @@ func (m Model) render() string {
 				}
 			}
 			if m.width > 0 {
-				// bubbletea's first View() runs before WindowSizeMsg:
+				// the loop's first View() runs before the resize lands:
 				// width 0 must not blank the rows (padRow would truncate
 				// them away)
 				line = padRowSGR(line, m.width, outer)
@@ -2214,11 +2230,11 @@ type dialogue struct {
 // dialogue open; field: the value replaces the dialogue field; confirm:
 // dispatches the action), esc cancels. The dialogue only exists while
 // a compose tab is attached, so the direct tab index is safe.
-// dialogueKey returns the model and the tea.Cmd to run when enter arms
+// dialogueKey returns the model and the Cmd to run when enter arms
 // one (an attach command exec - a path enter has no side command).
 // Update forwards both, so the dialogue can hand back a subprocess run
 // without escaping the message loop.
-func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m Model) dialogueKey(msg KeyPressMsg) (Model, Cmd) {
 	d := m.dialogue
 	if d.kind == dialogueError {
 		switch msg.String() {
@@ -2314,7 +2330,7 @@ func (m Model) dialogueKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // never a shell string), the command runs as a foreground TUI
 // subprocess, the result handler reads the selected paths back. An
 // unknown command keeps the prompt open (no exec, no error).
-func (m *Model) runAttachCommand(name string) tea.Cmd {
+func (m *Model) runAttachCommand(name string) Cmd {
 	if m.composeTab().Phase == compose.PhaseSending {
 		return nil
 	}
@@ -2330,7 +2346,7 @@ func (m *Model) runAttachCommand(name string) tea.Cmd {
 	st := m.composeTab()
 	cmd := exec.Command(argv[0], append(argv[1:], f.Name())...)
 	m.dialogue = nil
-	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+	return execCmd(cmd, func(err error) any {
 		return attachCmdDoneMsg{err: err, path: f.Name(), tabID: st.ID, name: name}
 	})
 }
@@ -2348,7 +2364,7 @@ func attachCommandNames() []string {
 
 // fuzzyKey captures the fuzzy context: bound actions dispatch,
 // unbound printable keys filter the query, backspace trims it.
-func (m *Model) fuzzyKey(msg tea.KeyPressMsg, km map[string]string) bool {
+func (m *Model) fuzzyKey(msg KeyPressMsg, km map[string]string) bool {
 	if a := actionForKey(msg, km); a != "" {
 		switch a {
 		case "fuzzy-down":

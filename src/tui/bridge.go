@@ -1,18 +1,14 @@
 package tui
 
-import (
-	tea "charm.land/bubbletea/v2"
-
-	"notmutt/core"
-)
+import "notmutt/core"
 
 type EventMsg struct{ Event core.Event }
 
-// EventCmd forwards one bus event into BubbleTea. Re-arm it after every
+// EventCmd forwards one bus event into the loop. Re-arm it after every
 // EventMsg (and from Init) to keep the loop alive. A nil channel waits
 // forever (tests), which is fine.
-func EventCmd(ch <-chan core.Event) tea.Cmd {
-	return func() tea.Msg {
-		return EventMsg{Event: <-ch}
+func EventCmd(ch <-chan core.Event) Cmd {
+	return func() []any {
+		return []any{EventMsg{Event: <-ch}}
 	}
 }

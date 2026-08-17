@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	tea "charm.land/bubbletea/v2"
-
 	"notmutt/config"
 	"notmutt/core"
 )
@@ -19,7 +17,7 @@ import (
 func frame(m Model) string {
 	m.width, m.height = 80, 24
 	m.paint = true
-	return m.View().Content
+	return m.View()
 }
 
 // TestRowCacheReflectsSetTags pins the invalidation half of the row
@@ -120,8 +118,8 @@ func BenchmarkIndexRender(b *testing.B) {
 	// one real move arms the cursor-id scan (the never-moved fallback
 	// resolves via the view's flattening CursorRow - the documented
 	// page-key stall, not the steady-state path this benchmark times)
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	m.View() // warm the row cache and the layers
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -145,8 +143,8 @@ func BenchmarkIndexRenderMiss(b *testing.B) {
 	view.MergeThreads(ts)
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 120, 40
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	m.View()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

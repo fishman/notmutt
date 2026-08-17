@@ -1,76 +1,30 @@
 package tui
 
+// Pager repaint contract on the tcell screen: a scroll changes the
+// visible buffer (the double-press regression - the pre-glow pager's
+// read-position indicator diffed to zero emitted bytes, so the first
+// press rendered nothing), and the frame is always exactly height
+// lines with the status row last, so a short pager never leaves the
+// previous frame's rows on screen (the diff renderer's stale-row
+// failure mode; the loop writes the full frame and tcell diffs
+// internally).
+
 import (
-	"bytes"
 	"fmt"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
-	uv "github.com/charmbracelet/ultraviolet"
+	"github.com/gdamore/tcell/v2"
 
 	"notmutt/config"
 	"notmutt/core"
 )
 
-// harness drives the vendored uv.TerminalRenderer exactly like
-// bubbletea's cursed_renderer.flush: a full-size screen buffer,
-// cleared, drawn with the frame, diffed against the previous frame.
-type repaintHarness struct {
-	tr   *uv.TerminalRenderer
-	out  *bytes.Buffer
-	w, h int
-}
-
-func newRepaintHarness(w, h int) *repaintHarness {
-	out := &bytes.Buffer{}
-	tr := uv.NewTerminalRenderer(out, []string{"TERM=xterm-256color"})
-	tr.SetFullscreen(true)
-	tr.SetScrollOptim(true)
-	return &repaintHarness{tr: tr, out: out, w: w, h: h}
-}
-
-// render draws one frame and returns the bytes emitted for it.
-func (r *repaintHarness) render(frame string) string {
-	r.out.Reset()
-	buf := uv.NewScreenBuffer(r.w, r.h)
-	buf.Clear()
-	uv.NewStyledString(frame).Draw(buf, buf.Bounds())
-	r.tr.Render(buf.RenderBuffer)
-	r.tr.Flush()
-	return r.out.String()
-}
-
-// show escapes control sequences for readable output.
-func show(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '\x1b':
-			b.WriteString("ESC")
-		case '\n':
-			b.WriteString("\\n\n")
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
-
-// maxRow extracts the highest target row in the output's CUP
-// positioning sequences; the diff only positions rows it writes.
-var cupRe = regexp.MustCompile(`\x1b\[(\d+);\d+H`)
-
-func maxRow(s string) int {
-	max := 0
-	for _, m := range cupRe.FindAllStringSubmatch(s, -1) {
-		if n, err := strconv.Atoi(m[1]); err == nil && n > max {
-			max = n
-		}
-	}
-	return max
+// pushFrameCapture paints the frame and returns the buffer.
+func pushFrameCapture(s tcell.SimulationScreen, frame string) []tcell.SimCell {
+	pushFrame(s, frame, 0, 0, false)
+	return copyCells(cellsOf(s))
 }
 
 func pagerFrames(t *testing.T) (core.Line, []core.Line) {
@@ -99,12 +53,28 @@ func pagerFrame(p *pager, km map[string]string, st Styles, ui config.UI, d statu
 	return b.String()
 }
 
+// show escapes control sequences for readable output.
+func show(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\x1b':
+			b.WriteString("ESC")
+		case '\n':
+			b.WriteString("\\n\n")
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // TestRepaintPagerScroll pins the double-press regression: the pre-glow
 // pager moved a read-position indicator whose style-only change diffed
 // to ZERO emitted bytes (the indicator wrap was overridden by the
 // line's own fg+bg style, so the parsed cells were identical), and the
 // first press rendered nothing. Line scrolling changes every visible
-// line's content, so the first press must repaint the window.
+// line's content, so the first press must change the buffer.
 func TestRepaintPagerScroll(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
@@ -115,22 +85,19 @@ func TestRepaintPagerScroll(t *testing.T) {
 
 	p := newPager("t1", lines)
 	p.setSize(80, 22, st)
+	s := newSim(t, 80, 24)
 
-	r := newRepaintHarness(80, 24)
-	if open := r.render(pagerFrame(p, km, st, ui, d)); len(open) == 0 {
-		t.Fatal("open frame emitted nothing")
-	}
-
+	open := pushFrameCapture(s, pagerFrame(p, km, st, ui, d))
 	p.scrollDown(1)
-	first := r.render(pagerFrame(p, km, st, ui, d))
+	first := pushFrameCapture(s, pagerFrame(p, km, st, ui, d))
 	p.scrollDown(1)
-	second := r.render(pagerFrame(p, km, st, ui, d))
+	second := pushFrameCapture(s, pagerFrame(p, km, st, ui, d))
 
-	if len(first) == 0 {
-		t.Fatalf("first scroll press emitted nothing (the double-press bug):\n%s", show(first))
+	if sameCells(open, first) {
+		t.Fatal("the first scroll press must change the frame (the double-press bug)")
 	}
-	if len(second) == 0 {
-		t.Fatalf("second scroll press emitted nothing:\n%s", show(second))
+	if sameCells(first, second) {
+		t.Fatal("the second scroll press must change the frame")
 	}
 }
 
@@ -146,7 +113,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	km := config.Default().Bindings["pager"]
 	d := statusData{view: "inbox", visible: 100}
 
-	// an index-like full frame first, so the diff has a previous frame
+	// an index-like full frame first, so the screen has a previous paint
 	var idx strings.Builder
 	for i := 0; i < 22; i++ {
 		idx.WriteString(st.Normal.Render(fmt.Sprintf("row %d", i)))
@@ -155,9 +122,8 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	idx.WriteString(keyhintRow(config.Default().Bindings["index"], 80))
 	idx.WriteByte('\n')
 	idx.WriteString(statusLineWidth(st, ui, d, 80))
-
-	r := newRepaintHarness(80, 24)
-	r.render(idx.String())
+	s := newSim(t, 80, 24)
+	pushFrameCapture(s, idx.String())
 
 	// empty thread: pager renders 22 blank rows, keyhint and status
 	// anchored at the bottom - a 24-line frame every time
@@ -172,13 +138,18 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 		t.Fatalf("the status row must be the frame's last line: %q", last)
 	}
 
-	emitted := r.render(frame)
-	// the diff rewrites the blanked content rows line by line and leaves
-	// the keyhint/status rows alone; the pre-glow bug wrote a 3-line
-	// frame at the top and cleared to end of display (ED), orphaning
-	// the stale rows on screen
-	if strings.Contains(emitted, "\x1b[J") {
-		t.Fatalf("the diff must not clear to end of display (the status-at-top bug):\n%s", show(emitted))
+	pushFrameCapture(s, frame)
+	cs := cellsOf(s)
+	for r := 0; r < 22; r++ {
+		if got := rowText(cs, 80, r); got != "" {
+			t.Fatalf("row %d must be blank after the empty pager (the stale-row bug): %q", r, got)
+		}
+	}
+	if got := rowText(cs, 80, 22); !strings.Contains(got, "scroll-bottom") {
+		t.Fatalf("keyhint clobbered: %q", got)
+	}
+	if got := rowText(cs, 80, 23); !strings.Contains(got, "inbox") {
+		t.Fatalf("status clobbered: %q", got)
 	}
 }
 

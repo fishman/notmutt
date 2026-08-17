@@ -11,8 +11,6 @@ import (
 	"testing"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
 	"notmutt/compose"
@@ -155,7 +153,7 @@ func TestChainExpiryResetsKeyhint(t *testing.T) {
 		t.Fatalf("the armed prefix must list only its visible chains:\n%s", clean)
 	}
 	next, _ := m.Update(chainTick{})
-	m = next.(Model)
+	m = next
 	clean = stripANSI(m.render())
 	if !strings.Contains(clean, "$ apply") {
 		t.Fatalf("the expired chain must reset to the base hint:\n%s", clean)
@@ -168,8 +166,8 @@ func TestChainExpiryResetsKeyhint(t *testing.T) {
 // keypress without firing it.
 func TestHelpListsBindings(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = press(t, m, "?")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -218,7 +216,7 @@ func TestHelpListsBindings(t *testing.T) {
 func TestLogEntryStatus(t *testing.T) {
 	m := model()
 	next, _ := m.Update(EventMsg{Event: core.LuaResult{Output: "hello"}})
-	m = next.(Model)
+	m = next
 	if m.statusMsg != "hello" || m.statusMsgErr {
 		t.Fatalf("the lua result must surface as the last log entry: %q err=%v", m.statusMsg, m.statusMsgErr)
 	}
@@ -230,7 +228,7 @@ func TestLogEntryStatus(t *testing.T) {
 		t.Fatalf("a keypress must not clear the log entry, got %q", m.statusMsg)
 	}
 	next, _ = m.Update(EventMsg{Event: core.LuaResult{Err: errors.New("boom")}})
-	m = next.(Model)
+	m = next
 	if m.statusMsg != "lua: boom" || !m.statusMsgErr {
 		t.Fatalf("the lua error must replace the entry styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
 	}
@@ -242,12 +240,12 @@ func TestLogEntryStatus(t *testing.T) {
 func TestJobErrorSurfaces(t *testing.T) {
 	m := model()
 	next, _ := m.Update(EventMsg{Event: core.JobError{Job: "apply", Err: errors.New("lock wait")}})
-	m = next.(Model)
+	m = next
 	if m.statusMsg != "apply: lock wait" || !m.statusMsgErr {
 		t.Fatalf("the job error must surface styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
 	}
 	next, _ = m.Update(EventMsg{Event: core.WorkerLockTimeout{Kind: "tag"}})
-	m = next.(Model)
+	m = next
 	if m.statusMsg != "lock timeout: tag" || !m.statusMsgErr {
 		t.Fatalf("the lock timeout must surface styled as error: %q err=%v", m.statusMsg, m.statusMsgErr)
 	}
@@ -258,7 +256,7 @@ func TestJobErrorSurfaces(t *testing.T) {
 func TestFilterDoneSurfaces(t *testing.T) {
 	m := model()
 	next, _ := m.Update(EventMsg{Event: core.FilterDone{DryRun: true, Entries: 3, Moves: 1, Skips: 2}})
-	m = next.(Model)
+	m = next
 	if m.statusMsg != "filter: 3 entries, 1 moved, 2 skipped (dry-run)" || m.statusMsgErr {
 		t.Fatalf("filter summary = %q err=%v", m.statusMsg, m.statusMsgErr)
 	}
@@ -270,7 +268,7 @@ func TestLogRingCaps(t *testing.T) {
 	m := model()
 	for i := 0; i < logCap+5; i++ {
 		next, _ := m.Update(EventMsg{Event: core.LuaResult{Output: "e"}})
-		m = next.(Model)
+		m = next
 	}
 	if len(m.log) != logCap {
 		t.Fatalf("the log ring must cap at %d, got %d", logCap, len(m.log))
@@ -285,11 +283,11 @@ func TestLogRingCaps(t *testing.T) {
 // key closes), and opening one overlay closes the other.
 func TestLogOverlay(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	for i := 0; i < 3; i++ {
 		next, _ = m.Update(EventMsg{Event: core.LuaResult{Output: fmt.Sprintf("entry %d", i)}})
-		m = next.(Model)
+		m = next
 	}
 	m = press(t, m, "~")
 	if !m.logOpen {
@@ -334,23 +332,23 @@ func TestLogOverlay(t *testing.T) {
 // ctrl+d returns half a window.
 func TestLogOverlayScroll(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	for i := 0; i < 30; i++ {
 		next, _ = m.Update(EventMsg{Event: core.LuaResult{Output: fmt.Sprintf("entry %d", i)}})
-		m = next.(Model)
+		m = next
 	}
 	m = press(t, m, "~")
 	if m.logView.offset != 10 { // 30 entries in a 20-row window, tail-pinned
 		t.Fatalf("the log must open at the tail, offset=%d", m.logView.offset)
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
+	m = next
 	if m.logView.offset != 0 {
 		t.Fatalf("ctrl+u must scroll the log to the top, offset=%d", m.logView.offset)
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	m = next
 	if m.logView.offset != 10 {
 		t.Fatalf("ctrl+d must scroll the log back half a window, offset=%d", m.logView.offset)
 	}
@@ -454,18 +452,18 @@ func ghostModel() Model {
 	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 }
 
-func press(t *testing.T, m tea.Model, key string) Model {
+func press(t *testing.T, m Model, key string) Model {
 	t.Helper()
-	next, _ := m.Update(tea.KeyPressMsg{Text: key, Code: []rune(key)[0]})
-	return next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: key, Code: []rune(key)[0]})
+	return next
 }
 
 // pressType presses a special key (arrows, ctrl+...): actionForKey
 // resolves the canonical name via msg.String() ("up", "down", "ctrl+d").
-func pressType(t *testing.T, m tea.Model, k rune) Model {
+func pressType(t *testing.T, m Model, k rune) Model {
 	t.Helper()
-	next, _ := m.Update(tea.KeyPressMsg{Code: k})
-	return next.(Model)
+	next, _ := m.Update(KeyPressMsg{Code: k})
+	return next
 }
 
 // stubModel builds the step-one fill state: search summaries (message id
@@ -500,7 +498,7 @@ func TestStubThreadStaging(t *testing.T) {
 		t.Fatalf("stub row must render the resolved thread state: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
 	m.width, m.height = 80, 24
-	if out := m.View().Content; !strings.Contains(out, "*") {
+	if out := m.View(); !strings.Contains(out, "*") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
 	m = press(t, m, "u") // undo clears the thread op
@@ -569,7 +567,7 @@ func TestCountedG(t *testing.T) {
 func TestRenderShowsRows(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	out := m.View().Content
+	out := m.View()
 	if out == "" {
 		t.Fatal("empty render")
 	}
@@ -583,7 +581,7 @@ func TestRenderShowsRows(t *testing.T) {
 
 func TestQuit(t *testing.T) {
 	m := model()
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
+	_, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q must return a quit command")
 	}
@@ -593,8 +591,8 @@ func TestEventMsgRepaints(t *testing.T) {
 	m := model()
 	m.view.SetCursor("a")
 	next, nextCmd := m.Update(EventMsg{Event: core.ViewDiff{View: "inbox"}})
-	if next.(Model).CursorIndex() != 1 {
-		t.Fatalf("cursor by id after event = %d", next.(Model).CursorIndex())
+	if next.CursorIndex() != 1 {
+		t.Fatalf("cursor by id after event = %d", next.CursorIndex())
 	}
 	if nextCmd == nil {
 		t.Fatal("EventMsg must re-arm the bridge")
@@ -604,7 +602,7 @@ func TestEventMsgRepaints(t *testing.T) {
 func TestGhostRowRendersAndCursorSkips(t *testing.T) {
 	m := ghostModel()
 	m.width, m.height = 80, 24
-	out := m.View().Content
+	out := m.View()
 	if !strings.Contains(out, "[...]") {
 		t.Fatalf("ghost row missing from render:\n%s", out)
 	}
@@ -642,7 +640,7 @@ func TestStageToggleRead(t *testing.T) {
 		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
 	}
 	m.width, m.height = 80, 24
-	if out := m.View().Content; !strings.Contains(out, "*N") {
+	if out := m.View(); !strings.Contains(out, "*N") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
 	m = press(t, m, "t")
@@ -822,7 +820,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
-	out := m.View().Content
+	out := m.View()
 	// the model's own cursor highlight (indicator style SGR) is not a
 	// leak; check the injected sequences specifically
 	for _, leak := range []string{"\x1b]", "\x07", "\x1b[31m", "\x1b[41m"} {
@@ -841,7 +839,7 @@ func TestComposeFormSanitizesControls(t *testing.T) {
 	m.tabs[0].Subject = "evil\x1b[31mred"
 	m.tabs[0].To = []string{"x\x07y@example.com"}
 	m.width, m.height = 80, 24
-	out := m.View().Content
+	out := m.View()
 	for _, leak := range []string{"\x1b[31m", "\x07"} {
 		if strings.Contains(out, leak) {
 			t.Fatalf("control chars leaked into the compose form:\n%q", out)
@@ -856,11 +854,11 @@ func TestComposeFormSanitizesControls(t *testing.T) {
 func TestProgressBarRendersAndClears(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
-	if strings.Contains(m.View().Content, "refresh 5/10") {
+	if strings.Contains(m.View(), "refresh 5/10") {
 		t.Fatal("no bar before any progress event")
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 5, Total: 10})
-	out := m.View().Content
+	out := m.View()
 	if !strings.Contains(out, "refresh 5/10") {
 		t.Fatalf("bar missing:\n%s", out)
 	}
@@ -868,7 +866,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
-	if strings.Contains(m.View().Content, "refresh 10/10") {
+	if strings.Contains(m.View(), "refresh 10/10") {
 		t.Fatal("bar must clear on completion")
 	}
 }
@@ -878,8 +876,8 @@ func TestProgressBarEmptyView(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 80, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	if !strings.Contains(m.View().Content, "refresh 1/5") {
-		t.Fatalf("empty view must still render the status line:\n%s", m.View().Content)
+	if !strings.Contains(m.View(), "refresh 1/5") {
+		t.Fatalf("empty view must still render the status line:\n%s", m.View())
 	}
 }
 
@@ -892,7 +890,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
-	out := m.View().Content
+	out := m.View()
 	if strings.Contains(out, "empty") {
 		t.Fatalf("the literal empty text must not render:\n%s", out)
 	}
@@ -916,8 +914,8 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	}
 	// loading: the progress bar rides the same status line
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	if !strings.Contains(m.View().Content, "refresh 1/5") {
-		t.Fatalf("loading empty view must render the bar:\n%s", m.View().Content)
+	if !strings.Contains(m.View(), "refresh 1/5") {
+		t.Fatalf("loading empty view must render the bar:\n%s", m.View())
 	}
 }
 
@@ -929,7 +927,7 @@ func TestDialogueKeepsKeyhint(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
 	m.dialogue = &dialogue{kind: dialogueConfirm, label: "abort?", action: "abort"}
-	strip := stripANSI(m.View().Content)
+	strip := stripANSI(m.View())
 	lines := strings.Split(strip, "\n")
 	if len(lines) != 24 {
 		t.Fatalf("frame = %d lines, want 24:\n%s", len(lines), strip)
@@ -957,7 +955,7 @@ func TestProgressBarEmptyViewHints(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 160, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
-	strip := stripANSI(m.View().Content)
+	strip := stripANSI(m.View())
 	if !strings.Contains(strip, "refresh 1/5") {
 		t.Fatalf("empty view must still render the status line:\n%s", strip)
 	}
@@ -1006,14 +1004,14 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.width, m.height = 80, 24
-	if out := m.View().Content; strings.Contains(out, "255;0;0") {
+	if out := m.View(); strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
 	}
 	if err := st.SetThemeVariant("red"); err != nil {
 		t.Fatal(err)
 	}
 	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
-	if out := m.View().Content; !strings.Contains(out, "255;0;0") {
+	if out := m.View(); !strings.Contains(out, "255;0;0") {
 		t.Fatalf("variant switch must re-render the status line in the new color:\n%s", out)
 	}
 }
@@ -1038,28 +1036,28 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
-		m = next.(Model)
+		m = next
 	})
 	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
-	if out := m.View().Content; strings.Contains(out, "255;0;0") {
+	if out := m.View(); strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red pager header:\n%s", out)
 	}
 	if err := st.SetThemeVariant("red"); err != nil {
 		t.Fatal(err)
 	}
 	m = pressEvent(t, m, core.ConfigChanged{Section: "theme"})
-	if out := m.View().Content; !strings.Contains(out, "255;0;0") {
+	if out := m.View(); !strings.Contains(out, "255;0;0") {
 		t.Fatalf("variant switch must re-style the open pager:\n%s", out)
 	}
 }
 
-func pressEvent(t *testing.T, m tea.Model, e core.Event) Model {
+func pressEvent(t *testing.T, m Model, e core.Event) Model {
 	t.Helper()
 	next, _ := m.Update(EventMsg{Event: e})
-	return next.(Model)
+	return next
 }
 
 func hasTag(tags []string, tag string) bool {
@@ -1105,7 +1103,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 
 	// The tick re-reads the snapshot and clears the bar.
 	next, _ := m.Update(progressTick{})
-	if next.(Model).progressOn {
+	if next.progressOn {
 		t.Fatal("bar must clear from the snapshot even with the completion event dropped")
 	}
 }
@@ -1115,7 +1113,7 @@ func pump(t *testing.T, m Model, ch <-chan core.Event) Model {
 	select {
 	case e := <-ch:
 		next, _ := m.Update(EventMsg{Event: e})
-		return next.(Model)
+		return next
 	case <-time.After(2 * time.Second):
 		t.Fatal("no event on the bus channel")
 		return m
@@ -1144,8 +1142,8 @@ func TestProgressBarPerView(t *testing.T) {
 	if !m.progressOn {
 		t.Fatal("this view's progress must turn on the bar")
 	}
-	if !strings.Contains(m.View().Content, "refresh 2/5") {
-		t.Fatalf("bar must show this view's progress:\n%s", m.View().Content)
+	if !strings.Contains(m.View(), "refresh 2/5") {
+		t.Fatalf("bar must show this view's progress:\n%s", m.View())
 	}
 	// completion clears only this view's bar
 	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 5, Total: 5})
@@ -1209,7 +1207,7 @@ func openPager(t *testing.T, m Model, path string) Model {
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
-		m = next.(Model)
+		m = next
 	})
 	press(t, m, "enter")
 	return m
@@ -1225,7 +1223,7 @@ func TestOpenSwitchesToPager(t *testing.T) {
 	if m.pager == nil || len(m.pager.lines) == 0 {
 		t.Fatal("pager content missing")
 	}
-	out := stripANSI(m.View().Content)
+	out := stripANSI(m.View())
 	for _, want := range []string{"hello", "a@example.com", "body line"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("pager render missing %q:\n%s", want, out)
@@ -1300,7 +1298,7 @@ func TestKeyhintBar(t *testing.T) {
 func TestKeyhintRowInView(t *testing.T) {
 	m := model()
 	m.width, m.height = 160, 24
-	strip := stripANSI(m.View().Content)
+	strip := stripANSI(m.View())
 	// the hint row truncates at the frame width, so the check anchors
 	// on the sorted row's head
 	if !strings.Contains(strip, "$ apply") {
@@ -1311,7 +1309,7 @@ func TestKeyhintRowInView(t *testing.T) {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
-	strip = stripANSI(m.View().Content)
+	strip = stripANSI(m.View())
 	if !strings.Contains(strip, "q back") || strings.Contains(strip, "j scroll-down") {
 		t.Fatalf("the pager hint must show the visible keys, not the hidden j/k:\n%s", strip)
 	}
@@ -1326,7 +1324,7 @@ func TestKeyhintRowInView(t *testing.T) {
 func TestKeyhintHidesPaging(t *testing.T) {
 	m := model()
 	m.width, m.height = 160, 24
-	strip := stripANSI(m.View().Content)
+	strip := stripANSI(m.View())
 	if strings.Contains(strip, "half-page-down") || strings.Contains(strip, "page-down") {
 		t.Fatalf("the paging bindings must stay out of the keyhint row:\n%s", strip)
 	}
@@ -1347,8 +1345,8 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	// no-op (no quit, no back), in pager mode it returns to index
 	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "back"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
-	m = next.(Model)
+	next, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
+	m = next
 	if cmd != nil {
 		t.Fatal("q unbound in index mode must not quit")
 	}
@@ -1377,7 +1375,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "quit"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
-	_, cmd := m.Update(tea.KeyPressMsg{Text: "q", Code: 'q'})
+	_, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q bound to quit in pager mode must return a quit command")
 	}
@@ -1389,13 +1387,13 @@ func TestPagerPageKeys(t *testing.T) {
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	// real ctrl+d/ctrl+u keys: KeyMsg.String() resolves to "ctrl+d" and
 	// the dispatch finds the page-down/page-up bindings
-	next, _ := m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	m = next
 	if m.pager.vp.offset != 3 {
 		t.Fatalf("ctrl+d must scroll half a window, offset=%d", m.pager.vp.offset)
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
+	m = next
 	if m.pager.vp.offset != 0 {
 		t.Fatalf("ctrl+u must scroll back half a window, offset=%d", m.pager.vp.offset)
 	}
@@ -1410,7 +1408,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
-		m = next.(Model)
+		m = next
 	})
 	press(t, m, "enter") // the handler rebinds m with the loaded pager
 	if m.mode != "pager" {
@@ -1445,15 +1443,15 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 		}})
-		m = next.(Model)
+		m = next
 	})
 	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
 	press(t, m, "q") // back to index, pager kept alive
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 10})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 40, Height: 10})
+	m = next
 	if m.pager.vp.width != 40 || m.pager.vp.height != 7 {
 		t.Fatalf("resize in index mode must re-size the pager window: %dx%d", m.pager.vp.width, m.pager.vp.height)
 	}
@@ -1472,7 +1470,7 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 func TestNumberColumnGrows(t *testing.T) {
 	m := rowsModel(12)
 	m.width, m.height = 80, 24
-	lines := strings.Split(stripANSI(m.View().Content), "\n")
+	lines := strings.Split(stripANSI(m.View()), "\n")
 	if !strings.HasPrefix(lines[1], "1  ") {
 		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[1])
 	}
@@ -1486,11 +1484,11 @@ func TestNumberColumnGrows(t *testing.T) {
 // the user's config file adds the keys).
 func TestArrowKeysMoveCursor(t *testing.T) {
 	m := rowsModel(3)
-	m = pressType(t, m, tea.KeyDown)
+	m = pressType(t, m, KeyDown)
 	if m.CursorIndex() != 1 {
 		t.Fatalf("down must move the cursor down, got %d", m.CursorIndex())
 	}
-	m = pressType(t, m, tea.KeyUp)
+	m = pressType(t, m, KeyUp)
 	if m.CursorIndex() != 0 {
 		t.Fatalf("up must move the cursor up, got %d", m.CursorIndex())
 	}
@@ -1508,11 +1506,11 @@ func TestArrowKeysScrollPager(t *testing.T) {
 	}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
-	m = pressType(t, m, tea.KeyDown)
+	m = pressType(t, m, KeyDown)
 	if m.pager.vp.offset != 1 {
 		t.Fatalf("down in pager mode must scroll down, offset=%d", m.pager.vp.offset)
 	}
-	m = pressType(t, m, tea.KeyUp)
+	m = pressType(t, m, KeyUp)
 	if m.pager.vp.offset != 0 {
 		t.Fatalf("up in pager mode must scroll back, offset=%d", m.pager.vp.offset)
 	}
@@ -1586,7 +1584,7 @@ func TestIndexPagesAtEdges(t *testing.T) {
 	if m.CursorIndex() != h || m.indexOffset != h {
 		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
 	}
-	lines := strings.Split(stripANSI(m.View().Content), "\n")
+	lines := strings.Split(stripANSI(m.View()), "\n")
 	if !strings.HasPrefix(lines[1], "22") {
 		t.Fatalf("the new page must render from its first row: %q", lines[1])
 	}
@@ -1648,13 +1646,13 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}}),
 		}})
-		m = next.(Model)
+		m = next
 	})
 	press(t, m, "enter")
 	if m.mode != "pager" {
 		t.Fatalf("a parse failure must open the pager with an error line, mode=%q", m.mode)
 	}
-	out := stripANSI(m.View().Content)
+	out := stripANSI(m.View())
 	if !strings.Contains(out, "failed to parse message") {
 		t.Fatalf("error line missing:\n%s", out)
 	}
@@ -1665,7 +1663,7 @@ func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m.width, m.height = 80, 24
 	SetOpenHandler(func(threadID string, preview bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
-		m = next.(Model)
+		m = next
 	})
 	m = press(t, m, "enter")
 	if m.mode != "index" {
@@ -1682,7 +1680,7 @@ func openDialogue(t *testing.T, m Model, id string) Model {
 		TabID: id, Mode: "reply", Account: "gmail", From: "Bob <bob@example.com>",
 		To: []string{"a@b.c"}, Subject: "Re: x", Body: "> quoted",
 	}})
-	mm := next.(Model)
+	mm := next
 	// the buffer file (BodyPath) dies with the tab; tests that never
 	// close the tab leave it to this cleanup
 	t.Cleanup(func() {
@@ -1763,7 +1761,7 @@ func TestReplyKeyOpensDialogue(t *testing.T) {
 func TestSendResultClosesTab(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
-	m = next.(Model)
+	m = next
 	if len(m.tabs) != 0 || m.mode != "index" {
 		t.Fatalf("success must close the tab: %d %q", len(m.tabs), m.mode)
 	}
@@ -1772,7 +1770,7 @@ func TestSendResultClosesTab(t *testing.T) {
 func TestSendResultFailureKeepsDialogue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: "boom"}})
-	m = next.(Model)
+	m = next
 	if len(m.tabs) != 1 || m.tabs[0].Phase != compose.PhaseFailed || m.tabs[0].Output != "boom" {
 		t.Fatalf("failure must keep the dialogue: %+v", m.tabs)
 	}
@@ -1812,8 +1810,8 @@ func TestSendResultSnapshotResolvesDroppedCompletion(t *testing.T) {
 	}
 
 	// The next keypress polls the snapshot and resolves the dialogue.
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if len(m.tabs) != 0 || m.mode != "index" {
 		t.Fatalf("the dropped completion must close the tab: %d %q", len(m.tabs), m.mode)
 	}
@@ -1837,8 +1835,8 @@ func TestSendResultSnapshotFailureKeepsDialogue(t *testing.T) {
 		bus.Publish(core.ViewDiff{View: "inbox"})
 	}
 	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "boom"})
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if len(m.tabs) != 1 || m.tabs[0].Phase != compose.PhaseFailed || m.tabs[0].Output != "boom" {
 		t.Fatalf("a dropped failure must keep the dialogue failed: %+v", m.tabs)
 	}
@@ -1861,8 +1859,8 @@ func TestSendRetryClearsSnapshot(t *testing.T) {
 	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "old failure"})
 
 	m = press(t, m, "y") // retry: re-arms Sending and clears the snapshot
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if m.tabs[0].Phase != compose.PhaseSending {
 		t.Fatalf("the stale failure must not re-apply during the retry, phase=%v", m.tabs[0].Phase)
 	}
@@ -1886,8 +1884,8 @@ func TestComposeOpenedSnapshotAttachesOnce(t *testing.T) {
 		bus.Publish(core.ViewDiff{View: "inbox"})
 	}
 	bus.Publish(core.ComposeOpened{TabID: "t1", Mode: "reply", Subject: "Re: x"})
-	next, _ := m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if len(m.tabs) != 1 || m.tabs[0].Subject != "Re: x" {
 		t.Fatalf("the dropped open must attach the dialogue: %+v", m.tabs)
 	}
@@ -1895,13 +1893,13 @@ func TestComposeOpenedSnapshotAttachesOnce(t *testing.T) {
 	// The same snapshot must not resurrect a closed dialogue.
 	m.tabs[0].Phase = compose.PhaseSending
 	bus.Publish(core.SendResult{TabID: "t1", OK: true})
-	next, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if len(m.tabs) != 0 {
 		t.Fatalf("a closed dialogue must never resurrect, got %d tabs", len(m.tabs))
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Text: "j", Code: 'j'})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Text: "j", Code: 'j'})
+	m = next
 	if len(m.tabs) != 0 {
 		t.Fatalf("the ComposeOpened snapshot must not re-attach, got %d tabs", len(m.tabs))
 	}
@@ -1968,8 +1966,8 @@ func TestBodyBufferFileLivesForTab(t *testing.T) {
 		t.Fatal("the editor buffer holds only the mail content, never the email header (mutt msgbody)")
 	}
 	// e reuses the same file - the row's path never churns
-	next, _ := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
-	m = next.(Model)
+	next, _ := m.Update(KeyPressMsg{Text: "e", Code: 'e'})
+	m = next
 	if m.tabs[0].BodyPath != p {
 		t.Fatalf("e must reuse the buffer file, path = %q, want %q", m.tabs[0].BodyPath, p)
 	}
@@ -1998,7 +1996,7 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	for _, r := range path {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, '\r') // String() resolves to "enter"
+	m = pressType(t, m, KeyEnter) // String() resolves to "enter"
 	if m.dialogue != nil {
 		t.Fatal("enter must close the prompt")
 	}
@@ -2020,25 +2018,25 @@ func TestAttachPromptAndDetach(t *testing.T) {
 // picker is open, nowhere otherwise.
 func TestPromptTextCursor(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
-	if c := m.View().Cursor; c != nil {
-		t.Fatalf("cursor without a prompt: %+v", c)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	if _, _, show := m.textCursor(); show {
+		t.Fatal("cursor without a prompt")
 	}
 	m = press(t, m, "a")
 	m = press(t, m, "xy")
-	c := m.View().Cursor
-	if c == nil {
+	x, y, show := m.textCursor()
+	if !show {
 		t.Fatal("an open input prompt must declare the cursor")
 	}
 	// "attach path: " label + 2 typed cells, the box content row
 	// above the keyhint (Y = height-4), after the border (X = 1)
-	if c.X != 1+len("attach path: ")+2 || c.Y != 20 {
-		t.Fatalf("input cursor at (%d, %d), want (16, 20)", c.X, c.Y)
+	if x != 1+len("attach path: ")+2 || y != 20 {
+		t.Fatalf("input cursor at (%d, %d), want (16, 20)", x, y)
 	}
 	m = press(t, m, "esc")
-	if c := m.View().Cursor; c != nil {
-		t.Fatalf("cursor after closing the prompt: %+v", c)
+	if _, _, show := m.textCursor(); show {
+		t.Fatal("cursor after closing the prompt")
 	}
 	// '?' on the empty attach prompt opens the command picker; the
 	// matcher row is the second frame line
@@ -2051,9 +2049,9 @@ func TestPromptTextCursor(t *testing.T) {
 		t.Fatal("? must open the command picker")
 	}
 	m = press(t, m, "ya")
-	c = m.View().Cursor
-	if c == nil || c.X != len("attach command:")+1+2 || c.Y != 1 {
-		t.Fatalf("fuzzy cursor at %+v, want (18, 1)", c)
+	x, y, _ = m.textCursor()
+	if x != len("attach command:")+1+2 || y != 1 {
+		t.Fatalf("fuzzy cursor at (%d, %d), want (18, 1)", x, y)
 	}
 }
 
@@ -2069,13 +2067,13 @@ func TestFieldEditFrom(t *testing.T) {
 	if m.dialogue.input != "Bob <bob@example.com>" {
 		t.Fatalf("the From field must pre-fill: %q", m.dialogue.input)
 	}
-	m = pressType(t, m, tea.KeyEsc)
+	m = pressType(t, m, KeyEsc)
 	if m.dialogue != nil || m.tabs[0].From != "Bob <bob@example.com>" {
 		t.Fatalf("esc must cancel the field edit: prompt=%v From=%q", m.dialogue != nil, m.tabs[0].From)
 	}
 	m = press(t, m, "f")
 	m = press(t, m, "x") // typing appends to the pre-filled input
-	m = pressType(t, m, '\r')
+	m = pressType(t, m, KeyEnter)
 	if m.dialogue != nil {
 		t.Fatal("enter must close the field prompt")
 	}
@@ -2096,7 +2094,7 @@ func TestFieldEditToSplitsAddrs(t *testing.T) {
 	for _, r := range ", d@e.f" {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, '\r')
+	m = pressType(t, m, KeyEnter)
 	if len(m.tabs[0].To) != 2 || m.tabs[0].To[0] != "a@b.c" || m.tabs[0].To[1] != "d@e.f" {
 		t.Fatalf("To = %v", m.tabs[0].To)
 	}
@@ -2108,8 +2106,8 @@ func TestFieldEditToSplitsAddrs(t *testing.T) {
 // content row - pasted ESC bytes never reach the terminal (F1).
 func TestAttachPromptRendersBox(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = press(t, m, "a")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -2141,8 +2139,8 @@ func TestAttachPromptRendersBox(t *testing.T) {
 // row (three lines from the end - the middle of the 3-row box).
 func TestConfirmBoxRendersHint(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = press(t, m, "q")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -2164,8 +2162,8 @@ func TestConfirmBoxRendersHint(t *testing.T) {
 // actions today - the direct arm pins the render path.
 func TestDialogueBoxRendersInIndex(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -2193,8 +2191,8 @@ func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 		}))
 	}
 	m.view.MergeThreads(threads)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m.dialogue = &dialogue{kind: dialogueInput, label: "go: "}
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -2222,12 +2220,12 @@ func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 func TestEditGatedDuringSending(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "y") // arms PhaseSending and the spinner tick
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	next, cmd := m.Update(KeyPressMsg{Text: "e", Code: 'e'})
 	if cmd != nil {
 		t.Fatal("e during PhaseSending must not launch the editor")
 	}
-	if next.(Model).tabs[0].Phase != compose.PhaseSending {
-		t.Fatalf("phase = %v", next.(Model).tabs[0].Phase)
+	if next.tabs[0].Phase != compose.PhaseSending {
+		t.Fatalf("phase = %v", next.tabs[0].Phase)
 	}
 }
 
@@ -2242,7 +2240,7 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	for _, r := range "alpha" {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, '\r') // enter selects
+	m = pressType(t, m, KeyEnter) // enter selects
 	if m.fuzzy != nil {
 		t.Fatal("enter must close the picker")
 	}
@@ -2261,19 +2259,19 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 func TestEditorEditArmsExec(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.formIdx = 1 // the redesign: e arms the body editor at any slot
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
+	next, cmd := m.Update(KeyPressMsg{Text: "e", Code: 'e'})
 	if cmd == nil {
 		t.Fatal("e must return an exec command")
 	}
-	if next.(Model).tabs[0].Phase != compose.PhaseEditing {
-		t.Fatalf("phase = %v", next.(Model).tabs[0].Phase)
+	if next.tabs[0].Phase != compose.PhaseEditing {
+		t.Fatalf("phase = %v", next.tabs[0].Phase)
 	}
 }
 
 func TestComposeFrameShape(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the compose frame must be exactly 24 lines, got %d:\n%s", got, frame)
@@ -2295,9 +2293,9 @@ func TestEditorDoneForClosedTabIsNoOp(t *testing.T) {
 	m = openDialogue(t, m, "a")
 	id := m.tabs[0].ID
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: id, OK: true}})
-	m = next.(Model)
+	m = next
 	next, _ = m.Update(editorDoneMsg{tabID: id, path: "/nonexistent"})
-	m = next.(Model)
+	m = next
 	if len(m.tabs) != 0 {
 		t.Fatalf("a stale editor result must not resurrect a tab, got %d tabs", len(m.tabs))
 	}
@@ -2305,7 +2303,7 @@ func TestEditorDoneForClosedTabIsNoOp(t *testing.T) {
 	m = openDialogue(t, m, "b")
 	subject := m.tabs[0].Subject
 	next, _ = m.Update(editorDoneMsg{tabID: id, path: "/nonexistent"})
-	m = next.(Model)
+	m = next
 	if m.tabs[0].Subject != subject {
 		t.Fatalf("a stale editor result must not touch another dialogue")
 	}
@@ -2313,8 +2311,8 @@ func TestEditorDoneForClosedTabIsNoOp(t *testing.T) {
 
 func TestComposeRenderFuzzyPopup(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = press(t, m, "A")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -2331,8 +2329,8 @@ func TestComposeRenderFuzzyPopup(t *testing.T) {
 // type. The match list clips instead; the frame stays exact.
 func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 7})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 7})
+	m = next
 	m = press(t, m, "A")
 	frame := m.render()
 	if got := strings.Count(frame, "\n") + 1; got != 7 {
@@ -2370,8 +2368,8 @@ func TestLegendNoTickWithReleaseReporting(t *testing.T) {
 	if m.legendTickOn {
 		t.Fatal("a hold must never arm the legend tick with release reporting on")
 	}
-	next, _ := m.Update(tea.KeyReleaseMsg{})
-	m = next.(Model)
+	next, _ := m.Update(KeyReleaseMsg{})
+	m = next
 	if m.legendPending || m.legendTickOn {
 		t.Fatal("the release must resolve the legend")
 	}
@@ -2393,7 +2391,7 @@ func TestLegendTickFallbackResolves(t *testing.T) {
 		t.Fatal("the press must mark the legend pending")
 	}
 	next, _ := m.Update(legendTick{moves: m.legendMoves})
-	m = next.(Model)
+	m = next
 	if m.legendPending || m.legendTickOn {
 		t.Fatal("the settled tick must resolve the legend")
 	}
@@ -2407,14 +2405,14 @@ func TestLegendTickFallbackResolves(t *testing.T) {
 // keyReleases flag, which gates the legend tick arming.
 func TestKeyboardEnhancementsMsgSetsReleasePath(t *testing.T) {
 	m := stubModel()
-	next, _ := m.Update(tea.KeyboardEnhancementsMsg{Flags: ansi.KittyReportEventTypes})
-	m = next.(Model)
+	next, _ := m.Update(KeyboardEnhancementsMsg{Flags: kittyReportEventTypes})
+	m = next
 	if !m.keyReleases {
 		t.Fatal("release reporting must be recorded from the enhancement message")
 	}
 	// a terminal answering without release reporting keeps the tick path
-	next, _ = m.Update(tea.KeyboardEnhancementsMsg{Flags: ansi.KittyDisambiguateEscapeCodes})
-	m = next.(Model)
+	next, _ = m.Update(KeyboardEnhancementsMsg{Flags: kittyDisambiguateEscapeCodes})
+	m = next
 	if m.keyReleases {
 		t.Fatal("a disambiguation-only answer must not enable the release path")
 	}
@@ -2443,7 +2441,7 @@ func TestPaintGateDeferredNavigation(t *testing.T) {
 	}
 	// the tick lands the deferred paint exactly once
 	next, _ := m.Update(frameTick{})
-	m = next.(Model)
+	m = next
 	if !m.paint || m.renderDue || m.frameTickOn {
 		t.Fatalf("the tick must re-arm the gate once: paint=%v renderDue=%v frameTickOn=%v", m.paint, m.renderDue, m.frameTickOn)
 	}
@@ -2452,7 +2450,7 @@ func TestPaintGateDeferredNavigation(t *testing.T) {
 	}
 	// an idle tick (nothing deferred) turns the gate off and dies
 	next, _ = m.Update(frameTick{})
-	m = next.(Model)
+	m = next
 	if m.paint || m.frameTickOn {
 		t.Fatalf("an idle tick must not paint: paint=%v frameTickOn=%v", m.paint, m.frameTickOn)
 	}
@@ -2464,19 +2462,19 @@ func TestPaintGateDeferredNavigation(t *testing.T) {
 // frame unchanged, and the tick's View builds the moved frame.
 func TestPaintGateSkipsTheFrameBuild(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
-	before := m.View().Content
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	before := m.View()
 	m = press(t, m, "j")
 	if m.paint {
 		t.Fatal("a navigation must defer its paint")
 	}
-	if got := m.View().Content; got != before {
+	if got := m.View(); got != before {
 		t.Fatal("a deferred View must return the last painted frame")
 	}
 	next, _ = m.Update(frameTick{})
-	m = next.(Model)
-	if got := m.View().Content; got == before {
+	m = next
+	if got := m.View(); got == before {
 		t.Fatal("the tick's paint must build the moved frame")
 	}
 }
@@ -2488,8 +2486,8 @@ func TestPaintGateImmediacy(t *testing.T) {
 	m := model()
 	// the fresh model renders unconditionally at startup (the loop's
 	// initial render, before the gate); the first message paints
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	if !m.paint {
 		t.Fatal("a resize must paint immediately")
 	}
@@ -2512,13 +2510,13 @@ func TestPaintGateImmediacy(t *testing.T) {
 	if m.paint {
 		t.Fatal("the navigation must have deferred")
 	}
-	next, _ = m.Update(tea.KeyReleaseMsg{})
-	m = next.(Model)
+	next, _ = m.Update(KeyReleaseMsg{})
+	m = next
 	if !m.paint || m.renderDue {
 		t.Fatalf("the release must paint immediately and settle the deferral: paint=%v renderDue=%v", m.paint, m.renderDue)
 	}
 	next, _ = m.Update(frameTick{})
-	m = next.(Model)
+	m = next
 	if m.paint {
 		t.Fatal("the settled tick must not paint a second time")
 	}
@@ -2542,7 +2540,7 @@ func TestPaintGateHoldBurst(t *testing.T) {
 			}
 		}
 		next, _ := m.Update(frameTick{})
-		m = next.(Model)
+		m = next
 		if !m.ShouldRender() {
 			t.Fatalf("window %d must land exactly one paint", w)
 		}
@@ -2555,7 +2553,7 @@ func TestPaintGateHoldBurst(t *testing.T) {
 
 // TestAttachPromptCommandPicker pins the '?' flow end to end: the
 // picker lists the registered commands, selecting arms the attach
-// prompt with "@name", and enter arms the exec (a non-nil tea.Cmd) and
+// prompt with "@name", and enter arms the exec (a non-nil Cmd) and
 // closes the prompt. The picker outranks the prompt while both are
 // live - the dispatch order change this test enforces.
 func TestAttachPromptCommandPicker(t *testing.T) {
@@ -2587,8 +2585,8 @@ func TestAttachPromptCommandPicker(t *testing.T) {
 	if m.dialogue == nil || m.dialogue.input != "@yazi" {
 		t.Fatalf("the selection must arm the prompt: %+v", m.dialogue)
 	}
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
-	m = next.(Model)
+	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	m = next
 	if cmd == nil {
 		t.Fatal("enter must return the command exec")
 	}
@@ -2603,8 +2601,8 @@ func TestAttachCmdUnknownKeepsPrompt(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "a")
 	m = press(t, m, "@nope")
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
-	m = next.(Model)
+	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	m = next
 	if cmd != nil {
 		t.Fatal("an unknown command must not exec")
 	}
@@ -2631,7 +2629,7 @@ func TestAttachCmdResultAddsFiles(t *testing.T) {
 	chooser.Close()
 
 	next, _ := m.Update(attachCmdDoneMsg{path: chooser.Name(), tabID: "t1"})
-	m = next.(Model)
+	m = next
 	got := m.tabs[0].Attachments
 	if len(got) != 2 || got[0].Path != f1.Name() || got[1].Path != f2.Name() {
 		t.Fatalf("attachments = %+v", got)
@@ -2646,7 +2644,7 @@ func TestAttachCmdResultAddsFiles(t *testing.T) {
 func TestAttachCmdFailureReopensPrompt(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
-	m = next.(Model)
+	m = next
 	if m.dialogue == nil || m.dialogue.kind != dialogueInput || m.dialogue.field != "attach" || m.dialogue.input != "@yazi" {
 		t.Fatalf("the prompt must re-open prefilled: %+v", m.dialogue)
 	}
@@ -2657,12 +2655,12 @@ func TestAttachCmdFailureReopensPrompt(t *testing.T) {
 func TestAttachCmdClosedTabNoOp(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
-	m = next.(Model)
+	m = next
 	if len(m.tabs) != 0 {
 		t.Fatalf("the send must close the tab: %d", len(m.tabs))
 	}
 	next, _ = m.Update(attachCmdDoneMsg{err: errors.New("boom"), path: "/nonexistent", tabID: "t1", name: "yazi"})
-	m = next.(Model)
+	m = next
 	if m.dialogue != nil {
 		t.Fatalf("a stale result must not resurrect the prompt: %+v", m.dialogue)
 	}
@@ -2674,8 +2672,8 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 // the prompt box splicing above the status line.
 func TestComposeFrameMuttLayout(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	frame := m.render()
 	lines := strings.Split(frame, "\n")
 	if lines[0] != m.tabBar() {
@@ -2720,8 +2718,8 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 // strip padded to the full width (R11 slot reservation).
 func TestTabBarStrip(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = openDialogue(t, m, "t2")
 	m.tabs[1].Subject = "second"
 	m = openDialogue(t, m, "t3")
@@ -2756,8 +2754,8 @@ func TestTabBarStrip(t *testing.T) {
 // dropped tail.
 func TestTabBarDropsTrailing(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 20, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 20, Height: 24})
+	m = next
 	m = openDialogue(t, m, "t2")
 	m.tabs[1].Subject = "aaaa"
 	m = openDialogue(t, m, "t3")
@@ -2781,8 +2779,8 @@ func TestTabBarDropsTrailing(t *testing.T) {
 // never displaces the status row, including in the compose window.
 func TestFramesChrome(t *testing.T) {
 	m := model()
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	// render() runs on a value copy - the frame's status line reads
 	// the copy's rows, so the outer model warms the same state
 	m.rows = m.view.Rows()
@@ -2960,8 +2958,8 @@ func TestFieldHotkeysPrefill(t *testing.T) {
 func TestEditUnconditionalAtAnySlot(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.formIdx = 0
-	next, cmd := m.Update(tea.KeyPressMsg{Text: "e", Code: 'e'})
-	m = next.(Model)
+	next, cmd := m.Update(KeyPressMsg{Text: "e", Code: 'e'})
+	m = next
 	if cmd == nil {
 		t.Fatal("e at slot 0 must arm the body editor")
 	}
@@ -2975,8 +2973,8 @@ func TestEditUnconditionalAtAnySlot(t *testing.T) {
 // label set: "Security:" / "Reply-To:" are the widest).
 func TestComposeTableColonAlign(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	frame := stripANSI(m.render())
 	lines := strings.Split(frame, "\n")
 	seam := -1
@@ -3007,8 +3005,8 @@ func TestComposeTableColonAlign(t *testing.T) {
 func TestComposeLongValueKeepsFrameHeight(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.composeTab().Subject = strings.Repeat("s", 100)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	frame := stripANSI(m.render())
 	if n := strings.Count(frame, "\n") + 1; n != 24 {
 		t.Fatalf("the frame must stay exactly 24 lines with a long value, got %d:\n%s", n, frame)
@@ -3032,8 +3030,8 @@ func TestComposeLongValueKeepsFrameHeight(t *testing.T) {
 // on the test message, so the typed entry is a standalone run.
 func TestDialogueLabelStyledBlue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m = press(t, m, "c")
 	for _, ch := range "writer@example.org" {
 		m = press(t, m, string(ch))
@@ -3057,19 +3055,19 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 func TestComposePreviewScrolls(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.tabs[0].Body = strings.Repeat("line\n", 200)
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	m.render() // the preview pager builds at render (syncPreviewPager)
 	if m.previewPager == nil || len(m.previewPager.lines) < 200 {
 		t.Fatalf("the preview pager must hold the body lines: %d", len(m.previewPager.lines))
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	m = next
 	if m.previewPager.vp.offset <= 0 {
 		t.Fatal("ctrl+d must scroll the compose preview")
 	}
-	next, _ = m.Update(tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
-	m = next.(Model)
+	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
+	m = next
 	if m.previewPager.vp.offset != 0 {
 		t.Fatalf("ctrl+u must scroll back, offset=%d", m.previewPager.vp.offset)
 	}
@@ -3080,8 +3078,8 @@ func TestComposePreviewScrolls(t *testing.T) {
 func TestComposeContentTypeRow(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.tabs[0].Body = "# t\n\n- x\n"
-	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	m = next.(Model)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
 	frame := m.render()
 	if !strings.Contains(frame, "[text/markdown, quoted-printable, utf-8") {
 		t.Fatalf("the content-type row must show text/markdown:\n%s", frame)
@@ -3120,7 +3118,7 @@ func TestSendTickReArmsWhileSending(t *testing.T) {
 	m = press(t, m, "y") // arms PhaseSending + the tick
 	before := m.spin
 	next, cmd = m.Update(sendTick{})
-	m = next.(Model)
+	m = next
 	if m.spin != before+1 {
 		t.Fatalf("the tick must advance the frame: %d -> %d", before, m.spin)
 	}
@@ -3146,7 +3144,7 @@ func TestSendErrorDialogue(t *testing.T) {
 	SetSendHandler(func(st compose.State) { calls++ })
 	defer SetSendHandler(func(st compose.State) {})
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: false, Output: "boom"}})
-	m = next.(Model)
+	m = next
 	if m.dialogue == nil || m.dialogue.kind != dialogueError || m.dialogue.input != "boom" {
 		t.Fatalf("failure must open the error dialogue: %+v", m.dialogue)
 	}
@@ -3174,7 +3172,7 @@ func TestSendErrorDialogue(t *testing.T) {
 func TestSendOkStatusMessage(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(EventMsg{Event: core.SendResult{TabID: "t1", OK: true}})
-	m = next.(Model)
+	m = next
 	if len(m.tabs) != 0 {
 		t.Fatalf("success must close the tab: %d", len(m.tabs))
 	}
@@ -3194,7 +3192,7 @@ func TestAddrCompletion(t *testing.T) {
 		{Addr: "bob@x.io"},
 		{Addr: "unrelated@z"},
 	}}})
-	m = next.(Model)
+	m = next
 	// "t" opens the To field prefilled with the dialogue's To (a@b.c)
 	m = press(t, m, "t")
 	if m.dialogue == nil || m.dialogue.field != "to" || m.dialogue.input != "a@b.c" {
@@ -3237,7 +3235,7 @@ func TestAddrCompletionLengthGate(t *testing.T) {
 	next, _ := m.Update(EventMsg{Event: core.AddressIndex{Addrs: []core.AddressEntry{
 		{Addr: "a@b.c", Name: "Ann"},
 	}}})
-	m = next.(Model)
+	m = next
 	m = press(t, m, "b") // the Bcc field, empty
 	m = pressType(t, m, 'a')
 	m = press(t, m, "tab")
@@ -3257,8 +3255,8 @@ func TestAddrCompletionLazyDebounce(t *testing.T) {
 	for _, r := range "bob@" {
 		m = press(t, m, string(r))
 	}
-	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyTab})
-	m = next.(Model)
+	next, cmd := m.Update(KeyPressMsg{Code: KeyTab})
+	m = next
 	if cmd == nil {
 		t.Fatal("a first trigger without a corpus must arm the debounce tick")
 	}
@@ -3285,7 +3283,7 @@ func TestAddrCompletionLazyDebounce(t *testing.T) {
 	next, _ = m.Update(EventMsg{Event: core.AddressIndex{Addrs: []core.AddressEntry{
 		{Addr: "bob@x.io"},
 	}}})
-	m = next.(Model)
+	m = next
 	if m.addrPending {
 		t.Fatal("the result must clear the in-flight flag")
 	}

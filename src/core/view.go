@@ -97,6 +97,16 @@ func (v *View) rowsLocked() []Row {
 	for _, t := range v.Threads {
 		rows = append(rows, flattenThread(t, t.Collapsed)...)
 	}
+	// re-anchor the cursor index by id at materialization (once per
+	// merge, never per paint): the render's CursorIndex read is O(1)
+	if v.cursorID != "" {
+		for i := range rows {
+			if rows[i].Msg != nil && rows[i].Msg.ID == v.cursorID {
+				v.lastRow = i
+				break
+			}
+		}
+	}
 	for i := range rows {
 		msg := rows[i].Msg
 		if msg == nil {
@@ -259,14 +269,14 @@ func (v *View) SetCursor(id string) {
 	v.cursorID = id
 }
 
-// SetCursorIndex anchors the cursor by row index instead of message
-// id - the stub-row case: search summaries carry no message id, so
-// id-anchored tracking is impossible until the viewport hydrate
-// replaces the stub. A later SetCursor(id) re-anchors by id.
+// SetCursorIndex records the cursor's row index - the O(1) read the
+// paint path uses (moves write it, merges re-anchor it at
+// materialization). The id anchor survives: SetCursor(id) + SetCursorIndex
+// together leave both fields consistent, and the stub case (no id)
+// clears the anchor via SetCursor("").
 func (v *View) SetCursorIndex(idx int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.cursorID = ""
 	v.lastRow = idx
 }
 
@@ -285,7 +295,14 @@ func (v *View) CursorRowIndex() int {
 func (v *View) CursorRow() (Row, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	rows := v.rowsLocked()
+	// cached rows when clean: the unconditional flatten here was the
+	// per-paint O(all rows) stall at 33k (every render resolved the
+	// cursor through CursorRow)
+	if v.dirty || v.rows == nil {
+		v.rows = v.rowsLocked()
+		v.dirty = false
+	}
+	rows := v.rows
 	if len(rows) == 0 {
 		return Row{}, false
 	}

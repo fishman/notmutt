@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
 
@@ -136,10 +136,6 @@ type Model struct {
 	// still while the cursor moves within it; only when the cursor
 	// crosses a page edge does the window jump a full page.
 	indexOffset int
-	// cursorID mirrors the view's cursor id: the view's CursorRow
-	// flattens the whole thread tree per call (the page-key stall at
-	// 33k rows), so moves resolve against the cached row list instead.
-	cursorID string
 	// legend is the debounced status-line icon library (the current
 	// message's tag icons): every cursor move clears it and arms the
 	// debounce, so it only resolves after the cursor rests - never
@@ -1440,31 +1436,19 @@ func (m Model) resolveStatus() (legend, account string) {
 	return iconLegend(tags, m.ui.Tags, m.accountTags), accountTag(tags, m.accountTags)
 }
 
-// cursorTags resolves the cursor message's tag list. Read-only over the
-// cached row list: the mirror id scan, or the view's stored cursor
-// index (O(1)) when the mirror is empty (stub cursor) or stale (the
-// view re-anchored after a merge) - never the view's CursorRow, which
-// flattens the whole thread tree. In pager mode the fallback is the
-// open thread's first real message.
+// cursorTags resolves the cursor message's tag list - an O(1) read of
+// the row at the view's stored cursor index (moves write it, merges
+// re-anchor it). In pager mode the fallback is the open thread's first
+// real message.
 func (m Model) cursorTags() []string {
 	rows := m.rows
 	if len(rows) == 0 {
 		return nil
 	}
 	var tags []string
-	if m.cursorID != "" {
-		for _, r := range rows {
-			if r.Msg != nil && r.Msg.ID == m.cursorID {
-				tags = r.Msg.Tags
-				break
-			}
-		}
-	}
-	if tags == nil {
-		if idx := m.view.CursorRowIndex(); idx >= 0 && idx < len(rows) {
-			if msg := rows[idx].Msg; msg != nil {
-				tags = msg.Tags
-			}
+	if idx := m.view.CursorRowIndex(); idx >= 0 && idx < len(rows) {
+		if msg := rows[idx].Msg; msg != nil {
+			tags = msg.Tags
 		}
 	}
 	if len(tags) == 0 && m.mode == "pager" && m.pager != nil {
@@ -1482,10 +1466,8 @@ func (m Model) cursorTags() []string {
 // single steps so edge crossings page). The window holds still while
 // the cursor moves within the page; only at a page edge does it jump
 // a full page. All stepping is index-local against the cached row
-// list: the view's CursorRow flattens the whole thread tree per call
-// (the page-key stall at 33k rows), so the cursor id is mirrored on
-// the model and looked up by scanning m.rows - one scan per move, no
-// flatten.
+// list; the view records the cursor index on every move (O(1) paint
+// reads, no flatten, no scan).
 func (m *Model) moveCursor(delta int) {
 	rows := m.view.Rows()
 	m.rows = rows
@@ -1592,13 +1574,8 @@ func (m *Model) setCursorAt(rows []core.Row, idx int) {
 	if rows[idx].Msg == nil {
 		return
 	}
-	if id := rows[idx].Msg.ID; id != "" {
-		m.view.SetCursor(id)
-		m.cursorID = id
-	} else {
-		m.view.SetCursorIndex(idx)
-		m.cursorID = ""
-	}
+	m.view.SetCursor(rows[idx].Msg.ID)
+	m.view.SetCursorIndex(idx)
 }
 
 // listHeight is the index window's row count: the top row is the tab
@@ -1743,42 +1720,15 @@ func (m *Model) undo() bool {
 // resolution, which flattens once - the model-set cursor path never
 // does. Stub rows carry no message id: the view's last row index is
 // the anchor.
+// CursorIndex is the cursor's row index - an O(1) read of the view's
+// stored index. Moves write it (setCursorAt), merges re-anchor it by
+// id at materialization (rowsLocked); the paint path never scans or
+// flattens the row list.
 func (m Model) CursorIndex() int {
-	if m.cursorID != "" {
-		for i, r := range m.rows {
-			if r.Msg != nil && r.Msg.ID == m.cursorID {
-				return i
-			}
-		}
-	}
-	row, ok := m.view.CursorRow()
-	if !ok {
-		return 0
-	}
-	if row.Msg == nil {
-		// cursor anchored on a ghost row (fresh view, empty cursor id):
-		// its position is the thread's first row
-		for i, r := range m.rows {
-			if r.Ghost && r.ThreadID == row.ThreadID {
-				return i
-			}
-		}
-		return 0
-	}
-	if row.Msg.ID != "" {
-		for i, r := range m.rows {
-			if r.Msg == nil {
-				continue
-			}
-			if r.Msg.ID == row.Msg.ID {
-				return i
-			}
-		}
-	}
-	idx := m.view.CursorRowIndex()
 	if len(m.rows) == 0 {
 		return 0
 	}
+	idx := m.view.CursorRowIndex()
 	if idx < 0 || idx >= len(m.rows) {
 		idx = len(m.rows) - 1
 	}
@@ -1868,9 +1818,9 @@ func (m Model) render() string {
 	rows := m.rows
 	if len(rows) == 0 {
 		// an empty view renders like a filled one: blank rows fill the
-		// list area (the indicator sits on the first, cursor-style), and
-		// the keyhint bar and status row always render - "empty" is a
-		// data state, never a surface state. The list area is the same
+		// list area (the cursor marker sits on the first, cursor-style),
+		// and the keyhint bar and status row always render - "empty" is
+		// a data state, never a surface state. The list area is the same
 		// height as the filled path: tabBar + list + keyhint + status
 		// must equal the frame height, one line over and the renderer
 		// writes out of bounds.
@@ -1879,12 +1829,12 @@ func (m Model) render() string {
 		b.WriteString(m.tabBar())
 		b.WriteByte('\n')
 		for i := 0; i < listHeight; i++ {
-			outer := st.Normal
+			line := st.sgr.normal.render(" ")
 			if i == 0 {
-				outer = st.Indicator
+				line = st.sgr.indicator.render(m.ui.Glyphs.Cursor)
 			}
 			if m.width > 0 {
-				b.WriteString(padRow("", m.width, outer))
+				b.WriteString(padRow(line, m.width, st.Normal))
 			}
 			b.WriteByte('\n')
 		}
@@ -1945,21 +1895,16 @@ func (m Model) render() string {
 			}
 			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
 			outer := sg.normal
-			if i == cur {
-				outer = sg.indicator
-			} else if rows[i].Ghost {
+			if rows[i].Ghost {
 				outer = sg.ghost
 			}
 			if rows[i].Staged {
 				// staged rows keep the row style and gain the staged look
 				// ([index.staged] default: bold + muted fg); the slot
 				// styles only override fg, so bold carries through
-				switch {
-				case i == cur:
-					outer = sg.stagedIndicator
-				case rows[i].Ghost:
+				if rows[i].Ghost {
 					outer = sg.stagedGhost
-				default:
+				} else {
 					outer = sg.stagedNormal
 				}
 			}

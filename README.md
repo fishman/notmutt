@@ -3,8 +3,8 @@
 notmutt is an async, command-line-first mail client built on notmuch.
 Tags are the logical model: every view, filter, and trigger is a notmuch
 query or tag operation; folders exist only for sync-tool compatibility.
-Written in Go - bubbletea v2 TUI, go-message for mail parsing and
-composition, TOML config, vim keybindings by default.
+Written in Go - tcell TUI (lipgloss for layout math), go-message for
+mail parsing and composition, TOML config, vim keybindings by default.
 
 Requirements and architecture are normative in AGENTS.md; the design
 decisions and their measurements live in docs/design-decisions.md.
@@ -22,9 +22,15 @@ help overlay (`?`) derives from it.
 
 ## Rendering
 
-BubbleTea v2 re-renders the whole frame on every message, which is where
-notmutt's rendering differs structurally from neomutt's - and why the
-merge system can cost more than neomutt's in general:
+notmutt renders with tcell (screen cell buffer, internal cell diff,
+input) on top of lipgloss (layout math and border/box strings in the
+frame builders). The first versions of the client used BubbleTea v2 as
+the renderer; the model architecture did not move with the flip - the
+frame builders, the paint gate, and the async core are renderer-
+agnostic by design (R5), and the flip touched only the tui package's
+render path.
+
+The structural differences from neomutt are unchanged by the flip:
 
 1. The view's truth is a thread TREE (new mail inserts into existing
    threads, never a rebuild, R3); the flat row array is DERIVED by a
@@ -32,10 +38,10 @@ merge system can cost more than neomutt's in general:
    rows, 6.3ms at 33k). neomutt paints directly from a flat array and
    never pays that derivation in steady state.
 2. Every message rebuilds the whole frame string in Go - every row
-   re-styled - before the renderer can diff anything. v2's renderer
-   itself writes incrementally (a cell-level diff against the previous
-   screen, capped at 60fps), so the terminal write is cheap; the cost is
-   the full styling pass, which runs per message regardless.
+   re-styled - before the renderer can diff anything. tcell's
+   Screen.Show() diffs the frame against the previous cell buffer, so
+   the terminal write is cheap; the cost is the full styling pass,
+   which runs per message regardless.
 3. The loop renders once per message, so a held key was one full frame
    build per repeat, and every merge during a refresh marked the view
    dirty - the next paint paid the full flatten again.
@@ -62,11 +68,38 @@ On top of that: a content-addressed row-string cache (a cursor move
 restyles only the two rows whose selection flips; every other row
 concatenates from the cache) and region layers for the keyhint,
 status, and help rows, which rebuild only when their inputs change.
+All of it survived the tcell flip - these are model-side costs, and
+the paint gate that triggers them is the same gate that pushed frames
+through the v2 renderer.
+
+### Why tcell (2026-08-17, decision record 23)
+
+The trigger was the vendored BubbleTea v2 renderer being the wrong
+trust boundary. An out-of-bounds frame bug (2026-08-15) was fixed
+model-side (record 16's padding rule), and the vendored ultraviolet
+diff engine was then verified byte-correct - but verifying it required
+a decoder test harness that re-implements what tcell's Screen.Show()
+does natively: a cell buffer you can dump and reason about directly.
+That debugging cost repeats on every renderer artifact, real or
+suspected.
+
+tcell is the mature version of the same idea - screen cell buffer,
+internal diff, Show - with a decade of production use; lazygit, this
+project's R5/R9 architecture reference, is tcell directly, which
+validates the pairing. tview was rejected in the R7 record for
+coupling app state into its primitives; tcell has no such layer, it
+is a screen and an event source, nothing more.
+
+The frame builders still emit SGR strings; a small adapter
+(pushFrame) parses them into per-cell tcell styles at the screen
+boundary. Only the client's own frames arrive there, so the parser is
+a strict param-walk over known sequences, not a general terminal
+emulator.
 
 The remaining structural differences are deliberate: full-frame
-rebuilds are the price of a maintained BubbleTea model, and the thread
-tree is the price of diff-and-insert refresh - neomutt's new-mail path
-re-runs the whole query and rebuilds its thread tree
+rebuilds are the price of a maintained model, and the thread tree is
+the price of diff-and-insert refresh - neomutt's new-mail path re-runs
+the whole query and rebuilds its thread tree
 (notmuch/notmuch.c:2183-2308), which notmutt avoids entirely. Post-fix
 steady state is sub-150us per press: the structural costs are
 amortized below perception.

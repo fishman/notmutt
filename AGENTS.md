@@ -218,7 +218,9 @@ for attachments/HTML viewing.
 ### R7. Language: Go
 
 Analysis (see decision record below). Go with go-message (emersion) for
-mail, BubbleTea for TUI, goroutines for the async model, libnotmuch via
+mail, tcell for TUI (lipgloss for layout math in the frame builders -
+decision record 23 flips record 5; lazygit's pairing: same renderer,
+no widget layer), goroutines for the async model, libnotmuch via
 cgo (aerc's in-tree binding pattern). Supply-chain policy is mandatory
 (below).
 
@@ -322,7 +324,7 @@ Question: Rust, Zig, or Go?
 |---|---|---|---|
 | notmuch bindings | `notmuch` crate (0.8.0, wraps C API, stale ~3y but works); FFI direct | go.notmuch (github.com/fishman/go.notmuch, community-maintained, modernized 2026-08-14) | none; hand-written FFI |
 | mail parse+compose | mail-parser + mail-builder (Stalwart, RFC 5322/MIME, zero-copy, fuzzed, production mail server, actively maintained 2026) | go-message (emersion, used by aerc) | none |
-| TUI | ratatui (mature, widget lib - UI extracted by design) | bubbletea/tview (fine, but app-state coupled) | none mature |
+| TUI | ratatui (mature, widget lib - UI extracted by design) | tcell + lipgloss (screen + input only, no widget layer - record 23 flips record 5; lazygit's pairing) | none mature |
 | async | tokio (mature) | goroutines (built-in, simple) | none; std.event.Loop is barebones, userland |
 | Lua | mlua (mature, used by neovim) | gopher-lua (stale-ish) | none |
 | supply chain (user concern: AI-generated code) | crates.io has the worst AI-generated-crate flood; mitigated by tiny dep set + vetting + cargo-audit + vendoring | module proxy + checksum db, typosquatting still exists | smallest surface (no registry sprawl, vendoring natural) |
@@ -601,7 +603,8 @@ the spec must say why it serves notmutt, not cite it as authority.
   struct (`pkg/config/user_config.go:231`), and cancellable background
   tasks with UI update hooks (`pkg/tasks/` - the R3 refresh pattern).
   Reference the ARCHITECTURE (state/UI split, data-driven config), not the
-  renderer: notmutt's TUI stays BubbleTea (R7).
+  renderer: notmutt's TUI is tcell with lipgloss (decision record 23 -
+  the R5/R9 architecture reference now pairs with the same renderer).
 - `afew/MailMover.py` - per-account folder priority resolution.
 - `muttrc/notmuch/tags` + `muttrc/notmuch/post-new` + `muttrc/afew/config`
   - the live classification pipeline (R2 reference).

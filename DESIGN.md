@@ -55,12 +55,12 @@ the client too (timer-less operation), but transport stays external.
 
 ```
 +-------------------------------------------------------------+
-|  tui/          BubbleTea views/components: index, pager,    |  <- extractable,
+|  tui/          tcell frames/components: index, pager,       |  <- extractable,
 |                dialogue boxes, tab bar, menu, statusline    |     publish later
 +---------------------------+---------------------------------+
                             |
 +---------------------------v---------------------------------+
-|  app/            BubbleTea models, event loop, routing,     |
+|  app/            app model, event loop, routing,            |
 |                  window management; renders dialogue        |
 |                  states, no logic                          |
 +---------------------------+---------------------------------+
@@ -83,12 +83,12 @@ Lua scripting layer (future, AGENTS.md R8) wraps core APIs.
 ```
 
 Rules: `core/` must not import anything terminal-specific. `tui/` must
-not contain domain logic. BubbleTea's own Model/Update/View triad IS the
-state/UI split: core exposes state + pure transitions; tui renders. The
-`tui/` component set is extracted as-is into a published library; the
-client becomes its demo. (BubbleTea's opinionated loop must not be allowed
-to swallow core logic - the split is enforced by layout, not by the
-framework.)
+not contain domain logic. The renderer is tcell (decision record 23
+flips the original BubbleTea v2 choice): core exposes state + pure
+transitions; tui renders. The `tui/` component set is extracted as-is
+into a published library; the client becomes its demo. (The event loop
+must not be allowed to swallow core logic - the split is enforced by
+layout, not by the framework.)
 
 ## 4. Async model
 
@@ -344,7 +344,9 @@ bad hex, unknown object - fail loudly, not at render).
   resolves conflicts.
 - Regex styles (body URLs/emails, header ^From:) ordered, last wins
   (mutt semantics).
-- The resolved style table feeds BubbleTea styles at render; content
+- The resolved style table feeds the SGR emitters in the frame
+  builders, which the tcell adapter parses per cell at the screen
+  boundary (record 23); content
   sanitization (SECURITY.md F1) stays a separate layer - styling never
   sees raw mail bytes.
 - Variant switch = config-store notification (ColorSchemeChanged event
@@ -452,9 +454,10 @@ language).
 
 ## 10. TUI (R5)
 
-BubbleTea. The `tui/` package provides: index view, pager view, dialogue
+tcell (record 23 flips the original BubbleTea v2 choice). The `tui/`
+package provides: index view, pager view, dialogue
 boxes, tab bar, menu, statusline - all pure renderers of core state
-(BubbleTea View functions of core state; models are thin adapters). The
+(frame builders over the model; the model is the state). The
 client wires them. Extraction path: `tui/` is versioned separately from
 day one (own module, own README); publishing is a packaging step, not a
 refactor.
@@ -479,7 +482,7 @@ specific neomutt piece, not the whole parser.
 |--------------|------------------------------------------------|
 | language     | Go (AGENTS.md decision record)                 |
 | async        | goroutines + channels (no framework)           |
-| TUI          | BubbleTea (charm) + Lip Gloss                  |
+| TUI          | tcell + Lip Gloss (record 23 flips BubbleTea)   |
 | mail parse   | go-message (emersion)                          |
 | mail compose | go-message (mail package)                      |
 | crypto       | NO library - system gpg + openssl CLIs (R10)   |
@@ -499,7 +502,7 @@ notmutt/
   send/          async send jobs
   crypto/        Provider interface + gpg/openssl backends (system CLIs)
   filter/        rule engine, exclusive groups, mover
-  tui/           extractable TUI library (BubbleTea views/components)
+  tui/           extractable TUI library (tcell frames/components)
   app/           client binary: models, event loop, windows, bindings
   cli/           headless commands (tag, move, filter) for scripting
   config/        TOML schema + typed store

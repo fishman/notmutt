@@ -109,10 +109,14 @@ type Model struct {
 	// targets (label N opens linkList[N-1]). The mode/headers/links
 	// mirrors the last ThreadLoaded - a same-thread reload with another
 	// view replaces the pager content.
-	renderMode  core.RenderMode
-	renderMime  string
-	linkMode    bool
-	linkList    []string
+	renderMode core.RenderMode
+	renderMime string
+	linkMode   bool
+	linkList   []string
+	// linkInput is the easyjump number under entry: digits extend it,
+	// backspace drops it (no prompt - the selection is the live
+	// highlight). A complete number opens the link on the spot.
+	linkInput   string
 	showHeaders bool
 	// imgProto is the terminal's image protocol ("" = unsupported:
 	// images stay collapsed); imgCache holds the decoded+scaled window
@@ -353,42 +357,19 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.logView.setSize(m.width, h)
 		}
 	case KeyPressMsg:
+		// the F key's label mode owns the keys (no dialogue - the
+		// selection is the live highlight): digits extend the number,
+		// backspace drops it, enter opens the highlighted link, esc/F
+		// exit, and the pager scroll keys stay live (the labels below
+		// the fold are reachable)
+		if m.linkMode && m.mode == "pager" && m.pager != nil {
+			m.linkKey(msg)
+			return m, nil
+		}
 		// the active dialogue owns the keys (R4): it can close (nil),
 		// swap itself out (a chooser over its prompt), or hand back a
 		// Cmd (an attach command exec, the addr harvest tick)
 		if m.dialogue != nil {
-			if d, ok := m.dialogue.(*textDialogue); ok && d.field == "link" && m.pager != nil {
-				// the link prompt keeps the pager scroll keys live
-				// (the easyjump must browse the labels below the fold
-				// - otherwise only the visible links are selectable);
-				// digits still type, enter/esc still resolve
-				switch actionForKey(msg, m.bindings["pager"]) {
-				case "scroll-down":
-					m.pager.scrollDown(1)
-					return m, nil
-				case "scroll-up":
-					m.pager.scrollUp(1)
-					return m, nil
-				case "scroll-top":
-					m.pager.scrollTop()
-					return m, nil
-				case "scroll-bottom":
-					m.pager.scrollBottom()
-					return m, nil
-				case "page-down":
-					m.pager.pageDown()
-					return m, nil
-				case "page-up":
-					m.pager.pageUp()
-					return m, nil
-				case "half-page-down":
-					m.pager.halfPageDown()
-					return m, nil
-				case "half-page-up":
-					m.pager.halfPageUp()
-					return m, nil
-				}
-			}
 			d, cmd := m.dialogue.handle(&m, msg)
 			m.dialogue = d
 			return m, cmd
@@ -774,15 +755,11 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the h key: the index flips the flag and opens; in the pager
 		// the open thread re-renders with the header block toggled
 		// (the same seam as v - the reply flips the state, the
-		// onThreadLoaded guard decides the replace). The link prompt
-		// closes first - one key, one mode.
+		// onThreadLoaded guard decides the replace).
 		if m.mode == "index" {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
-			if m.linkMode {
-				m.exitLinkMode()
-			}
 			onToggleRender(pagerThreadID(m.pager), m.renderMode, !m.showHeaders, m.width, false)
 			deferPaint()
 			deferred = true
@@ -926,20 +903,19 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			deferred = true
 		}
 	case "open-links":
-		// the F key (easyjump-style): the html view re-renders with
-		// the inline "[N]" link labels, and the number prompt arms
-		// when the labeled reply lands WITH links (a linkless mail
-		// reports instead of arming a dead prompt - labels exist only
-		// at link sites); the plain/source views list the visible
-		// links for the same number entry. F again (or esc) exits the
+		// the F key (easyjump-style): the html view re-renders with the
+		// inline "[N]" link labels, and the key loop owns the digits
+		// (no prompt - the selection is the live highlight, linkKey
+		// handles the numbers and the scroll keys); a linkless mail
+		// reports instead of arming a dead loop (labels exist only at
+		// link sites). The plain/source views list the visible links in
+		// the picker - no labels exist there. F again (or esc) exits the
 		// label mode. The linkMode flag adopts only when the render
 		// reply lands (the onThreadLoaded guard) - a request never
 		// claims the state before the reply, or the reply would match
 		// the request and skip the replace.
 		if m.mode == "pager" && m.pager != nil {
-			if m.linkMode {
-				m.exitLinkMode()
-			} else if m.renderMode == core.RenderHTML {
+			if m.renderMode == core.RenderHTML {
 				onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, true)
 			} else if links := linksOfLines(m.pager.lines, m.renderMode == core.RenderSource); len(links) > 0 {
 				m.dialogue = &listDialogue{f: newFuzzy("openlink", "open link:", numberedLinks(links))}
@@ -1187,15 +1163,101 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 // onThreadLoaded attaches the open job's render lines to the pager and
 // switches to pager mode. Rendering and the render transforms already
 // happened on the async open job - the model only attaches. A failed
-// exitLinkMode leaves the F key's label mode: the prompt closes and
-// the thread re-renders without the "[N]" labels.
-// exitLinkMode closes the label mode: the dialogue goes, the flag
+// exitLinkMode closes the F key's label mode: the selection clears and
+// the thread re-renders without the "[N]" labels. The linkMode flag
 // follows the unlabeled reply (exitLinkMode never claims it - the
 // onThreadLoaded guard decides the replace).
 func (m *Model) exitLinkMode() {
-	m.dialogue = nil
+	m.linkInput = ""
 	if m.pager != nil {
+		m.pager.setLinkSel("")
 		onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, false)
+	}
+}
+
+// linkKey is the easyjump key loop (no prompt - the selection IS the
+// feedback): digits extend the number, backspace drops it, enter opens
+// the highlighted link, esc/F leave the label mode, and the pager
+// scroll keys stay live - the labels below the fold are reachable.
+func (m *Model) linkKey(msg KeyPressMsg) {
+	if t := msg.Text; len(t) == 1 && t[0] >= '0' && t[0] <= '9' {
+		m.linkDigit(t)
+		return
+	}
+	switch msg.String() {
+	case "backspace":
+		if len(m.linkInput) > 0 {
+			m.linkInput = m.linkInput[:len(m.linkInput)-1]
+		}
+		m.syncLinkSel()
+	case "enter":
+		m.openLinkSel()
+		m.exitLinkMode()
+	case "esc", "ctrl+g":
+		m.exitLinkMode()
+	default:
+		switch actionForKey(msg, m.bindings["pager"]) {
+		case "open-links":
+			m.exitLinkMode()
+		case "scroll-down":
+			m.pager.scrollDown(1)
+		case "scroll-up":
+			m.pager.scrollUp(1)
+		case "scroll-top":
+			m.pager.scrollTop()
+		case "scroll-bottom":
+			m.pager.scrollBottom()
+		case "page-down":
+			m.pager.pageDown()
+		case "page-up":
+			m.pager.pageUp()
+		case "half-page-down":
+			m.pager.halfPageDown()
+		case "half-page-up":
+			m.pager.halfPageUp()
+		}
+	}
+}
+
+// linkDigit extends the easyjump number: a digit that would overshoot
+// the label count is ignored (labels are 1..N - a number above N is a
+// prefix of nothing, a dead entry). The highlight follows the digits;
+// a complete number - one no further label extends (n*10 > N) - opens
+// the link immediately.
+func (m *Model) linkDigit(d string) {
+	n, err := strconv.Atoi(m.linkInput + d)
+	if err != nil || n < 1 || n > len(m.linkList) {
+		return
+	}
+	m.linkInput += d
+	m.syncLinkSel()
+	if n*10 > len(m.linkList) {
+		openLink(m.linkList[n-1])
+		m.exitLinkMode()
+	}
+}
+
+// openLinkSel opens the link the current digits select (the enter key;
+// linkDigit's auto-open path bypasses it). An empty or out-of-range
+// number is a no-op - enter only closes the mode.
+func (m *Model) openLinkSel() {
+	n, err := strconv.Atoi(m.linkInput)
+	if err != nil || n < 1 || n > len(m.linkList) {
+		return
+	}
+	openLink(m.linkList[n-1])
+}
+
+// syncLinkSel points the pager at the selected label's marker (the F
+// key's live highlight: the "[N]" of the number under entry renders
+// reversed). No digits = no highlight.
+func (m *Model) syncLinkSel() {
+	sel := ""
+	if n, err := strconv.Atoi(m.linkInput); err == nil && n >= 1 && n <= len(m.linkList) {
+		sel = fmt.Sprintf("[%d]", n)
+	}
+	if m.pager != nil {
+		m.pager.setLinkSel(sel)
 	}
 }
 
@@ -1257,12 +1319,13 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
 		m.pager.setSize(w, h, m.styles)
-		// the F key's prompt arms with the labeled reply: links exist
-		// or the mode reports - never a dead prompt with no numbers
+		// the F key's label mode arms with the labeled reply: the digits
+		// start empty (the selection is the live highlight) and links
+		// exist or the mode reports - never a silent dead entry
 		if e.LinkLabels {
-			if len(e.Links) > 0 {
-				m.dialogue = &textDialogue{field: "link", label: "open link: "}
-			} else {
+			m.linkInput = ""
+			m.syncLinkSel()
+			if len(e.Links) == 0 {
 				m.logEntry("no links in this message", true)
 			}
 		}
@@ -2500,15 +2563,6 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		case "filter":
 			// the filter applied live per key - enter only closes
 			return nil, nil
-		case "link":
-			// the F key's number entry: link N opens (label N is
-			// linkList[N-1]); any other input just exits the label
-			// mode
-			if n, err := strconv.Atoi(input); err == nil && n >= 1 && n <= len(m.linkList) {
-				openLink(m.linkList[n-1])
-			}
-			m.exitLinkMode()
-			return nil, nil
 		}
 		st := &m.tabs[m.tabIdx-1]
 		switch d.field {
@@ -2531,9 +2585,6 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		if d.field == "filter" {
 			m.view.SetFilter(d.saved)
 			m.rows = m.view.Rows()
-		} else if d.field == "link" {
-			m.exitLinkMode()
-			return nil, nil
 		}
 		m.cancelDialogue()
 		return nil, nil

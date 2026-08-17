@@ -33,6 +33,10 @@ type Run struct {
 	Fg    string // #rrggbb, "" = none
 	Bg    string
 	Attrs LineAttrs
+	// Label marks the F key's link-marker run: the "[N]" the html
+	// renderer inserts before every link. It never merges with mail
+	// text, so the TUI finds the marker under entry by exact run match.
+	Label bool
 }
 
 // Image is a referenced mail image rendered on its own line(s): Data

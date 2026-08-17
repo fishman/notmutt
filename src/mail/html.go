@@ -108,10 +108,12 @@ type htmlWalker struct {
 	links      []string
 }
 
-// word is one pending word with its computed style.
+// word is one pending word with its computed style. label marks the
+// F key's link marker ("[N]") - its run never merges with mail text.
 type word struct {
-	text string
-	st   *styleProps
+	text  string
+	st    *styleProps
+	label bool
 }
 
 // cellLine is one line of a table cell's text: its words and the line's
@@ -219,7 +221,7 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 					if href := attr(c, "href"); href != "" {
 						href = sanitize(href)
 						w.links = append(w.links, href)
-						w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs)
+						w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs, true)
 					}
 				}
 				w.walk(c, cs)
@@ -269,14 +271,14 @@ func (w *htmlWalker) addText(txt string, st *styleProps) {
 			// record the trimmed target
 			if ls := core.Links(f, true); len(ls) > 0 {
 				w.links = append(w.links, ls[0])
-				w.addWord(fmt.Sprintf("[%d]", len(w.links)), st)
+				w.addWord(fmt.Sprintf("[%d]", len(w.links)), st, true)
 			}
 		}
-		w.addWord(f, st)
+		w.addWord(f, st, false)
 	}
 }
 
-func (w *htmlWalker) addWord(text string, st *styleProps) {
+func (w *htmlWalker) addWord(text string, st *styleProps, label bool) {
 	if w.linesLeft <= 0 {
 		w.truncated = true
 		return
@@ -289,7 +291,7 @@ func (w *htmlWalker) addWord(text string, st *styleProps) {
 		if w.cells > 0 {
 			w.flush()
 		}
-		w.words = append(w.words, word{text: chunk, st: st})
+		w.words = append(w.words, word{text: chunk, st: st, label: label})
 		w.cells = textWidth(chunk)
 		text = text[len(chunk):]
 		tw = textWidth(text)
@@ -304,7 +306,7 @@ func (w *htmlWalker) addWord(text string, st *styleProps) {
 		w.words = append(w.words, word{text: " ", st: w.words[len(w.words)-1].st})
 		w.cells++
 	}
-	w.words = append(w.words, word{text: text, st: st})
+	w.words = append(w.words, word{text: text, st: st, label: label})
 	w.cells += tw
 }
 
@@ -378,7 +380,7 @@ func (w *htmlWalker) image(c *html.Node, st *styleProps) {
 	w.flush()
 	img := resolveImage(c, w.atts)
 	if img == nil {
-		w.addWord("[image]", st)
+		w.addWord("[image]", st, false)
 		return
 	}
 	w.emitLine(nil)
@@ -802,16 +804,18 @@ func contrastFG(bg string) string {
 
 // runWords merges a word-line into runs: adjacent words with identical
 // styles merge (the inter-word space inherits the preceding word's
-// style); style changes split runs.
+// style); style changes and the F key's label markers split runs (the
+// marker keeps its own run - the TUI's highlight anchor).
 func runWords(words []word) []core.Run {
 	var runs []core.Run
 	for _, wd := range words {
-		if len(runs) > 0 && runFor(wd.st) == runs[len(runs)-1] {
+		r := runFor(wd.st)
+		r.Label = wd.label
+		r.Text = wd.text
+		if len(runs) > 0 && r == runs[len(runs)-1] {
 			runs[len(runs)-1].Text += wd.text
 			continue
 		}
-		r := runFor(wd.st)
-		r.Text = wd.text
 		runs = append(runs, r)
 	}
 	return runs

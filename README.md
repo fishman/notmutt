@@ -152,13 +152,16 @@ TUI decodes them only on the render-images key (a privacy gate); remote
 image srcs are never fetched, so tracking pixels stay dead.
 
 The easyjump link mode (`F`): every link - an anchor href or a bare
-URL word - gets an inline [N] label and the "open link:" prompt opens
-(a message without links reports "no links in this message" instead of
-arming a dead prompt).
-Type a number to open that link through the configured urlopener
-(`opener = [...]` in the config, `xdg-open` by default). While the
-prompt is open the pager scroll keys stay live - j/k, space, pgdn/pgup,
-ctrl+d/ctrl+u, g/G - so links below the fold are reachable; the label
-list is the document order, independent of the scroll position. esc or
-F again exits without opening. In the plain view `F` lists the visible
-links in the fuzzy picker instead.
+URL word - gets an inline [N] label, and the key input is just numbers
+and backspace - no prompt, the selection IS the feedback: the [N] of
+the number under entry highlights reversed as you type. A digit that
+completes a number (nothing longer can extend it) opens that link on
+the spot through the configured urlopener (`opener = [...]` in the
+config, `xdg-open` by default); enter confirms the highlighted link.
+A message without links reports "no links in this message" instead of
+arming a dead entry. While the label mode is active the pager scroll
+keys stay live - j/k, space, pgdn/pgup, ctrl+d/ctrl+u, g/G - so links
+below the fold are reachable; the label list is the document order,
+independent of the scroll position. esc or F again exits without
+opening. In the plain view `F` lists the visible links in the fuzzy
+picker instead.

@@ -17,8 +17,10 @@ import (
 // TestEasyjumpFullStack drives the real wiring end to end: the app's
 // open/render handlers on a real bus, the worker round trip
 // (fakeWorker answers ActThread with the fixture message), and the
-// actual key sequence enter -> v -> F -> j. Asserts the [N] labels
-// render and survive the scroll.
+// actual key sequence enter -> v -> F -> j -> 2 -> enter. Asserts the
+// [N] labels render and survive the scroll, and the digit entry still
+// opens (2 stays an incomplete prefix of 20..29 with 40 links, so the
+// enter key confirms it).
 func TestEasyjumpFullStack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -82,7 +84,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 	if out := strings.TrimSpace(m.View()); strings.Contains(out, "<p>") {
 		t.Fatalf("v must render the html flow, not the raw source:\n%s", out)
 	}
-	press("F") // the easyjump request + the number prompt
+	press("F") // the easyjump request arms the key loop (no prompt)
 	pump()
 	if out := strings.TrimSpace(m.View()); !strings.Contains(out, "[1]") {
 		t.Fatalf("the labeled reply must carry the [N] labels:\n%s", out)
@@ -91,7 +93,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 	// the scroll must move the viewport (the frame's second row is the
 	// pager's first visible line; the status bar is row one)
 	topBefore := secondLine(m.View())
-	press("j") // scroll while the prompt is open
+	press("j") // scroll while the key loop owns the keys
 	if out := strings.TrimSpace(m.View()); !strings.Contains(out, "[1]") {
 		t.Fatalf("scrolling must keep the labels:\n%s", out)
 	}

@@ -3909,12 +3909,13 @@ func fixtureHtml(t *testing.T, body string) string {
 
 // TestOpenLinksHTML pins the F key in the html view (easyjump style):
 // F re-renders with the inline "[N]" labels (the render handler sees
-// labelLinks=true) and opens the "open link:" prompt; a number entry
-// opens that link's target through the openLink seam and the exit
-// re-render drops the labels. F again or esc exits without opening;
-// an out-of-range number just exits. The render replies are injected
-// like the app's bus would deliver them - the seam records the
-// requests.
+// labelLinks=true) and the key loop owns the digits - no prompt, the
+// selection IS the feedback. A digit that completes a number (n*10 > N)
+// opens that link's target through the openLink seam on the spot; the
+// exit re-render drops the labels. F again or esc exits without
+// opening; a dead digit (above the label count) is ignored. The render
+// replies are injected like the app's bus would deliver them - the
+// seam records the requests.
 func TestOpenLinksHTML(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
@@ -3961,20 +3962,19 @@ func TestOpenLinksHTML(t *testing.T) {
 	if len(labelCalls) != 2 || !labelCalls[1] {
 		t.Fatalf("F must re-render labeled, calls=%v", labelCalls)
 	}
-	inject(core.RenderHTML, true) // the labeled reply lands: the prompt arms
-	if d := textD(m); d == nil || d.field != "link" {
-		t.Fatalf("the labeled reply must open the link prompt: %+v", m.dialogue)
+	inject(core.RenderHTML, true) // the labeled reply lands: the key loop arms
+	if !m.linkMode || m.dialogue != nil {
+		t.Fatalf("the labeled reply must arm the key loop, not a prompt: %+v", m.dialogue)
 	}
 	if out := stripANSI(m.View()); !strings.Contains(out, "[1]") || !strings.Contains(out, "[2]") {
 		t.Fatalf("the label render must carry the [N] labels:\n%s", out)
 	}
-	m = press(t, m, "2") // label 2: beta
-	m = pressType(t, m, KeyEnter)
+	m = press(t, m, "2") // label 2: complete (2*10 > 2): opens on the spot
 	if opened != "https://beta.example.com/b" {
-		t.Fatalf("the entered number must open link 2: %q", opened)
+		t.Fatalf("a complete number must open link 2: %q", opened)
 	}
-	if m.dialogue != nil {
-		t.Fatal("enter must close the link prompt")
+	if m.linkInput != "" || m.pager.linkSel != "" {
+		t.Fatalf("the auto-open must clear the digits: input=%q sel=%q", m.linkInput, m.pager.linkSel)
 	}
 	if len(labelCalls) != 3 || labelCalls[2] {
 		t.Fatalf("the exit re-render must be unlabeled, calls=%v", labelCalls)
@@ -3983,25 +3983,33 @@ func TestOpenLinksHTML(t *testing.T) {
 	if out := stripANSI(m.View()); strings.Contains(out, "[1]") {
 		t.Fatalf("the exit re-render must drop the labels:\n%s", out)
 	}
-	// F again exits without opening; an out-of-range number just exits
+	// F again exits without opening; a dead digit is ignored
 	m = press(t, m, "F")
 	inject(core.RenderHTML, true)
 	m = pressType(t, m, KeyEsc)
-	if opened != "https://beta.example.com/b" || m.dialogue != nil {
-		t.Fatalf("esc must exit the label mode without opening: %q dialogue=%v", opened, m.dialogue != nil)
+	if opened != "https://beta.example.com/b" || m.linkInput != "" {
+		t.Fatalf("esc must exit the label mode without opening: %q input=%q", opened, m.linkInput)
+	}
+	inject(core.RenderHTML, false) // the exit reply clears the mode
+	if m.linkMode {
+		t.Fatal("the exit reply must clear the label mode")
 	}
 	m = press(t, m, "F")
 	inject(core.RenderHTML, true)
-	m = press(t, m, "9")
-	m = pressType(t, m, KeyEnter)
-	if opened != "https://beta.example.com/b" || m.dialogue != nil {
-		t.Fatalf("an out-of-range number must not open: %q dialogue=%v", opened, m.dialogue != nil)
+	m = press(t, m, "9") // dead digit: above the label count
+	if opened != "https://beta.example.com/b" || m.linkInput != "" || !m.linkMode {
+		t.Fatalf("a dead digit must be ignored: %q input=%q", opened, m.linkInput)
+	}
+	m = press(t, m, "F") // F exits without opening
+	if opened != "https://beta.example.com/b" || m.linkInput != "" {
+		t.Fatalf("F must exit the label mode without opening: %q", opened)
 	}
 }
 
 // TestOpenLinksNoLinks pins the linkless html mail: the labeled reply
-// with an empty link list must NOT arm the number prompt - a dead
-// prompt with no numbers is a UX hole, the mode reports instead.
+// with an empty link list must NOT arm a prompt - no numbers exist, a
+// dead prompt is a UX hole; the mode reports instead and every digit
+// is a no-op.
 func TestOpenLinksNoLinks(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
@@ -4011,9 +4019,12 @@ func TestOpenLinksNoLinks(t *testing.T) {
 	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
 		labelCalls = append(labelCalls, labelLinks)
 	})
+	var opened string
+	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
 		SetOpenHandler(func(string, bool, bool, int) {})
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetOpenLinkHandler(func(string) {})
 	}()
 	inject := func(mode core.RenderMode, labelLinks bool) {
 		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks)
@@ -4036,7 +4047,11 @@ func TestOpenLinksNoLinks(t *testing.T) {
 	}
 	inject(core.RenderHTML, true) // the reply: zero links
 	if m.dialogue != nil {
-		t.Fatalf("a linkless labeled reply must not arm the prompt: %+v", m.dialogue)
+		t.Fatalf("a linkless labeled reply must not arm a prompt: %+v", m.dialogue)
+	}
+	m = press(t, m, "1") // no labels: the digit is dead
+	if opened != "" || m.linkInput != "" {
+		t.Fatalf("a linkless entry must ignore digits: %q input=%q", opened, m.linkInput)
 	}
 }
 
@@ -4107,10 +4122,10 @@ func TestOpenLinksPlain(t *testing.T) {
 }
 
 // TestLinkModeScrolls pins the easyjump scroll contract: while the
-// link number prompt is open, the pager scroll keys drive the labeled
+// label mode owns the keys, the pager scroll keys drive the labeled
 // view (links below the fold stay selectable - the number entry is
-// independent of the scroll position), digits still type, enter still
-// opens the entered label's target.
+// independent of the scroll position), digits still extend the number,
+// and a completed number opens its link on the spot.
 func TestLinkModeScrolls(t *testing.T) {
 	m := model()
 	m.width, m.height = 80, 24
@@ -4142,25 +4157,107 @@ func TestLinkModeScrolls(t *testing.T) {
 		m = next
 	}
 	inject(false)        // the plain html view
-	m = press(t, m, "F") // the label render request + the number prompt
-	inject(true)         // the labeled reply lands
-	m = press(t, m, "j") // scroll down: the prompt stays open
-	d := textD(m)
-	if d == nil || d.field != "link" {
-		t.Fatalf("scrolling must not close the link prompt: %+v", m.dialogue)
-	}
-	if m.pager.vp.offset != 1 {
-		t.Fatalf("j must scroll the labeled pager, offset=%d", m.pager.vp.offset)
+	m = press(t, m, "F") // the label render request
+	inject(true)         // the labeled reply lands: the key loop owns the keys
+	if !m.linkMode || m.dialogue != nil {
+		t.Fatalf("the labeled reply must arm the key loop, not a prompt: %+v", m.dialogue)
 	}
 	if len(links) != 40 {
 		t.Fatalf("fixture must carry 40 links, got %d", len(links))
 	}
-	m = press(t, m, "2") // digits still type after the scroll
+	m = press(t, m, "j") // scroll down: the key loop stays armed
+	if m.pager.vp.offset != 1 {
+		t.Fatalf("j must scroll the labeled pager, offset=%d", m.pager.vp.offset)
+	}
+	if m.linkInput != "" || m.pager.linkSel != "" {
+		t.Fatalf("scrolling must not touch the digits: input=%q sel=%q", m.linkInput, m.pager.linkSel)
+	}
+	m = press(t, m, "2") // digits still extend after the scroll
+	if m.linkInput != "2" || m.pager.linkSel != "[2]" {
+		t.Fatalf("the digit must extend the entry and select its marker: input=%q sel=%q", m.linkInput, m.pager.linkSel)
+	}
+	if opened != "" {
+		t.Fatalf("an incomplete number must not open yet (2*10 <= 40): %q", opened)
+	}
+	m = press(t, m, "0") // 20 completes (20*10 > 40): opens on the spot
+	if opened != "https://example.com/20" {
+		t.Fatalf("the completed number must open its link: %q", opened)
+	}
+	if m.linkInput != "" || m.pager.linkSel != "" {
+		t.Fatalf("the auto-open must clear the digits: input=%q sel=%q", m.linkInput, m.pager.linkSel)
+	}
+}
+
+// TestEasyjumpHighlight pins the live selection: the marker of the
+// number under entry renders reversed (the easyjump highlight follows
+// the digits - no prompt), an incomplete number stays a highlight, a
+// complete one opens on the spot, and backspace drops the highlight
+// with the digits.
+func TestEasyjumpHighlight(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	// 25 links: the digits 1-2 are incomplete (n*10 <= 25), so the
+	// highlight shows while the entry is still a prefix of a longer one
+	var body strings.Builder
+	for i := 1; i <= 25; i++ {
+		fmt.Fprintf(&body, "<p><a href=\"https://example.com/%d\">link %d</a></p>\n", i, i)
+	}
+	path := fixtureHtml(t, body.String())
+	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	var opened string
+	SetOpenLinkHandler(func(url string) { opened = url })
+	defer func() {
+		SetOpenHandler(func(string, bool, bool, int) {})
+		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetOpenLinkHandler(func(string) {})
+	}()
+	m = press(t, m, "enter") // open: the default handler is a no-op
+	inject := func(labelLinks bool) {
+		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: "t1", RenderMode: core.RenderHTML, Mime: "text/html",
+			LinkLabels: labelLinks, Links: ls, Lines: lines,
+		}})
+		m = next
+	}
+	inject(false)        // the plain html view
+	m = press(t, m, "F") // the label render request
+	inject(true)         // the labeled reply lands
+	if out := m.View(); strings.Contains(out, "\x1b[7m[1]") {
+		t.Fatalf("no digits must select nothing:\n%s", out)
+	}
+	m = press(t, m, "1") // incomplete (1*10 <= 25): a highlight, no open
+	if out := m.View(); !strings.Contains(out, "\x1b[7m[1]") {
+		t.Fatalf("the digit entry must highlight its marker reversed:\n%s", out)
+	}
+	if opened != "" || m.linkInput != "1" || m.pager.linkSel != "[1]" {
+		t.Fatalf("an incomplete number must stay a highlight: %q input=%q sel=%q", opened, m.linkInput, m.pager.linkSel)
+	}
+	m = press(t, m, "2") // 12 completes (12*10 > 25): opens on the spot
+	if opened != "https://example.com/12" || m.linkInput != "" || m.pager.linkSel != "" {
+		t.Fatalf("a complete number must open immediately: %q input=%q sel=%q", opened, m.linkInput, m.pager.linkSel)
+	}
+	inject(false) // the exit reply clears the mode
+	if m.linkMode {
+		t.Fatal("the exit reply must clear the label mode")
+	}
+	// backspace drops the digits and the highlight together
+	m = press(t, m, "F")
+	inject(true)
+	m = press(t, m, "1")
+	if m.pager.linkSel != "[1]" {
+		t.Fatalf("the re-armed entry must highlight again: sel=%q", m.pager.linkSel)
+	}
+	m = press(t, m, "backspace")
+	if m.linkInput != "" || m.pager.linkSel != "" {
+		t.Fatalf("backspace must drop the digits and the highlight: input=%q sel=%q", m.linkInput, m.pager.linkSel)
+	}
+	m = press(t, m, "2") // enter confirms the highlighted link
 	m = pressType(t, m, KeyEnter)
 	if opened != "https://example.com/2" {
-		t.Fatalf("the scrolled entry must still open the entered label: %q", opened)
-	}
-	if m.dialogue != nil {
-		t.Fatal("enter must close the link prompt")
+		t.Fatalf("enter must open the highlighted link: %q", opened)
 	}
 }

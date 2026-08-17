@@ -25,8 +25,12 @@ import (
 // never wrapped (R11 alignment; the truncation is a pinned limitation,
 // wrapping is future work).
 type pager struct {
-	threadID   string
-	lines      []core.Line
+	threadID string
+	lines    []core.Line
+	// linkSel is the F key's selected label marker ("[N]", "" = none):
+	// that run renders reversed - the easyjump highlight follows the
+	// digits live
+	linkSel    string
 	styled     []string // styled text per line; "" = not styled yet
 	doc        []string // the expanded document: image lines span Image.Rows rows
 	imgFrom    []int    // per doc row: the source line index
@@ -120,6 +124,20 @@ func (p *pager) ensureStyled() {
 		p.doc[i] = p.styled[li]
 	}
 	p.vp.setLines(p.doc)
+}
+
+// setLinkSel points the easyjump highlight at the label marker under
+// entry; the styled cache drops so the visible window re-renders with
+// the reversed marker on the next paint.
+func (p *pager) setLinkSel(sel string) {
+	if p.linkSel == sel {
+		return
+	}
+	p.linkSel = sel
+	clear(p.styled)
+	if p.doc != nil {
+		p.ensureStyled()
+	}
 }
 
 // setImages switches the image expansion (the render-images key): on
@@ -243,20 +261,34 @@ func (p *pager) styleRuns(runs []core.Run) string {
 	var b strings.Builder
 	for i, r := range runs {
 		if i > 0 {
-			prev := runs[i-1]
+			prev := p.runSel(runs[i-1])
 			if prev.Fg != "" || prev.Bg != "" || prev.Attrs != 0 {
 				b.WriteString("\x1b[0m")
 			}
 		}
+		r = p.runSel(r)
 		if open := runSGR(r); open != "" {
 			b.WriteString(open)
 		}
 		b.WriteString(r.Text)
 	}
-	if last := runs[len(runs)-1]; last.Bg != "" {
+	// the trailing reset covers the selected marker's reverse too - a
+	// reverse pad row is a visible artifact, unlike a colored one
+	last := p.runSel(runs[len(runs)-1])
+	if last.Bg != "" || last.Attrs != runs[len(runs)-1].Attrs {
 		b.WriteString("\x1b[0m")
 	}
 	return b.String()
+}
+
+// runSel applies the easyjump selection to a run: the marker of the
+// link under entry renders reversed (the live highlight). The overlay
+// rides the attrs so the reset logic sees it like any styled run.
+func (p *pager) runSel(r core.Run) core.Run {
+	if p.linkSel != "" && r.Label && r.Text == p.linkSel {
+		r.Attrs |= core.AttrReverse
+	}
+	return r
 }
 
 // runSGR maps a run's style to its SGR open (truecolor fg/bg, the attr

@@ -62,7 +62,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	if sent == "" {
 		sent = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
-	if sent != "" {
+	if sent != "" && !cfg.Accounts[st.Account].NoFcc {
 		if err := writeFcc(compose.ExpandHome(sent), data); err != nil {
 			note = "fcc failed: " + err.Error()
 		}
@@ -88,13 +88,17 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 
 // writeFcc lands the sent copy in the maildir new/ slot (maildir
 // convention: delivery lands in new, the sync tool flags into cur).
-// Unique name, 0600 (F5).
+// Unique name, 0600 (F5). The name follows the maildir spec -
+// seconds since the epoch, pid, hostname - so the client's files
+// carry the same shape as the sync tool's own (mbsync stamps the
+// host).
 func writeFcc(dir string, data []byte) error {
 	sub := filepath.Join(dir, "new")
 	if err := os.MkdirAll(sub, 0700); err != nil {
 		return err
 	}
-	name := filepath.Join(sub, fmt.Sprintf("%d.%d.notmutt", time.Now().UnixNano(), os.Getpid()))
+	host, _ := os.Hostname()
+	name := filepath.Join(sub, fmt.Sprintf("%d.%d.%s", time.Now().Unix(), os.Getpid(), host))
 	return os.WriteFile(name, data, 0600)
 }
 

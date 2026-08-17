@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -12,6 +13,11 @@ import (
 	"notmutt/core"
 	"notmutt/notmuch"
 )
+
+// maildirNameRe is the DJB maildir filename shape: seconds since the
+// epoch, a unique part (pid here), the hostname - the shape the sync
+// tool's own deliveries carry.
+var maildirNameRe = regexp.MustCompile(`^\d+\.\d+\.[^,]+(,U=\d+)?$`)
 
 // stubWorker records the actions a send job issues (ActNew, ActTag).
 type stubWorker struct {
@@ -59,6 +65,41 @@ func TestSendJobFccStateWins(t *testing.T) {
 	}
 }
 
+// TestSendJobNoFccSkipsCopy: an account with no_fcc (the server keeps
+// a sent copy itself - Gmail-family providers) writes no client fcc;
+// the send still delivers.
+func TestSendJobNoFccSkipsCopy(t *testing.T) {
+	dir := t.TempDir()
+	captured := filepath.Join(dir, "captured")
+	stub := "#!/bin/sh\ncat > " + captured + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}, NoFcc: true}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab1"
+	st.To = []string{"a@b.c"}
+	st.Subject = "x"
+	st.Body = "y"
+
+	sendJob(bus, w, view, cfg, dir, *st)
+
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "gmail", "Sent")); !os.IsNotExist(err) {
+		t.Fatal("no_fcc account must not write a client sent copy")
+	}
+}
+
 func TestSendJobDelivers(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")
@@ -103,6 +144,9 @@ func TestSendJobDelivers(t *testing.T) {
 	fi, err := entries[0].Info()
 	if err != nil || fi.Mode().Perm() != 0600 {
 		t.Fatalf("fcc perms: %v %v", fi.Mode(), err)
+	}
+	if !maildirNameRe.MatchString(entries[0].Name()) {
+		t.Fatalf("fcc name must follow the maildir spec (seconds.pid.host): %s", entries[0].Name())
 	}
 	fcc, err := os.ReadFile(filepath.Join(sent, "new", entries[0].Name()))
 	if err != nil {

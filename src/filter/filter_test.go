@@ -135,6 +135,45 @@ func TestEngineClassification(t *testing.T) {
 
 // TestEntryPriority: an entry whose resolved tag set contains a
 // [notify] priority tag is flagged; one without is not.
+// TestHeaderRuleDedup: two matching header rules adding the same tag
+// resolve to one op - the report and the apply carry the set, not the
+// raw rule emissions (a dry-run digest rendered ++meeting).
+func TestHeaderRuleDedup(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	root := filepath.Join(dir, "mail")
+	if err := os.MkdirAll(filepath.Join(root, "gmail", "INBOX", "cur"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.HeaderRules = []config.HeaderRule{
+		{Query: "from:x", Add: []string{"work"}},
+		{Query: "from:y", Add: []string{"work"}},
+	}
+	w := &fakeWorker{
+		delta:  []core.Message{{ID: "m1"}},
+		snaps:  []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{filepath.Join(root, "gmail/INBOX/cur/1")}}},
+		header: map[string]bool{"m1": true},
+	}
+	rep, err := New(w, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1", len(rep.Entries))
+	}
+	adds := 0
+	for _, op := range rep.Entries[0].Ops {
+		if op.Add && op.Tag == "work" {
+			adds++
+		}
+	}
+	if adds != 1 {
+		t.Fatalf("work ops = %d, want 1 (deduped): %+v", adds, rep.Entries[0].Ops)
+	}
+}
+
 func TestEntryPriority(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

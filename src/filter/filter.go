@@ -266,6 +266,19 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 			ops = append(ops, core.TagOp{Tag: "inbox", Add: true})
 		}
 	}
+	// one op per tag: several rules can add the same tag (two matching
+	// header rules) - the resolved set is what the report and the
+	// apply must carry, not the raw rule emissions.
+	seen := map[string]bool{}
+	uniq := ops[:0]
+	for _, op := range ops {
+		if seen[op.Tag] {
+			continue
+		}
+		seen[op.Tag] = true
+		uniq = append(uniq, op)
+	}
+	ops = uniq
 	final, resolved := core.ResolveOps(m.Tags, ops, e.groups)
 	prio := false
 	if len(ops) > 0 && len(e.cfg.Notify.Priority) > 0 {

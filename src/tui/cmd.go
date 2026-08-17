@@ -66,6 +66,10 @@ func execCmd(cmd *exec.Cmd, done func(error) any) Cmd {
 		err := cmd.Run()
 		if s := loopScreen; s != nil {
 			s.Resume()
+			// the suspend wiped the screen's cell buffer; the row cache
+			// must not survive it (the corruption bug - a row-skip push
+			// against the fresh buffer leaves the terminal blank)
+			resetPushedFrames(s)
 		}
 		return []any{done(err)}
 	}

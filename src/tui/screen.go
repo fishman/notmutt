@@ -40,6 +40,15 @@ type pushedState struct {
 
 var pushedFrames = map[tcell.Screen]pushedState{}
 
+// resetPushedFrames forgets a screen's last-pushed rows: the suspend
+// cycle wipes the tcell cell buffer (disengageFinish Resize(0,0), the
+// engage re-resizes fresh) while this cache survives, so the next push
+// must re-emit every row - a row-skip against the fresh buffer leaves
+// the cleared terminal blank everywhere except the changed rows, and
+// later repaints skip the same rows forever. execCmd calls this after
+// Resume.
+func resetPushedFrames(s tcell.Screen) { delete(pushedFrames, s) }
+
 func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bool) {
 	w, h := s.Size()
 	if last, seen := pushedFrames[s]; seen && last.frame == frame && last.cursorX == cursorX &&

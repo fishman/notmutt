@@ -123,6 +123,28 @@ func TestRepaintPagerScroll(t *testing.T) {
 	}
 }
 
+// TestRepaintAfterSuspend pins the editor-return corruption: the
+// suspend cycle wipes the cell buffer while pushFrame's row cache
+// survives, so a post-resume push must re-emit every row. A row-skip
+// against the fresh buffer leaves the cleared terminal blank everywhere
+// except the changed rows, and later repaints skip the same rows
+// forever - the compose dialog recovers only when a wholly different
+// frame (leaving compose) re-pushes everything.
+func TestRepaintAfterSuspend(t *testing.T) {
+	s := newSim(t, 20, 4)
+	pushFrameCapture(s, "aaaa\nbbbb\ncccc\ndddd")
+	s.Clear() // the disengage/engage cycle wipes the cell buffer
+	resetPushedFrames(s)
+	frameB := "aaaa\nBBBB\ncccc\ndddd"
+	pushFrameCapture(s, frameB)
+	cs := cellsOf(s)
+	for y, want := range strings.Split(frameB, "\n") {
+		if got := rowText(cs, 20, y); got != want {
+			t.Fatalf("row %d = %q, want %q - unchanged rows must re-emit after a suspend", y, got, want)
+		}
+	}
+}
+
 // TestRepaintEmptyPagerFrame pins the status-at-top regression: the
 // pre-glow pager rendered fewer lines than the window for short or
 // empty content, and the diff placed the keyhint and status rows at the

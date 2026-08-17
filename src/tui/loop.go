@@ -1,23 +1,12 @@
 package tui
 
 import (
-	"os"
-
 	"github.com/gdamore/tcell/v2"
 )
 
 // Run starts the loop: the real screen, then runLoop (the test entry
 // point drives runLoop with a simulation screen).
 func Run(model Model, quitCh <-chan struct{}) error {
-	// R11: truecolor is the baseline, never the 256 palette. tcell
-	// detects 24-bit from the terminfo or COLORTERM, and the static
-	// tmux-256color entry carries no Tc flag - so a tmux pane
-	// quantizes every RGB through FindColor (the blue cast over
-	// onedark's dark blue-grey background). Force it on unless the
-	// user explicitly set the env (disable is the opt-out).
-	if os.Getenv("TCELL_TRUECOLOR") == "" {
-		os.Setenv("TCELL_TRUECOLOR", "1")
-	}
 	s, err := tcell.NewScreen()
 	if err != nil {
 		return err

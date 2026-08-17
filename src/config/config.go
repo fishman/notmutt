@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"maps"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"sort"
 	"strings"
 
@@ -172,7 +174,7 @@ type Filter struct {
 // the beeep body is built the same way. The payload never carries
 // bodies or ids (F6).
 type Notify struct {
-	Backend  string   `toml:"backend"`
+	Backend  string   `toml:"backend" enum:"command,beeep"` // empty = auto-detect
 	Command  []string `toml:"command"`
 	Priority []string `toml:"priority"`
 	Max      int      `toml:"max"`
@@ -211,7 +213,7 @@ type Glyphs struct {
 type Style struct {
 	Fg    string   `toml:"fg"`
 	Bg    string   `toml:"bg"`
-	Attrs []string `toml:"attrs"`
+	Attrs []string `toml:"attrs" enum:"bold,italic,underline,reverse"`
 }
 
 // Resolved resolves fg/bg through the palette: a raw hex stays, a
@@ -703,7 +705,10 @@ type Send struct {
 // existing wins, '*' globs - afew folder_priorities). ReadOnly
 // accounts get folder tags but never physical moves (atlas);
 // ReturnInbox enables the trash return-to-inbox rule (the non-standard
-// rule in muttrc/afew/config).
+// rule in muttrc/afew/config). NoFcc skips the client's sent copy:
+// the server keeps one itself (Gmail-family providers), and the
+// mbsync-fetched copy is the sent record - writing a fcc would
+// duplicate the Message-ID record (one message, two paths).
 type Account struct {
 	Folder           *string             `toml:"folder"`
 	From             string              `toml:"from"`
@@ -713,6 +718,7 @@ type Account struct {
 	Moves            map[string][]string `toml:"moves"`
 	ReadOnly         bool                `toml:"readonly"`
 	ReturnInbox      bool                `toml:"return_inbox"`
+	NoFcc            bool                `toml:"no_fcc"`
 }
 
 func (a Account) Tag(name string) string {
@@ -1145,7 +1151,7 @@ func validate(cfg Config) error {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
 		}
 	}
-	if b := cfg.Notify.Backend; b != "" && b != "command" && b != "beeep" {
+	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)
 	}
 	if len(cfg.Notify.Command) > 0 && strings.TrimSpace(cfg.Notify.Command[0]) == "" {
@@ -1324,11 +1330,26 @@ func validateStyle(s Style, p Palette, path string) error {
 		}
 	}
 	for _, a := range s.Attrs {
-		switch a {
-		case "bold", "italic", "underline", "reverse":
-		default:
+		if !slices.Contains(enumOf(reflect.TypeOf(Style{}), "Attrs"), a) {
 			return fmt.Errorf("%s.attrs: unknown attr %q", path, a)
 		}
 	}
 	return nil
+}
+
+// enumOf is a struct field's enum tag split on commas; nil when the
+// field has none. The allowed values travel with the schema as data -
+// validate() consumes the tag, and a future config LSP completes from
+// the same one definition (keymap and preset stay data-derived: their
+// valid sets are the schemes and presets maps, not a tag).
+func enumOf(typ reflect.Type, field string) []string {
+	f, ok := typ.FieldByName(field)
+	if !ok {
+		return nil
+	}
+	tag, ok := f.Tag.Lookup("enum")
+	if !ok {
+		return nil
+	}
+	return strings.Split(tag, ",")
 }

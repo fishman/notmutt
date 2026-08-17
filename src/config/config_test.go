@@ -4,6 +4,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -1039,5 +1040,23 @@ func TestAccountMovesInvalid(t *testing.T) {
 	_, err = Load(write(t, "[accounts.gmail]\nfolder = \"gmail\"\n[accounts.gmail.moves]\narchive = ['Archives\"']\n"))
 	if err == nil || !strings.Contains(err.Error(), "moves.archive") {
 		t.Fatalf("a quoted candidate must error, got: %v", err)
+	}
+}
+
+func TestEnumTags(t *testing.T) {
+	for _, tc := range []struct {
+		typ    reflect.Type
+		field  string
+		values []string
+	}{
+		{reflect.TypeOf(Notify{}), "Backend", []string{"command", "beeep"}},
+		{reflect.TypeOf(Style{}), "Attrs", []string{"bold", "italic", "underline", "reverse"}},
+	} {
+		if got := enumOf(tc.typ, tc.field); !slices.Equal(got, tc.values) {
+			t.Fatalf("%s.%s enum = %v, want %v", tc.typ.Name(), tc.field, got, tc.values)
+		}
+	}
+	if enumOf(reflect.TypeOf(UI{}), "Keymap") != nil {
+		t.Fatal("keymap enum must stay data-derived (the schemes map)")
 	}
 }

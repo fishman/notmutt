@@ -28,6 +28,10 @@
 [tag-groups.folder]
 tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 
+# the link opener (the pager F key): argv, the url is appended as the
+# last element (F4 - never shell-interpolated)
+opener = ["xdg-open"]
+
 [schemes.vim.index]
 "j" = { fun = "cursor-down", desc = "Move the cursor down" }
 "k" = { fun = "cursor-up", desc = "Move the cursor up" }
@@ -86,6 +90,8 @@ tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 "i" = { fun = "toggle-images", desc = "Render images in this message", show = true }
 "v" = { fun = "toggle-render", desc = "Switch between the HTML and text view", show = true }
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
+"F" = { fun = "open-links", desc = "Open a link by number", show = true }
+"h" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
@@ -171,6 +177,8 @@ tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 "q" = { fun = "quit", show = true }
 "alt+i" = { fun = "toggle-images", desc = "Render images in this message" }
 "alt+r" = { fun = "toggle-render", desc = "Switch between the HTML and text view" }
+"F" = { fun = "open-links", desc = "Open a link by number" }
+"h" = { fun = "open-headers", desc = "Toggle the full header block" }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }

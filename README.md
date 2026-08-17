@@ -17,9 +17,13 @@ runtime backend (the batched walk closed the gap: 1.645s vs the CLI's
 the index is a materialized bbolt cache keyed by notmuch's revision.
 
 Keybindings: `o` opens a thread (marks it read), `p` previews it in a
-popup over the index without marking it read, `$` applies staged tag
-ops, `u` undoes them. The binding map is declarative per context; the
-help overlay (`?`) derives from it.
+popup over the index without marking it read, `v` toggles the
+plain/html part view, `ctrl+u` shows the html part's raw source, `h`
+toggles the full raw header block (delivery headers included -
+Received, DKIM-Signature, SPF - not the curated from/date summary),
+`F` enters the easyjump link mode (see HTML rendering), `$` applies
+staged tag ops, `u` undoes them. The binding map is declarative per
+context; the help overlay (`?`) derives from it.
 
 ## Rendering
 
@@ -126,3 +130,35 @@ the whole query and rebuilds its thread tree
 (notmuch/notmuch.c:2183-2308), which notmutt avoids entirely. Post-fix
 steady state is sub-150us per press: the structural costs are
 amortized below perception.
+
+## HTML rendering
+
+HTML mail renders inline in the pager - parsed and laid out in Go
+(x/net/html, error-tolerant and fuzz-exercised), never a browser. The
+layout is CSS 2.1 block flow with inline runs and column-aligned
+tables (docs/html-rendering-analysis.md); everything outside it
+(position, float, flex, media queries, scripts) drops. The mail only
+needs a subset of CSS, and the renderer understands exactly that
+subset: color and background-color (hex only - gradients, transparent
+and current-color fall back to inherit), font-weight (bold), font-style
+(italic), text-decoration (underline), text-align, display
+(block/none), white-space (pre/pre-wrap/pre-line), plus the tag
+defaults (b/strong bold, i/em italic, u underline). That covers the
+common mail shape. Layout is budgeted: wraps at 120 columns and caps
+at 5000 lines, so a hostile or broken doc cannot balloon the thread.
+
+Images render as placeholders - the bytes travel with the line and the
+TUI decodes them only on the render-images key (a privacy gate); remote
+image srcs are never fetched, so tracking pixels stay dead.
+
+The easyjump link mode (`F`): every link - an anchor href or a bare
+URL word - gets an inline [N] label and the "open link:" prompt opens
+(a message without links reports "no links in this message" instead of
+arming a dead prompt).
+Type a number to open that link through the configured urlopener
+(`opener = [...]` in the config, `xdg-open` by default). While the
+prompt is open the pager scroll keys stay live - j/k, space, pgdn/pgup,
+ctrl+d/ctrl+u, g/G - so links below the fold are reachable; the label
+list is the document order, independent of the scroll position. esc or
+F again exits without opening. In the plain view `F` lists the visible
+links in the fuzzy picker instead.

@@ -218,6 +218,31 @@ yazi = []
 	}
 }
 
+// TestLoadOpener pins the opener key (the pager F key's urlopener):
+// the value decodes as argv - the url is appended as the last element
+// at open time (F4, never shell-interpolated) - and an empty argv is
+// a load error.
+func TestLoadOpener(t *testing.T) {
+	cfg, err := Load(write(t, `
+opener = ["w3m", "-dump"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Opener) != 2 || cfg.Opener[0] != "w3m" || cfg.Opener[1] != "-dump" {
+		t.Fatalf("opener = %v", cfg.Opener)
+	}
+}
+
+func TestLoadOpenerEmptyArgvErrors(t *testing.T) {
+	_, err := Load(write(t, `
+opener = [""]
+`))
+	if err == nil || !strings.Contains(err.Error(), "opener") {
+		t.Fatalf("empty argv must error, got: %v", err)
+	}
+}
+
 func TestLoadNotify(t *testing.T) {
 	cfg, err := Load(write(t, `
 [notify]

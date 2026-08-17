@@ -36,7 +36,7 @@ func joinText(lines []core.Line) string {
 func TestRenderThread(t *testing.T) {
 	body := "line one\n> quoted a\n> > quoted deep\n-- \nsig line\n"
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, body)}}}
-	lines, _, err := RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func TestRenderThread(t *testing.T) {
 func TestRenderThreadStripsControls(t *testing.T) {
 	body := "evil\x1b[31mred\x07\n"
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, body)}}}
-	lines, _, err := RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestRenderThreadAttachment(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestRenderThreadAttachment(t *testing.T) {
 
 func TestRenderThreadMissingFile(t *testing.T) {
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{"/nonexistent"}}}
-	lines, _, err := RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestRenderThreadMissingFile(t *testing.T) {
 }
 
 func TestRenderThreadNoPath(t *testing.T) {
-	lines, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1"}}, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1"}}, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestRenderThreadNoPath(t *testing.T) {
 }
 
 func TestRenderThreadEmpty(t *testing.T) {
-	if _, _, err := RenderThread(nil, core.RenderHTML, false, 0); err == nil {
+	if _, _, _, err := RenderThread(nil, core.RenderHTML, false, 0, false); err == nil {
 		t.Fatal("an empty thread must error - nothing to show")
 	}
 }
@@ -124,7 +124,7 @@ func TestRenderThreadPartialOnBadMessage(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Paths: []string{bad}},
 		{ID: "m2", ThreadID: "t1", Paths: []string{good}},
 	}
-	lines, _, err := RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestRenderThreadUnknownCharset(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestRenderThreadUnknownCharset(t *testing.T) {
 
 func TestRenderThreadBodyTruncated(t *testing.T) {
 	big := strings.Repeat("x", maxPartBytes+1024)
-	lines, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, big)}}}, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, big)}}}, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,7 +186,7 @@ func TestRenderThreadAttachmentTruncated(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestRenderThreadTextView(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 
-	lines, _, err := RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestRenderThreadTextView(t *testing.T) {
 		t.Fatalf("the html view must render, not show markup:\n%s", joinText(lines))
 	}
 
-	lines, _, err = RenderThread(msgs, core.RenderPlain, false, 0)
+	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +344,7 @@ func TestRenderThreadAlternative(t *testing.T) {
 	}
 
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
-	lines, _, err := RenderThread(msgs, core.RenderPlain, false, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +352,7 @@ func TestRenderThreadAlternative(t *testing.T) {
 		t.Fatalf("the plain view must render the plain part only:\n%s", out)
 	}
 
-	lines, _, err = RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err = RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestRenderThreadSourceView(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 
-	lines, mime, err := RenderThread(msgs, core.RenderSource, false, 0)
+	lines, mime, _, err := RenderThread(msgs, core.RenderSource, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,7 +402,7 @@ func TestRenderThreadSourceView(t *testing.T) {
 	if err := os.WriteFile(p2, []byte(htmlOnly), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, mime, err = RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p2}}}, core.RenderPlain, false, 0)
+	lines, mime, _, err = RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p2}}}, core.RenderPlain, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,7 +425,7 @@ func TestRenderThreadMimeLabel(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 	for _, mode := range []core.RenderMode{core.RenderPlain, core.RenderHTML, core.RenderSource} {
-		lines, mime, err := RenderThread(msgs, mode, false, 0)
+		lines, mime, _, err := RenderThread(msgs, mode, false, 0, false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -438,13 +438,16 @@ func TestRenderThreadMimeLabel(t *testing.T) {
 	}
 }
 
-// TestRenderThreadHeaders pins the h toggle: the full header block
-// replaces the envelope in the plain view - present rows only, and the
-// notmuch subject (decoded at index time) preferred over the raw
-// encoded-word header value.
+// TestRenderThreadHeaders pins the h toggle: the full raw header
+// block replaces the envelope in the plain view - every field in file
+// order, delivery headers included, verbatim (an encoded-word subject
+// renders encoded here - the block is the true header, not a
+// summary).
 func TestRenderThreadHeaders(t *testing.T) {
-	msg := "From: alpha@example.com\nTo: beta@example.com\n" +
-		"Cc: gamma@example.com\nReply-To: delta@example.com\n" +
+	msg := "Return-Path: <bounce@example.com>\n" +
+		"Received: from mx.example.com by mail.example.com\n\tfor <alpha@example.com>\n" +
+		"DKIM-Signature: v=1; a=rsa-sha256; d=example.com\n" +
+		"From: alpha@example.com\nTo: beta@example.com\n" +
 		"Subject: =?utf-8?Q?caf=C3=A9?=\n" +
 		"Message-ID: <abc@example.com>\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\n" +
@@ -455,26 +458,37 @@ func TestRenderThreadHeaders(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "caf\xc3\xa9"}}
 
-	lines, _, err := RenderThread(msgs, core.RenderPlain, true, 0)
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, true, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	out := joinText(lines)
-	for _, want := range []string{
-		"Subject: caf\xc3\xa9", // the notmuch value, not the raw encoded word
+	// the block is file-ordered and verbatim - the delivery headers
+	// included, the folded Received unfolded, the encoded subject as
+	// stored
+	// go-message canonicalizes the field names (DKIM-Signature renders
+	// as Dkim-Signature, Message-ID as Message-Id)
+	block := []string{
+		"Return-Path: <bounce@example.com>",
+		"Received: from mx.example.com by mail.example.com for <alpha@example.com>",
+		"Dkim-Signature: v=1; a=rsa-sha256; d=example.com",
 		"From: alpha@example.com",
 		"To: beta@example.com",
-		"Cc: gamma@example.com",
-		"Reply-To: delta@example.com",
+		"Subject: =?utf-8?Q?caf=C3=A9?=",
+		"Message-Id: <abc@example.com>",
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000",
-		"Message-ID: <abc@example.com>",
-	} {
-		if !strings.Contains(out, want) {
+		"Content-Type: text/plain; charset=utf-8",
+	}
+	pos := -1
+	for _, want := range block {
+		i := strings.Index(out, want)
+		if i < 0 {
 			t.Fatalf("the header block must show %q:\n%s", want, out)
 		}
-	}
-	if strings.Contains(out, "=?utf-8?Q?caf=C3=A9?=") {
-		t.Fatalf("the raw encoded subject must never render:\n%s", out)
+		if i < pos {
+			t.Fatalf("the header block must stay in file order, %q out of place:\n%s", want, out)
+		}
+		pos = i
 	}
 	if !strings.Contains(out, "body") {
 		t.Fatalf("the body must follow the header block:\n%s", out)
@@ -482,7 +496,7 @@ func TestRenderThreadHeaders(t *testing.T) {
 
 	// without the toggle the envelope renders and carries no Reply-To
 	// row (it is not part of the envelope)
-	lines, _, err = RenderThread(msgs, core.RenderPlain, false, 0)
+	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

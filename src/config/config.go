@@ -109,17 +109,21 @@ type Config struct {
 	// Shown is the per-context key set the keyhint row shows (the
 	// help dialog shows every binding): derived from the scheme
 	// entries' show flag - visibility is opt-in, never a config block
-	Shown          map[string]map[string]bool               `toml:"-"`
-	TagActions     map[string]string                        `toml:"tag-actions"`
-	Accounts       map[string]Account                       `toml:"accounts"`
-	Send           Send                                     `toml:"send"`
-	Refresh        Refresh                                  `toml:"refresh"`
-	Filter         Filter                                   `toml:"filter"`
-	Notify         Notify                                   `toml:"notify"`
-	AttachCommands map[string][]string                      `toml:"attach-commands"`
-	Palette        Palette                                  `toml:"palette"`
-	Theme          Theme                                    `toml:"theme"`
-	Schemes        map[string]map[string]map[string]Binding `toml:"schemes"`
+	Shown          map[string]map[string]bool `toml:"-"`
+	TagActions     map[string]string          `toml:"tag-actions"`
+	Accounts       map[string]Account         `toml:"accounts"`
+	Send           Send                       `toml:"send"`
+	Refresh        Refresh                    `toml:"refresh"`
+	Filter         Filter                     `toml:"filter"`
+	Notify         Notify                     `toml:"notify"`
+	AttachCommands map[string][]string        `toml:"attach-commands"`
+	// Opener is the link opener argv (the pager F key): the url is
+	// appended as the final argv element (F4 - argv only, never
+	// shell-interpolated). Empty = xdg-open.
+	Opener  []string                                 `toml:"opener"`
+	Palette Palette                                  `toml:"palette"`
+	Theme   Theme                                    `toml:"theme"`
+	Schemes map[string]map[string]map[string]Binding `toml:"schemes"`
 	// Descriptions is the derived help vocabulary (action -> text),
 	// collected from the scheme entries - never a config block
 	Descriptions map[string]string `toml:"-"`
@@ -1223,6 +1227,9 @@ func validate(cfg Config) error {
 		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
 		}
+	}
+	if len(cfg.Opener) > 0 && strings.TrimSpace(cfg.Opener[0]) == "" {
+		return fmt.Errorf("opener: argv must not be empty")
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)

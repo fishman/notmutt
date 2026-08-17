@@ -1,6 +1,7 @@
 package mail
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,58 @@ func TestHTMLParseShapes(t *testing.T) {
 			continue
 		}
 		t.Logf("%s: parts=%d atts=%d", name, len(m.Parts), len(m.Attachments))
+	}
+}
+
+// TestRenderHTMLLinks pins the F key's label render (easyjump style):
+// every link - an anchor href or a bare URL word - gets an inline
+// "[N]" label, and the labels' document order is the returned target
+// list (label N opens Links[N-1]). An anchor without an href is plain
+// text, never a label. The unlabeled render returns no links and
+// carries no labels - the labels are mode-scoped, never a permanent
+// decoration of the html view.
+func TestRenderHTMLLinks(t *testing.T) {
+	body := "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>" +
+		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n" +
+		"<p>bare https://delta.example.com/d word</p>\n" +
+		"<p><a>no href</a> and <a href=\"https://gamma.example.com\"></a></p>\n"
+	lines, links := RenderHTMLWithLinks(body, nil, 80)
+	want := []string{
+		"https://alpha.example.com/x",
+		"https://beta.example.com/b",
+		"https://delta.example.com/d",
+		"https://gamma.example.com",
+	}
+	if len(links) != len(want) {
+		t.Fatalf("links = %v, want %v", links, want)
+	}
+	for i, w := range want {
+		if links[i] != w {
+			t.Fatalf("links[%d] = %q, want %q (document order)", i, links[i], w)
+		}
+	}
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(l.Text)
+		b.WriteByte('\n')
+	}
+	joined := b.String()
+	prev := -1
+	for i := range want {
+		idx := strings.Index(joined, fmt.Sprintf("[%d]", i+1))
+		if idx < 0 {
+			t.Fatalf("label [%d] missing from render:\n%s", i+1, joined)
+		}
+		if idx < prev {
+			t.Fatalf("labels out of document order:\n%s", joined)
+		}
+		prev = idx
+	}
+	plain := RenderHTML(body, nil, 80)
+	for _, l := range plain {
+		if strings.Contains(l.Text, "[") {
+			t.Fatalf("the unlabeled render must carry no labels: %q", l.Text)
+		}
 	}
 }
 

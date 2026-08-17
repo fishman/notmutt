@@ -224,6 +224,14 @@ type ThreadLoaded struct {
 	// Headers echoes the open's header toggle (the h key): the full
 	// header block renders at the top of the plain view.
 	Headers bool
+	// LinkLabels marks a label-render (the pager F key): every link
+	// in the html view carries its "[N]" label inline. The TUI
+	// compares it against its own link mode so a same-thread reload
+	// without labels replaces the labeled content.
+	LinkLabels bool
+	// Links is the label-render's target list (label N opens
+	// Links[N-1], document order), empty in an unlabeled render.
+	Links []string
 	// Mime is the rendered content's mime label (text/plain or
 	// text/html) for the status bar - what is on screen, resolved
 	// against the message's actual parts, never the requested view.

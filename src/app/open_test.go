@@ -17,7 +17,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
@@ -45,7 +45,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", true, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", true, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
@@ -71,7 +71,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:

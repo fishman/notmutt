@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -114,15 +115,17 @@ func Run() error {
 	// for the popup. The headers flag is the h key: the render includes
 	// the full header block.
 	tui.SetOpenHandler(func(threadID string, preview, headers bool, width int) {
-		go openThread(worker, bus, threadID, preview, core.RenderPlain, headers, width)
+		go openThread(worker, bus, threadID, preview, core.RenderPlain, headers, width, false)
 	})
 
-	// the render toggle (the v key in the pager) and the source view
-	// (ctrl+u): the same open path with the other view - the worker
-	// refetches the thread (the open job is the render owner, R13; the
-	// TUI never renders)
-	tui.SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, width int) {
-		go openThread(worker, bus, threadID, false, mode, headers, width)
+	// the render toggle (the v key in the pager), the source view
+	// (ctrl+u), and the link labels (the F key): the same open path
+	// with the other view - the worker refetches the thread (the open
+	// job is the render owner, R13; the TUI never renders). labelLinks
+	// is the F key: the renderer prefixes every link with its "[N]"
+	// label and the target list rides the reply.
+	tui.SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
+		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks)
 	})
 
 	// the remote image fetch (the render-images remote mode): http(s)
@@ -149,6 +152,18 @@ func Run() error {
 	// registry; the TUI reads it through the seam
 	loadConfigAttachCommands(cfg)
 	tui.SetAttachCommandSource(func() []tui.AttachCommand { return attachCommandSnapshot() })
+
+	// the link opener (the pager F key): the config's opener argv with
+	// the url appended (F4 - argv only, never shell-interpolated), a
+	// missing config opens with xdg-open. Fire-and-forget: the opener
+	// detaches its viewer and returns.
+	tui.SetOpenLinkHandler(func(url string) {
+		argv := cfg.Opener
+		if len(argv) == 0 {
+			argv = []string{"xdg-open"}
+		}
+		exec.Command(argv[0], append(argv[1:], url)...).Start()
+	})
 
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches
@@ -284,7 +299,7 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // the refresh cycle reconciles it into the view). The tag failure
 // keeps the thread open - the fetch already succeeded - and surfaces
 // as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int) {
+func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
@@ -294,13 +309,13 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	lines, mime, err := mail.RenderThread(rpl.Msgs, mode, headers, width)
+	lines, mime, links, err := mail.RenderThread(rpl.Msgs, mode, headers, width, labelLinks)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, RenderMode: mode, Headers: headers, Mime: mime, Lines: lines})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
 	if !preview {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,

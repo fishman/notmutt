@@ -59,8 +59,9 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true, "toggle-images": true,
-		"toggle-render": true, "show-source": true,
-		"tab-prev": true, "tab-next": true,
+		"toggle-render": true, "show-source": true, "open-links": true,
+		"open-headers": true,
+		"tab-prev":     true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
 	"compose": {
@@ -103,11 +104,15 @@ type Model struct {
 	// html source. renderMime is the last reply's mime label for the
 	// status bar - what actually rendered, resolved against the
 	// message's parts. showHeaders is the h key: the full header block
-	// renders at the top of the plain view. The mode/headers mirrors
-	// the last ThreadLoaded - a same-thread reload with another view
-	// replaces the pager content.
+	// renders at the top of the plain view. linkMode is the F key: the
+	// html view carries the "[N]" link labels and linkList holds the
+	// targets (label N opens linkList[N-1]). The mode/headers/links
+	// mirrors the last ThreadLoaded - a same-thread reload with another
+	// view replaces the pager content.
 	renderMode  core.RenderMode
 	renderMime  string
+	linkMode    bool
+	linkList    []string
 	showHeaders bool
 	// imgProto is the terminal's image protocol ("" = unsupported:
 	// images stay collapsed); imgCache holds the decoded+scaled window
@@ -352,6 +357,38 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		// swap itself out (a chooser over its prompt), or hand back a
 		// Cmd (an attach command exec, the addr harvest tick)
 		if m.dialogue != nil {
+			if d, ok := m.dialogue.(*textDialogue); ok && d.field == "link" && m.pager != nil {
+				// the link prompt keeps the pager scroll keys live
+				// (the easyjump must browse the labels below the fold
+				// - otherwise only the visible links are selectable);
+				// digits still type, enter/esc still resolve
+				switch actionForKey(msg, m.bindings["pager"]) {
+				case "scroll-down":
+					m.pager.scrollDown(1)
+					return m, nil
+				case "scroll-up":
+					m.pager.scrollUp(1)
+					return m, nil
+				case "scroll-top":
+					m.pager.scrollTop()
+					return m, nil
+				case "scroll-bottom":
+					m.pager.scrollBottom()
+					return m, nil
+				case "page-down":
+					m.pager.pageDown()
+					return m, nil
+				case "page-up":
+					m.pager.pageUp()
+					return m, nil
+				case "half-page-down":
+					m.pager.halfPageDown()
+					return m, nil
+				case "half-page-up":
+					m.pager.halfPageUp()
+					return m, nil
+				}
+			}
 			d, cmd := m.dialogue.handle(&m, msg)
 			m.dialogue = d
 			return m, cmd
@@ -734,12 +771,21 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.openCursorThread()
 		}
 	case "open-headers":
-		// the h key: flip the header-block toggle and open - the
-		// request rides the same open seam, the flag adopts only
-		// when the reply lands (the onThreadLoaded guard)
+		// the h key: the index flips the flag and opens; in the pager
+		// the open thread re-renders with the header block toggled
+		// (the same seam as v - the reply flips the state, the
+		// onThreadLoaded guard decides the replace). The link prompt
+		// closes first - one key, one mode.
 		if m.mode == "index" {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
+		} else if m.mode == "pager" && m.pager != nil {
+			if m.linkMode {
+				m.exitLinkMode()
+			}
+			onToggleRender(pagerThreadID(m.pager), m.renderMode, !m.showHeaders, m.width, false)
+			deferPaint()
+			deferred = true
 		}
 	case "preview":
 		if m.mode == "index" {
@@ -867,7 +913,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			if m.renderMode == core.RenderHTML {
 				mode = core.RenderPlain
 			}
-			onToggleRender(pagerThreadID(m.pager), mode, m.showHeaders, m.width)
+			onToggleRender(pagerThreadID(m.pager), mode, m.showHeaders, m.width, false)
 			deferPaint()
 			deferred = true
 		}
@@ -875,7 +921,31 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the raw html source view (ctrl+u): re-opens the thread in
 		// the source view unless it is already showing it.
 		if m.mode == "pager" && m.pager != nil && m.renderMode != core.RenderSource {
-			onToggleRender(pagerThreadID(m.pager), core.RenderSource, m.showHeaders, m.width)
+			onToggleRender(pagerThreadID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
+			deferPaint()
+			deferred = true
+		}
+	case "open-links":
+		// the F key (easyjump-style): the html view re-renders with
+		// the inline "[N]" link labels, and the number prompt arms
+		// when the labeled reply lands WITH links (a linkless mail
+		// reports instead of arming a dead prompt - labels exist only
+		// at link sites); the plain/source views list the visible
+		// links for the same number entry. F again (or esc) exits the
+		// label mode. The linkMode flag adopts only when the render
+		// reply lands (the onThreadLoaded guard) - a request never
+		// claims the state before the reply, or the reply would match
+		// the request and skip the replace.
+		if m.mode == "pager" && m.pager != nil {
+			if m.linkMode {
+				m.exitLinkMode()
+			} else if m.renderMode == core.RenderHTML {
+				onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, true)
+			} else if links := linksOfLines(m.pager.lines, m.renderMode == core.RenderSource); len(links) > 0 {
+				m.dialogue = &listDialogue{f: newFuzzy("openlink", "open link:", numberedLinks(links))}
+			} else {
+				m.logEntry("no links in this message", true)
+			}
 			deferPaint()
 			deferred = true
 		}
@@ -1117,6 +1187,41 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 // onThreadLoaded attaches the open job's render lines to the pager and
 // switches to pager mode. Rendering and the render transforms already
 // happened on the async open job - the model only attaches. A failed
+// exitLinkMode leaves the F key's label mode: the prompt closes and
+// the thread re-renders without the "[N]" labels.
+// exitLinkMode closes the label mode: the dialogue goes, the flag
+// follows the unlabeled reply (exitLinkMode never claims it - the
+// onThreadLoaded guard decides the replace).
+func (m *Model) exitLinkMode() {
+	m.dialogue = nil
+	if m.pager != nil {
+		onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, false)
+	}
+}
+
+// linksOfLines extracts the visible links of a non-html render (the
+// F key fallback): the joined line texts scanned for URLs and
+// addresses. isHTML marks the source view - the raw html, where the
+// angle brackets delimit the links.
+func linksOfLines(lines []core.Line, isHTML bool) []string {
+	var b strings.Builder
+	for _, l := range lines {
+		b.WriteString(l.Text)
+		b.WriteByte('\n')
+	}
+	return core.Links(b.String(), isHTML)
+}
+
+// numberedLinks prefixes each link with its 1-based number (the
+// plain-view picker's "enter the number" entries).
+func numberedLinks(links []string) []string {
+	out := make([]string, len(links))
+	for i, l := range links {
+		out[i] = fmt.Sprintf("%d. %s", i+1, l)
+	}
+	return out
+}
+
 // load falls back to index and drops the pager (a stale pager would
 // serve old content on a later reload). The thread-id guard makes a
 // repeated load of the already-open thread a no-op (idempotent
@@ -1145,13 +1250,22 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.mode, m.pager = "index", nil
 		return
 	}
-	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders {
-		m.renderMode, m.showHeaders = e.RenderMode, e.Headers
+	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode {
+		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
 		m.pager = newPager(e.ThreadID, e.Lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
 		m.pager.setSize(w, h, m.styles)
+		// the F key's prompt arms with the labeled reply: links exist
+		// or the mode reports - never a dead prompt with no numbers
+		if e.LinkLabels {
+			if len(e.Links) > 0 {
+				m.dialogue = &textDialogue{field: "link", label: "open link: "}
+			} else {
+				m.logEntry("no links in this message", true)
+			}
+		}
 	}
 	m.renderMime = e.Mime
 	m.mode = "pager"
@@ -2386,6 +2500,15 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		case "filter":
 			// the filter applied live per key - enter only closes
 			return nil, nil
+		case "link":
+			// the F key's number entry: link N opens (label N is
+			// linkList[N-1]); any other input just exits the label
+			// mode
+			if n, err := strconv.Atoi(input); err == nil && n >= 1 && n <= len(m.linkList) {
+				openLink(m.linkList[n-1])
+			}
+			m.exitLinkMode()
+			return nil, nil
 		}
 		st := &m.tabs[m.tabIdx-1]
 		switch d.field {
@@ -2408,6 +2531,9 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		if d.field == "filter" {
 			m.view.SetFilter(d.saved)
 			m.rows = m.view.Rows()
+		} else if d.field == "link" {
+			m.exitLinkMode()
+			return nil, nil
 		}
 		m.cancelDialogue()
 		return nil, nil
@@ -2580,6 +2706,13 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		return d.back, nil
 	}
 	switch d.f.kind {
+	case "openlink":
+		// the plain/source-view fallback (the F key): the entry is
+		// "N. url" - strip the number, open the link
+		if i := strings.Index(entry, ". "); i > 0 {
+			openLink(entry[i+2:])
+		}
+		return nil, nil
 	case "attachcmd":
 		back, ok := d.back.(*textDialogue)
 		if !ok {

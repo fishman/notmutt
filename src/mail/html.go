@@ -11,6 +11,7 @@ package mail
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -32,18 +33,34 @@ const (
 // terminal keeps the fixed-width layout and a narrow one reflows; 0
 // means the cap.
 func RenderHTML(body string, atts []Attachment, width int) []core.Line {
+	lines, _ := renderHTML(body, atts, width, false)
+	return lines
+}
+
+// RenderHTMLWithLinks renders the same content in link mode (the
+// pager F key, easyjump-style): every link - an anchor href or a bare
+// URL word - gets a "[N]" label inline in front of it, and the label
+// order is the returned list (label N opens Links[N-1]). Both come
+// from the walk's document order, so the labels and the list always
+// agree.
+func RenderHTMLWithLinks(body string, atts []Attachment, width int) ([]core.Line, []string) {
+	return renderHTML(body, atts, width, true)
+}
+
+func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]core.Line, []string) {
 	doc, err := html.Parse(strings.NewReader(body))
 	if err != nil {
-		return nil // x/net/html recovers from malformed input by spec; guard anyway
+		return nil, nil // x/net/html recovers from malformed input by spec; guard anyway
 	}
 	if width <= 0 || width > htmlWrapWidth {
 		width = htmlWrapWidth
 	}
 	w := &htmlWalker{
-		atts:      atts,
-		rules:     collectStyleBlocks(doc),
-		linesLeft: maxHTMLLines,
-		width:     width,
+		atts:       atts,
+		rules:      collectStyleBlocks(doc),
+		linesLeft:  maxHTMLLines,
+		width:      width,
+		labelLinks: labelLinks,
 	}
 	w.walk(doc, &styleProps{})
 	w.flush()
@@ -51,9 +68,9 @@ func RenderHTML(body string, atts []Attachment, width int) []core.Line {
 		w.lines = append(w.lines, core.Line{Text: "[content truncated]", Kind: core.LineBody})
 	}
 	if len(w.lines) == 0 {
-		return nil
+		return nil, w.links
 	}
-	return w.lines
+	return w.lines, w.links
 }
 
 type htmlWalker struct {
@@ -84,6 +101,11 @@ type htmlWalker struct {
 	// flushes (a nested block's leading flush) so a marked item never
 	// renders as a bare "1." line
 	pendingMark *word
+	// link mode (the F key): labelLinks arms the "[N]" labels and the
+	// links list (label order = list order); the mode is per-render,
+	// never persisted
+	labelLinks bool
+	links      []string
 }
 
 // word is one pending word with its computed style.
@@ -189,6 +211,18 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 					w.blankPending = true
 					w.blockSeen = false
 				}
+			case tag == "a":
+				// the F key's link label: the anchor's href gets its
+				// "[N]" label inline before the anchor text (an
+				// anchor without an href is plain text)
+				if w.labelLinks {
+					if href := attr(c, "href"); href != "" {
+						href = sanitize(href)
+						w.links = append(w.links, href)
+						w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs)
+					}
+				}
+				w.walk(c, cs)
 			default:
 				w.walk(c, cs)
 			}
@@ -230,6 +264,14 @@ func (w *htmlWalker) addText(txt string, st *styleProps) {
 		return
 	}
 	for _, f := range strings.Fields(txt) {
+		if w.labelLinks {
+			// a bare URL word (no anchor) is a link too: label it and
+			// record the trimmed target
+			if ls := core.Links(f, true); len(ls) > 0 {
+				w.links = append(w.links, ls[0])
+				w.addWord(fmt.Sprintf("[%d]", len(w.links)), st)
+			}
+		}
 		w.addWord(f, st)
 	}
 }

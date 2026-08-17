@@ -27,14 +27,26 @@ func SetOpenHandler(fn func(string, bool, bool, int)) {
 	onOpen = fn
 }
 
-// onToggleRender is the render-toggle seam (the v key in the pager)
-// and the source view (ctrl+u): the app re-runs the open path with
-// the requested view and publishes a fresh ThreadLoaded; the default
-// is a no-op so the model works in tests.
-var onToggleRender = func(threadID string, mode core.RenderMode, headers bool, width int) {}
+// onToggleRender is the render-toggle seam (the v key in the pager),
+// the source view (ctrl+u), and the link labels (the F key): the app
+// re-runs the open path with the requested view and publishes a
+// fresh ThreadLoaded; the default is a no-op so the model works in
+// tests. labelLinks is the F key: the renderer prefixes every link
+// with its "[N]" label and the target list rides the reply.
+var onToggleRender = func(threadID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {}
 
-func SetRenderHandler(fn func(string, core.RenderMode, bool, int)) {
+func SetRenderHandler(fn func(string, core.RenderMode, bool, int, bool)) {
 	onToggleRender = fn
+}
+
+// openLink is the link-open seam (the pager F key): the app runs the
+// configured opener with the url as its final argv element (F4 -
+// argv only, never shell-interpolated) and detaches; the default is
+// a no-op so the model works in tests.
+var openLink = func(url string) {}
+
+func SetOpenLinkHandler(fn func(string)) {
+	openLink = fn
 }
 
 // onImageFetch is the image-fetch seam (the render-images remote

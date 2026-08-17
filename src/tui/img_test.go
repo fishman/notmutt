@@ -1,0 +1,461 @@
+package tui
+
+// The render-images pipeline: image lines stay collapsed placeholders
+// (privacy gate - the bytes are never decoded until the toggle), the
+// toggle expands them to Image.Rows rows, and the terminal paint
+// emits the decoded+scaled pixels after the frame (protocol by
+// environment). All paints flow through imageWriter - nil in the
+// frame tests, a buffer here.
+
+import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/color"
+	"image/png"
+	"strings"
+	"testing"
+
+	"notmutt/config"
+	"notmutt/core"
+	"notmutt/mail"
+)
+
+// trimRows strips the per-row width padding before comparisons.
+func trimRows(s string) []string {
+	rows := strings.Split(s, "\n")
+	for i, r := range rows {
+		rows[i] = strings.TrimRight(r, " ")
+	}
+	return rows
+}
+
+// testPNG renders a deterministic w x h PNG (noise-ish pixels so the
+// encoded size is meaningful for the chunking tests).
+func testPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, color.RGBA{uint8(x * 31 % 256), uint8(y * 17 % 256), uint8(x + y), 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// testImg is an image with noise-ish pixels (the x*y term kills the
+// per-row correlation, so the encoded size is meaningful for the
+// chunking tests).
+func testImg(w, h int) image.Image {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for y := range h {
+		for x := range w {
+			img.Set(x, y, color.RGBA{uint8(x * 31 % 256), uint8(y * 17 % 256), uint8(x * y % 256), 255})
+		}
+	}
+	return img
+}
+
+func TestPagerImageLayout(t *testing.T) {
+	cfg := config.Default()
+	st := ResolveStyles(cfg.Theme, cfg.Palette)
+	lines := []core.Line{
+		{Kind: core.LineBody, Text: "before"},
+		{Kind: core.LineBody, Text: "[image]", Image: &core.Image{Alt: "[image]", Cols: 40, Rows: 3}},
+		{Kind: core.LineBody, Text: "after"},
+	}
+	p := newPager("t1", lines)
+	p.setSize(80, 22, st)
+
+	// collapsed default: 1:1, the Alt row shows
+	if got := len(p.vp.lines); got != 3 {
+		t.Fatalf("collapsed doc must be 1:1, got %d rows", got)
+	}
+	if got := stripANSI(p.render()); !strings.Contains(got, "[image]") {
+		t.Fatalf("collapsed render must show the alt text:\n%s", got)
+	}
+
+	// the toggle expands the image line to its rows
+	p.setImages(true)
+	if got := len(p.vp.lines); got != 5 {
+		t.Fatalf("expanded doc must be 5 rows, got %d", got)
+	}
+	rows := trimRows(stripANSI(p.render()))
+	if rows[0] != "before" || rows[4] != "after" {
+		t.Fatalf("expansion must keep the text order:\n%s", strings.Join(rows, "\n"))
+	}
+	for _, r := range rows[1:4] {
+		if r != "" {
+			t.Fatalf("image rows must carry no text, got %q", r)
+		}
+	}
+
+	// scrolling moves over the expanded rows (a 2-row window forces
+	// scroll space; the image rows carry no text)
+	p.setSize(80, 2, st)
+	p.scrollDown(3)
+	rows = trimRows(stripANSI(p.render()))
+	if rows[0] != "" || rows[1] != "after" {
+		t.Fatalf("scroll must move by expanded rows:\n%s", strings.Join(rows[:3], "\n"))
+	}
+
+	// toggle back: collapsed, the Alt row restores
+	p.setImages(false)
+	if got := len(p.vp.lines); got != 3 {
+		t.Fatalf("collapsed doc must be 1:1 again, got %d rows", got)
+	}
+	if got := stripANSI(p.render()); !strings.Contains(got, "[image]") {
+		t.Fatalf("toggle-off must restore the alt text:\n%s", got)
+	}
+}
+
+func TestPagerVisibleImages(t *testing.T) {
+	cfg := config.Default()
+	st := ResolveStyles(cfg.Theme, cfg.Palette)
+	lines := []core.Line{}
+	for range 40 {
+		lines = append(lines, core.Line{Kind: core.LineBody, Text: "a"})
+	}
+	lines = append(lines, core.Line{Kind: core.LineBody, Text: "[img]", Image: &core.Image{Alt: "[img]", Cols: 40, Rows: 3}})
+	for range 40 {
+		lines = append(lines, core.Line{Kind: core.LineBody, Text: "b"})
+	}
+	p := newPager("t1", lines)
+	p.setSize(80, 22, st)
+	p.setImages(true)
+
+	// scrolled before the block: the window sees no image
+	if blocks := p.visibleImages(); len(blocks) != 0 {
+		t.Fatalf("window above the image must see no block, got %+v", blocks)
+	}
+
+	// scrolled into the block: the doc anchor survives
+	p.scrollDown(40)
+	blocks := p.visibleImages()
+	if len(blocks) != 1 || blocks[0].line != 40 || blocks[0].doc != 40 || blocks[0].rows != 3 {
+		t.Fatalf("window must see the image block, got %+v", blocks)
+	}
+
+	// scrolled past: the window sees no image
+	p.scrollDown(21)
+	if blocks = p.visibleImages(); len(blocks) != 0 {
+		t.Fatalf("scrolled-past image must leave the window, got %+v", blocks)
+	}
+
+	// collapsed: the doc stops expanding, the block still lists (the
+	// decoder's trigger)
+	p.scrollUp(21)
+	p.setImages(false)
+	if blocks = p.visibleImages(); len(blocks) != 1 {
+		t.Fatalf("collapsed images must still list, got %+v", blocks)
+	}
+	if got := len(p.vp.lines); got != 81 {
+		t.Fatalf("collapse must return the doc to 1:1, got %d rows", got)
+	}
+}
+
+func TestDecodeImage(t *testing.T) {
+	// 400x900 px at an 80-cell window: the 30-row cap binds first
+	// (aspect kept: 2/3), the pixel dims snap to exact cell multiples
+	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols != 26 || rows != 30 {
+		t.Fatalf("scale must be 26x30 cells, got %dx%d", cols, rows)
+	}
+	if b := img.Bounds(); b.Dx() != cols*imgCellW || b.Dy() != rows*imgCellH {
+		t.Fatalf("pixel dims must snap to cell multiples: %dx%d", b.Dx(), b.Dy())
+	}
+
+	// a wide image binds on the width cap
+	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 80 || rows != 1 {
+		t.Fatalf("wide image must fill the window width, got %dx%d", cols, rows)
+	}
+
+	// a tiny image still occupies one cell (no zero-size expansion)
+	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 1 || rows != 1 {
+		t.Fatalf("tiny image must floor to one cell, got %dx%d", cols, rows)
+	}
+
+	// garbage bytes never decode
+	if _, _, _, err := decodeImage([]byte("not an image"), 80); err == nil {
+		t.Fatal("garbage must fail the decode")
+	}
+}
+
+func TestDetectImageProtocol(t *testing.T) {
+	cases := []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "kitty"},
+		{map[string]string{"TERM_PROGRAM": "wezterm"}, "kitty"},
+		{map[string]string{"TERM_PROGRAM": "ghostty"}, "kitty"},
+		{map[string]string{"TERM": "foot"}, "sixel"},
+		{map[string]string{"TERM": "xterm-sixel"}, "sixel"},
+		{map[string]string{"TERM": "mlterm"}, "sixel"},
+		{map[string]string{"TERM": "xterm-256color"}, ""},
+	}
+	for _, c := range cases {
+		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM", "TERM"} {
+			t.Setenv(k, c.env[k])
+		}
+		if got := detectImageProtocol(); got != c.want {
+			t.Errorf("detectImageProtocol(%v) = %q, want %q", c.env, got, c.want)
+		}
+	}
+}
+
+func TestKittyEncode(t *testing.T) {
+	var buf bytes.Buffer
+	kittyEncode(&buf, testImg(600, 600))
+	out := buf.String()
+	if !strings.HasPrefix(out, "\x1b_Gf=100,t=d,a=T,m=1;") {
+		t.Fatalf("first chunk must open the transmit frame, got %q", show(out[:24]))
+	}
+	if !strings.HasSuffix(out, "\x1b\\") || !strings.Contains(out, "\x1b_Gm=0;") {
+		t.Fatalf("last chunk must close with m=0:\n%s", show(out))
+	}
+	if !strings.Contains(out, "\x1b_Gm=1;") {
+		t.Fatalf("a large image must continue with m=1 chunks")
+	}
+	// every payload chunk fits the frame limit
+	for _, ch := range strings.Split(out, "\x1b_G")[1:] {
+		semi := strings.IndexByte(ch, ';')
+		payload := ch[semi+1 : len(ch)-2] // strip the terminator
+		if len(payload) > kittyChunk {
+			t.Fatalf("chunk exceeds the kitty limit: %d > %d", len(payload), kittyChunk)
+		}
+	}
+}
+
+func TestSixelEncode(t *testing.T) {
+	var buf bytes.Buffer
+	sixelEncode(&buf, testImg(100, 100))
+	out := buf.String()
+	if !strings.HasPrefix(out, "\x1bP") || !strings.HasSuffix(out, "\x1b\\") {
+		t.Fatalf("sixel must be a complete DCS sequence, got %q", show(out[:16]))
+	}
+}
+
+func TestPaintImage(t *testing.T) {
+	src := testImg(100, 200)
+	var buf bytes.Buffer
+	paintImage(&buf, "kitty", src, 0, 200, 0, 5)
+	if !strings.HasPrefix(buf.String(), "\x1b[6;1H\x1b_Gf=") {
+		t.Fatalf("paint must home then transmit, got %q", show(buf.String()[:24]))
+	}
+	buf.Reset()
+	paintImage(&buf, "kitty", src, 40, 80, 0, 5) // the visible slice
+	if !strings.HasPrefix(buf.String(), "\x1b[6;1H") {
+		t.Fatalf("cropped paint must home first, got %q", show(buf.String()[:8]))
+	}
+	if !strings.Contains(buf.String(), "\x1b_Gf=") {
+		t.Fatalf("cropped paint must still transmit, got %q", show(buf.String()[:16]))
+	}
+}
+
+func TestClearRect(t *testing.T) {
+	var buf bytes.Buffer
+	clearRect(&buf, 3, 5, 10, 2, "#112233")
+	got := buf.String()
+	if !strings.HasPrefix(got, "\x1b[6;4H\x1b[48;2;17;34;51m") {
+		t.Fatalf("clear must home and fill with the theme bg, got %q", show(got))
+	}
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Fatalf("clear must reset the fill, got %q", show(got))
+	}
+	if !strings.Contains(got, strings.Repeat(" ", 20)) {
+		t.Fatalf("clear must fill 10x2 cells with spaces")
+	}
+
+	buf.Reset()
+	clearRect(&buf, 0, 0, 3, 1, "") // no theme bg: the terminal default
+	if strings.Contains(buf.String(), "48;2") {
+		t.Fatalf("an unset theme bg must not emit an SGR fill")
+	}
+}
+
+func TestBgHexOf(t *testing.T) {
+	cfg := config.Default()
+	if got := bgHexOf(ResolveStyles(cfg.Theme, cfg.Palette).Normal.GetBackground()); got == "" {
+		t.Fatalf("the default theme must have a plain hex background, got %q", got)
+	}
+	if got := bgHexOf(nil); got != "" {
+		t.Fatalf("nil color must be empty, got %q", got)
+	}
+}
+
+// TestModelRenderImagesToggle runs the full path: open an html-only
+// message with an inline image, verify the placeholder gate, the
+// toggle expansion, the terminal paint, and the toggle-off clear.
+func TestModelRenderImagesToggle(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	png := testPNG(t, 100, 200)
+	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Lines:    mail.RenderHTML(body, nil, 0),
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+
+	// the privacy gate: the placeholder renders, the paint writes nothing
+	m.paintImages()
+	if buf.Len() != 0 {
+		t.Fatalf("collapsed images must not paint, got %d bytes", buf.Len())
+	}
+	if out := m.View(); !strings.Contains(out, "[image]") {
+		t.Fatalf("the placeholder must render before the toggle:\n%s", out)
+	}
+
+	// the toggle expands; the paint emits a kitty frame at the block
+	m = press(t, m, "i")
+	if !m.renderDue {
+		t.Fatalf("the toggle must defer the paint")
+	}
+	m, _ = m.Update(frameTick{})
+	out := m.View()
+	if strings.Contains(out, "[image]") || !strings.Contains(out, "after") {
+		t.Fatalf("the toggle must expand the image and keep the text:\n%s", out)
+	}
+	m.paintImages()
+	// the block sits at doc row 2 (before, blank, image) - screen row 4
+	if !strings.HasPrefix(buf.String(), "\x1b[4;1H\x1b_Gf=") {
+		t.Fatalf("the paint must emit a kitty frame at the image rows, got %q", show(buf.String()[:24]))
+	}
+	if len(m.painted) != 1 {
+		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
+	}
+
+	// toggle off: the third press (the cycle: off -> local -> remote ->
+	// off) clears the rect BEFORE the collapsed frame renders
+	m = press(t, m, "i")
+	m = press(t, m, "i")
+	if !strings.Contains(buf.String(), "\x1b[4;1H") {
+		t.Fatalf("toggle-off must clear the painted rect")
+	}
+	m, _ = m.Update(frameTick{})
+	if out := m.View(); !strings.Contains(out, "[image]") {
+		t.Fatalf("toggle-off must restore the placeholder:\n%s", out)
+	}
+	if len(m.painted) != 0 {
+		t.Fatalf("toggle-off must drop the rect bookkeeping")
+	}
+}
+
+// TestModelRenderImagesRemote pins the remote mode: the fetch seam
+// fires ONLY on the remote-mode key press (never in local mode), the
+// ImageFetched reply attaches to the image lines, and a stale reply
+// after the mode cycled away drops - network data never decodes
+// outside the remote mode.
+func TestModelRenderImagesRemote(t *testing.T) {
+	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   threadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Lines:      mail.RenderHTML(body, nil, 0),
+		}})
+		m = next
+	})
+	var fetched []string
+	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	// local mode (the first press): the placeholder shows, no fetch
+	m = press(t, m, "i")
+	if len(fetched) != 0 {
+		t.Fatalf("local mode must not fetch, got %v", fetched)
+	}
+
+	// remote mode (the second press): the seam fires once for the
+	// visible url
+	m = press(t, m, "i")
+	if len(fetched) != 1 || fetched[0] != "http://example.com/x.png" {
+		t.Fatalf("remote mode must fetch the visible url, got %v", fetched)
+	}
+
+	// the reply attaches: the bytes land on the image line
+	imgLine := func() int {
+		for i := range m.pager.lines {
+			if m.pager.lines[i].Image != nil && m.pager.lines[i].Image.URL == "http://example.com/x.png" {
+				return i
+			}
+		}
+		return -1
+	}
+	if i := imgLine(); i < 0 {
+		t.Fatalf("the render must carry an image line for the url")
+	}
+
+	next, _ := m.Update(EventMsg{Event: core.ImageFetched{
+		URL:  "http://example.com/x.png",
+		Data: testPNG(t, 40, 20),
+	}})
+	m = next
+	if i := imgLine(); i < 0 || len(m.pager.lines[i].Image.Data) == 0 {
+		t.Fatalf("the reply must attach its bytes to the image line")
+	}
+	m, _ = m.Update(frameTick{})
+	if out := m.View(); strings.Contains(out, "[image]") {
+		t.Fatalf("the fetched image must expand:\n%s", out)
+	}
+
+	// the mode cycled away: a stale reply drops without touching the
+	// lines (off mode, third press)
+	m = press(t, m, "i")
+	if m.imgMode != 0 {
+		t.Fatalf("the third press must cycle to off, mode=%d", m.imgMode)
+	}
+	next, _ = m.Update(EventMsg{Event: core.ImageFetched{
+		URL:  "http://example.com/x.png",
+		Data: []byte("stale bytes"),
+	}})
+	m = next
+	if i := imgLine(); i >= 0 && len(m.pager.lines[i].Image.Data) > 0 && m.pager.lines[i].Image.Data[0] == 's' {
+		t.Fatalf("a stale reply must never overwrite the remote data")
+	}
+}

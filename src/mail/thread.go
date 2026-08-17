@@ -55,11 +55,17 @@ const (
 // show the same string - the go-message parse keeps the raw header
 // only as an empty fallback. width is the caller's terminal width: the
 // html wrap caps at htmlWrapWidth, narrower terminals reflow.
-func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int) ([]core.Line, string, error) {
+// RenderThread renders the thread; links is the html view's label
+// targets (the F key), non-empty only when labelLinks asks for the
+// label render, empty in every other view. labelLinks is the pager
+// F key's mode flag - the labels are mode-scoped, never a permanent
+// decoration of the html view.
+func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int, labelLinks bool) ([]core.Line, string, []string, error) {
 	if len(msgs) == 0 {
-		return nil, "", fmt.Errorf("no messages in thread")
+		return nil, "", nil, fmt.Errorf("no messages in thread")
 	}
 	var lines []core.Line
+	var links []string
 	mime := ""
 	for i, m := range msgs {
 		if i > 0 {
@@ -81,19 +87,25 @@ func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width
 		if subj == "" {
 			subj = parsed.Subject
 		}
-		lines = append(lines, renderMessage(parsed, subj, mode, headers, width)...)
+		ml, ls := renderMessage(parsed, subj, mode, headers, width, labelLinks)
+		lines = append(lines, ml...)
+		links = append(links, ls...)
 	}
-	return lines, mime, nil
+	return lines, mime, links, nil
 }
 
 type Message struct {
-	From        string
-	Date        string
-	Subject     string
-	MessageID   string
-	To          []string // bare addresses, reply-all prefill
-	Cc          []string
-	ReplyTo     []string
+	From      string
+	Date      string
+	Subject   string
+	MessageID string
+	To        []string // bare addresses, reply-all prefill
+	Cc        []string
+	ReplyTo   []string
+	// Headers is the full raw header block in file order (the h key):
+	// every field, delivery headers included (Received, Return-Path,
+	// DKIM-Signature, SPF), values unfolded.
+	Headers     []string
 	Parts       []Part
 	Attachments []Attachment
 }
@@ -141,6 +153,14 @@ func ParseMessage(path string) (*Message, error) {
 	defer mr.Close()
 	hdr := mr.Header
 	m := &Message{}
+	// the full raw block for the h key: Fields() walks the parsed
+	// fields in file order (the textproto iterator reverses its
+	// internal list). Values arrive unfolded (continuation lines
+	// joined with a space by the parser).
+	iter := hdr.Fields()
+	for iter.Next() {
+		m.Headers = append(m.Headers, iter.Key()+": "+iter.Value())
+	}
 	if addrs, err := hdr.AddressList("From"); err == nil && len(addrs) > 0 {
 		m.From = addrs[0].Address
 	}
@@ -289,13 +309,14 @@ func expandTabs(line string) string {
 	return b.String()
 }
 
-func renderMessage(m *Message, subject string, mode core.RenderMode, headers bool, width int) []core.Line {
-	var lines []core.Line
+// renderMessage renders one parsed message; links returns the html
+// view's link labels (the F key), empty in every other view.
+func renderMessage(m *Message, subject string, mode core.RenderMode, headers bool, width int, labelLinks bool) (lines []core.Line, links []string) {
 	add := func(text string, kind core.LineKind, quoted int) {
 		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
 	if headers && mode == core.RenderPlain {
-		lines = append(lines, headerLines(m, subject)...)
+		lines = append(lines, headerLines(m)...)
 	} else {
 		add(subject, core.LineSubject, 0)
 		add(m.From+"  "+m.Date, core.LineHeader, 0)
@@ -309,7 +330,17 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 	for _, p := range m.Parts {
 		switch {
 		case p.HTML && mode == core.RenderHTML:
-			htmlLines := RenderHTML(p.Body, m.Attachments, width)
+			// the F key's label render carries the inline "[N]" labels
+			// and the target list; the plain render is unlabeled (the
+			// label renderer is link-mode's, never the default)
+			var htmlLines []core.Line
+			var ls []string
+			if labelLinks {
+				htmlLines, ls = RenderHTMLWithLinks(p.Body, m.Attachments, width)
+			} else {
+				htmlLines = RenderHTML(p.Body, m.Attachments, width)
+			}
+			links = append(links, ls...)
 			if len(htmlLines) == 0 {
 				htmlLines = renderPlain(p.Body)
 			}
@@ -333,28 +364,19 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		}
 		add(line, core.LineAttachment, 0)
 	}
-	return lines
+	return lines, links
 }
 
-// headerLines renders the full header block (the h key): each present
-// header row, sanitized per row. The subject is the decoded notmuch
-// value; Message-ID and Date are never encoded-word, so they render
-// raw.
-func headerLines(m *Message, subject string) []core.Line {
+// headerLines renders the full raw header block (the h key): every
+// field of the message in file order - the delivery headers
+// (Received, Return-Path, DKIM-Signature, SPF) included, not a
+// curated summary. The raw block is the true header: an encoded-word
+// subject renders encoded here.
+func headerLines(m *Message) []core.Line {
 	var lines []core.Line
-	add := func(label, value string) {
-		if value == "" {
-			return
-		}
-		lines = append(lines, core.Line{Text: core.SanitizeControls(label + ": " + value), Kind: core.LineHeader})
+	for _, h := range m.Headers {
+		lines = append(lines, core.Line{Text: core.SanitizeControls(h), Kind: core.LineHeader})
 	}
-	add("Subject", subject)
-	add("From", m.From)
-	add("To", strings.Join(m.To, ", "))
-	add("Cc", strings.Join(m.Cc, ", "))
-	add("Reply-To", strings.Join(m.ReplyTo, ", "))
-	add("Date", m.Date)
-	add("Message-ID", m.MessageID)
 	return lines
 }
 

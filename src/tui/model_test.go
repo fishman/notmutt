@@ -1309,7 +1309,7 @@ func rowsModel(n int) Model {
 // attaches lines, it never renders).
 func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 	t.Helper()
-	lines, _, err := mail.RenderThread(msgs, core.RenderHTML, false, 0)
+	lines, _, _, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3800,7 +3800,7 @@ func TestModelToggleRender(t *testing.T) {
 	})
 	var got string
 	var gotMode core.RenderMode
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int) {
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, _ bool) {
 		got, gotMode = threadID, mode
 	})
 	press(t, m, "enter") // discard: the open handler rebinds m
@@ -3891,5 +3891,276 @@ func TestModelOpenHeaders(t *testing.T) {
 	m = press(t, m, "h") // h again flips back
 	if gotHeaders {
 		t.Fatalf("the second h must open without headers")
+	}
+}
+
+// fixtureHtml writes a text/html message (the F-key links fixture).
+func fixtureHtml(t *testing.T, body string) string {
+	t.Helper()
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: html\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: text/html; charset=utf-8\n\n" + body
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestOpenLinksHTML pins the F key in the html view (easyjump style):
+// F re-renders with the inline "[N]" labels (the render handler sees
+// labelLinks=true) and opens the "open link:" prompt; a number entry
+// opens that link's target through the openLink seam and the exit
+// re-render drops the labels. F again or esc exits without opening;
+// an out-of-range number just exits. The render replies are injected
+// like the app's bus would deliver them - the seam records the
+// requests.
+func TestOpenLinksHTML(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	path := fixtureHtml(t, "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>"+
+		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n")
+	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	inject := func(mode core.RenderMode, labelLinks bool) {
+		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: "t1", RenderMode: mode, Mime: "text/html",
+			LinkLabels: labelLinks, Links: links, Lines: lines,
+		}})
+		m = next
+	}
+	var labelCalls []bool
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+		labelCalls = append(labelCalls, labelLinks)
+	})
+	var opened string
+	SetOpenLinkHandler(func(url string) { opened = url })
+	defer func() {
+		SetOpenHandler(func(string, bool, bool, int) {})
+		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetOpenLinkHandler(func(string) {})
+	}()
+
+	m = press(t, m, "enter") // open: the default handler is a no-op
+	inject(core.RenderPlain, false)
+	if out := stripANSI(m.View()); strings.Contains(out, "[1]") {
+		t.Fatalf("the plain open must carry no labels:\n%s", out)
+	}
+	m = press(t, m, "v") // toggle: the html view
+	if len(labelCalls) != 1 || labelCalls[0] {
+		t.Fatalf("the html toggle is unlabeled, calls=%v", labelCalls)
+	}
+	inject(core.RenderHTML, false)
+	if out := stripANSI(m.View()); strings.Contains(out, "[1]") {
+		t.Fatalf("the html view must not show labels before F:\n%s", out)
+	}
+	m = press(t, m, "F") // the label render request
+	if len(labelCalls) != 2 || !labelCalls[1] {
+		t.Fatalf("F must re-render labeled, calls=%v", labelCalls)
+	}
+	inject(core.RenderHTML, true) // the labeled reply lands: the prompt arms
+	if d := textD(m); d == nil || d.field != "link" {
+		t.Fatalf("the labeled reply must open the link prompt: %+v", m.dialogue)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "[1]") || !strings.Contains(out, "[2]") {
+		t.Fatalf("the label render must carry the [N] labels:\n%s", out)
+	}
+	m = press(t, m, "2") // label 2: beta
+	m = pressType(t, m, KeyEnter)
+	if opened != "https://beta.example.com/b" {
+		t.Fatalf("the entered number must open link 2: %q", opened)
+	}
+	if m.dialogue != nil {
+		t.Fatal("enter must close the link prompt")
+	}
+	if len(labelCalls) != 3 || labelCalls[2] {
+		t.Fatalf("the exit re-render must be unlabeled, calls=%v", labelCalls)
+	}
+	inject(core.RenderHTML, false) // the exit reply drops the labels
+	if out := stripANSI(m.View()); strings.Contains(out, "[1]") {
+		t.Fatalf("the exit re-render must drop the labels:\n%s", out)
+	}
+	// F again exits without opening; an out-of-range number just exits
+	m = press(t, m, "F")
+	inject(core.RenderHTML, true)
+	m = pressType(t, m, KeyEsc)
+	if opened != "https://beta.example.com/b" || m.dialogue != nil {
+		t.Fatalf("esc must exit the label mode without opening: %q dialogue=%v", opened, m.dialogue != nil)
+	}
+	m = press(t, m, "F")
+	inject(core.RenderHTML, true)
+	m = press(t, m, "9")
+	m = pressType(t, m, KeyEnter)
+	if opened != "https://beta.example.com/b" || m.dialogue != nil {
+		t.Fatalf("an out-of-range number must not open: %q dialogue=%v", opened, m.dialogue != nil)
+	}
+}
+
+// TestOpenLinksNoLinks pins the linkless html mail: the labeled reply
+// with an empty link list must NOT arm the number prompt - a dead
+// prompt with no numbers is a UX hole, the mode reports instead.
+func TestOpenLinksNoLinks(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	path := fixtureHtml(t, "<p>no links here, just text</p>\n")
+	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	var labelCalls []bool
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+		labelCalls = append(labelCalls, labelLinks)
+	})
+	defer func() {
+		SetOpenHandler(func(string, bool, bool, int) {})
+		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+	}()
+	inject := func(mode core.RenderMode, labelLinks bool) {
+		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: "t1", RenderMode: mode, Mime: "text/html",
+			LinkLabels: labelLinks, Links: links, Lines: lines,
+		}})
+		m = next
+	}
+	m = press(t, m, "enter")
+	inject(core.RenderPlain, false)
+	m = press(t, m, "v")
+	inject(core.RenderHTML, false)
+	m = press(t, m, "F") // the label render request
+	if len(labelCalls) != 2 || !labelCalls[1] {
+		t.Fatalf("F must still request the label render, calls=%v", labelCalls)
+	}
+	inject(core.RenderHTML, true) // the reply: zero links
+	if m.dialogue != nil {
+		t.Fatalf("a linkless labeled reply must not arm the prompt: %+v", m.dialogue)
+	}
+}
+
+// TestHeadersTogglePager pins the h key in the pager: h re-renders the
+// open thread with the header block flipped (the render handler sees
+// headers=true), and the reply's headers flag replaces the summary
+// with the full raw block. h again drops the block.
+func TestHeadersTogglePager(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	path := fixtureMsg(t, "see the body\n")
+	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	var headersSeen []bool
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, _ bool) {
+		headersSeen = append(headersSeen, headers)
+	})
+	defer func() {
+		SetOpenHandler(func(string, bool, bool, int) {})
+		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+	}()
+	m = openPager(t, m, path)
+	inject := func(headers bool) {
+		lines, _, _, err := mail.RenderThread(msgs, core.RenderPlain, headers, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: "t1", RenderMode: core.RenderPlain, Headers: headers, Lines: lines,
+		}})
+		m = next
+	}
+	if out := stripANSI(m.View()); strings.Contains(out, "Content-Type:") {
+		t.Fatalf("the open render must show the summary, not the block:\n%s", out)
+	}
+	m = press(t, m, "h") // toggle the headers on
+	if len(headersSeen) != 1 || !headersSeen[0] {
+		t.Fatalf("h must re-render with headers=true, seen=%v", headersSeen)
+	}
+	inject(true) // the reply lands: the full block replaces the summary
+	if out := stripANSI(m.View()); !strings.Contains(out, "Subject: hello") || !strings.Contains(out, "Content-Type:") {
+		t.Fatalf("the header reply must show the full block:\n%s", out)
+	}
+	m = press(t, m, "h") // and back off
+	inject(false)
+	if out := stripANSI(m.View()); strings.Contains(out, "Content-Type:") {
+		t.Fatalf("h must drop the block again:\n%s", out)
+	}
+}
+
+// TestOpenLinksPlain pins the F key's plain-view fallback: the pager
+// lists the visible links (extracted from the rendered lines) in the
+// fuzzy picker, and selecting one opens it.
+func TestOpenLinksPlain(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	m = openPager(t, m, fixtureMsg(t, "see https://alpha.example.com/x\n"))
+	m = press(t, m, "F")
+	p := picker(m)
+	if p == nil || p.kind != "openlink" {
+		t.Fatalf("F in the plain view must open the link picker: %+v", m.dialogue)
+	}
+	var opened string
+	SetOpenLinkHandler(func(url string) { opened = url })
+	m = press(t, m, "enter") // the sorted list: the url sorts before the mailto email
+	if opened != "https://alpha.example.com/x" {
+		t.Fatalf("selecting the url entry must open it: %q", opened)
+	}
+}
+
+// TestLinkModeScrolls pins the easyjump scroll contract: while the
+// link number prompt is open, the pager scroll keys drive the labeled
+// view (links below the fold stay selectable - the number entry is
+// independent of the scroll position), digits still type, enter still
+// opens the entered label's target.
+func TestLinkModeScrolls(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	var body strings.Builder
+	for i := 1; i <= 40; i++ {
+		fmt.Fprintf(&body, "<p><a href=\"https://example.com/%d\">link %d</a></p>\n", i, i)
+	}
+	path := fixtureHtml(t, body.String())
+	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
+	var opened string
+	SetOpenLinkHandler(func(url string) { opened = url })
+	defer func() {
+		SetOpenHandler(func(string, bool, bool, int) {})
+		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetOpenLinkHandler(func(string) {})
+	}()
+	m = press(t, m, "enter") // open: the default handler is a no-op
+	var links []string
+	inject := func(labelLinks bool) {
+		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks)
+		links = ls
+		if err != nil {
+			t.Fatal(err)
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: "t1", RenderMode: core.RenderHTML, Mime: "text/html",
+			LinkLabels: labelLinks, Links: links, Lines: lines,
+		}})
+		m = next
+	}
+	inject(false)        // the plain html view
+	m = press(t, m, "F") // the label render request + the number prompt
+	inject(true)         // the labeled reply lands
+	m = press(t, m, "j") // scroll down: the prompt stays open
+	d := textD(m)
+	if d == nil || d.field != "link" {
+		t.Fatalf("scrolling must not close the link prompt: %+v", m.dialogue)
+	}
+	if m.pager.vp.offset != 1 {
+		t.Fatalf("j must scroll the labeled pager, offset=%d", m.pager.vp.offset)
+	}
+	if len(links) != 40 {
+		t.Fatalf("fixture must carry 40 links, got %d", len(links))
+	}
+	m = press(t, m, "2") // digits still type after the scroll
+	m = pressType(t, m, KeyEnter)
+	if opened != "https://example.com/2" {
+		t.Fatalf("the scrolled entry must still open the entered label: %q", opened)
+	}
+	if m.dialogue != nil {
+		t.Fatal("enter must close the link prompt")
 	}
 }

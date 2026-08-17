@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -41,7 +43,7 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 		return append(lines, core.Line{Text: "hook two", Kind: core.LineBody}), nil
 	})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
@@ -79,7 +81,7 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 		return append(lines, core.Line{Text: "never seen", Kind: core.LineBody}), context.DeadlineExceeded
 	})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
@@ -127,7 +129,7 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 		return lines, ctx.Err()
 	})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
@@ -159,13 +161,77 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	ch := bus.Subscribe()
 	fw := emptyThreadWorker{}
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
 
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)
 		if !ok || tl.Err == nil {
 			t.Fatalf("an empty thread must publish Err, got %T %+v", e, tl)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+}
+
+// TestOpenThreadLinks pins the F key's label render through the open
+// job: labelLinks=true renders the inline "[N]" labels and ships the
+// target list on the ThreadLoaded event; the unlabeled render carries
+// no links - the labels are mode-scoped, never the html view's
+// default.
+func TestOpenThreadLinks(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: html\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: text/html; charset=utf-8\n\n" +
+		"<p>see <a href=\"https://alpha.example.com/x\">alpha</a></p>\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{p}}})
+
+	openThread(fw, bus, "t1", false, core.RenderHTML, false, 0, true)
+
+	select {
+	case e := <-ch:
+		tl, ok := e.(core.ThreadLoaded)
+		if !ok {
+			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+		if !tl.LinkLabels {
+			t.Fatal("labelLinks must ride the event")
+		}
+		if len(tl.Links) != 1 || tl.Links[0] != "https://alpha.example.com/x" {
+			t.Fatalf("links = %v", tl.Links)
+		}
+		joined := ""
+		for _, l := range tl.Lines {
+			joined += l.Text + "|"
+		}
+		if !strings.Contains(joined, "[1]") {
+			t.Fatalf("the label render must carry the [N] label: %q", joined)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+
+	openThread(fw, bus, "t1", false, core.RenderHTML, false, 0, false)
+	select {
+	case e := <-ch:
+		tl, ok := e.(core.ThreadLoaded)
+		if !ok {
+			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+		if tl.LinkLabels || len(tl.Links) != 0 {
+			t.Fatalf("the unlabeled render must carry no links: labels=%v links=%v", tl.LinkLabels, tl.Links)
+		}
+		for _, l := range tl.Lines {
+			if strings.Contains(l.Text, "[1]") {
+				t.Fatalf("the unlabeled render must carry no labels: %q", l.Text)
+			}
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no ThreadLoaded")

@@ -1796,8 +1796,9 @@ func (m Model) View() tea.View {
 // open: the fuzzy picker's matcher row (the query is the input while
 // the picker is open), else the dialogue input row. The v2 renderer
 // shows the terminal cursor only when the view declares it; the
-// dialogue box splices 3 rows above the status line and the matcher
-// row is the second frame line.
+// dialogue box splices 3 rows above the keyhint bar (the input row is
+// the box's content row) and the matcher row is the second frame
+// line.
 func (m Model) textCursor() (int, int, bool) {
 	if m.fuzzy != nil {
 		x := len(m.fuzzy.title) + 1 + len(m.fuzzy.query)
@@ -1813,7 +1814,7 @@ func (m Model) textCursor() (int, int, bool) {
 			budget = 0
 		}
 		x := 1 + len(m.dialogue.label) + min(runewidth.StringWidth(m.dialogue.input), budget)
-		return x, m.height - 3, true
+		return x, m.height - 4, true
 	}
 	return 0, 0, false
 }
@@ -1853,11 +1854,11 @@ func (m Model) render() string {
 		// an empty view renders like a filled one: blank rows fill the
 		// list area (the indicator sits on the first, cursor-style), and
 		// the keyhint bar and status row always render - "empty" is a
-		// data state, never a surface state
-		listHeight := m.height - 2
-		if listHeight < 1 {
-			listHeight = 1
-		}
+		// data state, never a surface state. The list area is the same
+		// height as the filled path: tabBar + list + keyhint + status
+		// must equal the frame height, one line over and the renderer
+		// writes out of bounds.
+		listHeight := m.listHeight()
 		var b strings.Builder
 		b.WriteString(m.tabBar())
 		b.WriteByte('\n')
@@ -1882,7 +1883,7 @@ func (m Model) render() string {
 	// only a page-edge crossing moves it. The clamp handles resizes and
 	// refreshes that shrank the rows; the write-back keeps the movement
 	// math in sync. The bottom two rows are the keyhint bar (R9) and
-	// the status line (R15); the list window is height-2.
+	// the status line (R15); the list window is height-3.
 	listHeight := m.listHeight()
 	top := m.indexOffset
 	bottom := top + listHeight
@@ -1957,6 +1958,17 @@ func (m Model) render() string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
+	// pad a short list to the full window: the renderer diffs cells and
+	// never erases past the last frame line, so a frame shorter than the
+	// screen leaves the previous paint's rows on screen and the next
+	// diff misaligns. The list area is always listHeight rows - the
+	// empty view pads the same way.
+	for i := bottom; i < top+listHeight; i++ {
+		if m.width > 0 {
+			b.WriteString(padRow("", m.width, st.Normal))
+		}
+		b.WriteByte('\n')
+	}
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	b.WriteString(m.statusLineWith(st, m.ui))
@@ -1965,13 +1977,14 @@ func (m Model) render() string {
 
 // overlayDialogue splices the prompt dialogue box over the frame: a
 // lipgloss-bordered box (border, content rows, border) whose rows
-// replace whole frame lines above the status line, so the splice
-// never cuts an SGR sequence. The derivation is the preview popup's:
-// config border glyphs (R11), the indicator's background as the
-// border color, the content rows indicator-styled. The error kind
-// shows the failure output (capped rows - the failed tab keeps the
-// full text in its preview) plus the keyhint. A terminal too small
-// (height < 5, width < 3) leaves the frame untouched.
+// replace whole frame lines above the keyhint bar, so the splice
+// never cuts an SGR sequence and the hotkey row survives the overlay.
+// The derivation is the preview popup's: config border glyphs (R11),
+// the indicator's background as the border color, the content rows
+// indicator-styled. The error kind shows the failure output (capped
+// rows - the failed tab keeps the full text in its preview) plus the
+// keyhint. A terminal too small (height < 5, width < 3) leaves the
+// frame untouched.
 func (m Model) overlayDialogue(frame string) string {
 	if m.dialogue == nil {
 		return frame
@@ -2012,11 +2025,11 @@ func (m Model) overlayDialogue(frame string) string {
 	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
 }
 
-// spliceBox replaces whole frame rows above the status line with the
+// spliceBox replaces whole frame rows above the keyhint bar with the
 // lipgloss-bordered box (border + content rows), so the splice never
-// cuts an SGR sequence. Config border glyphs (R11), the indicator's
-// background as the border color, the content rows on the normal
-// background.
+// cuts an SGR sequence and the hotkey row stays visible. Config
+// border glyphs (R11), the indicator's background as the border
+// color, the content rows on the normal background.
 func spliceBox(lines []string, width int, ui config.UI, st Styles, content []string) []string {
 	g := ui.Glyphs
 	inner := width - 2
@@ -2036,7 +2049,7 @@ func spliceBox(lines []string, width int, ui config.UI, st Styles, content []str
 		}
 		rows = append(rows, padRowSGR(line, width, st.sgr.normal))
 	}
-	top := len(lines) - len(rows) - 1 // anchored above the status line
+	top := len(lines) - len(rows) - 2 // anchored above the keyhint bar
 	if top < 0 {
 		top = 0
 	}

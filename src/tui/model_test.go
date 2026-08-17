@@ -909,13 +909,42 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 		t.Fatalf("the first blank row must carry the indicator style:\n%s", out)
 	}
 	lines := strings.Split(strip, "\n")
-	if len(lines) < 24 || lines[1] != strings.Repeat(" ", 160) {
-		t.Fatalf("the list area must fill with blank rows:\n%s", strip)
+	// the frame invariant: tabBar + list + keyhint + status = height.
+	// One line over and the renderer writes out of bounds.
+	if len(lines) != 24 || lines[1] != strings.Repeat(" ", 160) {
+		t.Fatalf("frame must be exactly the terminal height with blank list rows:\n%s", strip)
 	}
 	// loading: the progress bar rides the same status line
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View().Content, "refresh 1/5") {
 		t.Fatalf("loading empty view must render the bar:\n%s", m.View().Content)
+	}
+}
+
+// TestDialogueKeepsKeyhint pins the overlay layout: the dialogue box
+// splices ABOVE the keyhint bar, so the hotkey row (h-2) and the
+// status line (h-1) stay visible while a prompt is open.
+func TestDialogueKeepsKeyhint(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m.width, m.height = 160, 24
+	m.dialogue = &dialogue{kind: dialogueConfirm, label: "abort?", action: "abort"}
+	strip := stripANSI(m.View().Content)
+	lines := strings.Split(strip, "\n")
+	if len(lines) != 24 {
+		t.Fatalf("frame = %d lines, want 24:\n%s", len(lines), strip)
+	}
+	if !strings.Contains(lines[22], "$ apply") {
+		t.Fatalf("the keyhint row must survive the dialogue:\n%s", strip)
+	}
+	if !strings.Contains(lines[23], statusMarker("0")) {
+		t.Fatalf("the status line must survive the dialogue:\n%s", strip)
+	}
+	if !strings.Contains(lines[20], "abort?") {
+		t.Fatalf("the box content must sit above the keyhint bar:\n%s", strip)
+	}
+	if strings.Contains(lines[22], "abort?") {
+		t.Fatalf("the box must not cover the keyhint row:\n%s", strip)
 	}
 }
 
@@ -2003,9 +2032,9 @@ func TestPromptTextCursor(t *testing.T) {
 		t.Fatal("an open input prompt must declare the cursor")
 	}
 	// "attach path: " label + 2 typed cells, the box content row
-	// above the status line (Y = height-3), after the border (X = 1)
-	if c.X != 1+len("attach path: ")+2 || c.Y != 21 {
-		t.Fatalf("input cursor at (%d, %d), want (15, 21)", c.X, c.Y)
+	// above the keyhint (Y = height-4), after the border (X = 1)
+	if c.X != 1+len("attach path: ")+2 || c.Y != 20 {
+		t.Fatalf("input cursor at (%d, %d), want (16, 20)", c.X, c.Y)
 	}
 	m = press(t, m, "esc")
 	if c := m.View().Cursor; c != nil {
@@ -2090,10 +2119,10 @@ func TestAttachPromptRendersBox(t *testing.T) {
 	if !strings.Contains(lines[1], "a attach") {
 		t.Fatalf("the keyhint must stay on its row:\n%s", frame)
 	}
-	if !strings.Contains(lines[len(lines)-3], "attach path:") {
-		t.Fatalf("the dialogue box must render above the status line:\n%s", frame)
+	if !strings.Contains(lines[len(lines)-4], "attach path:") {
+		t.Fatalf("the dialogue box must render above the keyhint bar:\n%s", frame)
 	}
-	if !strings.Contains(lines[len(lines)-1], "compose") { // box is 3 rows: 20/21/22; status stays last
+	if !strings.Contains(lines[len(lines)-1], "compose") { // box is 3 rows: 19/20/21; keyhint 22, status last
 		t.Fatalf("the status line must stay the last row:\n%s", frame)
 	}
 	m = press(t, m, "h")
@@ -2120,7 +2149,7 @@ func TestConfirmBoxRendersHint(t *testing.T) {
 		t.Fatalf("the confirm frame must be exactly 24 lines, got %d", got)
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
-	row := lines[len(lines)-3]
+	row := lines[len(lines)-4]
 	if !strings.Contains(row, "Abort composition?") {
 		t.Fatalf("the confirm label must render in the box content row:\n%s", frame)
 	}
@@ -2143,7 +2172,7 @@ func TestDialogueBoxRendersInIndex(t *testing.T) {
 		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
-	if !strings.Contains(lines[len(lines)-3], "go:") {
+	if !strings.Contains(lines[len(lines)-4], "go:") {
 		t.Fatalf("the box content row must render the label:\n%s", frame)
 	}
 	if !strings.Contains(lines[len(lines)-1], "inbox") {
@@ -2151,10 +2180,11 @@ func TestDialogueBoxRendersInIndex(t *testing.T) {
 	}
 }
 
-// TestDialogueBoxCoversKeyhintInFullIndex pins the full-height splice:
-// with the list filling the window the box replaces the last two list
-// rows and the keyhint row, and the frame stays exactly m.height lines.
-func TestDialogueBoxCoversKeyhintInFullIndex(t *testing.T) {
+// TestDialogueBoxKeepsKeyhintInFullIndex pins the full-height splice:
+// with the list filling the window the box replaces the last three
+// list rows, and the keyhint and status rows survive; the frame stays
+// exactly m.height lines.
+func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 	m := model()
 	threads := make([]*core.Thread, 0, 24)
 	for i := 0; i < 24; i++ {
@@ -2172,11 +2202,14 @@ func TestDialogueBoxCoversKeyhintInFullIndex(t *testing.T) {
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
 	last := len(lines) - 1
-	if !strings.Contains(lines[last-2], "go:") {
+	if !strings.Contains(lines[last-3], "go:") {
 		t.Fatalf("the box content row must render the label:\n%s", frame)
 	}
-	if !strings.HasPrefix(lines[last-3], "╭") || !strings.HasPrefix(lines[last-1], "╰") {
-		t.Fatalf("the box must cover the keyhint row (borders at len-4/len-2):\n%s", frame)
+	if !strings.HasPrefix(lines[last-4], "╭") || !strings.HasPrefix(lines[last-2], "╰") {
+		t.Fatalf("the box must splice into the list rows (borders at len-5/len-3):\n%s", frame)
+	}
+	if !strings.Contains(lines[last-1], "? help") {
+		t.Fatalf("the keyhint row must survive the box:\n%s", frame)
 	}
 	if !strings.Contains(lines[last], "inbox") {
 		t.Fatalf("the status line must stay the last row:\n%s", frame)
@@ -2674,8 +2707,8 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), "a attach") {
 		t.Fatalf("the keyhint must stay on line 1: %q", stripANSI(strings.Split(frame, "\n")[1]))
 	}
-	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[21]), "attach path:") {
-		t.Fatalf("the attach prompt must splice into the box: %q", stripANSI(strings.Split(frame, "\n")[21]))
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[20]), "attach path:") {
+		t.Fatalf("the attach prompt must splice into the box: %q", stripANSI(strings.Split(frame, "\n")[20]))
 	}
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("the prompt frame must still be exactly 24 lines, got %d", got)
@@ -3007,7 +3040,7 @@ func TestDialogueLabelStyledBlue(t *testing.T) {
 	}
 	frame := m.render()
 	lines := strings.Split(frame, "\n")
-	row := lines[len(lines)-3] // the box content row
+	row := lines[len(lines)-4] // the box content row
 	if !strings.Contains(row, m.styles.ComposeLabel.Render("Cc: ")) {
 		t.Fatalf("the label must render in compose.label:\n%s", frame)
 	}

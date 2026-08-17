@@ -165,6 +165,7 @@ func templateFromSource(src []byte) (setup.Template, error) {
 	t := setup.Template{Name: string(name)}
 	t.Match = stringList(tbl.RawGetString("match"))
 	t.Folders = tagFolders(tbl.RawGetString("folders"))
+	t.NoFcc = lua.LVAsBool(tbl.RawGetString("no_fcc"))
 	if len(t.Match) == 0 {
 		return setup.Template{}, fmt.Errorf("match must name the top-level folders that gate the template")
 	}

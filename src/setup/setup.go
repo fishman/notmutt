@@ -22,11 +22,15 @@ import (
 // priority order (the afew folder_priorities shape). A tag's folder
 // is its first present candidate - the gmail candidates nest
 // ("[Gmail]/Drafts") for the mover's real path - and tags with no
-// present candidate stay out of the account's folder map.
+// present candidate stay out of the account's folder map. NoFcc
+// marks providers that store sent copies server-side (gmail): the
+// generated account gets no_fcc = true so the client writes no fcc
+// copy.
 type Template struct {
 	Name    string
 	Match   []string
 	Folders map[string][]string
+	NoFcc   bool
 }
 
 // Templates is the built-in detection set, tried in order: an account
@@ -50,6 +54,7 @@ var Templates = []Template{
 	{
 		Name:  "gmail",
 		Match: []string{"INBOX", "[Gmail]"},
+		NoFcc: true, // gmail stores sent copies server-side
 		Folders: map[string][]string{
 			"inbox":   {"INBOX"},
 			"draft":   {"[Gmail]/Drafts", "Drafts"},
@@ -87,6 +92,24 @@ var Templates = []Template{
 		},
 	},
 	{
+		// zoho discriminates by its Snoozed system folder; without it
+		// a flat zoho account falls to outlook (same shape, but no
+		// no_fcc - set the flag by hand). zoho stores sent copies
+		// server-side like gmail.
+		Name:  "zoho",
+		Match: []string{"INBOX", "Sent", "Snoozed"},
+		NoFcc: true,
+		Folders: map[string][]string{
+			"inbox":   {"INBOX"},
+			"sent":    {"Sent"},
+			"deleted": {"Trash"},
+			"draft":   {"Drafts"},
+			"spam":    {"Spam", "Junk"},
+			"archive": {"Archive", "Archives"},
+			"pending": {"Pending"},
+		},
+	},
+	{
 		Name:  "outlook",
 		Match: []string{"INBOX", "Sent"},
 		Folders: map[string][]string{
@@ -102,11 +125,13 @@ var Templates = []Template{
 }
 
 // Account is one detected top-level directory: its template (empty
-// when no template matched) and the resolved hard-tag folder map.
+// when no template matched), the resolved hard-tag folder map, and
+// the template's no_fcc flag.
 type Account struct {
 	Name     string
 	Template string
 	Folders  map[string]string
+	NoFcc    bool
 }
 
 // Detect walks the notmuch mail root: every top-level directory with
@@ -134,6 +159,7 @@ func Detect(root string, templates []Template) ([]Account, error) {
 		for i := range templates {
 			if f, ok := resolve(&templates[i], set); ok {
 				a.Template, a.Folders = templates[i].Name, f
+				a.NoFcc = templates[i].NoFcc
 				break
 			}
 		}
@@ -218,6 +244,10 @@ func Generate(accounts []Account) string {
 		}
 		b.WriteString("\n[accounts." + a.Name + "]\n")
 		b.WriteString("folder = " + strconv.Quote(a.Name) + "\n")
+		if a.NoFcc {
+			b.WriteString("# the provider stores sent copies server-side; the client writes no fcc copy\n")
+			b.WriteString("no_fcc = true\n")
+		}
 		b.WriteString("\n[accounts." + a.Name + ".folders]\n")
 		for _, tag := range sortedKeys(a.Folders) {
 			b.WriteString(tag + " = " + strconv.Quote(a.Folders[tag]) + "\n")

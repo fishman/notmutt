@@ -7,6 +7,8 @@
 return {
   name = "gmail",
   match = { "INBOX", "[Gmail]" },
+  -- gmail stores sent copies server-side; the client writes no fcc copy
+  no_fcc = true,
   folders = {
     inbox = { "INBOX" },
     draft = { "[Gmail]/Drafts", "Drafts" },

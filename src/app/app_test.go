@@ -62,8 +62,8 @@ func TestSeedTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed must create %s: %v", dst, err)
 	}
-	if len(got) != 4 {
-		t.Fatalf("seed must copy the 4 shipped templates, got %d", len(got))
+	if len(got) != 5 {
+		t.Fatalf("seed must copy the 5 shipped templates, got %d", len(got))
 	}
 	// a customized file must survive a re-run
 	edited := filepath.Join(dst, "gmail.lua")

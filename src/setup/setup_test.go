@@ -40,6 +40,9 @@ func TestDetectGmail(t *testing.T) {
 	if a.Name != "gmail" || a.Template != "gmail" {
 		t.Fatalf("got %+v, want gmail matched by the gmail template", a)
 	}
+	if !a.NoFcc {
+		t.Fatal("gmail stores sent copies server-side: the account must carry no_fcc")
+	}
 	want := map[string]string{
 		"inbox": "INBOX", "draft": "[Gmail]/Drafts", "sent": "[Gmail]/Sent Mail",
 		"spam": "[Gmail]/Spam", "deleted": "[Gmail]/Trash",
@@ -136,6 +139,35 @@ func TestDetectGmailFlatFallbacks(t *testing.T) {
 	}
 	if _, ok := a.Folders["draft"]; ok {
 		t.Fatal("absent tags must stay out of the map")
+	}
+}
+
+// TestDetectZoho pins the zoho template: the Snoozed system folder
+// discriminates zoho from the flat outlook shape, the hard-tag map
+// resolves, and the account carries no_fcc (zoho stores sent copies
+// server-side).
+func TestDetectZoho(t *testing.T) {
+	root := t.TempDir()
+	mkdirs(t, root,
+		"zoho/INBOX/cur", "zoho/Sent/cur", "zoho/Snoozed/cur",
+		"zoho/Drafts/cur", "zoho/Trash/cur", "zoho/Spam/cur",
+		"zoho/Archive/cur", "zoho/Pending/cur")
+	accs, err := Detect(root, Templates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(accs) != 1 || accs[0].Template != "zoho" {
+		t.Fatalf("got %+v, want the zoho template", accs)
+	}
+	if !accs[0].NoFcc {
+		t.Fatal("zoho stores sent copies server-side: the account must carry no_fcc")
+	}
+	want := map[string]string{
+		"inbox": "INBOX", "sent": "Sent", "deleted": "Trash", "draft": "Drafts",
+		"spam": "Spam", "archive": "Archive", "pending": "Pending",
+	}
+	if !maps.Equal(accs[0].Folders, want) {
+		t.Fatalf("folders = %v, want %v", accs[0].Folders, want)
 	}
 }
 
@@ -242,9 +274,11 @@ func TestDetectMissingRoot(t *testing.T) {
 
 // TestGenerateValid pins the generated file: valid TOML, quoted
 // folder names, sorted tags, and no entries for unmatched accounts.
+// A no_fcc account (gmail) generates the flag with the reason
+// comment; a plain account generates no flag.
 func TestGenerateValid(t *testing.T) {
 	accs := []Account{
-		{Name: "zeta", Template: "gmail", Folders: map[string]string{
+		{Name: "zeta", Template: "gmail", NoFcc: true, Folders: map[string]string{
 			"inbox": "INBOX", "draft": "[Gmail]/Drafts",
 		}},
 		{Name: "wren"},
@@ -255,6 +289,9 @@ func TestGenerateValid(t *testing.T) {
 	}
 	if !strings.Contains(got, "draft = \"[Gmail]/Drafts\"") {
 		t.Fatalf("folder names must quote through TOML:\n%s", got)
+	}
+	if !strings.Contains(got, "no_fcc = true") || !strings.Contains(got, "stores sent copies server-side") {
+		t.Fatalf("a no_fcc account must generate the flag with the reason comment:\n%s", got)
 	}
 	var parsed struct {
 		Accounts map[string]struct {

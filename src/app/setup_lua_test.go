@@ -152,7 +152,7 @@ return { name = "vendor", match = { "INBOX" }, folders = { inbox = { "INBOX" } }
 	}
 	t.Setenv("NOTMUTT_CONFIG", dir)
 	got := mergedTemplates([]string{"gmail", "exchange"})
-	want := []string{"gmail", "exchange", "icloud", "outlook"}
+	want := []string{"gmail", "exchange", "icloud", "zoho", "outlook"}
 	if len(got) != len(want) {
 		t.Fatalf("merged templates = %+v, want %v", names(got), want)
 	}
@@ -232,17 +232,21 @@ func TestBuiltinTemplatesMatchGoData(t *testing.T) {
 			t.Fatalf("template %s: lua folders %v != Go folders %v",
 				want.Name, got[i].Folders, want.Folders)
 		}
+		if got[i].NoFcc != want.NoFcc {
+			t.Fatalf("template %s: lua no_fcc %v != Go no_fcc %v", want.Name, got[i].NoFcc, want.NoFcc)
+		}
 	}
 }
 
 // TestSetupDetectsProviderSeeds pins the shipped exchange/icloud/
-// outlook seeds against their folder shapes.
+// outlook/zoho seeds against their folder shapes.
 func TestSetupDetectsProviderSeeds(t *testing.T) {
 	root := t.TempDir()
 	for _, d := range []string{
 		"work/INBOX", "work/Sent Items", "work/Deleted Items",
 		"home/INBOX", "home/Sent Messages", "home/Trash",
 		"junkbox/INBOX", "junkbox/Sent", "junkbox/Deleted Items",
+		"zoho/INBOX", "zoho/Sent", "zoho/Snoozed",
 	} {
 		if err := os.MkdirAll(filepath.Join(root, d), 0700); err != nil {
 			t.Fatal(err)
@@ -256,7 +260,7 @@ func TestSetupDetectsProviderSeeds(t *testing.T) {
 	for _, a := range accs {
 		got[a.Name] = a.Template
 	}
-	want := map[string]string{"work": "exchange", "home": "icloud", "junkbox": "outlook"}
+	want := map[string]string{"work": "exchange", "home": "icloud", "junkbox": "outlook", "zoho": "zoho"}
 	for name, tmpl := range want {
 		if got[name] != tmpl {
 			t.Fatalf("account %s = %q, want %q (all: %v)", name, got[name], tmpl, got)

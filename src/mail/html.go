@@ -1,0 +1,835 @@
+package mail
+
+// The HTML flow renderer (docs/html-rendering-analysis.md): x/net/html
+// parses (error-tolerant, fuzz-exercised - the trust boundary), the
+// CSS cascade from css.go computes styles, and the flow walk emits
+// pager lines. Layout is CSS 2.1 block flow + inline runs + column-
+// aligned tables; everything else (position, flex, media queries)
+// drops. Images render as placeholders - the bytes travel with the
+// line, the TUI decodes and paints only on the render-images key
+// (privacy gate); remote srcs never fetch (tracking pixels stay dead).
+
+import (
+	"encoding/base64"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/mattn/go-runewidth"
+	"golang.org/x/net/html"
+
+	"notmutt/core"
+)
+
+const (
+	htmlWrapWidth = 120  // the open job has no TUI width; shr.el's 120-cap is the reference, the plain path wraps at the same fixed width
+	maxHTMLLines  = 5000 // render budget: a hostile doc cannot balloon the thread
+)
+
+// RenderHTML renders an HTML mail body to pager lines. Returns nil for
+// an empty result (the caller falls back to the raw text).
+func RenderHTML(body string, atts []Attachment) []core.Line {
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		return nil // x/net/html recovers from malformed input by spec; guard anyway
+	}
+	w := &htmlWalker{
+		atts:      atts,
+		rules:     collectStyleBlocks(doc),
+		linesLeft: maxHTMLLines,
+	}
+	w.walk(doc, &styleProps{})
+	w.flush()
+	if w.truncated {
+		w.lines = append(w.lines, core.Line{Text: "[content truncated]", Kind: core.LineBody})
+	}
+	if len(w.lines) == 0 {
+		return nil
+	}
+	return w.lines
+}
+
+type htmlWalker struct {
+	atts      []Attachment
+	rules     []cssRule
+	lines     []core.Line
+	linesLeft int
+	truncated bool
+	// defaultBG is the mail's declared background (the <html>/<body>
+	// color, CSS or the bgcolor attribute): every rendered line carries
+	// it, so the html view's region - pad and blank lines included -
+	// respects the mail's background instead of the theme's.
+	defaultBG string
+	// inline state
+	words []word
+	cells int
+	align string
+	pre   bool
+	// block spacing: one blank line between content blocks
+	blankPending bool
+	blockSeen    bool
+	// list counters: one entry per open ol/ul (the top counts the
+	// current item; a ul counts too but renders bullets)
+	lists []int
+	// pendingMark is an li marker that attaches to the item's first
+	// content line at the next non-empty flush; it survives empty
+	// flushes (a nested block's leading flush) so a marked item never
+	// renders as a bare "1." line
+	pendingMark *word
+}
+
+// word is one pending word with its computed style.
+type word struct {
+	text string
+	st   *styleProps
+}
+
+// cellLine is one line of a table cell's text: its words and the line's
+// alignment (nested-table rows join the line; the row's align is the
+// last aligned cell's).
+type cellLine struct {
+	words []word
+	align string
+}
+
+var blockTags = map[string]bool{
+	"address": true, "article": true, "aside": true, "blockquote": true,
+	"body": true, "dd": true, "details": true, "dialog": true, "div": true,
+	"dl": true, "dt": true, "fieldset": true, "figcaption": true,
+	"figure": true, "footer": true, "form": true, "h1": true, "h2": true,
+	"h3": true, "h4": true, "h5": true, "h6": true, "header": true,
+	"hr": true, "html": true, "legend": true, "li": true, "main": true,
+	"nav": true, "ol": true, "p": true, "pre": true, "section": true,
+	"table": true, "tbody": true, "td": true, "tfoot": true, "th": true,
+	"thead": true, "tr": true, "ul": true,
+}
+
+var skipTags = map[string]bool{
+	"base": true, "head": true, "iframe": true, "link": true, "meta": true,
+	"noscript": true, "script": true, "style": true, "template": true,
+	"title": true,
+}
+
+// walk flows the subtree in its computed style: block elements flush
+// and recurse as block contexts, inline elements accumulate into the
+// pending word buffer.
+func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if w.linesLeft <= 0 {
+			w.truncated = true
+			return
+		}
+		switch c.Type {
+		case html.TextNode:
+			w.addText(c.Data, st)
+		case html.ElementNode:
+			cs := styleOf(c, st, w.rules)
+			tag := c.Data
+			if cs.display == "none" || skipTags[tag] {
+				continue
+			}
+			if tag == "html" || tag == "body" {
+				// the mail's declared background (CSS or the bgcolor
+				// attribute; the body's own color overrides the html
+				// default), or the light fallback: mail renders for a
+				// light page - a mail without a background is
+				// unreadable on a dark theme
+				if cs.bg != "" {
+					w.defaultBG = cs.bg
+				} else if w.defaultBG == "" {
+					w.defaultBG = "#ffffff"
+				}
+				// the default foreground must read on that background:
+				// an unstyled mail inherits the contrast color instead
+				// of the theme's light text on a dark terminal
+				if cs.fg == "" {
+					cs.fg = contrastFG(w.defaultBG)
+				}
+			}
+			switch {
+			case tag == "img":
+				w.image(c, cs)
+			case tag == "br" && !cs.pre:
+				w.flush()
+			case tag == "table" && isBlock(tag, cs):
+				w.table(c, cs)
+			case isBlock(tag, cs):
+				w.flush()
+				prev := w.align
+				// only an explicit text-align at this node sets the line's
+				// alignment; inherited text-align (button-internal
+				// align="center" scaffolds) must not re-align a line
+				if a := cs.align; (a == "center" || a == "right") && cs.alignSet {
+					w.align = a
+				}
+				switch tag {
+				case "ol", "ul":
+					w.lists = append(w.lists, 0)
+				case "li":
+					if len(w.lists) > 0 {
+						w.lists[len(w.lists)-1]++
+						w.pendingMark = &word{text: listMark(w.lists[len(w.lists)-1]), st: cs}
+					}
+				}
+				w.walk(c, cs)
+				if tag == "ol" || tag == "ul" {
+					w.lists = w.lists[:len(w.lists)-1]
+				}
+				w.flush()
+				w.align = prev
+				if w.blockSeen {
+					w.blankPending = true
+					w.blockSeen = false
+				}
+			default:
+				w.walk(c, cs)
+			}
+		}
+	}
+}
+
+func isBlock(tag string, cs *styleProps) bool {
+	if blockTags[tag] {
+		return true
+	}
+	switch cs.display {
+	case "block", "flex", "grid", "list-item", "table", "table-cell",
+		"table-footer-group", "table-header-group", "table-row",
+		"table-row-group":
+		return true
+	}
+	return false
+}
+
+// addText ingests a text node: pre content preserves spaces and line
+// breaks (tab-expanded, sanitized per line), inline content collapses
+// to space-separated words.
+func (w *htmlWalker) addText(txt string, st *styleProps) {
+	if w.linesLeft <= 0 {
+		w.truncated = true
+		return
+	}
+	if w.pre {
+		for _, line := range strings.Split(strings.TrimSuffix(txt, "\n"), "\n") {
+			line = strings.TrimSuffix(line, "\r")
+			if line == "" {
+				w.flush()
+				continue
+			}
+			w.words = append(w.words, word{text: sanitize(expandTabs(line)), st: st})
+			w.flush()
+		}
+		return
+	}
+	for _, f := range strings.Fields(txt) {
+		w.addWord(f, st)
+	}
+}
+
+func (w *htmlWalker) addWord(text string, st *styleProps) {
+	if w.linesLeft <= 0 {
+		w.truncated = true
+		return
+	}
+	text = sanitize(text) // F1: DOM text is raw - ESC/C0 never reach the pager
+	tw := textWidth(text)
+	// a single word wider than the line hard-splits into chunks
+	for tw > htmlWrapWidth {
+		chunk := takeCells(text, htmlWrapWidth)
+		if w.cells > 0 {
+			w.flush()
+		}
+		w.words = append(w.words, word{text: chunk, st: st})
+		w.cells = textWidth(chunk)
+		text = text[len(chunk):]
+		tw = textWidth(text)
+		if w.cells > 0 {
+			w.flush()
+		}
+	}
+	if w.cells > 0 && w.cells+1+tw > htmlWrapWidth {
+		w.flush()
+	}
+	if w.cells > 0 {
+		w.words = append(w.words, word{text: " ", st: w.words[len(w.words)-1].st})
+		w.cells++
+	}
+	w.words = append(w.words, word{text: text, st: st})
+	w.cells += tw
+}
+
+// flush wraps the pending words into a line: trailing space drops, the
+// block context's alignment pads to the wrap width, and a pending
+// block-boundary blank leads the line.
+func (w *htmlWalker) flush() {
+	if w.linesLeft <= 0 {
+		return
+	}
+	if len(w.words) == 0 {
+		return // a pending mark rides along until content exists
+	}
+	if w.pendingMark != nil {
+		w.words = append([]word{*w.pendingMark}, w.words...)
+		w.pendingMark = nil
+	}
+	if w.words[len(w.words)-1].text == " " {
+		w.words = w.words[:len(w.words)-1]
+		w.cells--
+	}
+	var runs []core.Run
+	switch w.align {
+	case "center":
+		if pad := (htmlWrapWidth - w.cells) / 2; pad > 0 {
+			runs = append(runs, core.Run{Text: strings.Repeat(" ", pad)})
+		}
+	case "right":
+		if pad := htmlWrapWidth - w.cells; pad > 0 {
+			runs = append(runs, core.Run{Text: strings.Repeat(" ", pad)})
+		}
+	}
+	runs = append(runs, runWords(w.words)...)
+	w.words = nil
+	w.cells = 0
+	w.emitLine(runs)
+}
+
+// emitLine appends a fully-built line, consuming a pending blank and
+// tracking the block content and the line budget.
+func (w *htmlWalker) emitLine(runs []core.Run) {
+	if w.linesLeft <= 0 {
+		w.truncated = true
+		return
+	}
+	if w.blankPending {
+		w.lines = append(w.lines, core.Line{Bg: w.defaultBG})
+		w.blankPending = false
+	}
+	line := core.Line{Kind: core.LineBody, Runs: runs, Bg: w.defaultBG}
+	line.Text = joinRunText(runs)
+	w.lines = append(w.lines, line)
+	w.linesLeft--
+	w.blockSeen = true
+}
+
+// listMark renders a list item's marker: "N. " in an ol (the counter
+// counts the item), "* " in a ul (the counter is meaningless there).
+func listMark(n int) string {
+	if n > 0 {
+		return strconv.Itoa(n) + "."
+	}
+	return "*"
+}
+
+// image emits an <img> as its own line: the placeholder text, or the
+// image line when the src resolves - cid: attachments and data: URIs
+// carry their bytes, http(s) srcs carry their URL (the remote images
+// mode fetches them on the render-images key; never fetched here).
+func (w *htmlWalker) image(c *html.Node, st *styleProps) {
+	w.flush()
+	img := resolveImage(c, w.atts)
+	if img == nil {
+		w.addWord("[image]", st)
+		return
+	}
+	w.emitLine(nil)
+	w.lines[len(w.lines)-1].Image = img
+	w.lines[len(w.lines)-1].Text = img.Alt
+}
+
+// resolveImage resolves an <img> src to its bytes + alt text: the
+// cid: attachment or data: URI bytes, or a remote http(s) image as a
+// URL-only placeholder (Data stays empty - the fetch is the remote
+// mode's keypress-gated step).
+func resolveImage(c *html.Node, atts []Attachment) *core.Image {
+	src := attr(c, "src")
+	var data []byte
+	var url string
+	switch {
+	case strings.HasPrefix(src, "cid:"):
+		id := strings.Trim(strings.TrimSpace(src[4:]), "<>")
+		for _, a := range atts {
+			if strings.EqualFold(strings.Trim(a.ContentID, "<>"), id) {
+				data = a.Data
+				break
+			}
+		}
+	case strings.HasPrefix(src, "data:image/") && strings.Contains(src, ";base64,"):
+		data, _ = base64.StdEncoding.DecodeString(src[strings.IndexByte(src, ',')+1:])
+	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
+		url = src
+	}
+	if len(data) == 0 && url == "" {
+		return nil
+	}
+	alt := attr(c, "alt")
+	if alt == "" {
+		alt = "[image]"
+	}
+	return &core.Image{Data: data, URL: url, Alt: sanitize(alt)}
+}
+
+// table renders a table as column-aligned rows (w3m's approach: pad
+// each column to its widest cell, wrapped at a per-column cap). Cell
+// content is extracted as word-lines, so styles survive into the rows.
+func (w *htmlWalker) table(t *html.Node, st *styleProps) {
+	rows := cellRows(t, st, w.rules)
+	if len(rows) == 0 {
+		return
+	}
+	ncols := 0
+	for _, r := range rows {
+		if len(r) > ncols {
+			ncols = len(r)
+		}
+	}
+	// the wrap cap comes from the CONTENT columns: empty spacer cells
+	// (the layout tables of the Outlook/Substack era) must not halve or
+	// third the text width
+	content := 0
+	for ci := 0; ci < ncols; ci++ {
+		has := false
+		for _, r := range rows {
+			if ci >= len(r) {
+				continue
+			}
+			for _, ln := range r[ci] {
+				if len(ln.words) > 0 {
+					has = true
+					break
+				}
+			}
+			if has {
+				break
+			}
+		}
+		if has {
+			content++
+		}
+	}
+	if content == 0 {
+		return
+	}
+	colCap := htmlWrapWidth / content
+	if colCap < 8 {
+		colCap = 8
+	}
+	widths := make([]int, ncols)
+	for _, r := range rows {
+		for ci := 0; ci < ncols; ci++ {
+			if ci >= len(r) {
+				continue
+			}
+			var wrapped []cellLine
+			for _, ln := range r[ci] {
+				for _, wl := range wrapWords(ln.words, colCap) {
+					wrapped = append(wrapped, cellLine{words: wl, align: ln.align})
+				}
+				if len(ln.words) == 0 {
+					wrapped = append(wrapped, cellLine{}) // an inter-block blank stays blank
+				}
+			}
+			r[ci] = wrapped
+			if cw := cellWidth(r[ci]); cw > widths[ci] {
+				widths[ci] = cw
+			}
+		}
+	}
+	w.flush()
+	for _, r := range rows {
+		rowLines := 0
+		for ci := 0; ci < ncols; ci++ {
+			// a ragged table: shorter rows have fewer cells - the
+			// widths pass guards the same bound, the emit pass must too
+			if ci < len(r) && len(r[ci]) > rowLines {
+				rowLines = len(r[ci])
+			}
+		}
+		for li := 0; li < rowLines; li++ {
+			var runs []core.Run
+			for ci := 0; ci < ncols; ci++ {
+				// a ragged row has no cell at ci: it renders as an empty
+				// column span, the same shape as an exhausted cell
+				var lines []cellLine
+				if ci < len(r) {
+					lines = r[ci]
+				}
+				if li < len(lines) {
+					cell := lines[li]
+					pad := widths[ci] - textWidth(joinWordText(cell.words))
+					pre, post := 0, pad
+					if cell.align == "right" {
+						pre, post = pad, 0
+					} else if cell.align == "center" {
+						pre, post = pad/2, pad-pad/2
+					}
+					if pre > 0 {
+						runs = append(runs, core.Run{Text: strings.Repeat(" ", pre)})
+					}
+					runs = append(runs, runWords(cell.words)...)
+					if post > 0 {
+						runs = append(runs, core.Run{Text: strings.Repeat(" ", post)})
+					}
+				} else {
+					runs = append(runs, core.Run{Text: strings.Repeat(" ", widths[ci])})
+				}
+				if ci < ncols-1 {
+					runs = append(runs, core.Run{Text: "  "})
+				}
+			}
+			w.emitLine(runs)
+		}
+	}
+	w.flush()
+	if w.blockSeen {
+		w.blankPending = true
+		w.blockSeen = false
+	}
+}
+
+// cellRows collects the table's tr rows, each cell a list of word-
+// lines (block boundaries and <br> inside a cell start a new line).
+// The HTML5 parser inserts an implicit tbody between the table and
+// its rows, so the row groups descend into it.
+func cellRows(t *html.Node, st *styleProps, rules []cssRule) [][][]cellLine {
+	var rows [][][]cellLine
+	for r := t.FirstChild; r != nil; r = r.NextSibling {
+		if r.Type != html.ElementNode {
+			continue
+		}
+		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
+			rows = append(rows, cellRows(r, st, rules)...)
+			continue
+		}
+		if r.Data != "tr" {
+			continue
+		}
+		var cells [][]cellLine
+		for c := r.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+				continue
+			}
+			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules))
+		}
+		if len(cells) > 0 {
+			rows = append(rows, cells)
+		}
+	}
+	return rows
+}
+
+// collectCell extracts a cell's text flow as word-lines: the same
+// block/inline walk as htmlWalker, but text-only. A nested table's
+// rows flatten into the current line - the Outlook/Substack era wraps
+// every layout element in presentation tables, and dropping them (the
+// old skip) emptied the article. Only an explicitly right-aligned
+// cell starts a new line under that alignment (the READ-IN-APP
+// column); inherited text-align - the align="center" button scaffolds
+// inside the row - never re-aligns a line.
+func collectCell(n *html.Node, st *styleProps, rules []cssRule) []cellLine {
+	var out []cellLine
+	var cur []word
+	align := ""
+	// lineAlign is a one-shot line alignment set by an explicitly
+	// right-aligned cell split: it applies to the next flushed line and
+	// then dies. It never rides the align prev/restore chains, so a
+	// split cannot leak into the enclosing flow (the buttons row) or be
+	// resurrected by a nested table's restore (READ IN APP).
+	lineAlign := ""
+	var blankPending, blockSeen bool
+	var lists []int
+	var pendingMark *word
+	flush := func() {
+		if len(cur) == 0 && pendingMark == nil {
+			return
+		}
+		if len(cur) > 0 {
+			if pendingMark != nil {
+				cur = append([]word{*pendingMark}, cur...)
+				pendingMark = nil
+			}
+			if blankPending {
+				out = append(out, cellLine{})
+				blankPending = false
+			}
+			a := align
+			if lineAlign != "" {
+				a = lineAlign
+				lineAlign = ""
+			}
+			out = append(out, cellLine{words: cur, align: a})
+			cur = nil
+			blockSeen = true
+		}
+	}
+	inRow := false
+	var walk func(n *html.Node, st *styleProps)
+	var walkRow func(n *html.Node, st *styleProps)
+	walk = func(n *html.Node, st *styleProps) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			switch c.Type {
+			case html.TextNode:
+				for _, f := range strings.Fields(c.Data) {
+					cur = append(cur, word{text: sanitize(f), st: st})
+				}
+			case html.ElementNode:
+				cs := styleOf(c, st, rules)
+				tag := c.Data
+				if cs.display == "none" || skipTags[tag] {
+					continue
+				}
+				switch {
+				case tag == "br" && !cs.pre:
+					flush()
+				case tag == "img":
+					if a := attr(c, "alt"); a != "" {
+						cur = append(cur, word{text: sanitize(a), st: cs})
+					} else {
+						cur = append(cur, word{text: "[image]", st: cs})
+					}
+				case tag == "table":
+					if !inRow {
+						flush()
+					}
+					prev := align
+					walkRow(c, cs)
+					if !inRow {
+						flush()
+					}
+					align = prev
+				case isBlock(tag, cs):
+					flush()
+					prev := align
+					// only an explicit text-align at this node sets the
+					// line's alignment; inherited text-align must not
+					// re-align a line
+					if a := cs.align; (a == "center" || a == "right") && cs.alignSet {
+						align = a
+						lineAlign = "" // an explicit block alignment wins over a pending cell split
+					}
+					switch tag {
+					case "ol", "ul":
+						lists = append(lists, 0)
+					case "li":
+						if len(lists) > 0 {
+							lists[len(lists)-1]++
+							pendingMark = &word{text: listMark(lists[len(lists)-1]), st: cs}
+						}
+					}
+					walk(c, cs)
+					if tag == "ol" || tag == "ul" {
+						lists = lists[:len(lists)-1]
+					}
+					flush()
+					align = prev
+					if blockSeen {
+						blankPending = true
+						blockSeen = false
+					}
+				default:
+					walk(c, cs)
+				}
+			}
+		}
+	}
+	walkRow = func(n *html.Node, st *styleProps) {
+		prevRow := inRow
+		inRow = true
+		defer func() { inRow = prevRow }()
+		for r := n.FirstChild; r != nil; r = r.NextSibling {
+			if r.Type != html.ElementNode {
+				continue
+			}
+			if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
+				walkRow(r, st)
+				continue
+			}
+			if r.Data != "tr" {
+				continue
+			}
+			for c := r.FirstChild; c != nil; c = c.NextSibling {
+				if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+					continue
+				}
+				tcs := styleOf(c, st, rules)
+				if tcs.align == "right" && tcs.alignSet {
+					if lineAlign != "right" {
+						flush()
+					}
+					lineAlign = "right"
+				}
+				walk(c, tcs)
+			}
+		}
+	}
+	walk(n, st)
+	flush()
+	return out
+}
+
+// wrapWords wraps one word-line at the column cap; a word wider than
+// the cap hard-splits.
+func wrapWords(words []word, cap int) [][]word {
+	var out [][]word
+	var cur []word
+	cells := 0
+	for _, wd := range words {
+		tw := textWidth(wd.text)
+		for tw > cap {
+			chunk := takeCells(wd.text, cap)
+			out = append(out, cur)
+			cur = []word{{text: chunk, st: wd.st}}
+			cells = textWidth(chunk)
+			out = append(out, cur)
+			cur, cells = nil, 0
+			wd.text = wd.text[len(chunk):]
+			tw = textWidth(wd.text)
+		}
+		if cells > 0 && cells+1+tw > cap {
+			out = append(out, cur)
+			cur, cells = nil, 0
+		}
+		if cells > 0 {
+			cur = append(cur, word{text: " ", st: wd.st})
+			cells++
+		}
+		cur = append(cur, wd)
+		cells += tw
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// takeCells cuts the longest true byte prefix of s that fits in cap
+// cells. The cut runs on the SOURCE bytes (DecodeRuneInString reports
+// each rune's real size): a recoded replacement char would claim more
+// bytes than the source consumed, and the caller's s[len(chunk):]
+// slice would overrun (the fuzz catch).
+func takeCells(s string, cap int) string {
+	i := 0
+	cells := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if cells+runewidth.RuneWidth(r) > cap {
+			break
+		}
+		i += size
+		cells += runewidth.RuneWidth(r)
+	}
+	return s[:i]
+}
+
+// textWidth is the string's width in terminal cells (wide runes count
+// double - the R11 wcwidth rule).
+func textWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		n += runewidth.RuneWidth(r)
+	}
+	return n
+}
+
+func sanitize(s string) string {
+	return core.SanitizeControls(s)
+}
+
+// contrastFG picks a readable default foreground for a mail-declared
+// background: Rec.709 luma of the bg, dark text on light pages and
+// light text on dark pages. An unstyled mail inherits this instead of
+// the theme's light text on a dark terminal.
+func contrastFG(bg string) string {
+	n, err := strconv.ParseUint(strings.TrimPrefix(bg, "#"), 16, 32)
+	if err != nil {
+		return "#1a1a1a"
+	}
+	luma := (0.299*float64(n>>16&255) + 0.587*float64(n>>8&255) + 0.114*float64(n&255)) / 255
+	if luma > 0.5 {
+		return "#1a1a1a"
+	}
+	return "#f5f5f5"
+}
+
+// runWords merges a word-line into runs: adjacent words with identical
+// styles merge (the inter-word space inherits the preceding word's
+// style); style changes split runs.
+func runWords(words []word) []core.Run {
+	var runs []core.Run
+	for _, wd := range words {
+		if len(runs) > 0 && runFor(wd.st) == runs[len(runs)-1] {
+			runs[len(runs)-1].Text += wd.text
+			continue
+		}
+		r := runFor(wd.st)
+		r.Text = wd.text
+		runs = append(runs, r)
+	}
+	return runs
+}
+
+// runFor maps a computed style to its run representation: "" fg/bg and
+// zero attrs for the unstyled base (run equality gates run merging).
+func runFor(st *styleProps) core.Run {
+	var r core.Run
+	if st == nil {
+		return r
+	}
+	r.Fg, r.Bg = st.fg, st.bg
+	if st.bold {
+		r.Attrs |= core.AttrBold
+	}
+	if st.italic {
+		r.Attrs |= core.AttrItalic
+	}
+	if st.underline {
+		r.Attrs |= core.AttrUnderline
+	}
+	return r
+}
+
+// joinRunText is the line's plain text (the Lua render contract reads
+// Line.Text; runs are the styled overlay).
+func joinRunText(runs []core.Run) string {
+	var b strings.Builder
+	for _, r := range runs {
+		b.WriteString(r.Text)
+	}
+	return b.String()
+}
+
+func joinWordText(words []word) string {
+	var b strings.Builder
+	for _, wd := range words {
+		b.WriteString(wd.text)
+	}
+	return b.String()
+}
+
+func cellWidth(lines []cellLine) int {
+	max := 0
+	for _, l := range lines {
+		if w := textWidth(joinWordText(l.words)); w > max {
+			max = w
+		}
+	}
+	return max
+}
+
+// collectStyleBlocks gathers the <style> element texts of the document
+// into one cascade.
+func collectStyleBlocks(doc *html.Node) []cssRule {
+	var rules []cssRule
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if c.Type == html.ElementNode {
+				if c.Data == "style" && c.FirstChild != nil {
+					rules = append(rules, parseStyleSheet(c.FirstChild.Data)...)
+				}
+				walk(c)
+			}
+		}
+	}
+	walk(doc)
+	return rules
+}

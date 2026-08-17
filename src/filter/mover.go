@@ -29,8 +29,18 @@ type Mover struct {
 	Progress func(done, total int)
 }
 
+func newMover(w Worker, cfg config.Config, root string, dryRun bool) *Mover {
+	return &Mover{worker: w, cfg: cfg, root: root, dryRun: dryRun}
+}
+
 func NewMover(w Worker, cfg config.Config, root string) *Mover {
-	return &Mover{worker: w, cfg: cfg, root: root, dryRun: cfg.Filter.DryRun}
+	return newMover(w, cfg, root, cfg.Filter.DryRun)
+}
+
+// NewMoverLive is the apply path's mover: the staged apply is explicit
+// intent, the filter dry-run gates the poll, not the $ key.
+func NewMoverLive(w Worker, cfg config.Config, root string) *Mover {
+	return newMover(w, cfg, root, false)
 }
 
 // MoveEntry is one file's move outcome: To empty means the file stays
@@ -69,9 +79,23 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 		if target == "" {
 			continue
 		}
+		// home is a message-level rule: one of the message's files
+		// already sits in the resolved target tree - the message is
+		// home and no copy moves. The self-send shape (the client's fcc
+		// copy in Sent plus the mbsync-delivered copy in INBOX, one
+		// message id) must leave the delivered copy untouched: moving an
+		// mbsync-owned file breaks its UID bookkeeping and the next sync
+		// re-downloads it.
+		home := false
+		for _, g := range e.Paths {
+			if sameTree(filepath.Dir(filepath.Dir(RelPath(m.root, g))), target) {
+				home = true
+				break
+			}
+		}
 		for _, f := range e.Paths {
 			me := MoveEntry{ID: e.ID, From: f}
-			rel := relPath(m.root, f)
+			rel := RelPath(m.root, f)
 			dst := filepath.Join(target, filepath.Base(filepath.Dir(rel)), stripUID(filepath.Base(rel)))
 			if _, err := os.Stat(absPath(m.root, f)); err != nil {
 				me.Skip = "source gone"
@@ -80,7 +104,7 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 				switch {
 				case !managedTree(managed[e.Account], srcMaildir):
 					me.Skip = "not managed"
-				case sameTree(srcMaildir, filepath.Dir(filepath.Dir(dst))):
+				case home:
 					me.Skip = "already home"
 				case exists(absPath(m.root, dst)):
 					me.Skip = "dest exists"
@@ -150,9 +174,9 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 		}
 		a, ok := m.cfg.Accounts[e.Account]
 		if !ok || a.ReadOnly {
-			// readonly accounts (dead accounts like toptal) never move:
-			// no targets means every entry skips silently - folder tags
-			// still apply, nothing destructive ever touches their mail.
+			// readonly accounts (dead accounts like toptal) are never
+			// classified (the engine drops them before this pass); no
+			// targets here stays as the defense - nothing ever moves.
 			continue
 		}
 		fs := a.Tag(e.Account)

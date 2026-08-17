@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -52,26 +51,7 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 
 func TestEngineClassification(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
 	root := filepath.Join(dir, "mail")
-	inboxDir := filepath.Join(root, "gmail", "INBOX", "cur")
-	if err := os.MkdirAll(inboxDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	fresh := filepath.Join(inboxDir, "2")
-	if err := os.WriteFile(fresh, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	mark := filepath.Join(dir, ".cache", "mail-sync-mark")
-	if err := os.MkdirAll(filepath.Dir(mark), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(mark, nil, 0o600)
-	past := time.Now().Add(-time.Hour)
-	if err := os.Chtimes(mark, past, past); err != nil {
-		t.Fatal(err)
-	}
-
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	cfg.Filter.HeaderRules = []config.HeaderRule{{Query: "from:x", Add: []string{"work"}}}
@@ -133,6 +113,40 @@ func TestEngineClassification(t *testing.T) {
 	}
 }
 
+// TestReadOnlyAccountNeverClassified: a readonly account's message is
+// not classified at all - no folder tags, no account tag, no header
+// tags, no writes. The entry drops out of the report even when the
+// message's tags contradict its folder.
+func TestReadOnlyAccountNeverClassified(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{
+		"toptal": {Preset: "gmail", ReadOnly: true},
+	}
+	cfg.Filter.HeaderRules = []config.HeaderRule{{Query: "from:x", Add: []string{"work"}}}
+	cfg.Filter.DryRun = false
+
+	w := &fakeWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"gmail", "archive"}, Paths: []string{filepath.Join(root, "toptal/INBOX/cur/1")}},
+		},
+		header: map[string]bool{"m1": true},
+	}
+
+	rep, err := New(w, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 0 {
+		t.Fatalf("entries = %+v, want none for a readonly account", rep.Entries)
+	}
+	if len(w.tagged) != 0 {
+		t.Fatalf("readonly mail must never be tagged: %+v", w.tagged)
+	}
+}
+
 // TestEntryPriority: an entry whose resolved tag set contains a
 // [notify] priority tag is flagged; one without is not.
 // TestHeaderRuleDedup: two matching header rules adding the same tag
@@ -140,11 +154,7 @@ func TestEngineClassification(t *testing.T) {
 // raw rule emissions (a dry-run digest rendered ++meeting).
 func TestHeaderRuleDedup(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
 	root := filepath.Join(dir, "mail")
-	if err := os.MkdirAll(filepath.Join(root, "gmail", "INBOX", "cur"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	cfg.Filter.HeaderRules = []config.HeaderRule{
@@ -176,17 +186,7 @@ func TestHeaderRuleDedup(t *testing.T) {
 
 func TestEntryPriority(t *testing.T) {
 	dir := t.TempDir()
-	t.Setenv("HOME", dir)
 	root := filepath.Join(dir, "mail")
-	if err := os.MkdirAll(filepath.Join(root, "gmail", "INBOX", "cur"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	mark := filepath.Join(dir, ".cache", "mail-sync-mark")
-	if err := os.MkdirAll(filepath.Dir(mark), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(mark, nil, 0o600)
-
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	cfg.Filter.HeaderRules = []config.HeaderRule{{Query: "from:x", Add: []string{"work"}}}
@@ -302,58 +302,38 @@ func TestMover(t *testing.T) {
 	}
 }
 
-// TestAlreadyTaggedMoves: a hard tag the message already carries (manual
-// apply, an external tool) must physically move the file - the mover
-// works off the tag's folder, not just the ops this pass produced. Mail
-// that already sits in its tag's folder produces no entry (no report
-// noise on every read-marked delta row).
-func TestAlreadyTaggedMoves(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("HOME", dir)
-	root := filepath.Join(dir, "mail")
-	for _, d := range []string{"INBOX", "Spam"} {
-		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
-	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
+// TestStaleFolderTagResolvesToLocation: a hard tag the message already
+// carries while the file sits in another folder is STALE - the location
+// is the home, the exclusive resolution drops the tag (the user's
+// model: tag-groups.folder members match the account folders, and the
+// member whose folder holds the file is the one that applies). Mail
+// already home produces no entry (no report noise on every read-marked
+// delta row).
+func TestStaleFolderTagResolvesToLocation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
-	cfg.Filter.DryRun = false
 	w := &fakeWorker{
-		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}, {ID: "m3"}},
 		snaps: []core.Message{
 			{ID: "m1", Tags: []string{"gmail", "spam"}, Paths: []string{"gmail/INBOX/cur/1"}},
 			{ID: "m2", Tags: []string{"gmail", "archive"}, Paths: []string{"gmail/Archives/cur/2"}},
+			{ID: "m3", Tags: []string{"gmail", "spam"}, Paths: []string{"gmail/Archives/cur/3"}},
 		},
 	}
-	rep, err := New(w, cfg, root).Run(0, 5)
+	rep, err := New(w, cfg, "mail").Run(0, 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rep.Entries) != 1 {
-		t.Fatalf("entries = %d, want 1 (already-home m2 must not appear): %+v", len(rep.Entries), rep.Entries)
+	if len(rep.Entries) != 2 {
+		t.Fatalf("entries = %d, want 2 (already-home m2 must not appear): %+v", len(rep.Entries), rep.Entries)
 	}
-	e := rep.Entries[0]
-	if e.ID != "m1" || e.Folder != "spam" || len(e.Ops) != 0 {
-		t.Fatalf("entry = %+v, want m1 folder spam with no ops", e)
+	e1 := rep.Entries[0]
+	if e1.ID != "m1" || e1.Folder != "" || !equalOps(e1.Ops, []core.TagOp{{Tag: "inbox", Add: true}, {Tag: "spam", Add: false}}) {
+		t.Fatalf("entry = %+v, want m1 -spam +inbox, no move", e1)
 	}
-	if len(w.tagged) != 0 {
-		t.Fatalf("ActTag calls = %d, want 0 (no new ops)", len(w.tagged))
-	}
-	// the mover physically follows the tag
-	if _, err := NewMover(w, cfg, root).Move(rep); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "gmail", "Spam", "cur", "1")); err != nil {
-		t.Fatalf("spam-tagged mail did not move: %v", err)
-	}
-	if _, err := os.Stat(src); err == nil {
-		t.Fatal("source still exists after the move")
+	e3 := rep.Entries[1]
+	if e3.ID != "m3" || e3.Folder != "archive" || !equalOps(e3.Ops, []core.TagOp{{Tag: "archive", Add: true}, {Tag: "spam", Add: false}}) {
+		t.Fatalf("entry = %+v, want m3 -spam +archive", e3)
 	}
 }
 
@@ -462,4 +442,88 @@ func equalOps(a, b []core.TagOp) bool {
 		}
 	}
 	return true
+}
+
+// TestTwoCopyResolvesToSent: a message with files in Sent and INBOX
+// (the self-send shape - the client's fcc copy in Sent plus the
+// mbsync-delivered copy in INBOX, one message id) resolves to sent:
+// the location pass emits both members and the last member-add wins
+// (the emission order is the reference priority ascending,
+// muttrc/notmuch/tags - sent beats inbox), so the stale inbox tag
+// drops while the message stays sent. Nothing moves.
+func TestTwoCopyResolvesToSent(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"jelveh": {Preset: "gmail"}}
+	w := &fakeWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{{
+			ID:    "m1",
+			Tags:  []string{"inbox", "sent", "jelveh", "unread", "replied", "newsletter"},
+			Paths: []string{"jelveh/Sent/cur/1", "jelveh/INBOX/cur/2"},
+		}},
+	}
+	rep, err := New(w, cfg, "mail").Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 {
+		t.Fatalf("entries = %d, want 1: %+v", len(rep.Entries), rep.Entries)
+	}
+	e := rep.Entries[0]
+	if !equalOps(e.Ops, []core.TagOp{{Tag: "inbox", Add: false}}) {
+		t.Fatalf("ops = %+v, want -inbox (sent wins, nothing else touched)", e.Ops)
+	}
+	if e.Folder != "" {
+		t.Fatalf("folder = %q, want empty (already home, no move)", e.Folder)
+	}
+}
+
+// TestMoverSkipsMessageAlreadyHome: a message with one of its files
+// already in the resolved target tree (the self-send shape - the fcc
+// copy in Sent plus the delivered copy in INBOX) moves nothing: the
+// message is home, and the mbsync-owned delivered copy must never be
+// touched (a move breaks its UID bookkeeping and the next sync
+// re-downloads it).
+func TestMoverSkipsMessageAlreadyHome(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"INBOX", "Sent"} {
+		if err := os.MkdirAll(filepath.Join(root, "jelveh", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fcc := filepath.Join(root, "jelveh", "Sent", "cur", "123.notmutt:2,S")
+	delivered := filepath.Join(root, "jelveh", "INBOX", "cur", "456.host:2,S,U=42")
+	for _, f := range []string{fcc, delivered} {
+		if err := os.WriteFile(f, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"jelveh": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fakeWorker{}
+	rep := &Report{Entries: []Entry{
+		{ID: "m1", Account: "jelveh", Folder: "sent", Paths: []string{
+			"jelveh/Sent/cur/123.notmutt:2,S",
+			"jelveh/INBOX/cur/456.host:2,S,U=42",
+		}},
+	}}
+
+	mr, err := NewMover(w, cfg, root).Move(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range mr.Moves {
+		if m.To != "" || m.Skip != "already home" {
+			t.Fatalf("move = %+v, want skip already home", m)
+		}
+	}
+	if _, err := os.Stat(delivered); err != nil {
+		t.Fatal("delivered copy was moved")
+	}
+	if len(w.pathOps) != 0 {
+		t.Fatalf("path ops = %+v, want none", w.pathOps)
+	}
 }

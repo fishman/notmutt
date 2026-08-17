@@ -6,9 +6,9 @@ package filter
 
 import (
 	"fmt"
-	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"notmutt/config"
@@ -22,20 +22,31 @@ type Worker interface {
 	Call(a notmuch.Action) (notmuch.Reply, error)
 }
 
-// dropped are the folder tags a fresh INBOX delivery sheds (the
-// muttrc/bin/untag-reversal DROPPED set): an external client moved the
-// mail into INBOX, the tags of its old folder would move it right back.
-var dropped = []string{"spam", "deleted", "archive", "pending"}
-
 // Engine classifies the delta. New resolves the account rules once;
 // Run evaluates one revision bracket per poll.
 type Engine struct {
 	worker Worker
 	cfg    config.Config
 	groups []core.TagGroup
-	accs   []accountRule
-	root   string // the mail root, for file stats (paths are relative to it)
+	// emissions is the per-group tag emission order: the folder group
+	// follows folderEmission (the reference priority ascending), so the
+	// last member-add wins the exclusive resolution; other groups keep
+	// their config order.
+	emissions [][]string
+	accs      []accountRule
+	root      string // the mail root, for file stats (paths are relative to it)
 }
+
+// folderEmission is the folder-group emission order, lowest priority
+// first: the reference chain (muttrc/notmuch/tags - "Priority:
+// archive > deleted > sent > draft > pending > spam", inbox removed by
+// any other member). The last member-add wins the exclusive
+// resolution, so a message with copies in several folders (the fcc
+// copy in Sent plus the delivered copy in INBOX - one message id, two
+// paths) resolves to the highest-priority folder: sent beats inbox,
+// archive beats sent. Members outside the list (custom folder tags)
+// emit first, in group order.
+var folderEmission = []string{"inbox", "spam", "pending", "draft", "sent", "deleted", "archive"}
 
 type accountRule struct {
 	name   string
@@ -49,6 +60,20 @@ type accountRule struct {
 // (folder space, folder-rule candidates, inbox candidates).
 func New(w Worker, cfg config.Config, root string) *Engine {
 	e := &Engine{worker: w, cfg: cfg, root: root, groups: cfg.TagGroupList()}
+	for _, g := range e.groups {
+		order := make([]string, 0, len(g.Tags))
+		for _, t := range g.Tags {
+			if !slices.Contains(folderEmission, t) {
+				order = append(order, t)
+			}
+		}
+		for _, t := range folderEmission {
+			if slices.Contains(g.Tags, t) {
+				order = append(order, t)
+			}
+		}
+		e.emissions = append(e.emissions, order)
+	}
 	for name, a := range cfg.Accounts {
 		ar := accountRule{name: name, acc: a, folder: a.Tag(name), rules: map[string][]string{}}
 		for _, g := range e.groups {
@@ -126,10 +151,9 @@ func (e *Engine) Run(pre, cur uint64) (*Report, error) {
 	if err != nil {
 		return nil, err
 	}
-	mark := markerMtime()
 	rep := &Report{DryRun: e.cfg.Filter.DryRun}
 	for i := range rpl.Msgs {
-		entry := e.classify(rpl.Msgs[i], hits, mark)
+		entry := e.classify(rpl.Msgs[i], hits)
 		if len(entry.Ops) == 0 && entry.Folder == "" {
 			continue
 		}
@@ -216,29 +240,50 @@ func (e *Engine) headerMatches(ids []string) ([]map[string]bool, error) {
 }
 
 // classify runs the rule set over one message snapshot: account tag
-// (path prefix), folder rules (path match, guard = the tag is absent),
-// header rules (delta scope, guard = absent), the delivery-gated
-// untag-reversal, then the exclusive-group resolution (R2: applying any
-// member removes the other members present, inbox included).
-func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) Entry {
+// (path prefix), folder rules (path match - the location IS the home,
+// a member emits whenever the file sits in its folders, present tags
+// and inbox included), header rules (delta scope, guard = absent),
+// then the exclusive-group resolution (R2: applying any member removes
+// the other members present, inbox included - a stale folder tag from
+// a previous location drops with the member that owns the file now).
+func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	var ops []core.TagOp
 	paths := e.norm(m.Paths)
 	ar := e.accountOf(paths)
+	if ar != nil && ar.acc.ReadOnly {
+		// readonly accounts (dead accounts like toptal) are never
+		// classified: no folder tags, no account tag, no header tags -
+		// the client writes nothing to their mail. The bare entry drops
+		// out of the report (no ops, no move).
+		return Entry{ID: m.ID}
+	}
 	if ar != nil {
 		if !hasTag(m.Tags, ar.folder) {
 			ops = append(ops, core.TagOp{Tag: ar.folder, Add: true})
 		}
-		// folder rules in reverse group order: the last member-add wins,
-		// so a message with files in several folders resolves to the
-		// reference priority (archive > deleted > sent > draft > pending
-		// > spam).
-		for gi := len(e.groups) - 1; gi >= 0; gi-- {
-			for ti := len(e.groups[gi].Tags) - 1; ti >= 0; ti-- {
-				tag := e.groups[gi].Tags[ti]
-				if tag == "inbox" || hasTag(m.Tags, tag) {
-					continue
+		// folder rules in the group's emission order (folderEmission
+		// ascending - muttrc/notmuch/tags "Priority: archive > deleted >
+		// sent > draft > pending > spam", inbox removed by any other
+		// member): the last member-add wins, so a message with copies in
+		// several folders (the fcc copy in Sent plus the delivered copy
+		// in INBOX - one message id, two paths) resolves to the
+		// highest-priority folder: sent beats inbox, archive beats sent.
+		// A member without folder candidates for this account never
+		// emits: it cannot be a home here ("tag-groups.folder matches
+		// the account folders").
+		for gi := range e.groups {
+			for _, tag := range e.emissions[gi] {
+				cs := ar.rules[tag]
+				if len(cs) == 0 {
+					if tag != "inbox" {
+						continue
+					}
+					cs = ar.inbox
+					if len(cs) == 0 {
+						continue
+					}
 				}
-				if cs := ar.rules[tag]; len(cs) > 0 && inFolder(paths, ar.folder, cs) {
+				if inFolder(paths, ar.folder, cs) {
 					ops = append(ops, core.TagOp{Tag: tag, Add: true})
 				}
 			}
@@ -252,18 +297,6 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 			if !hasTag(m.Tags, t) {
 				ops = append(ops, core.TagOp{Tag: t, Add: true})
 			}
-		}
-	}
-	if ar != nil && mark != 0 && inFolder(paths, ar.folder, ar.inbox) && freshInbox(paths, ar.folder, ar.inbox, e.abs, mark) {
-		var drops []core.TagOp
-		for _, t := range dropped {
-			if hasTag(m.Tags, t) {
-				drops = append(drops, core.TagOp{Tag: t})
-			}
-		}
-		if len(drops) > 0 {
-			ops = append(ops, drops...)
-			ops = append(ops, core.TagOp{Tag: "inbox", Add: true})
 		}
 	}
 	// one op per tag: several rules can add the same tag (two matching
@@ -299,8 +332,8 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 	if ar != nil {
 		acc = ar.name
 		// the move tag: the resolved winner among the folder tags with
-		// candidates (inbox has no rule and never moves - the untag
-		// delivers it, the mover would no-op).
+		// candidates (inbox has no rule and never moves - the location
+		// pass delivers it, the mover would no-op).
 		for _, op := range resolved {
 			if op.Add {
 				if _, ok := ar.rules[op.Tag]; ok {
@@ -329,11 +362,11 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool, mark int64) En
 	return Entry{ID: m.ID, Subject: m.Subject, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
-// relPath strips the mail root prefix: the path rules match relative
+// RelPath strips the mail root prefix: the path rules match relative
 // paths (notmuch reports them relative to the database path; absolute
 // only for files outside it). The root join leaves a leading slash
 // that would break the folder prefix match.
-func relPath(root, p string) string {
+func RelPath(root, p string) string {
 	if root != "" && strings.HasPrefix(p, root) {
 		return strings.Trim(strings.TrimPrefix(p, root), "/")
 	}
@@ -352,7 +385,7 @@ func absPath(root, p string) string {
 func (e *Engine) norm(paths []string) []string {
 	out := make([]string, len(paths))
 	for i, p := range paths {
-		out[i] = relPath(e.root, p)
+		out[i] = RelPath(e.root, p)
 	}
 	return out
 }
@@ -369,6 +402,20 @@ func (e *Engine) accountOf(paths []string) *accountRule {
 		}
 	}
 	return nil
+}
+
+// AccountOf is accountOf as a standalone: the apply path resolves the
+// account of an applied message the same way the engine does (the
+// paths come from a snapshot, normalized like the engine's).
+func AccountOf(cfg config.Config, paths []string) string {
+	for _, p := range paths {
+		for name, a := range cfg.Accounts {
+			if strings.HasPrefix(p, a.Tag(name)+"/") {
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 // abs joins the root for a file stat; absolute paths pass through.
@@ -398,36 +445,6 @@ func inFolder(paths []string, folder string, candidates []string) bool {
 		}
 	}
 	return false
-}
-
-// freshInbox gates the untag-reversal on delivery: the reference
-// touches only files mbsync just delivered (mtime >= the sync marker),
-// so mutt-tagged old mail keeps its pending d/y/a/p tags.
-func freshInbox(paths []string, folder string, inbox []string, abs func(string) string, mark int64) bool {
-	for _, p := range paths {
-		if !inFolder([]string{p}, folder, inbox) {
-			continue
-		}
-		fi, err := os.Stat(abs(p))
-		if err == nil && fi.ModTime().Unix() >= mark {
-			return true
-		}
-	}
-	return false
-}
-
-// markerMtime is the sync marker's mtime; 0 = no marker (the untag is
-// off - the reference returns early without one).
-func markerMtime() int64 {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return 0
-	}
-	fi, err := os.Stat(filepath.Join(home, ".cache", "mail-sync-mark"))
-	if err != nil {
-		return 0
-	}
-	return fi.ModTime().Unix()
 }
 
 func hasTag(tags []string, t string) bool {

@@ -139,7 +139,9 @@ the other members present, and inbox is a member. Header rules stay
 data (muttrc/notmuch/post-new): query + add, guards enforced by the
 engine. Conditional rules stay explicit:
 delivery-gated untag-reversal, trash return-to-inbox. Read-only
-accounts (atlas) get folder tags but no moves. Side effects
+accounts (atlas, toptal) are never classified: no folder tags, no
+account tag, no header tags, no moves - the client writes nothing to
+their mail. Side effects
 (address cache, notification) subscribe to the filter job's
 completion event; they are not hook steps.
 

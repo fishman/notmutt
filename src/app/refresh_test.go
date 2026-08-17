@@ -111,6 +111,9 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 			msgs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
 		}
 		r.Msgs = msgs
+	case notmuch.ActSnapshots:
+		msgs, _ := f.msgs.Load().([]core.Message)
+		r.Msgs = msgs
 	}
 	return r, nil
 }

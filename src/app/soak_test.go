@@ -161,7 +161,7 @@ func TestSoakStagedApply(t *testing.T) {
 	// the DB clean; on an untouched DB the inverse ops are harmless no-ops
 	defer worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: byID, TagOps: inverseOps(expected, before)})
 
-	if err := applyStaged(view, groups, worker); err != nil {
+	if err := applyStaged(view, groups, worker, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	got = fetchTags(worker, thr.Msgs[0].ThreadID, target)

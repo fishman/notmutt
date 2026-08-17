@@ -90,9 +90,18 @@ func Run() error {
 	groups := st.Config().TagGroupList()
 	view.SetGroups(groups)
 
+	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
+	// ONE resolution for the filter job, the fcc derivation, and the
+	// apply's move-after-tag. A failure disables the filter job and
+	// leaves the fcc empty (skipped on send) - the client still works.
+	root, rootErr := mailRoot()
+	if rootErr != nil {
+		diag.Warn("filter: disabled", "err", rootErr.Error())
+	}
+
 	tui.SetApplyHandler(func() {
 		go func() {
-			if err := applyStaged(view, groups, worker); err != nil {
+			if err := applyStaged(view, groups, worker, cfg, root); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
 			}
 			// the view changed either way (applied drops and baselines);
@@ -128,15 +137,6 @@ func Run() error {
 	// registry; the TUI reads it through the seam
 	loadConfigAttachCommands(cfg)
 	tui.SetAttachCommandSource(func() map[string][]string { return attachCommandSnapshot() })
-
-	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
-	// ONE resolution for the filter job and the fcc derivation. A
-	// failure disables the filter job and leaves the fcc empty (skipped
-	// on send) - the client still works.
-	root, rootErr := mailRoot()
-	if rootErr != nil {
-		diag.Warn("filter: disabled", "err", rootErr.Error())
-	}
 
 	// reply: the app prefills the dialogue (account detection, parse,
 	// default signature) and publishes ComposeOpened - the TUI attaches

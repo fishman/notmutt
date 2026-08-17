@@ -22,6 +22,11 @@
 "spam" = "spam"
 "pending" = "pending"
 
+# exclusive folder tag group (R2): one message has exactly one home;
+# applying any member removes the other members present (inbox included)
+[tag-groups.folder]
+tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
+
 [schemes.vim.index]
 "j" = { fun = "cursor-down", desc = "Move the cursor down" }
 "k" = { fun = "cursor-up", desc = "Move the cursor up" }

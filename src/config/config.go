@@ -198,6 +198,7 @@ type UITags struct {
 // the raw strings never hardcode in code.
 type Glyphs struct {
 	Staged        string `toml:"staged"`
+	Cursor        string `toml:"cursor"`
 	ProgressFill  string `toml:"progress_fill"`
 	ProgressEmpty string `toml:"progress_empty"`
 	BorderTL      string `toml:"border_tl"`
@@ -882,7 +883,7 @@ func Default() Config {
 				},
 			},
 			Glyphs: Glyphs{
-				Staged: "*", ProgressFill: "#", ProgressEmpty: "-",
+				Staged: "*", Cursor: "▌", ProgressFill: "#", ProgressEmpty: "-",
 				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
 				BorderH: "─", BorderV: "│",
 			},
@@ -1248,7 +1249,7 @@ func validate(cfg Config) error {
 		return fmt.Errorf("theme.default: no variant %q", cfg.Theme.Default)
 	}
 	g := cfg.UI.Glyphs
-	if g.Staged == "" || g.ProgressFill == "" || g.ProgressEmpty == "" ||
+	if g.Staged == "" || g.Cursor == "" || g.ProgressFill == "" || g.ProgressEmpty == "" ||
 		g.BorderTL == "" || g.BorderTR == "" || g.BorderBL == "" || g.BorderBR == "" || g.BorderH == "" || g.BorderV == "" {
 		return fmt.Errorf("ui.glyphs: no glyph may be empty")
 	}

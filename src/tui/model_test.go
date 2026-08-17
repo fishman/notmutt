@@ -903,13 +903,15 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 	if si, sh := strings.Index(strip, "$ apply"), strings.Index(strip, statusMarker("0")); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
+	// the cursor marker sits on the first blank row (indicator-styled
+	// glyph, config data); the row fill itself stays normal
 	if !strings.Contains(out, "229;192;123") {
 		t.Fatalf("the first blank row must carry the indicator style:\n%s", out)
 	}
 	lines := strings.Split(strip, "\n")
 	// the frame invariant: tabBar + list + keyhint + status = height.
 	// One line over and the renderer writes out of bounds.
-	if len(lines) != 24 || lines[1] != strings.Repeat(" ", 160) {
+	if len(lines) != 24 || lines[1] != "▌"+strings.Repeat(" ", 159) {
 		t.Fatalf("frame must be exactly the terminal height with blank list rows:\n%s", strip)
 	}
 	// loading: the progress bar rides the same status line
@@ -1471,10 +1473,10 @@ func TestNumberColumnGrows(t *testing.T) {
 	m := rowsModel(12)
 	m.width, m.height = 80, 24
 	lines := strings.Split(stripANSI(m.View()), "\n")
-	if !strings.HasPrefix(lines[1], "1  ") {
+	if !strings.HasPrefix(lines[1], "▌1  ") {
 		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[1])
 	}
-	if !strings.HasPrefix(lines[10], "10 ") {
+	if !strings.HasPrefix(lines[10], " 10 ") {
 		t.Fatalf("row 10 must fit the 2-cell slot: %q", lines[10])
 	}
 }
@@ -1585,7 +1587,7 @@ func TestIndexPagesAtEdges(t *testing.T) {
 		t.Fatalf("j past the bottom edge must page down, cursor=%d offset=%d", m.CursorIndex(), m.indexOffset)
 	}
 	lines := strings.Split(stripANSI(m.View()), "\n")
-	if !strings.HasPrefix(lines[1], "22") {
+	if !strings.HasPrefix(lines[1], "▌22") {
 		t.Fatalf("the new page must render from its first row: %q", lines[1])
 	}
 	m = press(t, m, "k")

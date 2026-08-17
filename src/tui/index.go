@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/mattn/go-runewidth"
 
 	"notmutt/config"
@@ -27,14 +27,15 @@ import (
 // bar (R2), not the mail title.
 func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool) string {
 	sg := st.sgr
-	// the cursor row is monochrome (R11): one highlight background and one
-	// text color - the indicator style replaces every slot style
-	numStyle, flagStyle, dateStyle, authorStyle, subjectStyle := sg.number, sg.flags, sg.date, sg.author, sg.subject
-	if selected {
-		numStyle, flagStyle, dateStyle, authorStyle, subjectStyle = sg.indicator, sg.indicator, sg.indicator, sg.indicator, sg.indicator
-	}
+	// the row keeps its slot styles; the selection is the cursor
+	// marker cell (config glyph, indicator-styled) at the line start
 	var b strings.Builder
-	b.WriteString(numStyle.render(padCellsRight(strconv.Itoa(n), numWidth)))
+	if selected {
+		b.WriteString(sg.indicator.render(ui.Glyphs.Cursor))
+	} else {
+		b.WriteString(sg.normal.render(" "))
+	}
+	b.WriteString(sg.number.render(padCellsRight(strconv.Itoa(n), numWidth)))
 	b.WriteByte(' ')
 	if row.Msg == nil {
 		// ghost root: message-derived slots stay blank, "[...]" fills the
@@ -56,7 +57,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		return b.String()
 	}
 	tags := rowTagList(row)
-	flagStr := flagStyle.render(flags(tags))
+	flagStr := sg.flags.render(flags(tags))
 	if row.Staged {
 		// staged rows render the resolved display tags with the staged
 		// glyph (config data, R11 tag-transforms). The slot keeps its
@@ -66,25 +67,21 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	b.WriteString(flagStr)
 	b.WriteString(padCellsRight(attachIcon(row.Msg, ui.Tags), 2))
 	b.WriteString(padCellsRight(signedIcon(row.Msg, ui.Tags), 2))
-	b.WriteString(dateStyle.render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
+	b.WriteString(sg.date.render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
 	author := core.SanitizeControls(row.Msg.Author)
-	b.WriteString(authorStyle.render(padCellsRight(truncCells(author, 16), 16)))
+	b.WriteString(sg.author.render(padCellsRight(truncCells(author, 16), 16)))
 	b.WriteByte(' ')
-	tagStyle := sg.tag
-	if selected {
-		tagStyle = func(string) sgr { return sg.indicator }
-	}
 	if tagWidth > 0 {
 		// the tag slot sits right after the sender (R2 surface split:
 		// account tags live in the status bar, display tags stay in the
 		// title). The run pads to the page width - the subject column
 		// never shifts within a page.
-		b.WriteString(padTagRun(tagGlyphs(tags, ui.Tags.Max, tagStyle, ui.Tags, accountTags), tagWidth, tagStyle))
+		b.WriteString(padTagRun(tagGlyphs(tags, ui.Tags.Max, sg.tag, ui.Tags, accountTags), tagWidth, sg.tag))
 		b.WriteByte(' ')
 	}
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(subjectStyle.render(subject))
+	b.WriteString(sg.subject.render(subject))
 	return b.String()
 }
 

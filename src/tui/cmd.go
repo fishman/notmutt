@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"os"
 	"os/exec"
 	"time"
 
@@ -51,6 +52,13 @@ func quitCmd() Cmd {
 var loopScreen tcell.Screen
 
 func execCmd(cmd *exec.Cmd, done func(error) any) Cmd {
+	// the child must see the parent's terminal - exec.Command wires nil
+	// stdio to the null device, and a foreground TUI with /dev/null on
+	// all three fds launches invisible and unreadable (the tea contract
+	// this migration dropped)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	return func() []any {
 		if s := loopScreen; s != nil {
 			s.Suspend()

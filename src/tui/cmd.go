@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // The command layer is the tea.Cmd shape with the tea runtime gone

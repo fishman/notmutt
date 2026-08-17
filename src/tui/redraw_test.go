@@ -16,27 +16,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 
 	"notmutt/config"
 	"notmutt/core"
 )
 
 // newSim builds the simulation screen the loop tests drive.
-func newSim(t *testing.T, w, h int) tcell.SimulationScreen {
+func newSim(t *testing.T, w, h int) *fakeScreen {
 	t.Helper()
-	s := tcell.NewSimulationScreen("UTF-8")
-	if err := s.Init(); err != nil {
-		t.Fatal(err)
-	}
-	s.SetSize(w, h) // after Init: Init resets the physical size to 80x25
-	t.Cleanup(s.Fini)
+	s := newFakeScreen()
+	s.SetSize(w, h)
 	return s
 }
 
 // rowText decodes one screen row to text, right-trimmed like the
 // terminal renders it.
-func rowText(cs []tcell.SimCell, w, y int) string {
+func rowText(cs []fakeCell, w, y int) string {
 	var b strings.Builder
 	for x := 0; x < w; x++ {
 		r := ' '
@@ -48,14 +44,14 @@ func rowText(cs []tcell.SimCell, w, y int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
-func rowCells(cs []tcell.SimCell, w, y int) []tcell.SimCell {
+func rowCells(cs []fakeCell, w, y int) []fakeCell {
 	return cs[y*w : (y+1)*w]
 }
 
 // copyCells deep-copies the buffer (GetContents may alias the screen's
 // internal rune slices).
-func copyCells(cs []tcell.SimCell) []tcell.SimCell {
-	out := make([]tcell.SimCell, len(cs))
+func copyCells(cs []fakeCell) []fakeCell {
+	out := make([]fakeCell, len(cs))
 	for i := range cs {
 		out[i] = cs[i]
 		out[i].Runes = append([]rune(nil), cs[i].Runes...)
@@ -64,7 +60,7 @@ func copyCells(cs []tcell.SimCell) []tcell.SimCell {
 }
 
 // sameCells compares two cell rows: runes and style.
-func sameCells(a, b []tcell.SimCell) bool {
+func sameCells(a, b []fakeCell) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -85,7 +81,7 @@ func sameCells(a, b []tcell.SimCell) bool {
 }
 
 // waitScreen polls the screen buffer until the predicate holds.
-func waitScreen(t *testing.T, s tcell.SimulationScreen, w, h int, want func([]tcell.SimCell) bool) {
+func waitScreen(t *testing.T, s *fakeScreen, w, h int, want func([]fakeCell) bool) {
 	t.Helper()
 	for i := 0; i < 200; i++ {
 		if want(cellsOf(s)) {
@@ -120,10 +116,10 @@ func TestLoopCursorMoveRepaints(t *testing.T) {
 	go func() { done <- runLoop(m, s, quitCh) }()
 	defer func() { close(quitCh); <-done }()
 
-	waitScreen(t, s, w, h, func(cs []tcell.SimCell) bool { return strings.Contains(rowText(cs, w, 22), "$ apply") })
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return strings.Contains(rowText(cs, w, 22), "$ apply") })
 	before := copyCells(cellsOf(s))
 	s.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
-	waitScreen(t, s, w, h, func(cs []tcell.SimCell) bool {
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool {
 		return !sameCells(rowCells(before, w, 1), rowCells(cs, w, 1)) ||
 			!sameCells(rowCells(before, w, 2), rowCells(cs, w, 2))
 	})
@@ -138,8 +134,16 @@ func TestLoopCursorMoveRepaints(t *testing.T) {
 	}
 }
 
-// cellsOf wraps the screen's 3-value GetContents.
-func cellsOf(s tcell.SimulationScreen) []tcell.SimCell {
-	cs, _, _ := s.GetContents()
+// cellsOf rebuilds the buffer through the Screen Get API (v3 has no
+// bulk GetContents).
+func cellsOf(s *fakeScreen) []fakeCell {
+	w, h := s.Size()
+	cs := make([]fakeCell, w*h)
+	for y := 0; y < h; y++ {
+		for x := 0; x < w; x++ {
+			str, st, _ := s.Get(x, y)
+			cs[y*w+x] = fakeCell{Runes: []rune(str), Style: st}
+		}
+	}
 	return cs
 }

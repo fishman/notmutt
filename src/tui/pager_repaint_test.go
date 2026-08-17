@@ -14,15 +14,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/gdamore/tcell/v2"
+	"charm.land/lipgloss/v2"
 
 	"notmutt/config"
 	"notmutt/core"
 )
 
 // pushFrameCapture paints the frame and returns the buffer.
-func pushFrameCapture(s tcell.SimulationScreen, frame string) []tcell.SimCell {
+func pushFrameCapture(s *fakeScreen, frame string) []fakeCell {
 	pushFrame(s, frame, 0, 0, false)
 	return copyCells(cellsOf(s))
 }

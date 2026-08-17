@@ -1,7 +1,7 @@
 package tui
 
 import (
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // Run starts the loop: the real screen, then runLoop (the test entry
@@ -40,11 +40,10 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	run(cmd)
 	x, y, show := m.textCursor()
 	pushFrame(s, m.View(), x, y, show)
-	// tcell's event forwarder: ChannelEvents is itself a blocking loop
-	// (PollEvent on its goroutine), so it runs detached and forwards to
-	// evCh (closing on stop - the return path).
-	evCh := make(chan tcell.Event)
-	go s.ChannelEvents(evCh, quitCh)
+	// tcell v3's event pump: the Screen owns the EventQ channel (the
+	// ChannelEvents forwarder is gone in v3); it stays open until Fini,
+	// so quitting still comes from quitCh or the model's quitMsg.
+	evCh := s.EventQ()
 	for {
 		var msgs []any
 		select {
@@ -55,8 +54,12 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			var msg any
 			switch e := ev.(type) {
 			case *tcell.EventKey:
-				if press, _, ok := keyPressOf(e); ok {
-					msg = press
+				// v3 delivers key releases (kitty protocol); the
+				// release path is not wired, so drop them.
+				if e.Pressed() {
+					if press, _, ok := keyPressOf(e); ok {
+						msg = press
+					}
 				}
 			case *tcell.EventResize:
 				w, h := e.Size()

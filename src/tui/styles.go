@@ -1,21 +1,13 @@
 package tui
 
 import (
+	"image/color"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	"charm.land/lipgloss/v2"
 
 	"notmutt/config"
 )
-
-// Truecolor is the baseline, no 256-color mapping (R11). Pin the renderer
-// profile so colors never degrade: profile detection reads the terminal
-// behind stdout, which is a pipe under `go test` - an Ascii profile would
-// silently drop every style and break the render contract.
-func init() {
-	lipgloss.SetColorProfile(termenv.TrueColor)
-}
 
 // Styles is the full style surface the TUI renders with. ResolveStyles
 // builds it from config data; the hardcoded onedark values in
@@ -70,7 +62,9 @@ type sgr struct {
 }
 
 func sgrOf(st lipgloss.Style) sgr {
+	// v1 reset was "\x1b[0m"; v2 emits the abbreviated "\x1b[m"
 	open := strings.TrimSuffix(st.Render(""), "\x1b[0m")
+	open = strings.TrimSuffix(open, "\x1b[m")
 	if open == "" {
 		return sgr{}
 	}
@@ -96,7 +90,7 @@ func (g sgr) render(text string) string {
 // sgrSet precomputes the SGR fragments of the render hot paths.
 type sgrSet struct {
 	normal, indicator, ghost                     sgr
-	stagedNormal, stagedIndicator, stagedGhost   sgr
+	stagedNormal, stagedGhost                    sgr
 	border                                       sgr // the popup border: the indicator's fg over the normal bg (no fill)
 	number, flags, date, author, subject, staged sgr
 	tag                                          func(name string) sgr
@@ -113,19 +107,18 @@ func sgrSetOf(st Styles) sgrSet {
 	tagStyle := st.Index.Tag
 	cache := make(map[string]sgr)
 	sg := sgrSet{
-		normal:          sgrOf(st.Normal),
-		indicator:       sgrOf(st.Indicator),
-		ghost:           sgrOf(st.Index.Ghost),
-		stagedNormal:    sgrOf(st.Index.Staged.Inherit(st.Normal)),
-		stagedIndicator: sgrOf(st.Index.Staged.Inherit(st.Indicator)),
-		stagedGhost:     sgrOf(st.Index.Staged.Inherit(st.Index.Ghost)),
-		border:          sgrOf(st.Normal.Foreground(st.Indicator.GetBackground())),
-		number:          sgrOf(st.Index.Number),
-		flags:           sgrOf(st.Index.Flags),
-		date:            sgrOf(st.Index.Date),
-		author:          sgrOf(st.Index.Author),
-		subject:         sgrOf(st.Index.Subject),
-		staged:          sgrOf(st.Index.Staged),
+		normal:       sgrOf(st.Normal),
+		indicator:    sgrOf(st.Indicator),
+		ghost:        sgrOf(st.Index.Ghost),
+		stagedNormal: sgrOf(st.Index.Staged.Inherit(st.Normal)),
+		stagedGhost:  sgrOf(st.Index.Staged.Inherit(st.Index.Ghost)),
+		border:       sgrOf(st.Normal.Foreground(st.Indicator.GetBackground())),
+		number:       sgrOf(st.Index.Number),
+		flags:        sgrOf(st.Index.Flags),
+		date:         sgrOf(st.Index.Date),
+		author:       sgrOf(st.Index.Author),
+		subject:      sgrOf(st.Index.Subject),
+		staged:       sgrOf(st.Index.Staged),
 		tag: func(name string) sgr {
 			if g, ok := cache[name]; ok {
 				return g
@@ -154,7 +147,7 @@ func sgrSetOf(st Styles) sgrSet {
 }
 
 func DefaultStyles() Styles {
-	c := func(hex string) lipgloss.Color { return lipgloss.Color(hex) }
+	c := func(hex string) color.Color { return lipgloss.Color(hex) }
 	st := Styles{
 		Normal:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#21252b")),
 		Indicator: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#e5c07b")),

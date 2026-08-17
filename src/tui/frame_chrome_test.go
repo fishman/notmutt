@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -40,7 +40,7 @@ func TestFrameChromeSurvivesRefresh(t *testing.T) {
 	go func() { done <- runLoop(m, s, quitCh) }()
 	defer func() { close(quitCh); <-done }()
 
-	waitScreen(t, s, w, h, func(cs []tcell.SimCell) bool { return strings.Contains(rowText(cs, w, 22), "$ apply") })
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return strings.Contains(rowText(cs, w, 22), "$ apply") })
 	for i := 0; i < 6; i++ {
 		s.InjectKey(tcell.KeyRune, 'j', tcell.ModNone)
 		time.Sleep(15 * time.Millisecond) // each deferred paint lands on its frame tick
@@ -49,7 +49,7 @@ func TestFrameChromeSurvivesRefresh(t *testing.T) {
 	view.MergeThreads(nil)
 	view.MergeThreads(threads[:2])
 	bus.Publish(core.ViewDiff{View: "inbox"})
-	waitScreen(t, s, w, h, func(cs []tcell.SimCell) bool {
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool {
 		// stable shrink: rows 3-21 blank, chrome intact, status shows 2
 		status := rowText(cs, w, h-1)
 		for r := 3; r <= 21; r++ {
@@ -61,7 +61,7 @@ func TestFrameChromeSurvivesRefresh(t *testing.T) {
 	})
 	view.MergeThreads(threads)
 	bus.Publish(core.ViewDiff{View: "inbox"})
-	waitScreen(t, s, w, h, func(cs []tcell.SimCell) bool { return rowText(cs, w, 21) != "" })
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return rowText(cs, w, 21) != "" })
 
 	cs := cellsOf(s)
 	for r := 1; r <= 21; r++ {

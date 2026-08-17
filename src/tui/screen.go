@@ -5,7 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -23,14 +23,43 @@ import (
 // Rows beyond the frame get the screen base; the renderers pad their
 // rows (the empty-view contract), so the base only shows below an
 // abnormally short frame.
+// pushedFrames remembers the last frame pushed per screen: an
+// unchanged row skips its SetContent sweep (the tcell Show diff covers
+// the rest), and a wholly unchanged frame (same rows, cursor, and size)
+// skips the Show diff walk entirely - the terminal already shows it.
+// The map keeps test screens from aliasing the loop's screen; the loop
+// is the only writer, so no lock.
+type pushedState struct {
+	frame      string
+	rows       []string
+	cursorX    int
+	cursorY    int
+	showCursor bool
+	w, h       int
+}
+
+var pushedFrames = map[tcell.Screen]pushedState{}
+
 func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bool) {
-	style := tcell.StyleDefault
 	w, h := s.Size()
+	if last, seen := pushedFrames[s]; seen && last.frame == frame && last.cursorX == cursorX &&
+		last.cursorY == cursorY && last.showCursor == showCursor && last.w == w && last.h == h {
+		return
+	}
+	style := tcell.StyleDefault
+	last, seen := pushedFrames[s]
+	if seen && len(last.rows) != h {
+		last.rows = nil
+		seen = false
+	}
 	rows := strings.Split(frame, "\n")
 	for y := 0; y < h; y++ {
 		row := ""
 		if y < len(rows) {
 			row = rows[y]
+		}
+		if seen && y < len(last.rows) && last.rows[y] == row {
+			continue
 		}
 		cs, end := parseSGR(row, style)
 		x := 0
@@ -48,7 +77,12 @@ func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bo
 		for ; x < w; x++ {
 			s.SetContent(x, y, ' ', nil, end)
 		}
+		for len(last.rows) <= y {
+			last.rows = append(last.rows, "")
+		}
+		last.rows[y] = row
 	}
+	pushedFrames[s] = pushedState{frame: frame, rows: last.rows, cursorX: cursorX, cursorY: cursorY, showCursor: showCursor, w: w, h: h}
 	if showCursor {
 		s.ShowCursor(cursorX, cursorY)
 	} else {

@@ -2,8 +2,9 @@ package tui
 
 import (
 	"strings"
+	"unicode/utf8"
 
-	"github.com/gdamore/tcell/v2"
+	"github.com/gdamore/tcell/v3"
 )
 
 // The key model is the tea v2 shape with the tea import gone (decision
@@ -119,7 +120,8 @@ func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 		mod |= modShift
 	}
 	if code == tcell.KeyRune {
-		r := ev.Rune()
+		// v3 delivers the rune(s) as Str() (the Rune accessor is gone)
+		r, _ := utf8.DecodeRuneInString(ev.Str())
 		text := ""
 		if mod == modNone || mod == modShift {
 			text = string(r)

@@ -54,20 +54,27 @@ func styledRow() string {
 	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags())
 }
 
-// TestRowSelectedMonochrome pins the cursor row look (R11): the indicator
-// style replaces every slot style, so the highlighted row carries one
-// highlight background and one text color - no per-slot colors survive.
-func TestRowSelectedMonochrome(t *testing.T) {
+// TestRowSelectedMarker pins the cursor row look: the row keeps its
+// slot styles, and the selection is the cursor marker cell (config
+// glyph, indicator-styled) at the line start - the indicator style
+// never leaks past the marker.
+func TestRowSelectedMarker(t *testing.T) {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
 	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, true, config.Default().AccountTags())
-	if !strings.Contains(out, "48;2;229;192;123") { // indicator bg #e5c07b
-		t.Fatalf("indicator background missing from selected row: %q", out)
+	if !strings.HasPrefix(out, "\x1b[38;2;33;37;43;48;2;229;192;123m▌") { // indicator fg #21252b + bg on the marker
+		t.Fatalf("cursor marker must carry the indicator style: %q", out)
 	}
-	if strings.Contains(out, "38;2;97;175;239") { // author blue #61afef
-		t.Fatalf("slot color survived on the selected row: %q", out)
+	if !strings.Contains(out, "38;2;97;175;239") { // author blue #61afef
+		t.Fatalf("slot colors must survive on the selected row: %q", out)
+	}
+	// the marker cell reserves its column on unselected rows, so the
+	// line never shifts when the cursor moves
+	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags())
+	if !strings.HasPrefix(stripANSI(plain), " ") {
+		t.Fatalf("the marker cell must reserve its column on unselected rows: %q", plain)
 	}
 }
 
@@ -81,7 +88,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
 	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 5, false, config.Default().AccountTags()))
-	if !strings.HasPrefix(out, "1    A ") {
+	if !strings.HasPrefix(out, " 1    A ") {
 		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
 	}
 	// tag names render in full next to the sender, never truncated to a
@@ -108,7 +115,7 @@ func TestRowFlagSlot(t *testing.T) {
 		Author: "Ann", Subject: "hello", Tags: []string{"replied", "signed", "work"},
 	}}
 	out := stripANSI(renderRow(1, row, st, ui, 1, 4, false, acc))
-	if !strings.HasPrefix(out, "1 R ") {
+	if !strings.HasPrefix(out, " 1 R ") {
 		t.Fatalf("flags slot must show replied: %q", out)
 	}
 	if !strings.Contains(out, "🔒") || strings.Index(out, "🔒") > strings.Index(out, "25/08/14") {
@@ -142,7 +149,7 @@ func TestRowTagIcon(t *testing.T) {
 	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, false, config.Default().AccountTags()))
 	// number + blank flags slot precede the attachment slot; the icon must
 	// sit before the date column, not in the tag slot
-	if !strings.HasPrefix(out, "1    x ") {
+	if !strings.HasPrefix(out, " 1    x ") {
 		t.Fatalf("attachment icon must open the row (row-start slot): %q", out)
 	}
 	if strings.Contains(out, "attachment") {

@@ -3,17 +3,18 @@
 notmutt is an async, command-line-first mail client built on notmuch.
 Tags are the logical model: every view, filter, and trigger is a notmuch
 query or tag operation; folders exist only for sync-tool compatibility.
-Written in Go - tcell TUI (lipgloss for layout math), go-message for
-mail parsing and composition, TOML config, vim keybindings by default.
+Written in Go - tcell v3 TUI (lipgloss v2 for layout math), go-message
+for mail parsing and composition, TOML config, vim keybindings by
+default.
 
 Requirements and architecture are normative in AGENTS.md; the design
 decisions and their measurements live in docs/design-decisions.md.
 
 Status: M1 (mailbox view) and M2 (staged tag ops, send dialogue) are
-done, including the render-coalescing round. The notmuch CLI is the
-runtime backend (measured 1.5s full walk vs the cgo binding's 8.7s on a
-33k-thread inbox); the index is a materialized bbolt cache keyed by
-notmuch's revision.
+done, including the render-coalescing round. The cgo binding is the
+runtime backend (the batched walk closed the gap: 1.645s vs the CLI's
+1.534s on a 33k-thread inbox; the CLI survives behind `-tags cli`);
+the index is a materialized bbolt cache keyed by notmuch's revision.
 
 Keybindings: `o` opens a thread (marks it read), `p` previews it in a
 popup over the index without marking it read, `$` applies staged tag
@@ -36,7 +37,12 @@ The structural differences from neomutt are unchanged by the flip:
    threads, never a rebuild, R3); the flat row array is DERIVED by a
    flatten that costs O(rows) whenever the tree changes (8us at 100
    rows, 6.3ms at 33k). neomutt paints directly from a flat array and
-   never pays that derivation in steady state.
+   never pays that derivation in steady state. Cursor resolution was
+   the same hazard once removed: every render resolved the cursor
+   through a view method that re-flattened the list per call. The
+   cursor index now lives in the view - moves write it, merges
+   re-anchor it once at materialization - so a press never touches
+   more than the visible window.
 2. Every message rebuilds the whole frame string in Go - every row
    re-styled - before the renderer can diff anything. tcell's
    Screen.Show() diffs the frame against the previous cell buffer, so
@@ -56,6 +62,7 @@ The render-coalescing round addressed all three. Measured on the
 | pager resize, 20k-line document | 385ms | 44-74us |
 | fill-window press, whole-fill batch | 2.61ms | 147us (17.7x) |
 | frame rebuild, all rows cached (40 visible @ 5k list) | 182us uncached | 24us (7.7x) |
+| keypress on the full 30k list (cursor resolve) | ~8ms flatten+scan per paint | 12us (O(1) index read) |
 
 The mechanisms: SGR sequences precomputed at style resolution (was 58%
 of the frame build), lazy pager styling (visible window only), the
@@ -95,6 +102,22 @@ The frame builders still emit SGR strings; a small adapter
 boundary. Only the client's own frames arrive there, so the parser is
 a strict param-walk over known sequences, not a general terminal
 emulator.
+
+Upgraded to tcell v3 (the lazygit pin) and lipgloss v2 the same day
+this record was written: v3 deleted the terminfo database - color
+support is env-heuristic, so TERM=tmux-direct/foot-direct and
+COLORTERM=truecolor resolve truecolor natively (the R11 baseline)
+without any terminfo entries. The v2 fork (row-dirty skip, truecolor
+env fix) is retired from go.mod; v3's native per-cell dirty skip and
+its env detection cover both. The port cost: SimulationScreen is gone,
+so the loop tests drive a ~110-line fake screen behind the Screen
+interface, events arrive on the Screen's EventQ channel (no
+ChannelEvents forwarder), and key releases need an explicit Pressed()
+filter. lipgloss v2 (charm.land vanity path) renders through
+colorprofile internally, so termenv is no longer a dependency and the
+v1 profile pinning is deleted; its abbreviated "\x1b[m" reset is
+stripped alongside the v1 form when an SGR open is derived from a
+style.
 
 The remaining structural differences are deliberate: full-frame
 rebuilds are the price of a maintained model, and the thread tree is

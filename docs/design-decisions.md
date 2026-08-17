@@ -426,3 +426,56 @@ user; alphabetical ordering would let filters.toml silently override
 the main file, which inverts the mental model "config.toml is the
 config". Strict load (R8) still names the FILE carrying an unknown
 key, so attribution survives the merge.
+
+## 23. TUI: tcell + lipgloss (2026-08-17, flips 5)
+
+Decision: move the TUI render path from BubbleTea v2 to tcell, keeping
+lipgloss. The model architecture does not move with it - the frame
+builders stay, the async core stays, R5's view/rendering split stays.
+Only the trust boundary changes: tcell owns the screen buffer, the
+cell-level diff, and input; lipgloss keeps what it already does (layout
+math, border/box strings, string styling in the frame builders); R11
+gains a tcell.Style emitter alongside its SGR emitter. Record 5
+(BubbleTea v2) is superseded; the AGENTS.md R7 table and the language
+decision record amend when the move lands.
+
+Why: the vendored v2 renderer is the wrong trust boundary. The
+out-of-bounds episode (2026-08-15) ended in a model-side fix (frame
+height, record 16's padding rule), and the vendored ultraviolet diff
+engine was verified byte-correct - but verifying it required a decoder
+test harness that re-implements what tcell's Screen.Show() does natively:
+a buffer you can dump and reason about directly. That debugging cost
+repeats on every renderer artifact, real or suspected. tcell is the
+mature version of the same idea (screen cellbuf + internal diff + Show)
+with a decade of production use; lazygit - this project's R5/R9
+architecture reference - is tcell directly with its own theme struct,
+which validates the pairing. tview was rejected in the R7 record for
+coupling app state into its primitives; tcell has no such layer, it is
+a screen and an event source, nothing more.
+
+Styling is where the flip is cheapest, not dearest: the R11 engine
+already produces styles as data (palette -> fg/bg/attrs). Today that
+data is rendered into SGR strings for the bubbletea styled-string
+parser; with tcell it renders into tcell.Style per cell - the natural
+representation, no SGR round-trip, no string walking. lipgloss's role
+is unchanged (it already lives in the frame builders, spliceBox and
+friends); the R11 theme records (records 14/16) survive verbatim.
+
+What the migration touches (when it happens): the tui package render
+path only - tea.NewProgram/Update/Cmd become a tcell.Screen plus a
+hand-rolled event loop (tcell events feed the same keybinding dispatch;
+lazygit's controllers pattern is the reference); tea.ExecProcess (the
+editor/attach command flow) becomes a tcell.Suspend/resume around the
+subprocess, the pattern lazygit's task system uses; the paint gate
+(frame cache, record 14) survives as the trigger that pushes a frame to
+the screen. core, app, filter, compose are untouched - R3/R4's async
+model rides the bus, not the renderer.
+
+Costs, stated plainly: the render path rewrite and its test churn; the
+kitty keyboard protocol and altscreen setup move from bubbletea's
+scaffolding into tcell's equivalents (tcell >= 2.8 carries enhanced
+keyboard support - verify at implementation time); the frame-string
+builders either grow a string-to-screen adapter (SGR runs -> tcell
+cells, parse only OUR frames, trusted input) or skip the adapter and
+emit tcell.Style directly. There is no live renderer bug driving this -
+it is insurance and simplification, not a fix.

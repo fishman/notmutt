@@ -59,7 +59,14 @@ func (m *Model) renderCompose() string {
 	b.WriteByte('\n')
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
-	form := m.composeForm(st)
+	// the cursor marker column: the index's selection marker cell is
+	// reserved on every row (the R11 slot rule), so the marker never
+	// shifts content - the cursor row shows the glyph, the others a
+	// blank cell, and a constant gap space follows the mark on every
+	// row. The row content is laid out for the frame minus the column
+	// and the gap, so the mime info stays right-aligned to the edge.
+	colW := runewidth.StringWidth(m.ui.Glyphs.Cursor)
+	form := m.composeForm(st, m.width-colW-1)
 	// the form is a viewport (the pager widget): when the rows outgrow
 	// the frame, the window scrolls with the cursor (formIdx). The
 	// frame discipline holds - the keyhint/status rows stay anchored.
@@ -94,15 +101,16 @@ func (m *Model) renderCompose() string {
 		}
 		line := f.text
 		if f.label != "" {
-			line = composeLabel(f.label, f.value, labelW, m.width, m.styles)
+			line = composeLabel(f.label, f.value, labelW, m.width-colW-1, m.styles)
 		}
+		mark := strings.Repeat(" ", colW)
 		if f.slot == m.formIdx {
-			// the cursor is the index's selection marker: one
-			// indicator-styled cell at the line start (the same style
-			// as the index rows), never a full-line highlight
-			line = m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor) + truncateStyled(line, m.width-1)
+			// the cursor is the index's selection marker: the glyph in
+			// the indicator style in the reserved column (the same
+			// style as the index rows), never a full-line highlight
+			mark = m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor)
 		}
-		b.WriteString(padRow(line, m.width, outer))
+		b.WriteString(padRow(mark+" "+line, m.width, outer))
 		b.WriteByte('\n')
 	}
 	previewRows := rows - formRows
@@ -188,11 +196,12 @@ func previewLinesOf(content string) []core.Line {
 // composeForm renders the form rows: the sender info (account, From,
 // To, Cc, Bcc, Subject, Reply-To, Fcc - Fcc static, set from the
 // account), the Security row, then the attachment list with mutt's
-// markers: the message-text row (marker -, entry 1, its mime type,
+// markers: the message-text row (marker I, entry 1, its mime type,
 // the buffer file path) and the attached files (marker A, deletable),
 // separators. Address lists cap at two display rows (alignment never
-// shifts; "+N more" names the overflow).
-func (m *Model) composeForm(st compose.State) []composeForm {
+// shifts; "+N more" names the overflow). w is the row content width
+// (the frame minus the reserved cursor column).
+func (m *Model) composeForm(st compose.State, w int) []composeForm {
 	capList := func(addrs []string) string {
 		if len(addrs) == 0 {
 			return ""
@@ -217,14 +226,14 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 	// the message-text row: marker I (mutt's inline part), entry 1,
 	// the buffer file path, its wire facts
 	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath,
-		partCell(compose.InlineFacts(&st), int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))), m.width)})
+		partCell(compose.InlineFacts(&st), int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))), w)})
 	for i, a := range st.Attachments {
 		if i >= 3 {
 			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
 			break
 		}
 		rows = append(rows, composeForm{slot: 9 + i,
-			text: attachRow("A", i+2, a.Name, partCell(compose.AttachmentFacts(a), a.Size), m.width)})
+			text: attachRow("A", i+2, a.Name, partCell(compose.AttachmentFacts(a), a.Size), w)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "--- Preview", divider: true})
 	// the form rows render mail-derived text (Subject/To/Cc from the
@@ -239,13 +248,13 @@ func (m *Model) composeForm(st compose.State) []composeForm {
 }
 
 // attachRow lays one attachment-list row out as a 4-column table
-// (mutt's attach-menu shape): the type marker (- I message text, - A
+// (mutt's attach-menu shape): the type marker (I message text, A
 // attachment), the entry number right-aligned in a fixed column, the
 // name/path left-aligned, the mime info right-aligned to the row
 // edge. Column widths never shift with content (R11 slot discipline);
 // a long name truncates.
 func attachRow(marker string, num int, name, mime string, w int) string {
-	prefix := fmt.Sprintf("- %s %*d ", marker, attachNumW, num)
+	prefix := fmt.Sprintf("%s %*d ", marker, attachNumW, num)
 	fileW := w - len(prefix) - runewidth.StringWidth(mime)
 	if fileW < 1 {
 		fileW = 1

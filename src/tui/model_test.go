@@ -2899,7 +2899,7 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if !strings.Contains(stripANSI(lines[1]), "a attach") {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
-	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "- I", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview"} {
+	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "I    1", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview"} {
 		if !strings.Contains(stripANSI(frame), want) {
 			t.Fatalf("the frame must show %q:\n%s", want, frame)
 		}
@@ -2943,7 +2943,7 @@ func TestComposeCursorIndexMarker(t *testing.T) {
 	}
 	row := ""
 	for _, l := range strings.Split(m.render(), "\n") {
-		if strings.Contains(stripANSI(l), "- I ") {
+		if strings.Contains(stripANSI(l), "I    1 ") {
 			row = l
 			break
 		}
@@ -2973,7 +2973,7 @@ func TestComposeCursorIndexMarker(t *testing.T) {
 		t.Fatalf("j must move onto the first attachment, formIdx = %d", m.formIdx)
 	}
 	for _, l := range strings.Split(m.render(), "\n") {
-		if strings.Contains(stripANSI(l), "- I ") && strings.Contains(l, m.styles.sgr.indicator.open) {
+		if strings.Contains(stripANSI(l), "I    1 ") && strings.Contains(l, m.styles.sgr.indicator.open) {
 			t.Fatalf("the message-text row must lose the marker after j:\n%s", l)
 		}
 	}
@@ -3236,7 +3236,8 @@ func TestEditUnconditionalAtAnySlot(t *testing.T) {
 
 // TestComposeTableColonAlign pins the two-column table: every settings
 // row's label colon sits at the same cell (labelW = 9 at the default
-// label set: "Security:" / "Reply-To:" are the widest).
+// label set: "Security:" / "Reply-To:" are the widest, plus the
+// reserved cursor column).
 func TestComposeTableColonAlign(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
@@ -3251,8 +3252,8 @@ func TestComposeTableColonAlign(t *testing.T) {
 		seam = strings.Index(l, ":")
 		break
 	}
-	if seam != 8 {
-		t.Fatalf("the label column seam must sit at cell 8, got %d:\n%s", seam, frame)
+	if seam != 10 {
+		t.Fatalf("the label column seam must sit at cell 10, got %d:\n%s", seam, frame)
 	}
 	seen := 0
 	for _, l := range lines {

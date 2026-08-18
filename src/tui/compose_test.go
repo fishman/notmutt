@@ -11,7 +11,7 @@ import (
 )
 
 // TestAttachRowTable pins the 4-column table (mutt's attach-menu
-// shape): the type marker column (- I / - A) lines up, entry numbers
+// shape): the type marker column (I / A) lines up, entry numbers
 // right-align in their fixed column, names stay left-aligned, the
 // mime info right-aligns to the row edge. Column widths never shift
 // with content (R11 slot discipline); a long name truncates.
@@ -19,17 +19,17 @@ func TestAttachRowTable(t *testing.T) {
 	w := 80
 	body := attachRow("I", 1, "/tmp/body.txt", "[text/plain, quoted-printable, utf-8, 0.1K]", w)
 	att := attachRow("A", 12, "notes.md", "[text/markdown, base64, 40K]", w)
-	if !strings.HasPrefix(body, "- I ") || !strings.HasPrefix(att, "- A ") {
+	if !strings.HasPrefix(body, "I ") || !strings.HasPrefix(att, "A ") {
 		t.Fatalf("the marker column must line up:\n%q\n%q", body, att)
 	}
-	// the number column (cells 4-7, attachNumW): right-aligned, so the
+	// the number column (cells 2-5, attachNumW): right-aligned, so the
 	// last digit of 1 and 12 sits at the same cell
-	if body[4:8] != "   1" || att[4:8] != "  12" {
+	if body[2:6] != "   1" || att[2:6] != "  12" {
 		t.Fatalf("numbers must right-align in the fixed column:\n%q\n%q", body, att)
 	}
-	// the name starts at cell 9 in both rows (prefix "- I " + the
-	// number field)
-	if !strings.HasPrefix(body[9:], "/tmp/body.txt") || !strings.HasPrefix(att[9:], "notes.md") {
+	// the name starts at cell 7 in both rows (the marker + the number
+	// field)
+	if !strings.HasPrefix(body[7:], "/tmp/body.txt") || !strings.HasPrefix(att[7:], "notes.md") {
 		t.Fatalf("the name column must start at the same cell:\n%q\n%q", body, att)
 	}
 	// the mime info right-aligns: both rows end at the same width with

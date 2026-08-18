@@ -184,7 +184,7 @@ func ParseMessage(path string) (*Message, error) {
 		}
 	}
 	m.Date = hdr.Get("Date")
-	m.Subject = hdr.Get("Subject")
+	m.Subject = core.DecodeSubject(hdr.Get("Subject"))
 	var imgBuffered int64
 	for {
 		p, err := mr.NextPart()

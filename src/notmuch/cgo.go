@@ -96,7 +96,7 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit fu
 				ThreadID:  s.ThreadID,
 				Timestamp: s.Timestamp,
 				Author:    s.Authors,
-				Subject:   s.Subject,
+				Subject:   core.DecodeSubject(s.Subject),
 				Tags:      s.Tags,
 			})
 		}
@@ -160,7 +160,7 @@ func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 				ThreadID:   m.ThreadID(),
 				Timestamp:  m.Date().Unix(),
 				Author:     m.Header("from"),
-				Subject:    m.Header("subject"),
+				Subject:    core.DecodeSubject(m.Header("subject")),
 				Tags:       tagsOf(m),
 				Paths:      pathsOf(m),
 				References: refsOf(m),
@@ -385,7 +385,7 @@ func (b *CGOBackend) Snapshots(ctx context.Context, ids []string) ([]Message, er
 		if err != nil {
 			return nil, fmt.Errorf("notmuch snapshot: %w", err)
 		}
-		out = append(out, Message{ID: id, Subject: m.Header("subject"), Tags: tagsOf(m), Paths: pathsOf(m)})
+		out = append(out, Message{ID: id, Subject: core.DecodeSubject(m.Header("subject")), Tags: tagsOf(m), Paths: pathsOf(m)})
 	}
 	return out, nil
 }

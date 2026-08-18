@@ -75,7 +75,7 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit int, emit fu
 		hi := min(i+size, len(items))
 		msgs := make([]core.Message, 0, hi-i)
 		for _, it := range items[i:hi] {
-			msgs = append(msgs, core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: it.Subject, Tags: it.Tags})
+			msgs = append(msgs, core.Message{ThreadID: it.Thread, Timestamp: it.Timestamp, Author: it.Authors, Subject: core.DecodeSubject(it.Subject), Tags: it.Tags})
 		}
 		if !emit(msgs) {
 			return nil
@@ -222,7 +222,7 @@ func walkGroups(groups [][]showNode, threadID string) []core.Message {
 			copy(refs, chain)
 			msgs = append(msgs, core.Message{
 				ID: n.Msg.ID, ThreadID: threadID, Timestamp: n.Msg.Timestamp,
-				Author: n.Msg.Headers["From"], Subject: n.Msg.Headers["Subject"],
+				Author: n.Msg.Headers["From"], Subject: core.DecodeSubject(n.Msg.Headers["Subject"]),
 				Tags: n.Msg.Tags, Paths: n.Msg.Filename, References: refs,
 			})
 			walk(n.Children, append(refs, n.Msg.ID))

@@ -81,47 +81,62 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	return ""
 }
 
-// probeCellSize asks the terminal for its cell size in pixels (XTerm's
-// CSI 18 t; kitty/ghostty/wezterm answer, tmux relays) so images
-// reserve exactly the rows their pixels occupy. No reply within the
-// deadline keeps the defaults. Runs before tcell takes the tty over -
-// the reply would otherwise race tcell's input pump.
+// probeCellSize asks the terminal for its cell size in pixels: the
+// CSI 14 t window-pixel reply divided by the CSI 18 t cell counts
+// (kitty/foot/wezterm/ghostty answer both). tmux answers such queries
+// itself and writes the reply into the pane's output - visible screen
+// garbage - so under tmux the probe is skipped and the 10x20 defaults
+// stay. No reply within the deadline keeps the defaults too. Runs
+// before tcell takes the tty over - the reply would otherwise race
+// tcell's input pump.
 func probeCellSize() {
+	if os.Getenv("TMUX") != "" {
+		return
+	}
 	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	if _, err := f.WriteString("\x1b[18t"); err != nil {
+	if _, err := f.WriteString("\x1b[14t\x1b[18t"); err != nil {
 		return
 	}
 	f.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
-	buf := make([]byte, 64)
+	buf := make([]byte, 128)
 	n, err := f.Read(buf)
 	if err != nil {
 		return
 	}
-	if h, w, ok := parseCellReply(string(buf[:n])); ok {
-		imgCellH, imgCellW = h, w
+	s := string(buf[:n])
+	ph, pw, ok := parseSizeReply(s, "4;") // the window's pixel size
+	if !ok {
+		return
+	}
+	rh, rw, ok := parseSizeReply(s, "8;") // the window's cell counts
+	if !ok {
+		return
+	}
+	ch, cw := ph/rh, pw/rw
+	if ch >= 1 && ch <= 60 && cw >= 1 && cw <= 60 {
+		imgCellH, imgCellW = ch, cw
 	}
 }
 
-// parseCellReply extracts the cell size from a CSI 18 t reply
-// (ESC [ 4 ; <cell h px> ; <cell w px> t); ok=false for any other
-// shape or an out-of-range size.
-func parseCellReply(s string) (h, w int, ok bool) {
-	i := strings.Index(s, "\x1b[4;")
+// parseSizeReply extracts a size pair from a window-size reply
+// (CSI 4 ; h ; w t for pixels, CSI 8 ; r ; c t for cell counts);
+// ok=false for any other shape or an out-of-range size.
+func parseSizeReply(s, prefix string) (h, w int, ok bool) {
+	i := strings.Index(s, "\x1b["+prefix)
 	if i < 0 {
 		return 0, 0, false
 	}
-	var vh, vw int
-	if _, err := fmt.Sscanf(s[i+4:], "%d;%dt", &vh, &vw); err != nil {
+	if _, err := fmt.Sscanf(s[i+4:], "%d;%dt", &h, &w); err != nil {
 		return 0, 0, false
 	}
-	if vh < 1 || vh > 200 || vw < 1 || vw > 200 {
+	if h < 1 || h > 10000 || w < 1 || w > 10000 {
 		return 0, 0, false
 	}
-	return vh, vw, true
+	return h, w, true
 }
 
 // sixelCapable is the negotiated sixel flag the screen exposes (the

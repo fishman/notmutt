@@ -817,26 +817,29 @@ func TestSixelEncodeTransparent(t *testing.T) {
 	}
 }
 
-// TestParseCellReply pins the CSI 18 t reply parser: the cell size in
-// pixels (h;w), garbage and out-of-range replies rejected.
+// TestParseCellReply pins the window-size reply parser: the CSI 14 t
+// pixel reply (4;h;w) and the CSI 18 t cell-count reply (8;r;c),
+// garbage and out-of-range sizes rejected.
 func TestParseCellReply(t *testing.T) {
 	cases := []struct {
-		in   string
-		h, w int
-		ok   bool
+		prefix string
+		in     string
+		h, w   int
+		ok     bool
 	}{
-		{"\x1b[4;30;10t", 30, 10, true},
-		{"\x1b[4;1;1t", 1, 1, true},
-		{"junk\x1b[4;24;8t\r\n", 24, 8, true},
-		{"\x1b[4;0;0t", 0, 0, false},
-		{"\x1b[4;300;10t", 0, 0, false},
-		{"\x1b[4;30", 0, 0, false},
-		{"no reply", 0, 0, false},
+		{"4;", "\x1b[4;2160;3840t", 2160, 3840, true},
+		{"8;", "\x1b[8;54;240t", 54, 240, true},
+		{"8;", "junk\x1b[8;24;80t\r\n", 24, 80, true},
+		{"4;", "\x1b[4;2160;3840t\x1b[8;54;240t", 2160, 3840, true},
+		{"4;", "\x1b[4;0;0t", 0, 0, false},
+		{"4;", "\x1b[4;20000;10t", 0, 0, false},
+		{"4;", "\x1b[4;30", 0, 0, false},
+		{"8;", "no reply", 0, 0, false},
 	}
 	for _, tc := range cases {
-		h, w, ok := parseCellReply(tc.in)
+		h, w, ok := parseSizeReply(tc.in, tc.prefix)
 		if h != tc.h || w != tc.w || ok != tc.ok {
-			t.Fatalf("parseCellReply(%q) = %d,%d,%v want %d,%d,%v", tc.in, h, w, ok, tc.h, tc.w, tc.ok)
+			t.Fatalf("parseSizeReply(%q, %q) = %d,%d,%v want %d,%d,%v", tc.in, tc.prefix, h, w, ok, tc.h, tc.w, tc.ok)
 		}
 	}
 }

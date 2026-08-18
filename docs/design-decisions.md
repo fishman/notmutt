@@ -506,3 +506,30 @@ localize through the same catalogs as core strings, and a plugin
 language is still selected by `[ui] language`, never by plugin
 config. The core i18n package imports nothing Lua; the binding lives
 in the lua-gated adapter. Default builds carry no VM and no binding.
+
+## 25. AI: no vendor SDKs, stdlib HTTP + pass_cmd (2026-08-18)
+
+Decision: the AI provider layer (src/app/ai, `[ai.<name>]` config) talks
+to anthropic and OpenAI-compatible endpoints with the stdlib net/http
+client only - no `anthropic-sdk-go`, no `go-openai`, no other vendor
+library.
+
+Why: we do not trust them. An SDK is a supply-chain liability, not a
+convenience: every one of them adds a dependency tree that must be
+pinned, vendored, and audited (R7 policy) for the sake of a POST with
+headers and a JSON body - the vendor SDKs exist to sell their
+platform's convenience features, and their value per byte of trusted
+code is the worst in the tree. The protocol surface is two shapes
+(anthropic /v1/messages NDJSON, OpenAI /v1/chat/completions SSE) that
+a request reader can see in full; the stream parsing is a bounded-line
+scanner, not a library-sized problem. The same reasoning already
+applies to crypto (R10: system tools, never vendored crypto) - the
+provider boundary is a network protocol, and the client keeps the
+smallest auditable surface between the user's secrets (the pass_cmd
+key) and the wire.
+
+pass_cmd follows the same distrust: the key never lives in client
+memory beyond one request (fetched per request, cleared after), never
+appears in a log, and is referenced only where the auth header
+requires it. argv-only exec (F4) - a secret-bearing command is
+tokenized at config load, never shell-interpolated.

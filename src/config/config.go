@@ -142,9 +142,14 @@ type Setup struct {
 // open key resolves the thread's sender domain against DefaultViews
 // and opens in the mapped view; unmapped domains keep the plain
 // default. The v toggle and the F/ctrl+u keys always request explicit
-// views, never the map.
+// views, never the map. ImageProtocol picks the terminal image
+// protocol: sixel (the default - most terminals support it) or kitty
+// (opt-in - kitty/wezterm/ghostty and friends). AllowTrackingImages
+// lifts the 1x1 tracking-pixel block on fetched remote images.
 type Pager struct {
-	DefaultViews map[string]string `toml:"default-views"`
+	DefaultViews        map[string]string `toml:"default-views"`
+	ImageProtocol       string            `toml:"image-protocol"`
+	AllowTrackingImages bool              `toml:"allow-tracking-images"`
 }
 
 // Lua configures the Lua plugin layer (R8): Tags is the config-level
@@ -1251,6 +1256,9 @@ func validate(cfg Config) error {
 		if v != "plain" && v != "html" {
 			return fmt.Errorf("pager.default-views.%s: must be plain or html, got %q", d, v)
 		}
+	}
+	if v := cfg.Pager.ImageProtocol; v != "" && v != "sixel" && v != "kitty" {
+		return fmt.Errorf("pager.image-protocol: must be sixel or kitty, got %q", v)
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)

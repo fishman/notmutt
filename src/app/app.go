@@ -133,11 +133,12 @@ func Run() error {
 		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks, nil)
 	})
 
-	// the remote image fetch (the render-images remote mode): http(s)
+	// the remote image fetch (the load-remote-images mode): http(s)
 	// srcs fetch ONLY on the key, capped and off the render path
-	// (imgfetch.go); the TUI publishes the url through this seam
+	// (imgfetch.go); the TUI publishes the url through this seam. The
+	// tracking-pixel block travels with the config
 	tui.SetImageFetchHandler(func(url string) {
-		go fetchImage(bus, url)
+		go fetchImage(bus, url, cfg.Pager.AllowTrackingImages)
 	})
 
 	// the signatures root (spec section 9): ONE path, both halves of

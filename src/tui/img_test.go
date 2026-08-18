@@ -1,11 +1,11 @@
 package tui
 
-// The render-images pipeline: image lines stay collapsed placeholders
-// (privacy gate - the bytes are never decoded until the toggle), the
-// toggle expands them to Image.Rows rows, and the terminal paint
-// emits the decoded+scaled pixels after the frame (protocol by
-// environment). All paints flow through imageWriter - nil in the
-// frame tests, a buffer here.
+// The load-remote-images pipeline: image lines stay collapsed
+// placeholders (privacy gate - the bytes are never decoded until the
+// toggle), the toggle expands them to Image.Rows rows, and the
+// terminal paint emits the decoded+scaled pixels after the frame
+// (protocol by config + environment, sixel by default). All paints
+// flow through imageWriter - nil in the frame tests, a buffer here.
 
 import (
 	"bytes"
@@ -195,23 +195,33 @@ func TestDecodeImage(t *testing.T) {
 }
 
 func TestDetectImageProtocol(t *testing.T) {
+	base := config.Default()
+	kitty := config.Default()
+	kitty.Pager.ImageProtocol = "kitty"
 	cases := []struct {
+		cfg  config.Pager
 		env  map[string]string
 		want string
 	}{
-		{map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "kitty"},
-		{map[string]string{"TERM_PROGRAM": "wezterm"}, "kitty"},
-		{map[string]string{"TERM_PROGRAM": "ghostty"}, "kitty"},
-		{map[string]string{"TERM": "foot"}, "sixel"},
-		{map[string]string{"TERM": "xterm-sixel"}, "sixel"},
-		{map[string]string{"TERM": "mlterm"}, "sixel"},
-		{map[string]string{"TERM": "xterm-256color"}, ""},
+		// kitty is opt-in: the kitty environment alone never selects it
+		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, ""},
+		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, "kitty"},
+		{kitty.Pager, map[string]string{"TERM": "xterm-256color"}, ""},
+		// sixel by default when the terminal names it in TERM
+		{base.Pager, map[string]string{"TERM": "foot"}, "sixel"},
+		{base.Pager, map[string]string{"TERM": "xterm-sixel"}, "sixel"},
+		{base.Pager, map[string]string{"TERM": "mlterm"}, "sixel"},
+		// unsupported terminals (tmux passes no image protocol through)
+		{base.Pager, map[string]string{"TERM": "tmux-direct"}, ""},
+		{base.Pager, map[string]string{"TERM": "xterm-256color"}, ""},
 	}
 	for _, c := range cases {
 		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM", "TERM"} {
 			t.Setenv(k, c.env[k])
 		}
-		if got := detectImageProtocol(); got != c.want {
+		if got := detectImageProtocol(c.cfg); got != c.want {
 			t.Errorf("detectImageProtocol(%v) = %q, want %q", c.env, got, c.want)
 		}
 	}
@@ -299,10 +309,12 @@ func TestBgHexOf(t *testing.T) {
 
 // TestModelRenderImagesToggle runs the full path: open an html-only
 // message with an inline image, verify the placeholder gate, the
-// toggle expansion, the terminal paint, and the toggle-off clear.
+// alt+i toggle expansion, the terminal paint, and the toggle-off
+// clear.
 func TestModelRenderImagesToggle(t *testing.T) {
 	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
 	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
@@ -339,7 +351,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	}
 
 	// the toggle expands; the paint emits a kitty frame at the block
-	m = press(t, m, "i")
+	m = press(t, m, "alt+i")
 	if !m.renderDue {
 		t.Fatalf("the toggle must defer the paint")
 	}
@@ -357,10 +369,9 @@ func TestModelRenderImagesToggle(t *testing.T) {
 		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
 	}
 
-	// toggle off: the third press (the cycle: off -> local -> remote ->
-	// off) clears the rect BEFORE the collapsed frame renders
-	m = press(t, m, "i")
-	m = press(t, m, "i")
+	// toggle off: the second press (the cycle: off -> remote -> off)
+	// clears the rect BEFORE the collapsed frame renders
+	m = press(t, m, "alt+i")
 	if !strings.Contains(buf.String(), "\x1b[4;1H") {
 		t.Fatalf("toggle-off must clear the painted rect")
 	}
@@ -373,14 +384,15 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	}
 }
 
-// TestModelRenderImagesRemote pins the remote mode: the fetch seam
-// fires ONLY on the remote-mode key press (never in local mode), the
-// ImageFetched reply attaches to the image lines, and a stale reply
-// after the mode cycled away drops - network data never decodes
-// outside the remote mode.
+// TestModelRenderImagesRemote pins the remote mode: the alt+i press
+// arms the fetch seam for the visible urls, the ImageFetched reply
+// attaches to the image lines, and a stale reply after the mode
+// cycled away drops - network data never decodes outside the remote
+// mode.
 func TestModelRenderImagesRemote(t *testing.T) {
 	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
 	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
@@ -405,17 +417,12 @@ func TestModelRenderImagesRemote(t *testing.T) {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
 
-	// local mode (the first press): the placeholder shows, no fetch
-	m = press(t, m, "i")
-	if len(fetched) != 0 {
-		t.Fatalf("local mode must not fetch, got %v", fetched)
-	}
-
-	// remote mode (the second press): the seam fires once for the
-	// visible url
-	m = press(t, m, "i")
+	// the first alt+i press arms the fetch (there is no local mode
+	// anymore - embedded cid:/data: bytes render, http(s) fetch on
+	// demand)
+	m = press(t, m, "alt+i")
 	if len(fetched) != 1 || fetched[0] != "http://example.com/x.png" {
-		t.Fatalf("remote mode must fetch the visible url, got %v", fetched)
+		t.Fatalf("the toggle must fetch the visible url, got %v", fetched)
 	}
 
 	// the reply attaches: the bytes land on the image line
@@ -445,10 +452,10 @@ func TestModelRenderImagesRemote(t *testing.T) {
 	}
 
 	// the mode cycled away: a stale reply drops without touching the
-	// lines (off mode, third press)
-	m = press(t, m, "i")
+	// lines (off mode, second press)
+	m = press(t, m, "alt+i")
 	if m.imgMode != 0 {
-		t.Fatalf("the third press must cycle to off, mode=%d", m.imgMode)
+		t.Fatalf("the second press must cycle to off, mode=%d", m.imgMode)
 	}
 	next, _ = m.Update(EventMsg{Event: core.ImageFetched{
 		URL:  "http://example.com/x.png",

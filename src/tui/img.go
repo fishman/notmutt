@@ -1,13 +1,13 @@
 package tui
 
 // Terminal image emission: the mail renderer's image lines are decoded
-// + scaled + emitted to the terminal ONLY on the render-images key
+// + scaled + emitted to the terminal ONLY on the load-remote-images key
 // (privacy gate - the bytes stay inert until then) and only for the
-// visible window. Protocol by environment (kitty graphics beats sixel;
-// each terminal family is unambiguous); unsupported terminals keep the
-// collapsed Alt row. The writer is /dev/tty (the tcell screen cannot
-// emit raw image protocols) and paint runs AFTER the frame flush, so
-// pixels never race the text.
+// visible window. Protocol: sixel by default (most terminals support
+// it), kitty opt-in via [pager] image-protocol; unsupported terminals
+// keep the collapsed Alt row. The writer is /dev/tty (the tcell screen
+// cannot emit raw image protocols) and paint runs AFTER the frame
+// flush, so pixels never race the text.
 
 import (
 	"bytes"
@@ -24,6 +24,7 @@ import (
 	"github.com/mattn/go-sixel"
 	"golang.org/x/image/draw"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -39,17 +40,22 @@ const (
 // paint paths no-op, so the frame tests never write to a terminal).
 var imageWriter io.Writer
 
-// detectImageProtocol picks the terminal's image protocol from the
-// environment: kitty terminals advertise KITTY_WINDOW_ID, the kitty
-// family names TERM_PROGRAM; sixel terminals name the protocol in
-// TERM. Unsupported terminals return "" - images stay collapsed.
-func detectImageProtocol() string {
-	if os.Getenv("KITTY_WINDOW_ID") != "" {
-		return "kitty"
-	}
-	switch os.Getenv("TERM_PROGRAM") {
-	case "kitty", "wezterm", "alacritty", "ghostty":
-		return "kitty"
+// detectImageProtocol picks the terminal's image protocol: kitty only
+// when [pager] image-protocol opts into it AND the kitty environment
+// matches (KITTY_WINDOW_ID, or TERM_PROGRAM in the kitty family) -
+// the default never auto-selects kitty. Otherwise sixel when the
+// terminal names it in TERM. Unsupported terminals return "" - images
+// stay collapsed.
+func detectImageProtocol(p config.Pager) string {
+	if p.ImageProtocol == "kitty" {
+		if os.Getenv("KITTY_WINDOW_ID") != "" {
+			return "kitty"
+		}
+		switch os.Getenv("TERM_PROGRAM") {
+		case "kitty", "wezterm", "alacritty", "ghostty":
+			return "kitty"
+		}
+		return ""
 	}
 	term := strings.ToLower(os.Getenv("TERM"))
 	if strings.Contains(term, "sixel") || term == "foot" || strings.HasSuffix(term, "-foot") || strings.Contains(term, "mlterm") {
@@ -216,21 +222,17 @@ func (m *Model) prepareImages() {
 	}
 }
 
-// setImgMode applies the render-images cycle (the i key): off ->
-// local (cid:/data: bytes only - never the network) -> remote (http(s)
-// srcs fetch on demand, gated by this key) -> off. Local mode drops
-// the fetched remote bytes - the modes are exclusive, the network
-// never feeds the decode outside the remote mode.
+// setImgMode applies the load-remote-images toggle (alt+i): off ->
+// remote (embedded cid:/data: bytes render, http(s) srcs fetch on
+// demand, gated by this key) -> off. Toggling off drops the fetched
+// remote bytes - the network never feeds the decode outside the mode.
 func (m *Model) setImgMode(mode int) {
 	switch mode {
 	case 0:
 		m.clearImageRects() // before the frame: the collapsed Alt row renders
+		m.dropRemoteData()
 		m.pager.setImages(false)
 	case 1:
-		m.clearImageRects() // the remote pixels clear; the diff repaints the rest
-		m.dropRemoteData()
-		m.pager.setImages(true)
-	case 2:
 		m.pager.setImages(true)
 		m.fetchVisibleImages()
 	}

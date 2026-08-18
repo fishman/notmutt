@@ -23,6 +23,13 @@
 "spam" = "spam"
 "pending" = "pending"
 
+# terminal image protocol: sixel by default (most terminals support
+# it), kitty opt-in. allow-tracking-images lifts the 1x1 tracking-pixel
+# block on fetched remote images (default: blocked)
+[pager]
+image-protocol = "sixel"
+allow-tracking-images = false
+
 # exclusive folder tag group (R2): one message has exactly one home;
 # applying any member removes the other members present (inbox included)
 [tag-groups.folder]
@@ -89,7 +96,7 @@ opener = ["xdg-open"]
 "g" = { fun = "scroll-top", desc = "Jump to the top" }
 "G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
 "q" = { fun = "back", desc = "Return to the message list", show = true }
-"i" = { fun = "toggle-images", desc = "Render images in this message", show = true }
+"alt+i" = { fun = "load-remote-images", desc = "Load remote images", show = true }
 "v" = { fun = "toggle-render", desc = "Switch between the HTML and text view", show = true }
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
@@ -179,7 +186,7 @@ opener = ["xdg-open"]
 "pgup" = { fun = "page-up" }
 "ctrl+g" = { fun = "back", show = true }
 "q" = { fun = "quit", show = true }
-"alt+i" = { fun = "toggle-images", desc = "Render images in this message" }
+"alt+i" = { fun = "load-remote-images", desc = "Load remote images" }
 "alt+r" = { fun = "toggle-render", desc = "Switch between the HTML and text view" }
 "F" = { fun = "open-links", desc = "Open a link by number" }
 "h" = { fun = "open-headers", desc = "Toggle the full header block" }

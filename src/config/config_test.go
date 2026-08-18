@@ -263,6 +263,43 @@ default-views = { "alpha.example.com" = "html", "atlas.example.com" = "plain" }
 	}
 }
 
+// TestLoadPagerImageProtocol pins the [pager] image settings: the
+// protocol is a strict enum (sixel default, kitty opt-in) and
+// allow-tracking-images is a plain bool.
+func TestLoadPagerImageProtocol(t *testing.T) {
+	cfg, err := Load(write(t, `
+[pager]
+image-protocol = "kitty"
+allow-tracking-images = true
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := cfg.Pager.ImageProtocol; v != "kitty" {
+		t.Fatalf("image-protocol = %q, want kitty", v)
+	}
+	if !cfg.Pager.AllowTrackingImages {
+		t.Fatal("allow-tracking-images must load as true")
+	}
+
+	// defaults: sixel protocol, tracking pixels blocked
+	def, err := Load(write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := def.Pager.ImageProtocol; v != "sixel" {
+		t.Fatalf("default image-protocol = %q, want sixel", v)
+	}
+	if def.Pager.AllowTrackingImages {
+		t.Fatal("default must block tracking images")
+	}
+
+	// an unknown protocol is a load error naming the key
+	if _, err := Load(write(t, "[pager]\nimage-protocol = \"tiv\"\n")); err == nil || !strings.Contains(err.Error(), "image-protocol") {
+		t.Fatalf("unknown protocol must error naming image-protocol, got: %v", err)
+	}
+}
+
 func TestLoadPagerDefaultViewsInvalid(t *testing.T) {
 	for _, tc := range []struct{ name, body string }{
 		{"bad value", `default-views = { "alpha.example.com" = "markdown" }`},

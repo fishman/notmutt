@@ -58,7 +58,7 @@ var Actions = map[string]map[string]bool{
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
-		"back": true, "quit": true, "toggle-images": true,
+		"back": true, "quit": true, "load-remote-images": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
 		"tab-prev": true, "tab-next": true,
@@ -301,7 +301,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgProto: detectImageProtocol(), imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgProto: detectImageProtocol(cfg.Pager), imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
 }
 
 func (m Model) Init() Cmd {
@@ -627,7 +627,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			// a fetch reply for the remote images mode; stale replies
 			// (the mode cycled away meanwhile) drop - network data
 			// never feeds the decode outside the remote mode
-			if m.imgMode == 2 {
+			if m.imgMode == 1 {
 				m.attachFetched(e)
 			}
 		case core.ComposeOpened:
@@ -882,14 +882,13 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.clearImageRects() // before the frame: the index renders over the pager area
 			m.mode = "index"
 		}
-	case "toggle-images":
+	case "load-remote-images":
 		// the privacy gate: images render ONLY on this key (no
 		// protocol - no unsupported terminal - keeps the Alt row). The
-		// cycle: off -> local (cid:/data: bytes only, never the
-		// network) -> remote (http(s) srcs fetch, gated by this key)
-		// -> off.
+		// alt+i toggle: off -> remote (embedded bytes render, http(s)
+		// srcs fetch, gated by this key) -> off.
 		if m.mode == "pager" && m.pager != nil && m.imgProto != "" {
-			m.setImgMode((m.imgMode + 1) % 3)
+			m.setImgMode((m.imgMode + 1) % 2)
 			deferPaint()
 			deferred = true
 		}
@@ -1369,7 +1368,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	// decode runs per frame in renderBase)
 	if m.imgMode != 0 {
 		m.pager.setImages(true)
-		if m.imgMode == 2 {
+		if m.imgMode == 1 {
 			m.fetchVisibleImages()
 		}
 	}

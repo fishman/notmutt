@@ -7,8 +7,10 @@ package app
 // to the image lines.
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"image"
 	"io"
 	"net/http"
 	"net/url"
@@ -24,12 +26,14 @@ const maxRemoteImg = 10 << 20 // 10MB cap: a mail-embedded fetch budget
 // scheme whitelist (http/https only - the default client already
 // refuses non-http redirects), a size cap and a 10s timeout. The
 // result publishes as ImageFetched; failures keep the Alt row.
-func fetchImage(bus *core.Bus, src string) {
-	data, err := fetchRemoteImage(src)
+// allowTracking lifts the 1x1 tracking-pixel block ([pager]
+// allow-tracking-images).
+func fetchImage(bus *core.Bus, src string, allowTracking bool) {
+	data, err := fetchRemoteImage(src, allowTracking)
 	bus.Publish(core.ImageFetched{URL: src, Data: data, Err: err})
 }
 
-func fetchRemoteImage(src string) ([]byte, error) {
+func fetchRemoteImage(src string, allowTracking bool) ([]byte, error) {
 	u, err := url.Parse(src)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, errors.New("unsupported image url")
@@ -52,6 +56,14 @@ func fetchRemoteImage(src string) ([]byte, error) {
 	}
 	if !strings.HasPrefix(http.DetectContentType(data), "image/") {
 		return nil, errors.New("not an image")
+	}
+	// tracking pixels (1x1 web beacons) drop unless the config allows
+	// them - the read receipt never renders (and the config opt-in is
+	// explicit)
+	if !allowTracking {
+		if cfg, _, err := image.DecodeConfig(bytes.NewReader(data)); err == nil && cfg.Width == 1 && cfg.Height == 1 {
+			return nil, errors.New("tracking pixel")
+		}
 	}
 	return data, nil
 }

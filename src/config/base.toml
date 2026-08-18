@@ -106,7 +106,9 @@ opener = ["xdg-open"]
 "G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
 "q" = { fun = "back", desc = "Return to the message list", show = true }
 "alt+i" = { fun = "load-remote-images", desc = "Load remote images", show = true }
-"v" = { fun = "toggle-render", desc = "Switch between the HTML and text view", show = true }
+"v" = { fun = "attachments", desc = "List the message's attachments", show = true }
+"V" = { fun = "toggle-render", desc = "Switch between the HTML and text view", show = true }
+"s" = { fun = "save-attachment", desc = "Save the viewed attachment", show = true }
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
 "h" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
@@ -199,6 +201,8 @@ opener = ["xdg-open"]
 "q" = { fun = "quit", show = true }
 "alt+i" = { fun = "load-remote-images", desc = "Load remote images" }
 "alt+r" = { fun = "toggle-render", desc = "Switch between the HTML and text view" }
+"v" = { fun = "attachments", desc = "List the message's attachments" }
+"s" = { fun = "save-attachment", desc = "Save the viewed attachment" }
 "F" = { fun = "open-links", desc = "Open a link by number" }
 "h" = { fun = "open-headers", desc = "Toggle the full header block" }
 "enter" = { fun = "open" }

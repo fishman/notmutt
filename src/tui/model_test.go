@@ -3893,7 +3893,7 @@ func TestModelToggleRender(t *testing.T) {
 	}
 
 	// the toggle asks for the html view of the open thread
-	m = press(t, m, "v")
+	m = press(t, m, "V")
 	if got != "t1" || gotMode != core.RenderHTML {
 		t.Fatalf("toggle must ask for the html view, got %q mode=%v", got, gotMode)
 	}
@@ -3914,7 +3914,7 @@ func TestModelToggleRender(t *testing.T) {
 	}
 
 	// toggling back asks for the plain view
-	m = press(t, m, "v")
+	m = press(t, m, "V")
 	if gotMode != core.RenderPlain {
 		t.Fatalf("second toggle must ask for the plain view, got %v", gotMode)
 	}
@@ -3987,6 +3987,110 @@ func TestModelCollapseThread(t *testing.T) {
 	m = press(t, m, "ctrl+v")
 	if rows := m.view.Rows(); len(rows) != 3 {
 		t.Fatalf("collapse-all again must restore the tree, got %d", len(rows))
+	}
+}
+
+// TestModelAttachmentDialog pins the v key's attachment flow: the
+// picker lists the pager's attachment lines, enter views the chosen
+// attachment through the seam (the AttachmentLoaded reply swaps the
+// pager), s arms the save prompt prefilled with the name, and back
+// re-opens the message to restore.
+func TestModelAttachmentDialog(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{
+			{Text: "body line", Kind: core.LineBody},
+			{Text: "attachment: report.pdf (10 bytes)", Kind: core.LineAttachment},
+			{Text: "attachment: notes.txt (8 bytes)", Kind: core.LineAttachment},
+		},
+	}})
+	m = next
+	var viewedTID string
+	var viewedOrdinal int
+	SetAttachmentViewHandler(func(threadID string, ordinal int) {
+		viewedTID, viewedOrdinal = threadID, ordinal
+	})
+	defer func() { SetAttachmentViewHandler(func(string, int) {}) }()
+	var savedTID string
+	var savedOrdinal int
+	var savedPath string
+	SetAttachmentSaveHandler(func(threadID string, ordinal int, path string) {
+		savedTID, savedOrdinal, savedPath = threadID, ordinal, path
+	})
+	defer func() { SetAttachmentSaveHandler(func(string, int, string) {}) }()
+	// the back restore: the app re-opens the message in the current
+	// view and the reply replaces the attachment content
+	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID, RenderMode: mode, Mime: "text/plain",
+			Lines: []core.Line{{Text: "body line", Kind: core.LineBody}},
+		}})
+		m = next
+	})
+	defer func() { SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {}) }()
+
+	// the v key opens the picker with the attachment lines in order
+	m = press(t, m, "v")
+	d, ok := m.dialogue.(*listDialogue)
+	if !ok || d.f.kind != "attachments" {
+		t.Fatalf("v must open the attachment picker, got %+v", m.dialogue)
+	}
+	if len(d.f.entries) != 2 || d.f.entries[0] != "1. report.pdf" || d.f.entries[1] != "2. notes.txt" {
+		t.Fatalf("entries = %v", d.f.entries)
+	}
+
+	// enter views the highlighted attachment (the ordinal rides the
+	// entry number)
+	m = press(t, m, "enter")
+	if viewedTID != "t1" || viewedOrdinal != 0 {
+		t.Fatalf("the view seam must fire with the chosen attachment, got %q %d", viewedTID, viewedOrdinal)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("the picker must close on select: %+v", m.dialogue)
+	}
+	next, _ = m.Update(EventMsg{Event: core.AttachmentLoaded{
+		ThreadID: "t1", Ordinal: 0, Name: "report.pdf",
+		Lines: []core.Line{{Text: "pdf line", Kind: core.LineBody}},
+	}})
+	m = next
+	if m.attView == nil || m.attView.name != "report.pdf" {
+		t.Fatalf("the attachment view must be active: %+v", m.attView)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "pdf line") {
+		t.Fatalf("the pager must show the attachment:\n%s", out)
+	}
+
+	// s arms the save prompt prefilled with the name; enter saves
+	m = press(t, m, "s")
+	td, ok := m.dialogue.(*textDialogue)
+	if !ok || td.field != "saveatt" || td.input != "report.pdf" {
+		t.Fatalf("s must open the save prompt prefilled, got %+v", m.dialogue)
+	}
+	m = press(t, m, "enter")
+	if savedTID != "t1" || savedOrdinal != 0 || savedPath != "report.pdf" {
+		t.Fatalf("the save seam must fire with the viewed attachment, got %q %d %q", savedTID, savedOrdinal, savedPath)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("the save prompt must close on enter: %+v", m.dialogue)
+	}
+
+	// back re-opens the message; the reply replaces and clears the
+	// view (the press result is discarded - the restore handler
+	// rebinds m, the TestModelToggleRender pattern)
+	press(t, m, "q")
+	if m.attView != nil {
+		t.Fatalf("back must clear the attachment view: %+v", m.attView)
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "body line") || strings.Contains(out, "pdf line") {
+		t.Fatalf("back must restore the message:\n%s", out)
 	}
 }
 
@@ -4080,7 +4184,7 @@ func TestOpenLinksHTML(t *testing.T) {
 	if out := stripANSI(m.View()); strings.Contains(out, "[1]") {
 		t.Fatalf("the plain open must carry no labels:\n%s", out)
 	}
-	m = press(t, m, "v") // toggle: the html view
+	m = press(t, m, "V") // toggle: the html view
 	if len(labelCalls) != 1 || labelCalls[0] {
 		t.Fatalf("the html toggle is unlabeled, calls=%v", labelCalls)
 	}
@@ -4169,7 +4273,7 @@ func TestOpenLinksNoLinks(t *testing.T) {
 	}
 	m = press(t, m, "enter")
 	inject(core.RenderPlain, false)
-	m = press(t, m, "v")
+	m = press(t, m, "V")
 	inject(core.RenderHTML, false)
 	m = press(t, m, "F") // the label render request
 	if len(labelCalls) != 2 || !labelCalls[1] {

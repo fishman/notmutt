@@ -253,6 +253,64 @@ func ParseMessage(path string) (*Message, error) {
 	return m, nil
 }
 
+// ExtractAttachment re-opens one mail file and reads the ordinal-th
+// attachment's bytes (the attachment view/save demand path) -
+// ParseMessage size-counts non-image parts and never keeps them, so
+// the demand path reads one part, capped like the parse. A structural
+// part error ends the scan with "not found".
+func ExtractAttachment(path string, ordinal int) (name string, data []byte, err error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", nil, err
+	}
+	defer f.Close()
+	mr, err := mail.CreateReader(f)
+	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+		return "", nil, fmt.Errorf("%s: %w", path, err)
+	}
+	defer mr.Close()
+	n := 0
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+			break
+		}
+		h, ok := p.Header.(*mail.AttachmentHeader)
+		if !ok {
+			continue
+		}
+		if n != ordinal {
+			n++
+			continue
+		}
+		name, _ = h.Filename()
+		if name == "" {
+			name = "attachment"
+		}
+		data, err = io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
+		if err != nil {
+			return "", nil, fmt.Errorf("%s: %w", path, err)
+		}
+		return name, data, nil
+	}
+	return "", nil, fmt.Errorf("attachment %d not found", ordinal)
+}
+
+// RenderAttachment renders an attachment's bytes as pager body lines
+// (the v dialog's view): sanitized text lines (F1). Binary
+// attachments render garbled but harmless - the save path (the s key)
+// is their real consumer.
+func RenderAttachment(data []byte) []core.Line {
+	var lines []core.Line
+	for _, l := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
+		lines = append(lines, core.Line{Text: core.SanitizeControls(l), Kind: core.LineBody})
+	}
+	return lines
+}
+
 // splitBody splits the raw text into parts: quoted depth by leading
 // ">" count (capped at 5), signature after the first standalone "-- ".
 // The marker line itself stays a part - renderMessage emits it as-is,

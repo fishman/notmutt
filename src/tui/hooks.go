@@ -52,6 +52,27 @@ func SetOpenLinkHandler(fn func(string)) {
 	openLink = fn
 }
 
+// onAttachmentView is the attachment-view seam (the v dialog's enter):
+// the app re-opens the thread's message, extracts the chosen
+// attachment, renders it to pager lines and publishes
+// AttachmentLoaded; the default is a no-op so the model works in
+// tests. ordinal is the attachment's index in the parsed message.
+var onAttachmentView = func(threadID string, ordinal int) {}
+
+func SetAttachmentViewHandler(fn func(string, int)) {
+	onAttachmentView = fn
+}
+
+// onAttachmentSave is the attachment-save seam (the s key in an
+// attachment view): the app re-extracts the attachment and writes it
+// to the path (0600, F5), publishing AttachmentSaved; the default is
+// a no-op so the model works in tests.
+var onAttachmentSave = func(threadID string, ordinal int, path string) {}
+
+func SetAttachmentSaveHandler(fn func(string, int, string)) {
+	onAttachmentSave = fn
+}
+
 // onImageFetch is the image-fetch seam (the render-images remote
 // mode): the app fetches the http(s) src and publishes ImageFetched;
 // the default is a no-op so the model works in tests.

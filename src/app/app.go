@@ -136,6 +136,17 @@ func Run() error {
 		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks, nil)
 	})
 
+	// the attachment view (the v dialog's enter) and save (the s key
+	// in an attachment view): both re-extract the chosen attachment
+	// from the thread's message on demand - ParseMessage never keeps
+	// non-image part bytes, the demand path reads one part
+	tui.SetAttachmentViewHandler(func(threadID string, ordinal int) {
+		go viewAttachment(worker, bus, threadID, ordinal)
+	})
+	tui.SetAttachmentSaveHandler(func(threadID string, ordinal int, path string) {
+		go saveAttachment(worker, bus, threadID, ordinal, path)
+	})
+
 	// the remote image fetch (the load-remote-images mode): http(s)
 	// srcs fetch ONLY on the key, capped and off the render path
 	// (imgfetch.go); the TUI publishes the url through this seam. The
@@ -338,6 +349,51 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", threadID, err, rpl.Err)})
 		}
 	}
+}
+
+// extractAttachment fetches the thread's message and reads the
+// ordinal-th attachment's bytes - the shared demand path of the view
+// and save seams (one file open per demand, never held in memory).
+func extractAttachment(worker workerAPI, threadID string, ordinal int) (name string, data []byte, err error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+	if err != nil {
+		return "", nil, err
+	}
+	if rpl.Err != nil {
+		return "", nil, rpl.Err
+	}
+	if len(rpl.Msgs) == 0 || len(rpl.Msgs[0].Paths) == 0 {
+		return "", nil, fmt.Errorf("no message path")
+	}
+	return mail.ExtractAttachment(rpl.Msgs[0].Paths[0], ordinal)
+}
+
+// viewAttachment serves the v dialog's enter: extract + render the
+// chosen attachment to pager lines and publish AttachmentLoaded - the
+// TUI swaps the pager content until back re-opens the message.
+func viewAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int) {
+	name, data, err := extractAttachment(worker, threadID, ordinal)
+	if err != nil {
+		bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Err: err})
+		return
+	}
+	bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Ordinal: ordinal, Name: name, Lines: mail.RenderAttachment(data)})
+}
+
+// saveAttachment serves the s key in an attachment view: extract the
+// attachment and write it to the path (0600, F5); the result rides
+// AttachmentSaved for the status line.
+func saveAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int, path string) {
+	_, data, err := extractAttachment(worker, threadID, ordinal)
+	if err != nil {
+		bus.Publish(core.AttachmentSaved{Path: path, Err: err})
+		return
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		bus.Publish(core.AttachmentSaved{Path: path, Err: err})
+		return
+	}
+	bus.Publish(core.AttachmentSaved{Path: path})
 }
 
 // openViewMode resolves the open key's default view for a thread: the

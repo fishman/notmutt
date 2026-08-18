@@ -65,6 +65,7 @@ var Actions = map[string]map[string]bool{
 		"back": true, "quit": true, "load-remote-images": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
+		"attachments": true, "save-attachment": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
@@ -137,9 +138,15 @@ type Model struct {
 	painted     map[*core.Image]cellRect
 	imgMode     int
 	imgFetching map[string]bool
-	job         string
-	progress    core.Progress
-	progressOn  bool
+	// attView is the pager's active attachment view (the v dialog's
+	// enter): the message's lines are replaced by the attachment's
+	// render, and back re-opens the message to restore. The viewed
+	// attachment's identity rides here for the s key (the save prompt
+	// prefills its name). nil = the pager shows the message.
+	attView    *attView
+	job        string
+	progress   core.Progress
+	progressOn bool
 	// statusMsg is the status line's last log entry (the R4 send
 	// results, the R8 lua results, job errors, lock timeouts):
 	// logEntry is the single write path, an entry survives until the
@@ -627,6 +634,17 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 		case core.ThreadLoaded:
 			m.onThreadLoaded(e)
+		case core.AttachmentLoaded:
+			m.onAttachmentLoaded(e)
+		case core.AttachmentSaved:
+			// the s key's write result (the app extracted + wrote the
+			// attachment): the path or the failure surfaces on the
+			// status line
+			if e.Err != nil {
+				m.logEntry("save failed: "+e.Err.Error(), true)
+			} else {
+				m.logEntry("saved attachment to "+e.Path, false)
+			}
 		case core.ImageFetched:
 			// a fetch reply for the remote images mode; stale replies
 			// (the mode cycled away meanwhile) drop - network data
@@ -917,8 +935,39 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "back":
 		if m.mode == "pager" {
+			if m.attView != nil {
+				// the q key in an attachment view returns to the
+				// message: the re-open reply replaces the pager (the
+				// onThreadLoaded attView guard) and clears the view
+				onToggleRender(m.attView.threadID, m.renderMode, m.showHeaders, m.width, false)
+				deferPaint()
+				deferred = true
+				break
+			}
 			m.clearImageRects() // before the frame: the index renders over the pager area
 			m.mode = "index"
+		}
+	case "attachments":
+		// the v key: the attachment picker (mutt's v dialog) lists the
+		// message's attachments from the pager's attachment lines;
+		// enter views the chosen one. A linkless attachment-less
+		// message reports instead of arming a dead picker.
+		if m.mode == "pager" && m.pager != nil {
+			if entries := attachmentEntries(m.pager.lines); len(entries) > 0 {
+				m.dialogue = &listDialogue{f: newFuzzy("attachments", "attachments:", entries)}
+			} else {
+				m.logEntry("no attachments in this message", true)
+			}
+			deferPaint()
+			deferred = true
+		}
+	case "save-attachment":
+		// the s key in an attachment view: the save prompt prefills
+		// the viewed attachment's name, enter writes it via the app
+		if m.mode == "pager" && m.attView != nil {
+			m.dialogue = &textDialogue{field: "saveatt", label: "save attachment to: ", input: m.attView.name}
+			deferPaint()
+			deferred = true
 		}
 	case "load-remote-images":
 		// the privacy gate: images render ONLY on this key (no
@@ -1378,11 +1427,15 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		return
 	}
 	if e.Err != nil {
-		m.mode, m.pager = "index", nil
+		m.mode, m.pager, m.attView = "index", nil, nil
 		return
 	}
-	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode {
+	// the attView term: any message render while an attachment view is
+	// active replaces it (the back key's restore) - the reply carries
+	// the message's own mode/headers, which alone never differ
+	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || m.attView != nil {
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
+		m.attView = nil // the attachment view ends with the restore
 		m.pager = newPager(e.ThreadID, e.Lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
@@ -1411,6 +1464,57 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 	}
 	m.legendPending = true
+}
+
+// onAttachmentLoaded swaps the pager into the attachment view (the v
+// dialog's enter): the message's lines are replaced by the chosen
+// attachment's render and the identity rides attView - back re-opens
+// the message to restore, s saves through the app. Stale replies (the
+// pager moved on) drop.
+func (m *Model) onAttachmentLoaded(e core.AttachmentLoaded) {
+	if e.Err != nil {
+		m.logEntry("attachment: "+e.Err.Error(), true)
+		return
+	}
+	if m.mode != "pager" || e.ThreadID != pagerThreadID(m.pager) {
+		return
+	}
+	m.attView = &attView{threadID: e.ThreadID, ordinal: e.Ordinal, name: e.Name}
+	m.pager = newPager(e.ThreadID, e.Lines)
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+}
+
+// attView is the pager's attachment view state: the viewed
+// attachment's thread + ordinal (the save seam's re-extraction key)
+// and name (the save prompt's prefill).
+type attView struct {
+	threadID string
+	ordinal  int
+	name     string
+}
+
+// attachmentEntries maps the pager's attachment lines to the v
+// dialog's entries: "N. name (size)" - the leading number is the
+// attachment's ordinal (1-based), the display name drops the size
+// suffix the line carries. Line order equals parse order (renderMessage
+// emits one line per parsed attachment in order), so the picker's
+// numbering is the extraction index.
+func attachmentEntries(lines []core.Line) []string {
+	var entries []string
+	n := 0
+	for _, l := range lines {
+		if l.Kind != core.LineAttachment {
+			continue
+		}
+		n++
+		name := strings.TrimPrefix(l.Text, "attachment: ")
+		if i := strings.Index(name, " ("); i > 0 {
+			name = name[:i]
+		}
+		entries = append(entries, fmt.Sprintf("%d. %s", n, name))
+	}
+	return entries
 }
 
 // onSendResult applies a send result to its dialogue: OK closes the
@@ -2683,6 +2787,14 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 				m.searchNext()
 			}
 			return nil, nil
+		case "saveatt":
+			// the s key in an attachment view: the app writes the
+			// viewed attachment to the path (0600) and the result
+			// surfaces on the status line
+			if input != "" && m.attView != nil {
+				onAttachmentSave(m.attView.threadID, m.attView.ordinal, compose.ExpandHome(input))
+			}
+			return nil, nil
 		}
 		st := &m.tabs[m.tabIdx-1]
 		switch d.field {
@@ -2907,6 +3019,18 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		}
 		back.cur = len(back.input)
 		return back, nil
+	case "attachments":
+		// the v dialog's enter: view the chosen attachment - the app
+		// re-opens the message, extracts + renders the part, and the
+		// reply swaps the pager (back restores). The entry's leading
+		// number is the attachment's ordinal.
+		if i := strings.Index(entry, ". "); i > 0 {
+			if n, err := strconv.Atoi(entry[:i]); err == nil && n > 0 && m.mode == "pager" && m.pager != nil {
+				onAttachmentView(pagerThreadID(m.pager), n-1)
+			}
+		}
+		m.cancelDialogue()
+		return nil, nil
 	}
 	st := &m.tabs[m.tabIdx-1]
 	if d.f.kind == "account" {

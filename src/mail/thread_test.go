@@ -447,6 +447,47 @@ func TestRenderThreadSourceView(t *testing.T) {
 	}
 }
 
+// TestExtractAttachment pins the attachment demand path (the v
+// dialog's view/save): the ordinal-th attachment's bytes come back
+// with its name, an out-of-range ordinal errors, and the render
+// sanitizes the bytes into body lines (F1).
+func TestExtractAttachment(t *testing.T) {
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: atts\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nbody\n" +
+		"--x\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=\"report.pdf\"\n\n%PDF-1.4 fake\n" +
+		"--x\nContent-Type: text/plain\nContent-Disposition: attachment; filename=\"notes.txt\"\n\nnote one\nnote two\n" +
+		"--x--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	name, data, err := ExtractAttachment(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "report.pdf" || string(data) != "%PDF-1.4 fake" {
+		t.Fatalf("attachment 0 = %q %q", name, data)
+	}
+	name, data, err = ExtractAttachment(p, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "notes.txt" || string(data) != "note one\nnote two" {
+		t.Fatalf("attachment 1 = %q %q", name, data)
+	}
+	if _, _, err := ExtractAttachment(p, 9); err == nil {
+		t.Fatal("an out-of-range ordinal must error")
+	}
+	// F1: the ESC byte is stripped (the sequence text stays - the
+	// terminal can never see a raw control byte)
+	lines := RenderAttachment([]byte("a\x1b[31mb\nc"))
+	if len(lines) != 2 || lines[0].Text != "a[31mb" || lines[1].Text != "c" {
+		t.Fatalf("the render must sanitize into body lines: %+v", lines)
+	}
+}
+
 // TestRenderThreadMimeLabel pins the label against the message's real
 // parts: a plain-only mail renders plain in every view and says so.
 func TestRenderThreadMimeLabel(t *testing.T) {

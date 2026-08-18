@@ -248,6 +248,27 @@ type ThreadLoaded struct {
 	Err   error
 }
 
+// AttachmentLoaded carries the attachment view (the v dialog's
+// enter): the chosen attachment rendered to pager lines, or the
+// error - the TUI swaps the pager content and back re-opens the
+// message to restore. Ordinal echoes the request (the save key's
+// re-extraction index).
+type AttachmentLoaded struct {
+	ThreadID string
+	Ordinal  int
+	Name     string
+	Lines    []Line
+	Err      error
+}
+
+// AttachmentSaved carries the attachment save result (the s key in an
+// attachment view): the write target, or the error - the TUI surfaces
+// the outcome on the status line.
+type AttachmentSaved struct {
+	Path string
+	Err  error
+}
+
 // ImageFetched carries one remote image fetch (the render-images
 // remote mode): the bytes for the URL, or the error - the TUI attaches
 // them to the image lines. Data is an image blob, never message text

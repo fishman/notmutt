@@ -20,7 +20,7 @@ import (
 // TestEasyjumpFullStack drives the real wiring end to end: the app's
 // open/render handlers on a real bus, the worker round trip
 // (fakeWorker answers ActThread with the fixture message), and the
-// actual key sequence enter -> v -> F -> j -> 2 -> enter. Asserts the
+// actual key sequence enter -> V -> F -> j -> 2 -> enter. Asserts the
 // [N] labels render and survive the scroll, and the digit entry still
 // opens (2 stays an incomplete prefix of 20..29 with 40 links, so the
 // enter key confirms it).
@@ -82,7 +82,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 	if out := strings.TrimSpace(m.View()); !strings.Contains(out, "a@example.com") {
 		t.Fatalf("open must switch to the pager, view:\n%s", out)
 	}
-	press("v") // the html view
+	press("V") // the html view
 	pump()
 	if out := strings.TrimSpace(m.View()); strings.Contains(out, "<p>") {
 		t.Fatalf("v must render the html flow, not the raw source:\n%s", out)

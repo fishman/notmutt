@@ -354,39 +354,62 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 }
 
 // extractAttachment fetches the thread's message and reads the
-// ordinal-th attachment's bytes - the shared demand path of the view
-// and save seams (one file open per demand, never held in memory).
-func extractAttachment(worker workerAPI, threadID string, ordinal int) (name string, data []byte, err error) {
+// ordinal-th attachment's bytes and type - the shared demand path of
+// the view and save seams (one file open per demand, never held in
+// memory).
+func extractAttachment(worker workerAPI, threadID string, ordinal int) (name, typ string, data []byte, err error) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if rpl.Err != nil {
-		return "", nil, rpl.Err
+		return "", "", nil, rpl.Err
 	}
 	if len(rpl.Msgs) == 0 || len(rpl.Msgs[0].Paths) == 0 {
-		return "", nil, fmt.Errorf("no message path")
+		return "", "", nil, fmt.Errorf("no message path")
 	}
 	return mail.ExtractAttachment(rpl.Msgs[0].Paths[0], ordinal)
 }
 
 // viewAttachment serves the v dialog's enter: extract + render the
 // chosen attachment to pager lines and publish AttachmentLoaded - the
-// TUI swaps the pager content until back re-opens the message.
+// TUI swaps the pager content until back re-opens the message. A
+// matching mailcap copiousoutput entry replaces the bytes with its
+// preview text (a pdf renders as pdftotext output, never as bytes);
+// a preview failure is an error, not a fallback to the raw dump.
 func viewAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int) {
-	name, data, err := extractAttachment(worker, threadID, ordinal)
+	name, typ, data, err := extractAttachment(worker, threadID, ordinal)
 	if err != nil {
 		bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Err: err})
 		return
 	}
+	if argv, ok := previewMailcap(typ); ok {
+		if out, err := mail.RunPreview(argv, data); err != nil {
+			bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Err: err})
+			return
+		} else {
+			data = out
+		}
+	}
 	bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Ordinal: ordinal, Name: name, Lines: mail.RenderAttachment(data)})
+}
+
+// previewMailcap resolves an attachment type to its mailcap preview
+// command: the built-in defaults (a pdf previews as pdftotext text)
+// plus the user's <configdir>/mailcap overrides by type.
+func previewMailcap(typ string) ([]string, bool) {
+	mc := mail.DefaultMailcap()
+	if b, err := os.ReadFile(filepath.Join(configDir(), "mailcap")); err == nil {
+		mc.Parse(b)
+	}
+	return mc.PreviewCommand(typ)
 }
 
 // saveAttachment serves the s key in an attachment view: extract the
 // attachment and write it to the path (0600, F5); the result rides
 // AttachmentSaved for the status line.
 func saveAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int, path string) {
-	_, data, err := extractAttachment(worker, threadID, ordinal)
+	_, _, data, err := extractAttachment(worker, threadID, ordinal)
 	if err != nil {
 		bus.Publish(core.AttachmentSaved{Path: path, Err: err})
 		return

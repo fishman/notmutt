@@ -254,19 +254,19 @@ func ParseMessage(path string) (*Message, error) {
 }
 
 // ExtractAttachment re-opens one mail file and reads the ordinal-th
-// attachment's bytes (the attachment view/save demand path) -
-// ParseMessage size-counts non-image parts and never keeps them, so
-// the demand path reads one part, capped like the parse. A structural
-// part error ends the scan with "not found".
-func ExtractAttachment(path string, ordinal int) (name string, data []byte, err error) {
+// attachment's bytes and content type (the attachment view/save demand
+// path) - ParseMessage size-counts non-image parts and never keeps
+// them, so the demand path reads one part, capped like the parse. A
+// structural part error ends the scan with "not found".
+func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	defer f.Close()
 	mr, err := mail.CreateReader(f)
 	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
-		return "", nil, fmt.Errorf("%s: %w", path, err)
+		return "", "", nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer mr.Close()
 	n := 0
@@ -290,13 +290,14 @@ func ExtractAttachment(path string, ordinal int) (name string, data []byte, err 
 		if name == "" {
 			name = "attachment"
 		}
+		typ, _, _ = h.ContentType()
 		data, err = io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 		if err != nil {
-			return "", nil, fmt.Errorf("%s: %w", path, err)
+			return "", "", nil, fmt.Errorf("%s: %w", path, err)
 		}
-		return name, data, nil
+		return name, typ, data, nil
 	}
-	return "", nil, fmt.Errorf("attachment %d not found", ordinal)
+	return "", "", nil, fmt.Errorf("attachment %d not found", ordinal)
 }
 
 // RenderAttachment renders an attachment's bytes as pager body lines

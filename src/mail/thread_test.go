@@ -463,21 +463,21 @@ func TestExtractAttachment(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	name, data, err := ExtractAttachment(p, 0)
+	name, typ, data, err := ExtractAttachment(p, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "report.pdf" || string(data) != "%PDF-1.4 fake" {
-		t.Fatalf("attachment 0 = %q %q", name, data)
+	if name != "report.pdf" || typ != "application/pdf" || string(data) != "%PDF-1.4 fake" {
+		t.Fatalf("attachment 0 = %q %q %q", name, typ, data)
 	}
-	name, data, err = ExtractAttachment(p, 1)
+	name, typ, data, err = ExtractAttachment(p, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if name != "notes.txt" || string(data) != "note one\nnote two" {
-		t.Fatalf("attachment 1 = %q %q", name, data)
+	if name != "notes.txt" || typ != "text/plain" || string(data) != "note one\nnote two" {
+		t.Fatalf("attachment 1 = %q %q %q", name, typ, data)
 	}
-	if _, _, err := ExtractAttachment(p, 9); err == nil {
+	if _, _, _, err := ExtractAttachment(p, 9); err == nil {
 		t.Fatal("an out-of-range ordinal must error")
 	}
 	// F1: the ESC byte is stripped (the sequence text stays - the

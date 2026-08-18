@@ -74,6 +74,16 @@ what notmuch sees.
 | notmuch is the only truth | No own database - a revision-keyed bbolt cache mirrors query output and re-syncs from notmuch's lastmod |
 | Lua plugins | Build-tag-gated gopher-lua layer with a lib whitelist sandbox; plugins register body-rendering transforms |
 
+## Commits and AI assistance
+
+All code in this repository is owned by its human author: no code
+commit carries an AI-assisted marker, whether or not an AI drafted it.
+An `AI-assisted` trailer is like mail typed on an iPhone - the device
+produced the words, you answer for them, and blaming the device for a
+dumb decision is not acceptable. Doc and spec commits may carry an
+`AI-assisted: deepseek` trailer (the model that drafted them); review
+responsibility stays with the human either way.
+
 ## Design decisions
 
 The full records with measurements live in

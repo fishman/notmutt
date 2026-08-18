@@ -19,10 +19,13 @@ Pi and other tools). Read it first; it is normative.
 ## Commit trailer
 
 Commits follow the Conventional Commits style: `type(scope): subject`, brief
-lowercase imperative subject. Spec/doc commits carry an
-`AI-assisted: deepseek` trailer (the session model is deepseek); code
-commits carry no AI-assisted trailer - the human bears responsibility for
-code.
+lowercase imperative subject. ALL code is owned by the human author - code
+commits carry no AI-assisted trailer, whether or not an AI drafted them (the
+README explains the rule: an AI-assisted marker is like mail typed on an
+iPhone - the device produced the words, the owner answers for them; blaming
+the device for dumb decisions is not acceptable). Doc/spec commits may carry
+an `AI-assisted: deepseek` trailer (the session model is deepseek); review
+responsibility stays with the human either way.
 
 ## Behavior
 

@@ -367,9 +367,11 @@ constraint):
 - Vendor the build. Reproducible builds.
 - Review dependency diffs on upgrade; no auto-bump bots.
 - Never accept a dependency whose provenance or authorship is unclear.
-- AI-generated code is allowed in this repo only with an `AI-assisted`
-  commit trailer, and must be reviewed like any other contribution
-  (tests proving the edge cases).
+- AI-generated code is allowed, but ALL code in this repo is owned by
+  its human author: no commit carries an AI-generated marker, and every
+  line is reviewed like any other contribution (tests proving the edge
+  cases). An `AI-assisted` trailer is not a disclaimer - the author
+  answers for the code whether or not an AI drafted it.
 
 CI standard (mirror `neomutt-docs/docs/actions.md`): build + test on every
 commit, sanitizers (ASAN/UBSAN), fuzzing on the mail-parsing boundary,
@@ -635,10 +637,13 @@ the spec must say why it serves notmutt, not cite it as authority.
   checksum (sha256 or faster) when correlating or verifying message
   identity.
 - Commits: Conventional Commits style (`type(scope): subject`), brief
-  lowercase imperative subject. Spec/doc commits carry an
+  lowercase imperative subject. ALL code is owned by the human author -
+  code commits carry no AI-assisted trailer, whether or not an AI
+  drafted them (the README explains the rule: an AI-assisted marker is
+  like mail typed on an iPhone - the device produced the words, the
+  owner answers for them). Doc/spec commits may carry an
   `AI-assisted: deepseek` trailer (the session model is deepseek);
-  code commits carry no AI-assisted trailer - the human bears
-  responsibility for code.
+  review responsibility stays with the human either way.
 - Testing: treat AI-generated output like firmware - assume it fails in
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks

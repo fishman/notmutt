@@ -46,12 +46,10 @@ in-process; the theme, binding and config systems are data-driven.
   send path does not wire a gpg/openssl transform into assembly yet.
   Crypto runs through your system `gpg` when it lands - no vendored
   crypto library, ever.
-- **Filter engine**: header rules run declaratively; algorithmic
-  filters (bayes spam, DKIM validation) are a registered-interface
-  plan, not implemented.
-- **Lua scripting**: a build-tag-gated layer exists with one plugin
-  surface (body rendering transforms). Hooks and UI callbacks are the
-  roadmap, not the present.
+- **Algorithmic filters**: the filter engine (exclusive tag groups,
+  derived folder rules, per-account mover, dry-run mode) runs
+  in-process; bayes spam and DKIM validation are registered-interface
+  plug-ins, not implemented.
 - **Emacs keymap**: the scheme exists as config data; the vim scheme
   is the reference and the tested one.
 - **IMAP/POP3 transport**: notmutt does not sync mail. mbsync /

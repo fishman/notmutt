@@ -784,3 +784,27 @@ func TestSixelEncodeTransparent(t *testing.T) {
 		t.Fatalf("round-trip dims %dx%d, want 40x20", back.Bounds().Dx(), back.Bounds().Dy())
 	}
 }
+
+// TestParseCellReply pins the CSI 18 t reply parser: the cell size in
+// pixels (h;w), garbage and out-of-range replies rejected.
+func TestParseCellReply(t *testing.T) {
+	cases := []struct {
+		in   string
+		h, w int
+		ok   bool
+	}{
+		{"\x1b[4;30;10t", 30, 10, true},
+		{"\x1b[4;1;1t", 1, 1, true},
+		{"junk\x1b[4;24;8t\r\n", 24, 8, true},
+		{"\x1b[4;0;0t", 0, 0, false},
+		{"\x1b[4;300;10t", 0, 0, false},
+		{"\x1b[4;30", 0, 0, false},
+		{"no reply", 0, 0, false},
+	}
+	for _, tc := range cases {
+		h, w, ok := parseCellReply(tc.in)
+		if h != tc.h || w != tc.w || ok != tc.ok {
+			t.Fatalf("parseCellReply(%q) = %d,%d,%v want %d,%d,%v", tc.in, h, w, ok, tc.h, tc.w, tc.ok)
+		}
+	}
+}

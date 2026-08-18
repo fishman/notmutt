@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	_ "golang.org/x/image/webp" // decoder registrations: mail charts arrive as jpeg/gif/webp
 
@@ -38,10 +39,17 @@ import (
 )
 
 const (
-	imgCellW   = 10 // ponytail: default cell px; the calibration knob if a terminal's cell grid differs
-	imgCellH   = 20
 	imgMaxCols = 100  // paint cap: an image line never exceeds 100 cells wide
 	kittyChunk = 4096 // kitty's max payload per DCS frame
+)
+
+// imgCellW/H are the terminal's cell size in pixels, probed at startup
+// (CSI 18 t); the 10x20 defaults when no terminal answers. An image's
+// reserved rows must match the pixels its raster occupies: a cell
+// taller than the default leaves a gap under every painted image.
+var (
+	imgCellW = 10
+	imgCellH = 20
 )
 
 // imageWriter is the paint sink: /dev/tty in Run, nil in tests (all
@@ -71,6 +79,49 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 		return "sixel"
 	}
 	return ""
+}
+
+// probeCellSize asks the terminal for its cell size in pixels (XTerm's
+// CSI 18 t; kitty/ghostty/wezterm answer, tmux relays) so images
+// reserve exactly the rows their pixels occupy. No reply within the
+// deadline keeps the defaults. Runs before tcell takes the tty over -
+// the reply would otherwise race tcell's input pump.
+func probeCellSize() {
+	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	if _, err := f.WriteString("\x1b[18t"); err != nil {
+		return
+	}
+	f.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	buf := make([]byte, 64)
+	n, err := f.Read(buf)
+	if err != nil {
+		return
+	}
+	if h, w, ok := parseCellReply(string(buf[:n])); ok {
+		imgCellH, imgCellW = h, w
+	}
+}
+
+// parseCellReply extracts the cell size from a CSI 18 t reply
+// (ESC [ 4 ; <cell h px> ; <cell w px> t); ok=false for any other
+// shape or an out-of-range size.
+func parseCellReply(s string) (h, w int, ok bool) {
+	i := strings.Index(s, "\x1b[4;")
+	if i < 0 {
+		return 0, 0, false
+	}
+	var vh, vw int
+	if _, err := fmt.Sscanf(s[i+4:], "%d;%dt", &vh, &vw); err != nil {
+		return 0, 0, false
+	}
+	if vh < 1 || vh > 200 || vw < 1 || vw > 200 {
+		return 0, 0, false
+	}
+	return vh, vw, true
 }
 
 // sixelCapable is the negotiated sixel flag the screen exposes (the
@@ -109,12 +160,12 @@ func decodeImage(data []byte, widthCells, heightRows int) (image.Image, int, int
 		heightRows = 1
 	}
 	sw, sh := float64(src.Bounds().Dx()), float64(src.Bounds().Dy())
-	scale := math.Min((float64(widthCells)*imgCellW)/sw, (float64(heightRows)*imgCellH)/sh)
+	scale := math.Min((float64(widthCells)*float64(imgCellW))/sw, (float64(heightRows)*float64(imgCellH))/sh)
 	if scale > 1 {
 		scale = 1
 	}
-	cols := int(sw * scale / imgCellW)
-	rows := int(sh * scale / imgCellH)
+	cols := int(sw * scale / float64(imgCellW))
+	rows := int(sh * scale / float64(imgCellH))
 	if cols < 1 {
 		cols = 1
 	}

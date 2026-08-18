@@ -347,6 +347,7 @@ type IndexStyleTable struct {
 	Flags   Style
 	Staged  Style
 	Ghost   Style
+	Search  Style
 	Tag     TagStyleTable
 }
 
@@ -561,6 +562,8 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 					t.Index.Staged = style
 				case "ghost":
 					t.Index.Ghost = style
+				case "search":
+					t.Index.Search = style
 				default:
 					return StyleTable{}, fmt.Errorf("index: unknown key %q", ik)
 				}
@@ -1056,7 +1059,7 @@ func defaultTheme() Theme {
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},
 					Flags: Style{Fg: "base08"}, Staged: Style{Fg: "base04", Attrs: []string{"bold"}},
-					Ghost: Style{Fg: "base03"},
+					Ghost: Style{Fg: "base03"}, Search: Style{Fg: "base0A", Attrs: []string{"bold"}},
 					Tag: TagStyleTable{
 						// the base.colors tag markers (muttrc/base.colors):
 						// a color per hard tag; inbox stays plain green -

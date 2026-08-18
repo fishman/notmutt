@@ -25,7 +25,7 @@ import (
 // and the tag-slot cap come from config data, never hardcoded.
 // Account tags never render here - the account lives in the status
 // bar (R2), not the mail title.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool) string {
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool, query string) string {
 	sg := st.sgr
 	// the row keeps its slot styles; the selection is the cursor
 	// marker cell (config glyph, indicator-styled) at the line start
@@ -70,7 +70,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	b.WriteString(sg.date.render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
 	author := core.SanitizeControls(row.Msg.Author)
-	b.WriteString(sg.author.render(padCellsRight(truncCells(author, 16), 16)))
+	b.WriteString(renderHighlighted(padCellsRight(truncCells(author, 16), 16), query, sg.author, sg.search))
 	b.WriteByte(' ')
 	if tagWidth > 0 {
 		// the tag slot sits right after the sender (R2 surface split:
@@ -81,8 +81,31 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		b.WriteByte(' ')
 	}
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(sg.subject.render(subject))
+	b.WriteString(renderHighlighted(subject, query, sg.subject, sg.search))
 	return b.String()
+}
+
+// renderHighlighted renders s through style with every occurrence of
+// query in hl instead (the / search match, case-insensitive); an
+// empty query renders plain. Byte offsets from Index are rune-safe
+// boundaries, so the runs never split a character.
+func renderHighlighted(s, query string, style, hl sgr) string {
+	if query == "" {
+		return style.render(s)
+	}
+	lower, q := strings.ToLower(s), strings.ToLower(query)
+	var b strings.Builder
+	for from := 0; ; {
+		i := strings.Index(lower[from:], q)
+		if i < 0 {
+			b.WriteString(style.render(s[from:]))
+			return b.String()
+		}
+		i += from
+		b.WriteString(style.render(s[from:i]))
+		b.WriteString(hl.render(s[i : i+len(q)]))
+		from = i + len(q)
+	}
 }
 
 // rowTagList is the tag list a row renders in its tag slot: staged

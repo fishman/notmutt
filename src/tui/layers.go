@@ -42,4 +42,5 @@ type rowKey struct {
 	styles   int
 	selected bool
 	atts     bool
+	query    string // the search pattern: a change re-renders every row
 }

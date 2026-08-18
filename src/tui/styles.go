@@ -39,6 +39,7 @@ type IndexStyles struct {
 	Flags   lipgloss.Style
 	Staged  lipgloss.Style
 	Ghost   lipgloss.Style
+	Search  lipgloss.Style
 	Tag     func(name string) lipgloss.Style // per-tag styles (R11)
 }
 
@@ -93,6 +94,7 @@ type sgrSet struct {
 	stagedNormal, stagedGhost                    sgr
 	border                                       sgr // the popup border: the indicator's fg over the normal bg (no fill)
 	number, flags, date, author, subject, staged sgr
+	search                                       sgr
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
 	pagerDef                                     sgr
@@ -118,6 +120,7 @@ func sgrSetOf(st Styles) sgrSet {
 		date:         sgrOf(st.Index.Date),
 		author:       sgrOf(st.Index.Author),
 		subject:      sgrOf(st.Index.Subject),
+		search:       sgrOf(st.Index.Search),
 		staged:       sgrOf(st.Index.Staged),
 		tag: func(name string) sgr {
 			if g, ok := cache[name]; ok {
@@ -172,6 +175,7 @@ func DefaultStyles() Styles {
 			Flags:   lipgloss.NewStyle().Foreground(c("#e06c75")),
 			Staged:  lipgloss.NewStyle().Foreground(c("#565c64")).Bold(true),
 			Ghost:   lipgloss.NewStyle().Foreground(c("#5c6370")),
+			Search:  lipgloss.NewStyle().Foreground(c("#e5c07b")).Bold(true),
 			Tag: func(string) lipgloss.Style {
 				return lipgloss.NewStyle().Foreground(c("#c678dd"))
 			},

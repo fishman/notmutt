@@ -4261,3 +4261,145 @@ func TestEasyjumpHighlight(t *testing.T) {
 		t.Fatalf("enter must open the highlighted link: %q", opened)
 	}
 }
+
+// TestNextMatch pins the search scan: a real row whose author or
+// subject contains the query matches case-insensitively, the scan
+// starts after the cursor and wraps, ghost rows never match, and an
+// empty query or no match returns -1.
+func TestNextMatch(t *testing.T) {
+	rows := []core.Row{
+		{Msg: &core.Message{ID: "a", ThreadID: "t1", Author: "Alpha", Subject: "build report"}},
+		{Msg: nil}, // ghost root: never a match
+		{Msg: &core.Message{ID: "b", ThreadID: "t2", Author: "Boris", Subject: "beta notes"}},
+		{Msg: &core.Message{ID: "c", ThreadID: "t3", Author: "Carol", Subject: "gamma plan"}},
+	}
+	cases := []struct {
+		name  string
+		start int
+		query string
+		want  int
+	}{
+		{"subject match", 0, "beta", 2},
+		{"author match", 0, "carol", 3},
+		{"case-insensitive", 1, "ALPHA", 0},
+		{"wrap past the end", 2, "build", 0},
+		{"start past the end wraps", 4, "gamma", 3},
+		{"no match", 0, "zzz", -1},
+		{"empty query", 0, "", -1},
+		{"ghost-only row", 0, "build", 0},
+	}
+	for _, c := range cases {
+		if got := nextMatch(rows, c.start, c.query); got != c.want {
+			t.Errorf("%s: nextMatch(%d, %q) = %d, want %d", c.name, c.start, c.query, got, c.want)
+		}
+	}
+	if got := nextMatch(nil, 0, "x"); got != -1 {
+		t.Fatalf("an empty row set must not match: %d", got)
+	}
+}
+
+// TestIndexSearch pins the / prompt and the n key: / opens the search
+// prompt, enter commits the pattern, closes the prompt and jumps the
+// cursor to the next match; the matched part highlights in the rows,
+// and n repeats the search from the cursor (wrapping). A miss logs the
+// no-match notice and leaves the cursor.
+func TestIndexSearch(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	// the view sorts newest-first: t3 row 0, t2 row 1, t1 row 2
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{{ID: "a", Timestamp: 100, Author: "Alpha", Subject: "build report", Tags: []string{"inbox"}}}),
+		core.NewThread("t2", []*core.Message{{ID: "b", Timestamp: 200, Author: "Boris", Subject: "beta notes", Tags: []string{"inbox"}}}),
+		core.NewThread("t3", []*core.Message{{ID: "c", Timestamp: 300, Author: "Carol", Subject: "gamma plan", Tags: []string{"inbox"}}}),
+	})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	searchSGR := sgrOf(m.styles.Index.Search).open
+
+	// / opens the prompt prefilled with the last pattern (empty here)
+	m = press(t, m, "/")
+	if d := textD(m); d == nil || d.field != "search" {
+		t.Fatalf("/ must open the search prompt, got %+v", m.dialogue)
+	}
+	// type the pattern and enter: the prompt closes, the cursor jumps
+	// to the match
+	m = press(t, m, "b")
+	m = press(t, m, "enter")
+	if m.dialogue != nil {
+		t.Fatal("enter must close the search prompt (the pattern is saved)")
+	}
+	if !m.paint {
+		t.Fatal("enter must schedule the repaint (the prompt box must hide immediately)")
+	}
+	if m.CursorIndex() != 1 {
+		t.Fatalf("enter must jump to the matching row, cursor=%d", m.CursorIndex())
+	}
+	if out := m.View(); !strings.Contains(out, searchSGR) {
+		t.Fatalf("the matched part must render highlighted:\n%q", out)
+	}
+	// n repeats the search from the cursor: the next match
+	m = press(t, m, "n")
+	if m.CursorIndex() != 2 {
+		t.Fatalf("n must jump to the next match, cursor=%d", m.CursorIndex())
+	}
+	// n wraps past the end of the list
+	m = press(t, m, "n")
+	if m.CursorIndex() != 1 {
+		t.Fatalf("n must wrap to the first match, cursor=%d", m.CursorIndex())
+	}
+	// a miss leaves the cursor and logs the notice
+	m = press(t, m, "/")
+	m = press(t, m, "z")
+	m = press(t, m, "enter")
+	if m.dialogue != nil {
+		t.Fatal("a miss must still close the search prompt")
+	}
+	if m.CursorIndex() != 1 {
+		t.Fatalf("a miss must not move the cursor, cursor=%d", m.CursorIndex())
+	}
+	if m.statusMsg != "search: no match" {
+		t.Fatalf("a miss must log the notice, got %q", m.statusMsg)
+	}
+}
+
+// TestPagerEnterNextMail pins the pager's enter key: the index cursor
+// advances and the pager loads the next thread; a press on the last
+// row is a no-op (the same-thread guard skips the reload).
+func TestPagerEnterNextMail(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	// the view sorts newest-first: t2 (300) is row 0, t1 the next
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{{ID: "a", Timestamp: 100, Tags: []string{"inbox"}}}),
+		core.NewThread("t2", []*core.Message{{ID: "b", Timestamp: 300, Tags: []string{"inbox"}}}),
+	})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	opens := 0
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		opens++
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID, RenderMode: core.RenderPlain, Mime: "text/plain",
+			Lines: []core.Line{{Text: "mail " + threadID}},
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m (t2)
+	if m.mode != "pager" {
+		t.Fatalf("enter in the index must open the pager, mode=%q", m.mode)
+	}
+	press(t, m, "enter") // enter in the pager: next mail (rebinds with t1)
+	if m.CursorIndex() != 1 {
+		t.Fatalf("the pager's enter must advance the cursor, cursor=%d", m.CursorIndex())
+	}
+	if out := stripANSI(m.View()); !strings.Contains(out, "mail t1") {
+		t.Fatalf("the pager must load the next thread:\n%s", out)
+	}
+	before := opens
+	press(t, m, "enter") // last row: no-op
+	if opens != before {
+		t.Fatalf("a same-thread press must not reload, opens=%d", opens)
+	}
+}

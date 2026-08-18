@@ -54,6 +54,8 @@ opener = ["xdg-open"]
 "p" = { fun = "pending", show = true }
 "P" = { fun = "preview", desc = "Preview the message under the cursor", show = true }
 "F" = { fun = "filter", desc = "Live-filter the index rows", show = true }
+"/" = { fun = "search", desc = "Search the index", show = true }
+"n" = { fun = "search-next", desc = "Jump to the next search match", show = true }
 "g g" = { fun = "cursor-top", desc = "Jump to the first row" }
 "G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
 "g r" = { fun = "reply-all", show = true }
@@ -92,6 +94,7 @@ opener = ["xdg-open"]
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
 "h" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
+"enter" = { fun = "open", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
@@ -163,6 +166,7 @@ opener = ["xdg-open"]
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
 "ctrl+r" = { fun = "refresh", desc = "Check for new mail now", show = true }
+"ctrl+s" = { fun = "search", desc = "Search the index", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }
@@ -179,6 +183,7 @@ opener = ["xdg-open"]
 "alt+r" = { fun = "toggle-render", desc = "Switch between the HTML and text view" }
 "F" = { fun = "open-links", desc = "Open a link by number" }
 "h" = { fun = "open-headers", desc = "Toggle the full header block" }
+"enter" = { fun = "open" }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }

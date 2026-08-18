@@ -48,8 +48,8 @@ var Actions = map[string]map[string]bool{
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
-		"filter": true,
-		"reply":  true, "reply-all": true, "forward": true, "compose": true,
+		"filter": true, "search": true, "search-next": true,
+		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
@@ -60,8 +60,8 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"back": true, "quit": true, "toggle-images": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
-		"open-headers": true,
-		"tab-prev":     true, "tab-next": true,
+		"open-headers": true, "open": true,
+		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
 	"compose": {
@@ -118,6 +118,10 @@ type Model struct {
 	// highlight). A complete number opens the link on the spot.
 	linkInput   string
 	showHeaders bool
+	// searchQuery is the index search pattern (the / key): rows whose
+	// author or subject contains it render the match highlighted, and
+	// the n key jumps to the next match. Empty means no active search.
+	searchQuery string
 	// imgProto is the terminal's image protocol ("" = unsupported:
 	// images stay collapsed); imgCache holds the decoded+scaled window
 	// images; painted the rects the terminal currently holds (the
@@ -750,6 +754,17 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "open":
 		if m.mode == "index" {
 			m.openCursorThread()
+		} else if m.mode == "pager" && m.pager != nil {
+			// enter in the pager: the next mail (mutt's next-message).
+			// The index cursor advances; a same-thread press at the
+			// last row is a no-op. The reload guard replaces the
+			// pager content on arrival.
+			m.moveCursor(1)
+			if tid, _ := m.cursorThreadID(); tid != "" && tid != pagerThreadID(m.pager) {
+				onOpen(tid, false, m.showHeaders, m.width)
+				deferPaint()
+				deferred = true
+			}
 		}
 	case "open-headers":
 		// the h key: the index flips the flag and opens; in the pager
@@ -1078,6 +1093,23 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				label: "filter: ", input: m.view.Filter(), saved: m.view.Filter()}
 			d.cur = len(d.input)
 			m.dialogue = d
+		}
+	case "search":
+		// the mutt search prompt (/): enter commits the pattern and
+		// closes the prompt - the n key repeats the search from the
+		// cursor. The pattern preloads so a repeat-search can edit it.
+		if m.mode == "index" {
+			d := &textDialogue{field: "search", label: "/",
+				input: m.searchQuery, saved: m.searchQuery}
+			d.cur = len(d.input)
+			m.dialogue = d
+		}
+	case "search-next":
+		// n repeats the last search from the cursor (wrapping)
+		if m.mode == "index" && m.searchQuery != "" {
+			m.searchNext()
+			deferPaint()
+			deferred = true
 		}
 	default:
 		// a plugin-registered action (R8): the app runs it in the
@@ -1818,6 +1850,47 @@ func (m *Model) moveCursor(delta int) {
 	}
 }
 
+// searchNext jumps the cursor to the next search match at or after
+// the current row (the / prompt's enter and the n key). The scan
+// wraps; a miss logs the mutt "Pattern not found" notice and leaves
+// the cursor. The cursor move goes through moveCursor so the window
+// pages like any counted move.
+func (m *Model) searchNext() {
+	rows := m.view.Rows()
+	m.rows = rows
+	if len(rows) == 0 {
+		return
+	}
+	idx := nextMatch(rows, m.CursorIndex()+1, m.searchQuery)
+	if idx < 0 {
+		m.logEntry("search: no match", false)
+		return
+	}
+	m.moveCursor(idx - m.CursorIndex())
+}
+
+// nextMatch finds the first real row at or after start (wrapping)
+// whose author or subject contains query, case-insensitive; -1 when
+// nothing matches. start may equal len(rows) - the wrap covers the
+// first rows.
+func nextMatch(rows []core.Row, start int, query string) int {
+	if query == "" || len(rows) == 0 {
+		return -1
+	}
+	q := strings.ToLower(query)
+	for i := 0; i < len(rows); i++ {
+		r := rows[(start+i)%len(rows)]
+		if r.Msg == nil {
+			continue
+		}
+		if strings.Contains(strings.ToLower(r.Msg.Author), q) ||
+			strings.Contains(strings.ToLower(r.Msg.Subject), q) {
+			return (start + i) % len(rows)
+		}
+	}
+	return -1
+}
+
 // cursorStepAt moves idx one row in dir. Ghost rows are pass-through:
 // a step onto a ghost walks in the move direction to the nearest real
 // message; at a boundary, the step does not move (returns start).
@@ -2210,7 +2283,7 @@ func (m Model) renderBase() string {
 		// plus every style-affecting parameter; the outer row style is
 		// a function of the row's own fields and selected, so the
 		// rendered line is fully keyed.
-		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur}
+		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
@@ -2219,7 +2292,7 @@ func (m Model) renderBase() string {
 			if len(m.rowCache) > rowCacheMax {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
-			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags)
+			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
 			outer := sg.normal
 			if rows[i].Ghost {
 				outer = sg.ghost
@@ -2562,6 +2635,16 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return nil, nil
 		case "filter":
 			// the filter applied live per key - enter only closes
+			return nil, nil
+		case "search":
+			// enter commits the pattern and closes the prompt - the
+			// saved state drives the n key from the new cursor. The
+			// update's default paint stays: the box must vanish
+			// immediately, not on the next armed tick.
+			if input != "" {
+				m.searchQuery = core.SanitizeControls(input)
+				m.searchNext()
+			}
 			return nil, nil
 		}
 		st := &m.tabs[m.tabIdx-1]

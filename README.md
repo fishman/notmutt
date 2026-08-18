@@ -6,6 +6,8 @@ operation; folders exist only for sync-tool compatibility. Written in Go
 - tcell v3 TUI (lipgloss v2 for layout math), go-message for mail
 parsing and composition, TOML config, vim keybindings by default.
 
+<img width="2285" height="1309" alt="1787024932790608185" src="https://github.com/user-attachments/assets/1d0626f7-1e78-4100-8d4c-dea5108a51a2" />
+
 ## Try it now
 
 Requirements: a recent Go toolchain, libnotmuch, and a notmuch-indexed

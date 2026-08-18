@@ -413,9 +413,7 @@ func (v *View) CursorRow() (Row, bool) {
 			}
 		}
 	}
-	if v.lastRow >= len(rows) {
-		v.lastRow = len(rows) - 1
-	}
+	v.lastRow = min(v.lastRow, len(rows)-1)
 	return rows[v.lastRow], true
 }
 
@@ -628,8 +626,7 @@ func buildTree(msgs []*Message) *Node {
 // parentOf scans references in reverse so the nearest present ancestor
 // wins over distant ones.
 func parentOf(m *Message, nodes map[string]*Node) *Node {
-	for i := len(m.References) - 1; i >= 0; i-- {
-		ref := m.References[i]
+	for _, ref := range slices.Backward(m.References) {
 		if ref == m.ID {
 			continue
 		}

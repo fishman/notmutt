@@ -59,13 +59,7 @@ func (f *fuzzy) move(n int) {
 		f.sel = 0
 		return
 	}
-	f.sel += n
-	if f.sel < 0 {
-		f.sel = 0
-	}
-	if max := len(idx) - 1; f.sel > max {
-		f.sel = max
-	}
+	f.sel = max(0, min(f.sel+n, len(idx)-1))
 }
 
 func (f *fuzzy) selected() (string, bool) {

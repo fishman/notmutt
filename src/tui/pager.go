@@ -137,9 +137,7 @@ func (p *pager) relayout() {
 func imgRowSpan(l *core.Line) int {
 	rows := 1
 	for _, im := range l.Imgs {
-		if im.Image.Rows > rows {
-			rows = im.Image.Rows
-		}
+		rows = max(rows, im.Image.Rows)
 	}
 	return rows
 }

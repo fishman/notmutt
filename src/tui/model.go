@@ -2199,13 +2199,7 @@ func nextMatch(rows []core.Row, start int, query string) int {
 // message; at a boundary, the step does not move (returns start).
 func cursorStepAt(rows []core.Row, idx, dir int) int {
 	start := idx
-	idx += dir
-	if idx < 0 {
-		idx = 0
-	}
-	if idx >= len(rows) {
-		idx = len(rows) - 1
-	}
+	idx = max(0, min(idx+dir, len(rows)-1))
 	if rows[idx].Msg == nil {
 		for {
 			idx += dir
@@ -2231,17 +2225,11 @@ func (m *Model) pageAtEdgeAt(rows []core.Row, idx int) int {
 	}
 	h := m.listHeight()
 	if idx > m.indexOffset+h-1 {
-		m.indexOffset += h
-		if m.indexOffset > len(rows)-h {
-			m.indexOffset = len(rows) - h
-		}
+		m.indexOffset = min(m.indexOffset+h, len(rows)-h)
 		return cursorLandAt(rows, m.indexOffset, 1)
 	}
 	if idx < m.indexOffset {
-		m.indexOffset -= h
-		if m.indexOffset < 0 {
-			m.indexOffset = 0
-		}
+		m.indexOffset = max(m.indexOffset-h, 0)
 		return cursorLandAt(rows, m.indexOffset+h-1, -1)
 	}
 	return idx
@@ -2307,12 +2295,7 @@ func (m *Model) clampIndexOffset() {
 		m.indexOffset = 0
 		return
 	}
-	if max := len(rows) - m.listHeight(); m.indexOffset > max {
-		m.indexOffset = max
-	}
-	if m.indexOffset < 0 {
-		m.indexOffset = 0
-	}
+	m.indexOffset = max(0, min(m.indexOffset, len(rows)-m.listHeight()))
 }
 
 // cursorTop/cursorBottom jump the index cursor to the first/last real
@@ -2557,10 +2540,7 @@ func (m Model) renderBase() string {
 	bottom := top + listHeight
 	if bottom > len(rows) {
 		bottom = len(rows)
-		top = bottom - listHeight
-		if top < 0 {
-			top = 0
-		}
+		top = max(0, bottom-listHeight)
 		m.indexOffset = top
 	}
 	// the number slot grows with the largest row number (the width is
@@ -2655,14 +2635,8 @@ func (m Model) listFrame(f *fuzzy) string {
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
 	lines := []string{padRow(f.title+" "+f.query, m.width, m.styles.Indicator)}
-	matchRows := rows - 1
-	if matchRows < 0 {
-		matchRows = 0
-	}
 	matches := f.filtered()
-	if matchRows > len(matches) {
-		matchRows = len(matches)
-	}
+	matchRows := max(0, min(rows-1, len(matches)))
 	for i := 0; i < matchRows; i++ {
 		outer := m.styles.Normal
 		if i == f.sel {

@@ -233,20 +233,10 @@ func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 	if sel < 0 || sel >= n {
 		sel = 0
 	}
-	lo := sel - 2 // the cursor's row is the window's third
-	if lo < 0 {
-		lo = 0
-	}
-	if lo+3 > n {
-		lo = n - 3
-	}
-	if lo < 0 {
-		lo = 0
-	}
-	hi := lo + 3
-	if hi > n {
-		hi = n
-	}
+	// the 3-row window clamps to [0, n) with the cursor at its third
+	// row; a short list (n-3 < 0) pins the top
+	lo := max(0, min(sel-2, n-3))
+	hi := min(lo+3, n)
 	if lo > 0 {
 		rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", lo)})
 	}

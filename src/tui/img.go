@@ -120,15 +120,8 @@ func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.I
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	if widthCells > imgMaxCols {
-		widthCells = imgMaxCols
-	}
-	if widthCells < 1 {
-		widthCells = 1
-	}
-	if heightRows < 1 {
-		heightRows = 1
-	}
+	widthCells = max(1, min(widthCells, imgMaxCols))
+	heightRows = max(1, heightRows)
 	sw, sh := float64(src.Bounds().Dx()), float64(src.Bounds().Dy())
 	scale := math.Min((float64(widthCells)*float64(imgCellW))/sw, (float64(heightRows)*float64(imgCellH))/sh)
 	if dispW > 0 {
@@ -140,14 +133,8 @@ func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.I
 	if scale > 1 && dispW == 0 && dispH == 0 {
 		scale = 1
 	}
-	cols := int(sw * scale / float64(imgCellW))
-	rows := int(sh * scale / float64(imgCellH))
-	if cols < 1 {
-		cols = 1
-	}
-	if rows < 1 {
-		rows = 1
-	}
+	cols := max(1, int(sw*scale/float64(imgCellW)))
+	rows := max(1, int(sh*scale/float64(imgCellH)))
 	dw, dh := cols*imgCellW, rows*imgCellH
 	dst := image.NewNRGBA(image.Rect(0, 0, dw, dh))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)

@@ -23,25 +23,14 @@ func (v *viewport) setLines(lines []string) {
 }
 
 func (v *viewport) setSize(w, h int) {
-	if w < 0 {
-		w = 0
-	}
-	if h < 0 {
-		h = 0
-	}
-	v.width, v.height = w, h
+	v.width, v.height = max(0, w), max(0, h)
 	v.clamp()
 }
 
 // clamp keeps the offset inside [0, len-lines-height]; a window taller
 // than the content pins to the top.
 func (v *viewport) clamp() {
-	if max := len(v.lines) - v.height; v.offset > max {
-		v.offset = max
-	}
-	if v.offset < 0 {
-		v.offset = 0
-	}
+	v.offset = max(0, min(v.offset, len(v.lines)-v.height))
 }
 
 // window returns the visible line range as a copy: the pager's render
@@ -49,10 +38,7 @@ func (v *viewport) clamp() {
 // (a later render must see the clean content, not an ever-growing pile
 // of blank rows).
 func (v *viewport) window() []string {
-	last := v.offset + v.height
-	if last > len(v.lines) {
-		last = len(v.lines)
-	}
+	last := min(v.offset+v.height, len(v.lines))
 	return slices.Clone(v.lines[v.offset:last])
 }
 

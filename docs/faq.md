@@ -96,8 +96,9 @@ Zig on bindings, mail libraries, TUI maturity, async model and
 supply-chain surface. Go won on integration surface: go-message is
 aerc's production mail library (the same worker architecture notmutt
 mirrors), goroutines make the async model native, and the cgo
-binding is vendored and pinned. The Rust column's strengths (ratatui,
-mlua, tokio) are real; they lost on integration surface.
+binding is vendored and pinned. Rust's toolkit is strong - ratatui,
+mlua, tokio are mature - but integration won: mirroring aerc's proven
+mail path beats assembling best-in-class parts.
 
 ## Does it support my terminal?
 

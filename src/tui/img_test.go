@@ -29,6 +29,31 @@ import (
 	"notmutt/mail"
 )
 
+// TestSetCellSize pins the ioctl-derived cell size: window pixels over
+// cell counts, out-of-range or missing pixels keep the 10x20 defaults.
+func TestSetCellSize(t *testing.T) {
+	saveW, saveH := imgCellW, imgCellH
+	defer func() { imgCellW, imgCellH = saveW, saveH }()
+	imgCellW, imgCellH = 10, 20
+
+	setCellSize(159, 33, 1908, 990) // the measured foot/tmux geometry
+	if imgCellW != 12 || imgCellH != 30 {
+		t.Fatalf("cell size = %dx%d, want 12x30", imgCellW, imgCellH)
+	}
+	for name, args := range map[string][4]int{
+		"no pixels":  {159, 33, 0, 0},
+		"corrupt px": {159, 33, 20000, 990},
+		"no cells":   {0, 0, 1908, 990},
+		"tiny cell":  {159, 33, 5, 5},
+	} {
+		imgCellW, imgCellH = 10, 20
+		setCellSize(args[0], args[1], args[2], args[3])
+		if imgCellW != 10 || imgCellH != 20 {
+			t.Fatalf("%s: must keep the defaults, got %dx%d", name, imgCellW, imgCellH)
+		}
+	}
+}
+
 // trimRows strips the per-row width padding before comparisons.
 func trimRows(s string) []string {
 	rows := strings.Split(s, "\n")

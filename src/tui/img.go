@@ -40,9 +40,13 @@ import (
 const (
 	imgMaxCols = 100  // paint cap: an image line never exceeds 100 cells wide
 	kittyChunk = 4096 // kitty's max payload per DCS frame
-	// imgCellW/H are the assumed terminal cell size in pixels. No probe
-	// (queries race tcell's input and tmux answers them with screen
-	// garbage); a font that differs leaves a gap under painted images.
+)
+
+// imgCellW/H are the terminal cell size in pixels: probed from the
+// TIOCGWINSZ ioctl at startup and on resize, 10x20 when the pty
+// reports no pixels. An image's reserved rows must match the pixels
+// its raster occupies - a wrong cell size misaligns every image.
+var (
 	imgCellW = 10
 	imgCellH = 20
 )
@@ -74,6 +78,18 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 		return "sixel"
 	}
 	return ""
+}
+
+// setCellSize adopts a measured cell size (window pixels over cell
+// counts); bounds keep a corrupt ioctl from breaking the paint math.
+func setCellSize(cols, rows, pxW, pxH int) {
+	if cols <= 0 || rows <= 0 || pxW <= 0 || pxH <= 0 {
+		return
+	}
+	cw, ch := pxW/cols, pxH/rows
+	if cw >= 1 && cw <= 60 && ch >= 1 && ch <= 60 {
+		imgCellW, imgCellH = cw, ch
+	}
 }
 
 // sixelCapable is the negotiated sixel flag the screen exposes (the

@@ -15,6 +15,7 @@ import (
 // protocols, and the direct fd writes after a frame flush are ordered
 // and safe (the draw clobbers the cursor position on the next frame).
 func Run(model Model, quitCh <-chan struct{}) error {
+	probeCellSize()
 	s, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -78,6 +79,7 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 					}
 				}
 			case *tcell.EventResize:
+				probeCellSize()
 				w, h := e.Size()
 				msg = WindowSizeMsg{Width: w, Height: h}
 			}

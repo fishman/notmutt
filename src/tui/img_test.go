@@ -18,6 +18,8 @@ import (
 	"image/png"
 	"os"
 	"strings"
+
+	"github.com/mattn/go-sixel"
 	"testing"
 
 	"notmutt/config"
@@ -163,9 +165,9 @@ func TestPagerVisibleImages(t *testing.T) {
 }
 
 func TestDecodeImage(t *testing.T) {
-	// 400x900 px at an 80-cell window: the 30-row cap binds first
+	// 400x900 px at an 80x30 window: the row budget binds first
 	// (aspect kept: 2/3), the pixel dims snap to exact cell multiples
-	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80)
+	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,8 +178,17 @@ func TestDecodeImage(t *testing.T) {
 		t.Fatalf("pixel dims must snap to cell multiples: %dx%d", b.Dx(), b.Dy())
 	}
 
+	// the same image in a 100-row window binds on the width instead:
+	// a tall chart renders at its natural aspect, not squashed
+	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 40 || rows != 45 {
+		t.Fatalf("tall image must keep the width-bound aspect, got %dx%d", cols, rows)
+	}
+
 	// a wide image binds on the width cap
-	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80, 100); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 80 || rows != 1 {
@@ -185,7 +196,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// a tiny image still occupies one cell (no zero-size expansion)
-	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80, 100); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 1 || rows != 1 {
@@ -193,7 +204,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// garbage bytes never decode
-	if _, _, _, err := decodeImage([]byte("not an image"), 80); err == nil {
+	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100); err == nil {
 		t.Fatal("garbage must fail the decode")
 	}
 }
@@ -613,5 +624,143 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	m, _ = m.Update(frameTick{})
 	if out := m.View(); !strings.Contains(out, "[image]") {
 		t.Fatalf("toggle-off must restore the placeholders:\n%s", out)
+	}
+}
+
+// TestModelRenderImagesScrollCycle pins the scroll behavior: a below-
+// fold block image decodes when scrolled into view, its rect clears
+// when scrolled past, and the same rect paints again on the way back
+// (the decode cache keeps the bytes, the pixel state is re-emitted).
+func TestModelRenderImagesScrollCycle(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty"
+	m.width, m.height = 60, 30
+	var body strings.Builder
+	body.WriteString("<p>head</p>")
+	for range 20 {
+		body.WriteString("<p>text</p>")
+	}
+	body.WriteString("<img src=\"http://example.com/chart.png\" alt=\"[image]\">")
+	for range 20 {
+		body.WriteString("<p>tail</p>")
+	}
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Lines:    mail.RenderHTML(body.String(), nil, 0),
+		}})
+		m = next
+	})
+	press(t, m, "enter")
+	var fetched []string
+	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
+	m = press(t, m, "alt+i")
+	next, _ := m.Update(EventMsg{Event: core.ImageFetched{
+		URL:  "http://example.com/chart.png",
+		Data: testPNG(t, 100, 120),
+	}})
+	m = next
+	m, _ = m.Update(frameTick{})
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	paint := func() {
+		next, stale := m.paintRects()
+		clearRects(imageWriter, stale)
+		m.paintImages(next)
+	}
+
+	chart := func() *core.Image {
+		for i := range m.pager.lines {
+			if img := m.pager.lines[i].Image; img != nil && img.URL != "" {
+				return img
+			}
+		}
+		return nil
+	}
+
+	// below fold: not decoded, nothing painted
+	m.pager.vp.offset = 0
+	m.View()
+	paint()
+	if img := chart(); img != nil && img.Rows != 0 {
+		t.Fatalf("a below-fold image must stay undecoded, rows=%d", img.Rows)
+	}
+	if len(m.painted) != 0 {
+		t.Fatalf("nothing may paint below the fold, got %d rects", len(m.painted))
+	}
+
+	// scroll into it: the decode expands the doc, the paint emits the rect
+	m.pager.vp.offset = 25
+	m.View()
+	paint()
+	img := chart()
+	if img == nil || img.Rows == 0 {
+		t.Fatalf("scrolling into the image must decode it")
+	}
+	if len(m.painted) != 1 {
+		t.Fatalf("the visible image must paint one rect, got %d", len(m.painted))
+	}
+
+	// scroll past: the rect stales (cleared before the frame) and the
+	// bookkeeping drops it
+	m.pager.vp.offset = 60
+	m.View()
+	np, stale := m.paintRects()
+	if len(np) != 0 {
+		t.Fatalf("scrolled-past images must not paint, got %d", len(np))
+	}
+	if len(stale) != 1 {
+		t.Fatalf("the scrolled-past rect must stale, got %d", len(stale))
+	}
+	clearRects(imageWriter, stale)
+	m.paintImages(np)
+
+	// scroll back: the same rect paints again (the pixels were cleared
+	// when it left the window - the cache keeps the bytes, the dims
+	// stay decoded)
+	m.pager.vp.offset = 25
+	m.View()
+	paint()
+	if len(m.painted) != 1 {
+		t.Fatalf("scrolling back must re-paint the image, got %d rects", len(m.painted))
+	}
+}
+
+// TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave
+// the cleared page background visible (P2=0 paints them in the terminal's
+// default background), and the stream must round-trip to the same dims.
+func TestSixelEncodeTransparent(t *testing.T) {
+	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := img.(*image.NRGBA)
+	for y := range 2 {
+		for x := range n.Bounds().Dx() {
+			n.SetNRGBA(x, y, color.NRGBA{0, 0, 0, 0})
+		}
+	}
+	var buf bytes.Buffer
+	sixelEncode(&buf, img)
+	head := buf.String()
+	if !strings.HasPrefix(head, "\x1bP0;1;8q") {
+		t.Fatalf("P2 flag: got %q, want P2=1", head[:min(8, len(head))])
+	}
+	var back image.Image
+	if err := sixel.NewDecoder(bytes.NewReader(buf.Bytes())).Decode(&back); err != nil {
+		t.Fatalf("round-trip decode: %v", err)
+	}
+	if back.Bounds().Dx() != 40 || back.Bounds().Dy() != 20 {
+		t.Fatalf("round-trip dims %dx%d, want 40x20", back.Bounds().Dx(), back.Bounds().Dy())
 	}
 }

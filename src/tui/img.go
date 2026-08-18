@@ -36,8 +36,7 @@ import (
 const (
 	imgCellW   = 10 // ponytail: default cell px; the calibration knob if a terminal's cell grid differs
 	imgCellH   = 20
-	imgMaxCols = 100 // paint caps: an image line never exceeds 100x30 cells
-	imgMaxRows = 30
+	imgMaxCols = 100  // paint cap: an image line never exceeds 100 cells wide
 	kittyChunk = 4096 // kitty's max payload per DCS frame
 )
 
@@ -84,11 +83,14 @@ var tmuxSixel = func() bool {
 }
 
 // decodeImage decodes the raw image bytes and scales to the cell
-// grid: at most widthCells (capped at imgMaxCols) x imgMaxRows cells,
-// aspect preserved, then snapped UP to exact cell multiples so the
-// pixel dims align with the terminal's cells. Returns the scaled
-// image (always NRGBA) plus its cell dims.
-func decodeImage(data []byte, widthCells int) (image.Image, int, int, error) {
+// grid: at most widthCells (capped at imgMaxCols) wide and heightRows
+// tall, aspect preserved, then snapped UP to exact cell multiples so
+// the pixel dims align with the terminal's cells. The row budget is
+// the pager window's height: a chart renders at its natural aspect
+// (a fixed row cap squashed wide images to a small rectangle), and no
+// image ever occupies more than one window. Returns the scaled image
+// (always NRGBA) plus its cell dims.
+func decodeImage(data []byte, widthCells, heightRows int) (image.Image, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, err
@@ -99,8 +101,11 @@ func decodeImage(data []byte, widthCells int) (image.Image, int, int, error) {
 	if widthCells < 1 {
 		widthCells = 1
 	}
+	if heightRows < 1 {
+		heightRows = 1
+	}
 	sw, sh := float64(src.Bounds().Dx()), float64(src.Bounds().Dy())
-	scale := math.Min((float64(widthCells)*imgCellW)/sw, (float64(imgMaxRows)*imgCellH)/sh)
+	scale := math.Min((float64(widthCells)*imgCellW)/sw, (float64(heightRows)*imgCellH)/sh)
 	if scale > 1 {
 		scale = 1
 	}
@@ -141,9 +146,13 @@ func kittyEncode(w io.Writer, img image.Image) {
 }
 
 // sixelEncode emits the image as sixels; go-sixel writes the complete
-// DCS sequence in one call.
+// DCS sequence in one call. Transparent (P2=1) leaves the cleared page
+// background visible behind alpha pixels - P2=0 would paint them in the
+// terminal's default background (dark boxes around icons on a white page).
 func sixelEncode(w io.Writer, img image.Image) {
-	sixel.NewEncoder(w).Encode(img)
+	e := sixel.NewEncoder(w)
+	e.Transparent = true
+	e.Encode(img)
 }
 
 // cropImage cuts a pixel sub-rect of the scaled image (decodeImage
@@ -250,7 +259,7 @@ func (m *Model) prepareImages() {
 		if _, ok := m.imgCache[img]; ok {
 			continue
 		}
-		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width)
+		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height)
 		if err != nil {
 			continue
 		}
@@ -317,11 +326,15 @@ func lineImages(l *core.Line) []*core.Image {
 // attachFetched attaches a fetch reply to its image lines (the remote
 // images mode): the bytes land on every line sharing the URL, the
 // pager re-expands, and the decode runs on the next prepareImages. A
-// failed fetch keeps the Alt row and drops the URL so the next cycle
-// never refetches.
+// failed fetch keeps the Alt row AND the URL: the next toggle
+// refetches (a transient network failure must not kill the image
+// forever).
 func (m *Model) attachFetched(e core.ImageFetched) {
 	delete(m.imgFetching, e.URL)
 	if m.pager == nil {
+		return
+	}
+	if e.Err != nil {
 		return
 	}
 	dirty := false
@@ -331,19 +344,12 @@ func (m *Model) attachFetched(e core.ImageFetched) {
 			if img.URL != e.URL {
 				continue
 			}
-			dirty = true
-			if e.Err != nil {
-				img.URL = ""
-				continue
-			}
 			img.Data = e.Data
+			dirty = true
 		}
 	}
 	if !dirty {
 		return
-	}
-	if e.Err != nil {
-		m.logEntry("image fetch failed", true)
 	}
 	m.pager.relayout()
 }

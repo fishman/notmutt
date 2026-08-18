@@ -22,6 +22,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/mattn/go-sixel"
@@ -43,12 +44,26 @@ const (
 // paint paths no-op, so the frame tests never write to a terminal).
 var imageWriter io.Writer
 
+// probeTmuxTerm asks the running tmux (if any) for the client's outer
+// terminal name - TERM inside tmux is the tmux wrapper; the image
+// protocol belongs to the real terminal outside. Stubable: tests run
+// inside a tmux session and must stay deterministic.
+var probeTmuxTerm = func() string {
+	out, err := exec.Command("tmux", "display-message", "-p", "#{client_termname}").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // detectImageProtocol picks the terminal's image protocol: kitty only
 // when [pager] image-protocol opts into it AND the kitty environment
-// matches (KITTY_WINDOW_ID, or TERM_PROGRAM in the kitty family) -
-// the default never auto-selects kitty. Otherwise sixel when the
-// terminal names it in TERM. Unsupported terminals return "" - images
-// stay collapsed.
+// matches (KITTY_WINDOW_ID, or TERM_PROGRAM in the kitty family -
+// env vars pass through tmux) - the default never auto-selects kitty.
+// Otherwise sixel when the terminal names it in TERM (foot and its
+// variants included); a tmux wrapper TERM recurses on the client's
+// real terminal name. Unsupported terminals return "" - images stay
+// collapsed.
 func detectImageProtocol(p config.Pager) string {
 	if p.ImageProtocol == "kitty" {
 		if os.Getenv("KITTY_WINDOW_ID") != "" {
@@ -61,7 +76,10 @@ func detectImageProtocol(p config.Pager) string {
 		return ""
 	}
 	term := strings.ToLower(os.Getenv("TERM"))
-	if strings.Contains(term, "sixel") || term == "foot" || strings.HasSuffix(term, "-foot") || strings.Contains(term, "mlterm") {
+	if strings.HasPrefix(term, "tmux") {
+		term = strings.ToLower(probeTmuxTerm())
+	}
+	if strings.Contains(term, "sixel") || strings.Contains(term, "foot") || strings.Contains(term, "mlterm") {
 		return "sixel"
 	}
 	return ""

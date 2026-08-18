@@ -201,31 +201,41 @@ func TestDetectImageProtocol(t *testing.T) {
 	base := config.Default()
 	kitty := config.Default()
 	kitty.Pager.ImageProtocol = "kitty"
+	orig := probeTmuxTerm
+	defer func() { probeTmuxTerm = orig }()
 	cases := []struct {
-		cfg  config.Pager
-		env  map[string]string
-		want string
+		cfg   config.Pager
+		env   map[string]string
+		probe string // the stubbed tmux client termname
+		want  string
 	}{
 		// kitty is opt-in: the kitty environment alone never selects it
-		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, ""},
-		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, "kitty"},
-		{kitty.Pager, map[string]string{"TERM": "xterm-256color"}, ""},
-		// sixel by default when the terminal names it in TERM
-		{base.Pager, map[string]string{"TERM": "foot"}, "sixel"},
-		{base.Pager, map[string]string{"TERM": "xterm-sixel"}, "sixel"},
-		{base.Pager, map[string]string{"TERM": "mlterm"}, "sixel"},
-		// unsupported terminals (tmux passes no image protocol through)
-		{base.Pager, map[string]string{"TERM": "tmux-direct"}, ""},
-		{base.Pager, map[string]string{"TERM": "xterm-256color"}, ""},
+		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "", ""},
+		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "", "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, "", "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, "", "kitty"},
+		{kitty.Pager, map[string]string{"TERM": "xterm-256color"}, "", ""},
+		// sixel by default when the terminal names it in TERM (foot
+		// variants included - foot-extra-direct is the real-world case)
+		{base.Pager, map[string]string{"TERM": "foot"}, "", "sixel"},
+		{base.Pager, map[string]string{"TERM": "foot-extra-direct"}, "", "sixel"},
+		{base.Pager, map[string]string{"TERM": "xterm-sixel"}, "", "sixel"},
+		{base.Pager, map[string]string{"TERM": "mlterm"}, "", "sixel"},
+		// a tmux wrapper TERM recurses on the client's real terminal
+		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "foot-extra-direct", "sixel"},
+		{base.Pager, map[string]string{"TERM": "tmux-256color"}, "xterm-sixel", "sixel"},
+		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "xterm-256color", ""},
+		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "", ""},
+		// unsupported terminals
+		{base.Pager, map[string]string{"TERM": "xterm-256color"}, "", ""},
 	}
 	for _, c := range cases {
 		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM", "TERM"} {
 			t.Setenv(k, c.env[k])
 		}
+		probeTmuxTerm = func() string { return c.probe }
 		if got := detectImageProtocol(c.cfg); got != c.want {
-			t.Errorf("detectImageProtocol(%v) = %q, want %q", c.env, got, c.want)
+			t.Errorf("detectImageProtocol(%v, probe %q) = %q, want %q", c.env, c.probe, got, c.want)
 		}
 	}
 }

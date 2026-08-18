@@ -10,13 +10,35 @@ Question: render HTML mail in the pager with Go, stdlib-first, the main
 risk being CSS. Claim to test: mail HTML uses a very small CSS subset,
 so a subset parser + renderer is tractable.
 
-## Current state
+## Current state (2026-08-19): the renderer shipped
 
-`text/html` parts are silently dropped: the MIME walk keeps only
-`text/plain` inline parts (src/mail/thread.go, the `ct == "text/plain"`
-filter). An HTML-only mail renders as an empty body. The reference
-paths (muttrc mailcap, neomutt's attachment view) are not ported yet
-(R6).
+The in-client flow renderer from the sketch below is live: `text/html`
+bodies render through src/mail/html.go (x/net/html parse -> css.go
+cascade -> flow walk to pager lines) and are the default view for html
+mail. What shipped:
+
+- Phase 1 AND phase 2 of the sequencing below: inline `style=""` plus
+  `<style>` blocks, selectors matched with cascadia (the mature,
+  fuzzed companion - never reimplemented, per the go-css verdict).
+- The ~22-property whitelist from the subset claim; everything else
+  (position, float, flex, media queries) drops.
+- Tables column-align per cell width, ol/ul lists with counters or
+  bullets, block spacing between content blocks, `white-space: pre`.
+- Link mode (the pager F key): `[N]` labels inline, label order = link
+  list (RenderHTMLWithLinks).
+- Images render as placeholders: the bytes travel with the line, the
+  TUI decodes and paints only on the render-images key (privacy gate);
+  remote srcs never fetch (tracking pixels stay dead).
+- Budget: 5000 rendered lines, then a truncation marker - a hostile
+  doc cannot balloon the thread.
+- Fuzz targets live on the boundary: FuzzRenderHTML and
+  FuzzCSSDeclarations (src/mail/fuzz_test.go), per the F10 standard.
+
+Mailcap (R6) shipped on the attachment-preview path: a
+`copiousoutput`-style rule replaces the bytes with its output
+(src/app/app.go, `previewMailcap`), with `<configdir>/mailcap`
+overrides by type - the options table's fallback row, scoped to
+attachments rather than the primary html path.
 
 ## What "go stdlib html" actually is
 
@@ -145,6 +167,10 @@ matching if phase 2 ships (it is the mature, fuzzed piece - take it,
 don't reimplement it). go-css is useful only as a reference shape for
 the state machine.
 
+Outcome (2026-08-19): as concluded - css.go is the hand-written subset
+parser (inline style="" + style blocks), cascadia does the selector
+matching, go-css is not vendored.
+
 ## Scale and sequencing
 
 Phase 1 is the honest first cut: parse + inline-style whitelist + block
@@ -154,7 +180,10 @@ inheritance) is driven by evidence from real mail - the inline-first
 reality of the ecosystem means phase 1 already handles most of what
 Gmail/Outlook-compatible senders emit.
 
-Rendering HTML mail is a resolved "how" (parse + subset CSS + flow
-walk) with a staged "how much" (phase 1 first). The remaining unknown
-is not feasibility but the fidelity bar the user wants on their own
-mail - which the interactive pass measures.
+Rendering HTML mail was a resolved "how" (parse + subset CSS + flow
+walk) with a staged "how much" - and the build delivered both phases
+at once: style blocks and class selectors are in the shipped renderer,
+not a follow-up. The remaining question is the fidelity bar on real
+mail; the interactive pass answers it live. Gaps surface as render
+bugs against the user's own corpus, and the property whitelist and
+table alignment are the extension points.

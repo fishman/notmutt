@@ -14,6 +14,8 @@ composing while the mailbox updates around you.
 Written in Go. tcell TUI, go-message for mail, TOML config, vim
 keybindings out of the box.
 
+<img width="2285" height="1309" alt="notmutt screenshot" src="https://github.com/user-attachments/assets/1d0626f7-1e78-4100-8d4c-dea5108a51a2" />
+
 ## Why switch
 
 **Nothing blocks you.** neomutt's thread queries load synchronously and

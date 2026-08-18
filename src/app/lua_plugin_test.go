@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"notmutt/core"
+	"notmutt/i18n"
 )
 
 func pluginDir(t *testing.T, files map[string]string) string {
@@ -145,6 +146,40 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
 			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+}
+
+// TestLuaTranslateBinding pins the translate() global (decision record
+// 24): the plugin binding is backed by the same embedded bundle as the
+// UI, so its output rides the catalog lookup.
+func TestLuaTranslateBinding(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
+	saved := renderHooks
+	defer restoreRenderHooks(saved, renderHookBudget)
+	i18n.SetLanguage("en")
+	dir := pluginDir(t, map[string]string{"tr.lua": `
+function body_render(lines)
+  return { { text = translate("save attachment to: "), kind = 2, quoted = 0 } }
+end
+`})
+	loadLuaPlugins(dir)
+
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	select {
+	case e := <-ch:
+		tl, ok := e.(core.ThreadLoaded)
+		if !ok {
+			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+		last := tl.Lines[len(tl.Lines)-1]
+		if last.Text != "save attachment to: " {
+			t.Fatalf("translate must serve the catalog: %+v", last)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no ThreadLoaded")

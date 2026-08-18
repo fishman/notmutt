@@ -24,6 +24,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/filter"
+	"notmutt/i18n"
 	"notmutt/mail"
 	"notmutt/notmuch"
 	"notmutt/setup"
@@ -52,6 +53,7 @@ func Run() error {
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
+	i18n.SetLanguage(cfg.UI.Language)
 	if err := validateBindings(&cfg); err != nil {
 		return err
 	}

@@ -1,0 +1,26 @@
+# en: the reference catalog (decision record 24). Keys are the English
+# strings themselves - the T() fallback serves English with an empty
+# catalog, this file is the translation template: copy it to <lang>.toml
+# and translate the "other" values. Dialogue labels only, never mail
+# content.
+
+["attach path: "]
+other = "attach path: "
+
+["save attachment to: "]
+other = "save attachment to: "
+
+["filter: "]
+other = "filter: "
+
+["Discard staged changes and quit?"]
+other = "Discard staged changes and quit?"
+
+["Abort composition?"]
+other = "Abort composition?"
+
+["send failed"]
+other = "send failed"
+
+["draft failed"]
+other = "draft failed"

@@ -25,6 +25,7 @@ import (
 	lua "github.com/yuin/gopher-lua"
 
 	"notmutt/core"
+	"notmutt/i18n"
 )
 
 // luaPlugin is one loaded plugin file: its VM and body_render function.
@@ -95,6 +96,13 @@ func loadLuaPlugin(path string) {
 		}
 		registerAttachCommand(name, argv)
 		return 0
+	}))
+	// translate runs the session language lookup (decision record 24):
+	// backed by the same embedded bundle as the client UI, selected by
+	// the [ui] language - never plugin config.
+	vm.SetGlobal("translate", vm.NewFunction(func(L *lua.LState) int {
+		L.Push(lua.LString(i18n.T(L.CheckString(1))))
+		return 1
 	}))
 	if err := vm.DoFile(path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)

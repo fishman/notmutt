@@ -337,8 +337,8 @@ make the async model native; the cgo binding is go.notmuch
 (module path github.com/fishman/go.notmuch, NOT an official binding -
 the official contrib/go bindings were dormant 2018-2026 and lack the
 revision/UUID API the refresh cycle needs; we added DB.Revision() to
-the vendored fork, see the T14 benchmark report). Vendored and pinned
-by replace, never fetched from the proxy. The Rust
+the vendored fork, see the T14 benchmark report). Pinned
+at the v0.40.0 release, go.sum-verified, vendored. The Rust
 column's strengths (ratatui, mlua, tokio) are real; they lost on
 integration surface - mirroring aerc's proven stack beats best-in-class
 per part. Zig remains greenfield on every dimension.

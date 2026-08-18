@@ -251,8 +251,8 @@ is 0600/0700 (F5/F7); bodies, headers, and passphrases are never logged
 
 Decision: minimal, deliberate dependency set - every dependency must
 earn its place; exact pins; the build is vendored and reproducible; the
-go.notmuch fork is vendored and pinned by replace, never fetched from
-the proxy. Spec/doc commits carry the AI-assisted trailer; code is
+go.notmuch is pinned at the v0.40.0 release, go.sum-verified, vendored;
+Spec/doc commits carry the AI-assisted trailer; code is
 reviewed like any other contribution, with tests proving the edge
 cases.
 

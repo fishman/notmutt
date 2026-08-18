@@ -10,7 +10,7 @@ Pi and other tools). Read it first; it is normative.
 - Never submit mail content (bodies, headers, whole .eml/.mbox files) to
   the LLM.
 - To read a subject or field from inside mail, extract it with a script
-  first (pattern: `muttrc/bin/dedupe-mail`), pass only the extracted value.
+  first (pattern: `references/muttrc/bin/dedupe-mail`), pass only the extracted value.
 - Include a file checksum (sha256, or faster md5/xxhash) when correlating
   or verifying the identity of a message.
 - Config files (muttrc, afew configs, notmuch config) are not mail content

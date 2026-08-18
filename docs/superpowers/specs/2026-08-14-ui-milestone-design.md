@@ -239,7 +239,7 @@ derived surface for now.
 
 - Regex styles (header per-pattern, body URL/email rules, diff
   colors) - the R11 regex surface, later.
-- Theme converter from the base16 .rc collection (muttrc/themes/
+- Theme converter from the base16 .rc collection (references/muttrc/themes/
   palette) - a script, later.
 - R12 DBus scheme sync (separate build tag).
 - Commands (`:theme`, `:help`), keymap macros, help view.
@@ -256,7 +256,7 @@ The milestone shipped. Deviations from this spec, pinned:
   bubbles module; adding it would break the R7 no-new-dependency
   rule). Scrollbar and mouse wheel are future surface, not lost
   features.
-- Pager reading is LINE SCROLLING (the glow/less model), superseding
+- Pager reading is LINE SCROLLING (the references/glow/less model), superseding
   the read-position cursor of the 2026-08-14 ship (2026-08-15 pin,
   the user's directive after the render bugs). The read-position
   cursor failed in production: the indicator wrap was style-only and

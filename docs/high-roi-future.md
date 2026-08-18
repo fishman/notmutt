@@ -30,8 +30,8 @@ afew entirely:
 
 Impact: the classification pipeline becomes the client's own, the muttrc pain
 dies, and the client reaches feature parity with the reference setup.
-Pointers: AGENTS.md R2; `muttrc/notmuch/tags`, `muttrc/notmuch/post-new`,
-`muttrc/afew/config` (reference shapes); `afew/MailMover.py` (reference
+Pointers: AGENTS.md R2; `references/muttrc/notmuch/tags`, `references/muttrc/notmuch/post-new`,
+`references/muttrc/afew/config` (reference shapes); `references/afew/MailMover.py` (reference
 logic). M1's account-sender work (2026-08-14-account-sender-design.md) is the
 account model this derives from.
 
@@ -52,8 +52,8 @@ only passphrase path; no loopback mode - Go cannot zero secrets).
   mail-library decision record).
 
 Impact: the client becomes usable for signed/encrypted mail - table stakes for
-this user's workflow. Pointers: AGENTS.md R10, `neomutt/ncrypt/*`,
-`neomutt/smime/smime.c`, `aerc/lib/crypto/gpg/gpgbin`.
+this user's workflow. Pointers: AGENTS.md R10, `references/neomutt/ncrypt/*`,
+`references/neomutt/smime/smime.c`, `references/aerc/lib/crypto/gpg/gpgbin`.
 
 ### 3. MIME cache (R13) - effort M
 
@@ -101,12 +101,12 @@ Pointers: AGENTS.md R14, `src/tui/model.go` stage/apply/undo.
 
 ### 7. Theme: onedark port + base16 palette converter (R11) - effort S-M
 
-The onedark theme in `muttrc/theme/onedark.muttrc` is the reference port; the
-base16 collection in `muttrc/themes/palette/` is the import source. A
+The onedark theme in `references/muttrc/theme/onedark.muttrc` is the reference port; the
+base16 collection in `references/muttrc/themes/palette/` is the import source. A
 converter script (base16 -> TOML palette) is a stated future task.
 
 Impact: theme parity with the reference mutt setup, delivered as data.
-Pointers: AGENTS.md R11, `src/config` theme store, `muttrc/theme/onedark.muttrc`.
+Pointers: AGENTS.md R11, `src/config` theme store, `references/muttrc/theme/onedark.muttrc`.
 
 ### 8. Send retry reopens the compose dialogue with the failed message (R4) - effort S-M
 
@@ -116,7 +116,7 @@ retries in place); the missing piece is reopening with the failed state and
 its captured output shown.
 
 Impact: send failures stop being lossy - the user edits and re-sends the
-actual failed message. Pointers: `neomutt/send` (async_send branch,
+actual failed message. Pointers: `references/neomutt/send` (async_send branch,
 `bg_send_retry`), `src/app/send.go`, `src/compose/state.go` PhaseFailed.
 
 ### 9. Address cache + notifications as filter side effects (R2) - effort S-M
@@ -126,7 +126,7 @@ mail notification. They subscribe to the filter job's completion event (they
 are not hook steps).
 
 Impact: query completion and notifications arrive with the filter pipeline.
-Pointers: AGENTS.md R2, `muttrc/afew/config` (the reference side effects).
+Pointers: AGENTS.md R2, `references/muttrc/afew/config` (the reference side effects).
 
 ## Tier 3: later, smaller, or gated
 

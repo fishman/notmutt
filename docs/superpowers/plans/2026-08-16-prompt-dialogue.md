@@ -329,7 +329,7 @@ the tab closed and the model returned by Update is the closed one
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-gofmt -l tui/ config/ compose/ app/ core/ notmuch/ cache/   # empty (vendor hits are pre-existing)
+gofmt -l tui/ config/ compose/ app/ core/ references/notmuch/ cache/   # empty (vendor hits are pre-existing)
 go build ./...
 go test ./tui/ ./compose/ ./config/
 ```
@@ -512,7 +512,7 @@ armed in index by actions today - the direct arm pins the render path).
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-gofmt -l tui/ config/ compose/ app/ core/ notmuch/ cache/   # empty (vendor hits pre-existing)
+gofmt -l tui/ config/ compose/ app/ core/ references/notmuch/ cache/   # empty (vendor hits pre-existing)
 go vet ./...
 go build ./...
 go test ./...
@@ -536,7 +536,7 @@ Final gate:
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-gofmt -l .                    # only pre-existing vendor/ + notmuch/cli_test.go hits
+gofmt -l .                    # only pre-existing vendor/ + references/notmuch/cli_test.go hits
 go vet ./...
 go test ./...
 ```

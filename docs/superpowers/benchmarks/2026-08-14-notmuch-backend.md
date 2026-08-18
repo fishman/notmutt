@@ -1,7 +1,7 @@
 # Backend benchmark: CLI vs cgo (2026-08-14)
 
-Task 14. Compares the CLI backend (`src/notmuch/cli.go`, the default) with
-the tagged cgo backend (`src/notmuch/cgo.go`, build tag `notmuchcgo`)
+Task 14. Compares the CLI backend (`src/references/notmuch/cli.go`, the default) with
+the tagged cgo backend (`src/references/notmuch/cgo.go`, build tag `notmuchcgo`)
 against the real default DB. Read-only queries only; no mail content was
 read, printed, or recorded. All rows are latency + result count.
 
@@ -12,17 +12,17 @@ read, printed, or recorded. All rows are latency + result count.
   links plain `-lnotmuch` - notmuch ships one unversioned header and one
   lib, installed or not, so no pkg-config is involved)
 - cgo backend wraps `github.com/fishman/go.notmuch` (fishman fork,
-  notmuch/bindings/go.notmuch in this workspace), vendored and pinned
+  references/go.notmuch in this workspace), vendored and pinned
   via `replace` in src/go.mod. The vendored copy carries one binding
   addition, `DB.Revision()` (the binding lacked the revision/UUID pair
   the refresh cycle needs). The tree at HEAD is unreleased, so the
   replace pins the workspace checkout, never the proxy.
-- Test: `src/notmuch/bench_test.go`, env-gated on NOTMUCH_BENCH=1
+- Test: `src/references/notmuch/bench_test.go`, env-gated on NOTMUCH_BENCH=1
 
 Command (3 runs):
 
 ```
-NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3
+NOTMUCH_BENCH=1 go test -tags notmuchcgo ./references/notmuch/ -run TestBench -v -count=3
 ```
 
 ## Timings (binding-backed cgo)
@@ -67,7 +67,7 @@ References.
 
 Effective config: `database.lock_timeout=10` (`notmuch config list`;
 ~/.notmuch-config has `lock_timeout=10`, matching the reference
-`muttrc/notmuch/config:5`). CLI backend commands wait at most 10s
+`references/muttrc/notmuch/config:5`). CLI backend commands wait at most 10s
 behind a lock holder; the cgo handle opens READ_ONLY and never
 acquires the write lock. Lock-timeout behavior itself is unit-tested
 in TestWorkerLockTimeout.
@@ -83,7 +83,7 @@ in TestWorkerLockTimeout.
    the replace + vendor pins it; the official contrib/go bindings
    (dormant 2018-2026) were NOT chosen because they lack the
    revision/UUID API and the config-aware open; the workspace fork
-   (notmuch/bindings/go.notmuch) was modernized on 2026-08-14.
+   (references/go.notmuch) was modernized on 2026-08-14.
 2. Thread() shape divergence: CLI Thread runs `notmuch show --body=false
    thread:ID` (show tree, References populated); cgo Thread runs a flat
    newest-first search over `thread:ID` with empty References. The

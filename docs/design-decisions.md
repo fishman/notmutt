@@ -403,9 +403,9 @@ or ids); the subject arrives on the delta query (the snapshot fetch,
 zero file opens) and flows Entry -> FilterDone -> notify. The beeep
 body is the same payload, newline-joined.
 
-The aerc/matcha survey verdict (2026-08-17): neither has a
+The references/aerc/matcha survey verdict (2026-08-17): neither has a
 classifiable notification surface; aerc notifies via command hooks,
-matcha has no notify path. The argv backend (the muttrc/notify
+matcha has no notify path. The argv backend (the references/muttrc/notify
 command shape) is the reference, not a library.
 
 ## 22. Config precedence: config.toml is the main file (2026-08-17)

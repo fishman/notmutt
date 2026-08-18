@@ -707,7 +707,7 @@ Expected: PASS.
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-gofmt -l .            # empty (pre-existing vendor/ and notmuch/cli_test.go hits are not yours)
+gofmt -l .            # empty (pre-existing vendor/ and references/notmuch/cli_test.go hits are not yours)
 go vet ./...
 go test -count=1 ./...
 ```

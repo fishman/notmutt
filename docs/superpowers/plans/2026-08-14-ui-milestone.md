@@ -73,7 +73,7 @@ import "github.com/charmbracelet/lipgloss"
 
 // Styles is the full style surface the TUI renders with. Task 2 makes
 // this config-driven; the hardcoded onedark values are the reference
-// port (muttrc/theme/onedark.muttrc) until then.
+// port (references/muttrc/theme/onedark.muttrc) until then.
 type Styles struct {
 	Normal    lipgloss.Style
 	Indicator lipgloss.Style

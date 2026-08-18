@@ -292,7 +292,7 @@ tag-action tables are their substrate, so nothing here forecloses them.
 
 - Account presets (tag -> folder maps) and the mover (filter-engine
   milestone; the group list is already config data).
-- Soft-tag header rules (query + add, the muttrc/notmuch/post-new
+- Soft-tag header rules (query + add, the references/muttrc/notmuch/post-new
   shape) - filter-engine milestone. Soft tags need no client-side
   support in M2: they are simply not in any group.
 - Persisted pending buffer across restarts (R14 future work).

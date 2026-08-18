@@ -31,7 +31,7 @@ mailbox. Foundation exists to serve it. Acceptance:
 src/                  # Go module, this repo, top-level dir
   config/             # TOML schema, strict load, defaults, observers
   core/               # event bus, mailbox view model (no terminal imports)
-  notmuch/            # worker: actions in, results out; backend behind interface
+  references/notmuch/            # worker: actions in, results out; backend behind interface
   cache/              # MIME cache: Cache interface + bbolt backend
   tui/                # BubbleTea views (minimal index for M1)
   app/                # main: wires store + bus + worker + view
@@ -78,14 +78,14 @@ via a relay bridge; the bridge is the only tui<->core seam.
   page renders before the query completes. Batches are emitted in
   canonical sort order (the worker sorts before slicing).
 - Backend behind an interface: in-tree cgo bindings, and CLI-per-query
-  (exec `notmuch`, parse output - aerc worker/notmuch/lib pattern).
+  (exec `notmuch`, parse output - aerc worker/references/notmuch/lib pattern).
   M1 runs the benchmark (section 1.4) and keeps the loser behind the
   interface, unused.
 - Lock rule: every op carries a lock budget (lock_timeout=10, muttrc
   precedent); exceeding it errors to the bus as WorkerLockTimeout,
   never blocks the UI.
 - Revision action: `notmuch count --lastmod` on the CLI path
-  (prints uuid + revision, notmuch/notmuch-count.c:122-124); 
+  (prints uuid + revision, references/notmuch/notmuch-count.c:122-124); 
   `notmuch_database_get_revision` on the cgo path.
 
 ## 6. Mailbox view model
@@ -132,9 +132,9 @@ Node { message, children: []*Node,       // children via References links
 
 Verified against notmuch source in this workspace: every DB change -
 new mail AND tag changes - stamps NOTMUCH_VALUE_LAST_MOD with a fresh
-revision (`_notmuch_message_sync`, notmuch/lib/message.cc:1351-1371;
+revision (`_notmuch_message_sync`, references/notmuch/lib/message.cc:1351-1371;
 `_notmuch_database_new_revision`, lib/database.cc:491-505). afew tags
-through the notmuch2 bindings (afew/Database.py:8), so its changes
+through the notmuch2 bindings (references/afew/Database.py:8), so its changes
 land in the same cycle. The `lastmod:NN..MM` query prefix
 (lib/lastmod-fp.cc) matches exactly the changed messages.
 
@@ -158,7 +158,7 @@ cycle:  read R_cur + uuid (Revision action)
 
 | trigger | detection |
 |---|---|
-| DB rebuild / compact | uuid mismatch on any cycle (count --lastmod uuid; the DB's own guard: notmuch/notmuch.c:313) |
+| DB rebuild / compact | uuid mismatch on any cycle (count --lastmod uuid; the DB's own guard: references/notmuch/notmuch.c:313) |
 | Manual | `:refresh` command |
 | View config change | view query edited in config store |
 | Reconcile soak | slow periodic timer (15-30 min) - firmware net; lastmod is complete for DB state, this catches client bugs and path drift |

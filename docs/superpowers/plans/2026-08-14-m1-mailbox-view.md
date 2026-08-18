@@ -41,13 +41,13 @@ src/
   core/bus_test.go
   core/view.go                     # View: thread trees, rows, merge, cursor, collapse
   core/view_test.go
-  notmuch/backend.go               # Backend interface, TagOp, Action, Reply, ErrLockTimeout
-  notmuch/cli.go                   # CLI backend: argv run, JSON parse
-  notmuch/cli_test.go              # fake runner
-  notmuch/worker.go                # action loop, lock budgets, bus events
-  notmuch/worker_test.go           # fake backend
-  notmuch/cgo.go                   # cgo backend (build tag cgo) - task 13
-  notmuch/bench_test.go            # env-gated benchmark - task 14
+  references/notmuch/backend.go               # Backend interface, TagOp, Action, Reply, ErrLockTimeout
+  references/notmuch/cli.go                   # CLI backend: argv run, JSON parse
+  references/notmuch/cli_test.go              # fake runner
+  references/notmuch/worker.go                # action loop, lock budgets, bus events
+  references/notmuch/worker_test.go           # fake backend
+  references/notmuch/cgo.go                   # cgo backend (build tag cgo) - task 13
+  references/notmuch/bench_test.go            # env-gated benchmark - task 14
   cache/cache.go                   # Cache interface, Key
   cache/bbolt.go                   # bbolt backend, 0600
   cache/scan.go                    # go-message attachment scan
@@ -2018,11 +2018,11 @@ git commit -m "feat(cache): add bbolt MIME cache"
 ## Task 8: Notmuch CLI backend
 
 **Files:**
-- Create: `src/notmuch/backend.go`, `src/notmuch/cli.go`, `src/notmuch/cli_test.go`
+- Create: `src/references/notmuch/backend.go`, `src/references/notmuch/cli.go`, `src/references/notmuch/cli_test.go`
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/notmuch/cli_test.go`:
+`src/references/notmuch/cli_test.go`:
 
 ```go
 package notmuch
@@ -2176,14 +2176,14 @@ func TestCLIQueryError(t *testing.T) {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-go test ./notmuch/ 2>&1 | head -5
+go test ./references/notmuch/ 2>&1 | head -5
 ```
 
 Expected: `undefined: NewCLI`.
 
 - [ ] **Step 3: Implement**
 
-`src/notmuch/backend.go`:
+`src/references/notmuch/backend.go`:
 
 ```go
 package notmuch
@@ -2218,7 +2218,7 @@ type Backend interface {
 }
 ```
 
-`src/notmuch/cli.go`:
+`src/references/notmuch/cli.go`:
 
 ```go
 package notmuch
@@ -2408,7 +2408,7 @@ func (b *CLIBackend) New(ctx context.Context) error {
 - [ ] **Step 4: Run to verify they pass**
 
 ```bash
-go test ./notmuch/ -v
+go test ./references/notmuch/ -v
 ```
 
 Expected: all 7 tests pass. Also verify the parse shape against the real CLI (read-only, numbers only):
@@ -2435,11 +2435,11 @@ git commit -m "feat(notmuch): add CLI backend"
 ## Task 9: Notmuch worker
 
 **Files:**
-- Create: `src/notmuch/worker.go`, `src/notmuch/worker_test.go`
+- Create: `src/references/notmuch/worker.go`, `src/references/notmuch/worker_test.go`
 
 - [ ] **Step 1: Write the failing tests**
 
-`src/notmuch/worker_test.go`:
+`src/references/notmuch/worker_test.go`:
 
 ```go
 package notmuch
@@ -2614,14 +2614,14 @@ func TestWorkerBackendError(t *testing.T) {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-go test ./notmuch/ -run TestWorker 2>&1 | head -5
+go test ./references/notmuch/ -run TestWorker 2>&1 | head -5
 ```
 
 Expected: `undefined: NewWorker`.
 
 - [ ] **Step 3: Implement**
 
-`src/notmuch/worker.go`:
+`src/references/notmuch/worker.go`:
 
 ```go
 package notmuch
@@ -2775,7 +2775,7 @@ func actionName(k ActionKind) string {
 - [ ] **Step 4: Run to verify they pass**
 
 ```bash
-go test ./notmuch/ -v
+go test ./references/notmuch/ -v
 ```
 
 Expected: all 12 tests pass (7 CLI from task 8 + 5 worker).
@@ -4088,7 +4088,7 @@ note (core/view.go:12-14) mandates the locked path.
 (5) the smoke run needs `go build -o notmutt .` first: `go build ./...`
 discards binaries.
 (6) the tag-op query doubles quotes (`strings.ReplaceAll(msgID, `"`,
-`""`)`): notmuch's escape rule is doubling (`notmuch/doc/man7/notmuch-
+`""`)`): notmuch's escape rule is doubling (`references/notmuch/doc/man7/notmuch-
 search-terms.rst`), and the block's backslash form silently matched zero
 messages for ids containing a quote, leaving the optimistic toggle wrong.
 (7) the dead `worker` field on cacheJob was dropped (the `w` parameter of
@@ -4112,7 +4112,7 @@ network-backed maildir would stall rescans - future note).
 ## Task 13: cgo backend (benchmark path)
 
 **Files:**
-- Create: `src/notmuch/cgo.go` (build tag `notmuchcgo`), `src/notmuch/cgo_test.go`
+- Create: `src/references/notmuch/cgo.go` (build tag `notmuchcgo`), `src/references/notmuch/cgo_test.go`
 
 - [ ] **Step 1: Check dev headers**
 
@@ -4140,7 +4140,7 @@ Ask the user which option they prefer before running anything that needs sudo. T
 
 - [ ] **Step 2: Implement the cgo backend**
 
-`src/notmuch/cgo.go`:
+`src/references/notmuch/cgo.go`:
 
 ```go
 //go:build notmuchcgo
@@ -4249,10 +4249,10 @@ func pathsOf(m *nm.Message) []string {
 ```bash
 cd /home/user/git/opencode/notmutt/src
 go build -tags notmuchcgo ./...
-go test -tags notmuchcgo ./notmuch/ -run TestCGOSmoke -v
+go test -tags notmuchcgo ./references/notmuch/ -run TestCGOSmoke -v
 ```
 
-`src/notmuch/cgo_test.go`:
+`src/references/notmuch/cgo_test.go`:
 
 ```go
 //go:build notmuchcgo
@@ -4331,11 +4331,11 @@ tag/filename iterators are message-owned, not leaked.
 ## Task 14: Benchmark and backend selection
 
 **Files:**
-- Create: `src/notmuch/bench_test.go`, `docs/superpowers/benchmarks/2026-08-14-notmuch-backend.md`
+- Create: `src/references/notmuch/bench_test.go`, `docs/superpowers/benchmarks/2026-08-14-notmuch-backend.md`
 
 - [ ] **Step 1: Write the benchmark test (env-gated)**
 
-`src/notmuch/bench_test.go`:
+`src/references/notmuch/bench_test.go`:
 
 ```go
 //go:build notmuchcgo
@@ -4349,7 +4349,7 @@ import (
 	"time"
 )
 
-// Run: NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v
+// Run: NOTMUCH_BENCH=1 go test -tags notmuchcgo ./references/notmuch/ -run TestBench -v
 // Requires notmuch dev headers on the default include/link paths (task 13;
 // the binding links plain -lnotmuch, no pkg-config). Prints a comparison report.
 // Requires notmuch dev headers (task 13). Prints a comparison report.
@@ -4422,7 +4422,7 @@ func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 
 ```bash
 cd /home/user/git/opencode/notmutt/src
-NOTMUCH_BENCH=1 go test -tags notmuchcgo ./notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
+NOTMUCH_BENCH=1 go test -tags notmuchcgo ./references/notmuch/ -run TestBench -v -count=3 2>&1 | grep -E "cli|cgo|PASS|FAIL"
 ```
 
 Expected: a timing table over 3 runs each. Lock-timeout behavior is already unit-tested (TestWorkerLockTimeout); record the configured CLI value in the report:
@@ -4441,7 +4441,7 @@ Expected: `10` (or the configured value; record it).
 
 ```bash
 cd /home/user/git/opencode/notmutt
-git add src/notmuch/bench_test.go docs/superpowers/benchmarks
+git add src/references/notmuch/bench_test.go docs/superpowers/benchmarks
 git commit -m "test(notmuch): benchmark CLI vs cgo backends"
 ```
 

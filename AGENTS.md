@@ -1,9 +1,9 @@
 # notmutt - requirements and architecture
 
 Workspace: a mail client under construction. This workspace holds the source
-material: `neomutt/` (fork carrying async patches), `muttrc/` (live config,
-the reference mail setup), `afew/` (fork with the per-account MailMover),
-`notmuch/` (notmuch source), `neovim/` (neovim checkout, reference for UI
+material: `references/neomutt/` (fork carrying async patches), `references/muttrc/` (live config,
+the reference mail setup), `references/afew/` (fork with the per-account MailMover),
+`references/notmuch/` (notmuch source), `neovim/` (neovim checkout, reference for UI
 async + Lua integration).
 
 The goal: an async, command-line-first mail client. All mail handled by
@@ -53,7 +53,7 @@ cheap). Applied at every stage of the pipeline.
 
 Physical move destinations resolve per account by existence: candidates are
 tried in order, first existing folder wins, `*` candidates are globs
-(afew `folder_priorities`; `muttrc/afew/config`). The new client's move
+(afew `folder_priorities`; `references/muttrc/afew/config`). The new client's move
 engine must keep this model.
 
 ### Lock handling
@@ -105,7 +105,7 @@ by an integrated filter engine, so the filter interface must be a boundary:
 a module that consumes notmuch documents + a rule set and produces tag
 changes. Same contract for both implementations.
 
-The MailMover is NATIVE in the client (afew/MailMover.py is the
+The MailMover is NATIVE in the client (references/afew/MailMover.py is the
 reference logic, never the runtime). Every account owns a folder
 space (the muttrc `folder:/^gmail\//` account-tag pattern as data:
 `[accounts.<name>] folder = "gmail"`), and mover rules are defined
@@ -123,20 +123,20 @@ provider (gmail, outlook, icloud, generic-imap). Accounts inherit by
 dir override built-ins by name. Default move rules derive from the
 hard tag group (`tag:<t>` moves to t's folder - the rule is universal,
 only the folder names vary); only non-standard rules (e.g. the trash
-return-to-inbox rule in muttrc/afew/config) are written explicitly.
+return-to-inbox rule in references/muttrc/afew/config) are written explicitly.
 
 The filter engine owns the FULL classification pipeline - folder
 rules, header rules, and the mover all run inside the client; the
 muttrc post-new hook and afew are reference shapes, not backends.
 Folder rules are DERIVED from the account + preset data: each hard
 tag's candidates become `folder:"<account>/<candidate>"` OR-queries
-with auto NOT-guards (muttrc/notmuch/tags proves the shape), account
+with auto NOT-guards (references/muttrc/notmuch/tags proves the shape), account
 tags derive from the account folder prefix (`folder:/^gmail\//`).
 The exclusive group is pure mutual exclusion - no priority, no
 implied removals (the tags-file conflict chain and the `-inbox`
 folder rule are the pain this replaces): applying any member removes
 the other members present, and inbox is a member. Header rules stay
-data (muttrc/notmuch/post-new): query + add, guards enforced by the
+data (references/muttrc/notmuch/post-new): query + add, guards enforced by the
 engine. Conditional rules stay explicit:
 delivery-gated untag-reversal, trash return-to-inbox. Read-only
 accounts (atlas, toptal) are never classified: no folder tags, no
@@ -177,10 +177,10 @@ without a full rebuild. No full-refresh-on-new-mail. Diff-and-insert, not
 rebuild.
 
 Neomutt's current state (the gap to close): thread queries load
-synchronously (`notmuch/notmuch.c:1074-1119`), and the mail check re-runs
+synchronously (`references/notmuch/notmuch.c:1074-1119`), and the mail check re-runs
 the whole query with a message-level search even for thread mailboxes,
 marks everything inactive, merges, then fires NT_MAILBOX_INVALID which
-rebuilds the thread tree (`notmuch/notmuch.c:2183-2308`). notmutt must do
+rebuilds the thread tree (`references/notmuch/notmuch.c:2183-2308`). notmutt must do
 better on both: async thread loading and diff-and-insert refresh.
 
 ### R4. Async send + dialogue state machine
@@ -253,7 +253,7 @@ freezes the UI. The VM sandbox is a lib whitelist (no os/io/debug).
 
 Config model: TOML is the config language and the file shape IS the
 schema shape. Config files unmarshal into typed Go structs (1:1 with
-the TOML), with neomutt's ConfigSet properties (`neomutt-docs/docs/
+the TOML), with neomutt's ConfigSet properties (`references/neomutt-docs/docs/
 config.md`) as requirements, not mechanism: typed values (string,
 number, bool, enum, path, list, regex, sort), validators, defaults,
 observers. Load is strict - unknown keys are load errors, no silent
@@ -373,7 +373,7 @@ constraint):
   cases). An `AI-assisted` trailer is not a disclaimer - the author
   answers for the code whether or not an AI drafted it.
 
-CI standard (mirror `neomutt-docs/docs/actions.md`): build + test on every
+CI standard (mirror `references/neomutt-docs/docs/actions.md`): build + test on every
 commit, sanitizers (ASAN/UBSAN), fuzzing on the mail-parsing boundary,
 static analysis in CI. The mail parser is the trust boundary - it must be
 fuzzed like the firmware it is.
@@ -381,8 +381,8 @@ fuzzed like the firmware it is.
 ### R11. Truecolor theming engine
 
 Theming covers mutt's color surface but is configured better. Mutt
-objects that must exist (from `muttrc/theme/onedark.muttrc` +
-`muttrc/base.colors`): normal, indicator, status, tree, tilde, prompt,
+objects that must exist (from `references/muttrc/theme/onedark.muttrc` +
+`references/muttrc/base.colors`): normal, indicator, status, tree, tilde, prompt,
 message, progress, error, search; index + index_number/author/subject/
 date/flags; hdrdefault, header (per-header regex), quoted0-5, body
 (regex rules: URLs, email addresses, *bold* _underlined_ /italic/),
@@ -405,7 +405,7 @@ Better configuration, all in TOML:
   separate attribute objects.
 - Index coloring is TAG-driven, not mutt's `~X` patterns: `~l <tag>`
   and `index_tag` become declarative `[index.tag.<name>]` styles
-  (muttrc/base.colors already colors by notmuch tags; notmutt makes it
+  (references/muttrc/base.colors already colors by notmuch tags; notmutt makes it
   data). Tag styles compose with the exclusive tag groups (R2/R6) and
   with the base index style; conflicts resolve by the group priority.
 - Index row layout is a fixed-slot template, not mutt's format string.
@@ -428,8 +428,8 @@ Better configuration, all in TOML:
   `default` selects. Switching is a config-store notification - the
   same observer path as any config change, so the UI re-renders live
   with zero reload.
-- The onedark theme in `muttrc/theme/onedark.muttrc` is the reference
-  port; the base16 palette collection in `muttrc/themes/palette/` is
+- The onedark theme in `references/muttrc/theme/onedark.muttrc` is the reference
+  port; the base16 palette collection in `references/muttrc/themes/palette/` is
   the import source (a converter is a future task, not M1).
 
 ### R12. Dark/light sync via DBus (optional build tag)
@@ -557,7 +557,7 @@ the spec must say why it serves notmutt, not cite it as authority.
 
 ## Reference code in this workspace
 
-- `neomutt/background/` - the background job model that R4's send-job
+- `references/neomutt/background/` - the background job model that R4's send-job
   design comes from. Concrete state: fixed job table `Jobs[MAX_JOBS]`
   (`background/background.c:55`, `private.h:30-44`), reaping via
   non-blocking `waitpid` + `WNOHANG` in an event-loop timeout observer
@@ -568,35 +568,35 @@ the spec must say why it serves notmutt, not cite it as authority.
   (`background/dlg_background.c`, `126b53b26`, `ccafd3068`). Known gaps
   to fix: no job-state enum, completion is polled not evented, no
   per-job observers.
-- `neomutt/send` (branch `async_send`, commit aa4478969) - async send:
+- `references/neomutt/send` (branch `async_send`, commit aa4478969) - async send:
   `$sendmail_async` skips the parent's waitpid and hands the pid back
   (`send/sendmail.c:246-255`); `bg_send_register` tracks the job;
   deferred Fcc on reap; failed sends RETAIN the Email and `bg_send_retry`
   re-opens the compose dialog with the failed message - the pause/restart
   seed for R4.
-- `neomutt/compose/shared_data.{c,h}` - ComposeSharedData splits dialogue
+- `references/neomutt/compose/shared_data.{c,h}` - ComposeSharedData splits dialogue
   state (email, attachments, fcc, return code) from the dialog window.
   Source of R4's state/UI split.
-- `neomutt/notmuch/` - notmuch backend: `$nm_query_type` (MESSAGES vs
-  THREADS, `notmuch/query.h:36-38`), progressive time-sliced filling for
-  message mode (`notmuch/notmuch.c:983-1043`, `2137-2174` - budgeted
+- `references/neomutt/notmuch/` - notmuch backend: `$nm_query_type` (MESSAGES vs
+  THREADS, `references/notmuch/query.h:36-38`), progressive time-sliced filling for
+  message mode (`references/notmuch/notmuch.c:983-1043`, `2137-2174` - budgeted
   iterator slices, not threads), synchronous thread loading
-  (`notmuch/notmuch.c:1074-1119`), full re-query refresh
-  (`notmuch/notmuch.c:2183-2308`). Reference for R3; the gaps are R3's
+  (`references/notmuch/notmuch.c:1074-1119`), full re-query refresh
+  (`references/notmuch/notmuch.c:2183-2308`). Reference for R3; the gaps are R3's
   reason to exist.
-- `neomutt/lua/` - module registering Lua commands (config-level Lua).
+- `references/neomutt/lua/` - module registering Lua commands (config-level Lua).
   Reference for R8's Lua layer.
 - `neovim/` - full neovim checkout. Reference for R8: event loop, RPC,
   Lua API, UI protocol, fast events.
-- `aerc/` - the production Go notmuch client. Design reference for MAIL
+- `references/aerc/` - the production Go notmuch client. Design reference for MAIL
   HANDLING ONLY (not the UI): the notmuch worker action loop
-  (`worker/notmuch/worker.go` - `Run()` + `handleMessage` dispatch,
+  (`worker/references/notmuch/worker.go` - `Run()` + `handleMessage` dispatch,
   worker factory registration with build tags in `worker/handlers`),
-  cgo-free notmuch integration via the CLI (`worker/notmuch/lib`), and
+  cgo-free notmuch integration via the CLI (`worker/references/notmuch/lib`), and
   go-message for parsing. The worker model is the R3/R4 async reference.
   Its per-context keybinding config (`config/binds.conf`) is the
   keybinding-config model for R9.
-- `lazygit/` - production Go TUI (checkout d25315b55, tcell/v3 renderer).
+- `references/lazygit/` - production Go TUI (checkout d25315b55, tcell/v3 renderer).
   Reference for HOW to structure a Go TUI (R5/R9): view models separated
   from rendering (`pkg/gui/context/` - per-panel state), actions as
   keybinding-driven controllers (`pkg/gui/controllers/`), the
@@ -607,10 +607,10 @@ the spec must say why it serves notmutt, not cite it as authority.
   Reference the ARCHITECTURE (state/UI split, data-driven config), not the
   renderer: notmutt's TUI is tcell with lipgloss (decision record 23 -
   the R5/R9 architecture reference now pairs with the same renderer).
-- `afew/MailMover.py` - per-account folder priority resolution.
-- `muttrc/notmuch/tags` + `muttrc/notmuch/post-new` + `muttrc/afew/config`
+- `references/afew/MailMover.py` - per-account folder priority resolution.
+- `references/muttrc/notmuch/tags` + `references/muttrc/notmuch/post-new` + `references/muttrc/afew/config`
   - the live classification pipeline (R2 reference).
-- `matcha/` - production Go mail client with a gopher-lua plugin system.
+- `references/matcha/` - production Go mail client with a gopher-lua plugin system.
   Reference for R8's Lua layer ONLY (decision record 20 in
   docs/design-decisions.md): one VM on the orchestrator goroutine,
   Protect-then-log dispatch, lib-whitelist sandbox (no os/io/debug),

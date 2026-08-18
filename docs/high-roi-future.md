@@ -1,3 +1,9 @@
+---
+layout: default
+title: High-ROI backlog
+nav_order: 8
+---
+
 # Future work: high-ROI backlog
 
 Ranked by ROI (impact / effort), collected from AGENTS.md requirements not yet

@@ -1,3 +1,9 @@
+---
+layout: default
+title: HTML rendering analysis
+nav_order: 6
+---
+
 # HTML mail rendering: feasibility analysis (2026-08-17)
 
 Question: render HTML mail in the pager with Go, stdlib-first, the main

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Design decisions
+nav_order: 5
+---
+
 # notmutt - design decisions
 
 Decision record: what was chosen, why, and what was measured. The

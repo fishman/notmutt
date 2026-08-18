@@ -1,6 +1,7 @@
 ---
 layout: default
 title: notmutt
+nav_order: 1
 ---
 
 # A mail client that never makes you wait

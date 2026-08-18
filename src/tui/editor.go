@@ -20,7 +20,9 @@ import (
 // dialogue state itself never leaves the model.
 func writeEditorBuffer(st compose.State, path string) (string, error) {
 	if path == "" {
-		f, err := os.CreateTemp("", "notmutt-compose-*")
+		// mutt-family temp name: neovim's filetype detection maps
+		// mutt-*/neomutt-* basenames to the mail filetype
+		f, err := os.CreateTemp("", "mutt-notmutt-*")
 		if err != nil {
 			return "", err
 		}

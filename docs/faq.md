@@ -54,8 +54,6 @@ in-process; the theme, binding and config systems are data-driven.
   roadmap, not the present.
 - **Emacs keymap**: the scheme exists as config data; the vim scheme
   is the reference and the tested one.
-- **GUI**: explicitly out of scope. The TUI layer is structured for
-  extraction as a library, but the client is a terminal client.
 - **IMAP/POP3 transport**: notmutt does not sync mail. mbsync /
   vdirsyncer deliver into your maildirs and notmuch indexes them;
   the client reads what notmuch sees.

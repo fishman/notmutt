@@ -121,10 +121,12 @@ type word struct {
 
 // cellLine is one line of a table cell's text: its words and the line's
 // alignment (nested-table rows join the line; the row's align is the
-// last aligned cell's).
+// last aligned cell's). img is a resolved cell image - the line then
+// carries no words and emits as a full-width image line.
 type cellLine struct {
 	words []word
 	align string
+	img   *core.Image
 }
 
 var blockTags = map[string]bool{
@@ -476,6 +478,10 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 			}
 			var wrapped []cellLine
 			for _, ln := range r[ci] {
+				if ln.img != nil {
+					wrapped = append(wrapped, ln) // an image line never wraps
+					continue
+				}
 				for _, wl := range wrapWords(ln.words, colCap) {
 					wrapped = append(wrapped, cellLine{words: wl, align: ln.align})
 				}
@@ -500,6 +506,17 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 			}
 		}
 		for li := 0; li < rowLines; li++ {
+			// a cell image emits as its own full-width line (the line
+			// model holds one image); the text join below pads the
+			// image cells' columns blank
+			for ci := 0; ci < ncols; ci++ {
+				if ci < len(r) && li < len(r[ci]) && r[ci][li].img != nil {
+					w.emitLine(nil)
+					i := len(w.lines) - 1
+					w.lines[i].Image = r[ci][li].img
+					w.lines[i].Text = r[ci][li].img.Alt
+				}
+			}
 			var runs []core.Run
 			for ci := 0; ci < ncols; ci++ {
 				// a ragged row has no cell at ci: it renders as an empty
@@ -644,6 +661,14 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 				case tag == "br" && !cs.pre:
 					flush()
 				case tag == "img":
+					// a resolved image becomes its own full-width line
+					// (the column join can hold one image per line);
+					// unresolved srcs stay text placeholders
+					if img := resolveImage(c, nil); img != nil {
+						flush()
+						out = append(out, cellLine{img: img})
+						break
+					}
 					if a := attr(c, "alt"); a != "" {
 						cur = append(cur, word{text: sanitize(a), st: cs})
 					} else {

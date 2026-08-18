@@ -253,21 +253,23 @@ func (m *Model) setImgMode(mode int) {
 		m.pager.setImages(false)
 	case 1:
 		m.pager.setImages(true)
-		m.fetchVisibleImages()
+		m.fetchRemoteImages()
 	}
 	m.imgMode = mode
 }
 
-// fetchVisibleImages arms the visible remote-image fetches (the remote
-// images mode): URL-image lines without bytes yet fetch once -
-// imgFetching single-flights the in-flight URLs, the seam owns the
-// goroutine so the render path never blocks.
-func (m *Model) fetchVisibleImages() {
+// fetchRemoteImages arms the message's remote-image fetches (the
+// remote images mode): every URL-image line without bytes fetches
+// once - the keypress is the gate, the decode stays per-window
+// (prepareImages), so below-fold images fetch now and expand when
+// scrolled into view. imgFetching single-flights the in-flight URLs,
+// the seam owns the goroutine so the render path never blocks.
+func (m *Model) fetchRemoteImages() {
 	if m.pager == nil {
 		return
 	}
-	for _, b := range m.pager.visibleImages() {
-		img := m.pager.lines[b.line].Image
+	for i := range m.pager.lines {
+		img := m.pager.lines[i].Image
 		if img == nil || img.URL == "" || len(img.Data) > 0 || m.imgFetching[img.URL] {
 			continue
 		}

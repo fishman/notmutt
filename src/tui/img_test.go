@@ -16,6 +16,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
 	"strings"
 	"testing"
 
@@ -496,5 +497,77 @@ func TestModelRenderImagesRemote(t *testing.T) {
 	m = next
 	if i := imgLine(); i >= 0 && len(m.pager.lines[i].Image.Data) > 0 && m.pager.lines[i].Image.Data[0] == 's' {
 		t.Fatalf("a stale reply must never overwrite the remote data")
+	}
+}
+
+// TestModelRenderSemianalysisImages runs the real fixture through the
+// remote-images pipeline: the semianalysis newsletter's http(s) srcs
+// (icons + article images) must fetch on the alt+i press, expand when
+// the bytes arrive, and collapse on the toggle-off press. Pins the
+// fixture's image flow, not its layout.
+func TestModelRenderSemianalysisImages(t *testing.T) {
+	html, err := os.ReadFile("../../testing/semianalysis.html")
+	if err != nil {
+		t.Skip(err)
+	}
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 24
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   threadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Lines:      mail.RenderHTML(string(html), nil, 0),
+		}})
+		m = next
+	})
+	var fetched []string
+	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	// the collapsed gate: placeholders render, nothing fetched
+	if out := m.View(); !strings.Contains(out, "[image]") {
+		t.Fatalf("the fixture must render image placeholders:\n%s", out)
+	}
+
+	// the press arms every remote src (all https)
+	m = press(t, m, "alt+i")
+	if len(fetched) == 0 {
+		t.Fatalf("the fixture's visible http(s) srcs must fetch, got none")
+	}
+	for _, u := range fetched {
+		if !strings.HasPrefix(u, "https://") {
+			t.Fatalf("the fixture must fetch https srcs only, got %q", u)
+		}
+	}
+	before := strings.Count(m.View(), "[image]")
+
+	// the replies attach and expand the placeholders
+	for _, u := range fetched {
+		next, _ := m.Update(EventMsg{Event: core.ImageFetched{URL: u, Data: testPNG(t, 40, 20)}})
+		m = next
+	}
+	m, _ = m.Update(frameTick{})
+	after := strings.Count(m.View(), "[image]")
+	if after >= before {
+		t.Fatalf("the fetched images must expand: [image] count %d -> %d", before, after)
+	}
+
+	// the toggle-off press restores the placeholders
+	m = press(t, m, "alt+i")
+	m, _ = m.Update(frameTick{})
+	if out := m.View(); !strings.Contains(out, "[image]") {
+		t.Fatalf("toggle-off must restore the placeholders:\n%s", out)
 	}
 }

@@ -34,7 +34,7 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 	trim := func(l core.Line) string { return strings.TrimSpace(l.Text) }
 
 	var forwarded, title, readInApp, sources, last int
-	var buttonLines, marks []int
+	var iconLines, marks []int
 	right := func(i int) bool { return lead(lines[i]) > 50 }
 	left := func(i int) bool { return lead(lines[i]) < 20 }
 	for i, l := range lines {
@@ -48,8 +48,10 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 		case strings.HasPrefix(trim(l), "Sources:"):
 			sources = i
 		}
-		if n := strings.Count(l.Text, "[image]"); n == 4 {
-			buttonLines = append(buttonLines, i)
+		// the action-button icons render as image placeholder lines
+		// (the column join can hold one image per line)
+		if trim(l) == "[image]" {
+			iconLines = append(iconLines, i)
 		}
 		if m := trim(l); len(m) >= 2 && m[0] >= '1' && m[0] <= '9' && m[1] == '.' {
 			marks = append(marks, i)
@@ -63,15 +65,20 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 	if !left(title) {
 		t.Fatalf("title must be left-aligned, lead=%d", lead(lines[title]))
 	}
-	if len(buttonLines) != 1 {
-		t.Fatalf("the 4 action buttons must join into one line, got %d lines", len(buttonLines))
+	// the header's icon block: at least 4 left-aligned placeholder
+	// lines, all before READ IN APP
+	if len(iconLines) < 4 || iconLines[3] >= readInApp {
+		t.Fatalf("the action-button icons must render as placeholder lines in the header, got %d lines, 4th at %d vs READ IN APP %d",
+			len(iconLines), iconLines[min(3, len(iconLines)-1)], readInApp)
 	}
-	if !left(buttonLines[0]) {
-		t.Fatalf("the buttons line must be left-aligned, lead=%d", lead(lines[buttonLines[0]]))
+	for _, i := range iconLines[:4] {
+		if !left(i) {
+			t.Fatalf("an icon line must be left-aligned, lead=%d", lead(lines[i]))
+		}
 	}
-	if !right(readInApp) || lead(lines[readInApp]) <= lead(lines[buttonLines[0]]) {
-		t.Fatalf("READ IN APP must be the rightmost line, lead=%d vs buttons %d",
-			lead(lines[readInApp]), lead(lines[buttonLines[0]]))
+	if !right(readInApp) || lead(lines[readInApp]) <= lead(lines[iconLines[3]]) {
+		t.Fatalf("READ IN APP must be the rightmost line, lead=%d vs icons %d",
+			lead(lines[readInApp]), lead(lines[iconLines[3]]))
 	}
 	for _, n := range []byte{'1', '2', '3'} {
 		found := false

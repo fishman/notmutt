@@ -1456,12 +1456,12 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	m.renderMime = e.Mime
 	m.mode = "pager"
 	// the render-images mode survives an open: a fresh pager re-arms
-	// the expansion and re-triggers the visible remote fetches (the
-	// decode runs per frame in renderBase)
+	// the expansion and re-triggers the remote fetches (the decode runs
+	// per frame in renderBase)
 	if m.imgMode != 0 {
 		m.pager.setImages(true)
 		if m.imgMode == 1 {
-			m.fetchVisibleImages()
+			m.fetchRemoteImages()
 		}
 	}
 	m.legendPending = true

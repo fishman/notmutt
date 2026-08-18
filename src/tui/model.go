@@ -52,6 +52,7 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
 		"filter": true, "search": true, "search-next": true,
+		"collapse-thread": true, "collapse-all": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
@@ -754,6 +755,31 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.cursorBottom()
 		deferPaint()
 		deferred = true
+	case "collapse-thread":
+		// the C key: the cursor thread collapses to its root row
+		// (re-anchored in the view) or expands back to its tree
+		if m.mode == "index" {
+			rows := m.view.Rows()
+			m.rows = rows
+			idx := m.CursorIndex()
+			if idx >= 0 && idx < len(rows) && rows[idx].Msg != nil {
+				m.view.ToggleCollapsed(rows[idx].ThreadID)
+				m.rows = m.view.Rows()
+				m.clampIndexOffset()
+				deferPaint()
+				deferred = true
+			}
+		}
+	case "collapse-all":
+		// the ctrl+v key: the whole index flattens to one row per
+		// thread or expands back to the full tree
+		if m.mode == "index" {
+			m.view.ToggleCollapseAll()
+			m.rows = m.view.Rows()
+			m.clampIndexOffset()
+			deferPaint()
+			deferred = true
+		}
 	case "open":
 		if m.mode == "index" {
 			m.openCursorThread()

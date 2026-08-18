@@ -184,7 +184,7 @@ func TestHelpListsBindings(t *testing.T) {
 	// The columns pad to their widest entry (the fixed two-space gap
 	// stays): the widest row aligns exactly, descriptions are
 	// padding-robust by position
-	if !strings.Contains(clean, "ctrl+d  half-page-down  Scroll down half a page") ||
+	if !strings.Contains(clean, "ctrl+d  half-page-down   Scroll down half a page") ||
 		!strings.Contains(clean, "Move the cursor down") ||
 		!strings.Contains(clean, "Reply to all recipients") {
 		t.Fatalf("the help must list the bindings with descriptions:\n%s", clean)
@@ -1452,7 +1452,7 @@ func TestKeyhintHidesPaging(t *testing.T) {
 	}
 	m = press(t, m, "?")
 	clean := stripANSI(m.render())
-	if !strings.Contains(clean, "ctrl+d  half-page-down  Scroll down half a page") {
+	if !strings.Contains(clean, "ctrl+d  half-page-down   Scroll down half a page") {
 		t.Fatalf("the help dialog must list the hidden binding:\n%s", clean)
 	}
 }
@@ -3935,6 +3935,58 @@ func TestModelToggleRender(t *testing.T) {
 	m = next
 	if out := stripANSI(m.View()); !strings.Contains(out, "raw source") {
 		t.Fatalf("the source reply must replace the pager content:\n%s", out)
+	}
+}
+
+// TestModelCollapseThread pins the C and ctrl+v keys: the cursor
+// thread collapses to its root row (the cursor re-anchors there) and
+// expands back; ctrl+v flattens every thread and restores the tree.
+func TestModelCollapseThread(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{
+			{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+			{ID: "b", Timestamp: 90, References: []string{"a"}, Tags: []string{"inbox"}},
+		}),
+		core.NewThread("t2", []*core.Message{{ID: "c", Timestamp: 80, Tags: []string{"inbox"}}}),
+	})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.width, m.height = 80, 24
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("the tree must render 3 rows, got %d", len(rows))
+	}
+
+	// move to the child row, then collapse t1: 2 rows, cursor on the
+	// surviving root row
+	m = press(t, m, "j")
+	m = press(t, m, "C")
+	rows := m.view.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("collapse must leave 2 rows, got %d", len(rows))
+	}
+	if rows[0].Msg == nil || rows[0].Msg.ID != "a" {
+		t.Fatalf("the surviving row must be the thread root, got %+v", rows[0].Msg)
+	}
+	if i := m.CursorIndex(); i != 0 {
+		t.Fatalf("the cursor must re-anchor on the root row, got %d", i)
+	}
+
+	// expand back: the full tree again
+	m = press(t, m, "C")
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("expanding must restore the tree, got %d rows", len(rows))
+	}
+
+	// ctrl+v flattens everything, a second press restores the tree
+	m = press(t, m, "ctrl+v")
+	if rows := m.view.Rows(); len(rows) != 2 {
+		t.Fatalf("collapse-all must leave one row per thread, got %d", len(rows))
+	}
+	m = press(t, m, "ctrl+v")
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("collapse-all again must restore the tree, got %d", len(rows))
 	}
 }
 

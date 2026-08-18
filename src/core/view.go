@@ -435,6 +435,46 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 	return fmt.Errorf("view: unknown thread %q", id)
 }
 
+// ToggleCollapsed flips the thread's collapse state (the C key).
+// Collapsing re-anchors the cursor to the thread's root row - the
+// child rows vanish at the next materialization, so the anchor must
+// name a row that survives.
+func (v *View) ToggleCollapsed(id string) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			t.Collapsed = !t.Collapsed
+			if t.Collapsed && t.Root != nil && t.Root.Msg != nil {
+				v.cursorID = t.Root.Msg.ID
+			}
+			v.dirty = true
+			return nil
+		}
+	}
+	return fmt.Errorf("view: unknown thread %q", id)
+}
+
+// ToggleCollapseAll flips the whole index between the flat layout
+// (every thread one row) and the tree (all expanded): collapse-all
+// when any thread is expanded, expand-all when every thread is
+// collapsed. The cursor's thread survives by its root anchor.
+func (v *View) ToggleCollapseAll() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	all := true
+	for _, t := range v.Threads {
+		if !t.Collapsed {
+			all = false
+			break
+		}
+	}
+	for _, t := range v.Threads {
+		t.Collapsed = !all
+	}
+	v.dirty = true
+}
+
 // SetAtts records the cache job's attachment list under the view lock
 // (see the View doc comment). Unknown ids are a no-op: the message left
 // the view between the scan and the write.

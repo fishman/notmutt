@@ -852,12 +852,22 @@ func TestDefaultShownSet(t *testing.T) {
 		t.Fatal("the command keys must be shown")
 	}
 	_, emacsShown := bindingsFromScheme(Default().Schemes["emacs"])
-	for _, ctx := range []string{"index", "pager", "compose", "fuzzy"} {
+	for _, ctx := range []string{"pager", "compose", "fuzzy"} {
 		for _, k := range []string{"j", "k", "up", "down", "ctrl+n", "ctrl+p", "ctrl+v", "pgdown"} {
 			if emacsShown[ctx][k] {
 				t.Fatalf("generic key %q must stay out of the emacs %s hint", k, ctx)
 			}
 		}
+	}
+	for _, k := range []string{"j", "k", "up", "down", "ctrl+n", "ctrl+p", "pgdown"} {
+		if emacsShown["index"][k] {
+			t.Fatalf("generic key %q must stay out of the emacs index hint", k)
+		}
+	}
+	// in the emacs index ctrl+v is a command (collapse-all), not the
+	// hidden paging key it is in pager/compose
+	if !emacsShown["index"]["ctrl+v"] {
+		t.Fatal("emacs index ctrl+v must show as the collapse-all command")
 	}
 	if !emacsShown["index"]["q"] || !emacsShown["compose"]["t"] {
 		t.Fatal("the emacs command keys must be shown")

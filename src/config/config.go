@@ -57,11 +57,11 @@ type Binding struct {
 	Show bool
 }
 
-func (b *Binding) UnmarshalTOML(v interface{}) error {
+func (b *Binding) UnmarshalTOML(v any) error {
 	switch t := v.(type) {
 	case string:
 		b.Fun = t
-	case []interface{}:
+	case []any:
 		if len(t) != 2 {
 			return fmt.Errorf("binding: array must be [fun, desc], got %d elements", len(t))
 		}
@@ -74,7 +74,7 @@ func (b *Binding) UnmarshalTOML(v interface{}) error {
 			return fmt.Errorf("binding: array desc must be a string")
 		}
 		b.Fun, b.Desc = fun, desc
-	case map[string]interface{}:
+	case map[string]any:
 		fun, ok := t["fun"].(string)
 		if !ok {
 			return fmt.Errorf("binding: table must carry a string fun")
@@ -295,8 +295,8 @@ type Palette struct {
 	Variants map[string]map[string]string
 }
 
-func (p *Palette) UnmarshalTOML(v interface{}) error {
-	raw, ok := v.(map[string]interface{})
+func (p *Palette) UnmarshalTOML(v any) error {
+	raw, ok := v.(map[string]any)
 	if !ok {
 		return fmt.Errorf("palette: expected a table")
 	}
@@ -312,7 +312,7 @@ func (p *Palette) UnmarshalTOML(v interface{}) error {
 		switch tv := val.(type) {
 		case string:
 			p.Base[name] = tv
-		case map[string]interface{}:
+		case map[string]any:
 			m := p.Variants[name]
 			if m == nil {
 				m = map[string]string{}
@@ -415,8 +415,8 @@ type Theme struct {
 
 // rawStyle decodes a style table {fg, bg, attrs} from a decoded TOML
 // table (map). Every key is checked - strict load.
-func rawStyle(v interface{}) (Style, error) {
-	raw, ok := v.(map[string]interface{})
+func rawStyle(v any) (Style, error) {
+	raw, ok := v.(map[string]any)
 	if !ok {
 		return Style{}, fmt.Errorf("expected a style table")
 	}
@@ -436,7 +436,7 @@ func rawStyle(v interface{}) (Style, error) {
 			}
 			s.Bg = str
 		case "attrs":
-			arr, ok := val.([]interface{})
+			arr, ok := val.([]any)
 			if !ok {
 				return Style{}, fmt.Errorf("attrs: expected an array")
 			}
@@ -460,8 +460,8 @@ func rawStyle(v interface{}) (Style, error) {
 // styles. Every style key merges individually - a [theme.dark.index]
 // naming only subject keeps the variant's number/date/... - and
 // unknown keys are load errors.
-func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
-	raw, ok := v.(map[string]interface{})
+func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
+	raw, ok := v.(map[string]any)
 	if !ok {
 		return StyleTable{}, fmt.Errorf("expected a style table")
 	}
@@ -486,7 +486,7 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				t.Error = s
 			}
 		case "tabbar":
-			tm, ok := val.(map[string]interface{})
+			tm, ok := val.(map[string]any)
 			if !ok {
 				return StyleTable{}, fmt.Errorf("tabbar: expected a table")
 			}
@@ -506,7 +506,7 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				t.Tabbar.Default = s
 			}
 		case "compose":
-			cm, ok := val.(map[string]interface{})
+			cm, ok := val.(map[string]any)
 			if !ok {
 				return StyleTable{}, fmt.Errorf("compose: expected a table")
 			}
@@ -530,13 +530,13 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				return StyleTable{}, fmt.Errorf("compose.%s: unknown key", k)
 			}
 		case "index":
-			im, ok := val.(map[string]interface{})
+			im, ok := val.(map[string]any)
 			if !ok {
 				return StyleTable{}, fmt.Errorf("index: expected a table")
 			}
 			for ik, iv := range im {
 				if ik == "tag" {
-					tm, ok := iv.(map[string]interface{})
+					tm, ok := iv.(map[string]any)
 					if !ok {
 						return StyleTable{}, fmt.Errorf("index.tag: expected a table")
 					}
@@ -555,7 +555,7 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 							continue
 						}
 						if tn == "attrs" {
-							arr, ok := tv.([]interface{})
+							arr, ok := tv.([]any)
 							if !ok {
 								return StyleTable{}, fmt.Errorf("index.tag.attrs: expected an array")
 							}
@@ -605,7 +605,7 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 				}
 			}
 		case "pager":
-			pm, ok := val.(map[string]interface{})
+			pm, ok := val.(map[string]any)
 			if !ok {
 				return StyleTable{}, fmt.Errorf("pager: expected a table")
 			}
@@ -636,8 +636,8 @@ func rawStyleTable(v interface{}, base StyleTable) (StyleTable, error) {
 	return t, nil
 }
 
-func (t *Theme) UnmarshalTOML(v interface{}) error {
-	raw, ok := v.(map[string]interface{})
+func (t *Theme) UnmarshalTOML(v any) error {
+	raw, ok := v.(map[string]any)
 	if !ok {
 		return fmt.Errorf("theme: expected a table")
 	}

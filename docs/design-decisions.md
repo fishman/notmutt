@@ -479,3 +479,30 @@ builders either grow a string-to-screen adapter (SGR runs -> tcell
 cells, parse only OUR frames, trusted input) or skip the adapter and
 emit tcell.Style directly. There is no live renderer bug driving this -
 it is insurance and simplification, not a fix.
+
+## 24. go-i18n: embedded catalogs, Lua bindings (2026-08-18)
+
+Decision: go-i18n v2.6.1 catalogs ship INSIDE the binary. The
+`src/i18n` package embeds `locale/*.toml` via `go:embed` and loads them
+with `Bundle.LoadMessageFileFS` at startup (the v2.3.0+ fs.FS loader,
+verified in the pinned v2.6.1 source) - never `LoadMessageFile`, never
+a runtime read from the config dir or a data dir.
+
+Why: single-binary distribution. The client already links libnotmuch
+and reads config from one directory; a locale file tree would be a
+second runtime data dependency with its own missing-file and stale-file
+failure modes, and the config dir stays free of non-config content.
+Catalog files are build input, like base.toml: the `goi18n
+extract/merge` CLI regenerates them, and a new language is one toml
+file in the embed tree plus the `[ui] language` resolution already in
+the config store. The R8 constraint holds - TOML catalogs stay TOML,
+the Lua story does not change the catalog format.
+
+Lua bindings (R8, the R12 build-tag pattern): plugins get a
+`translate(id)` function on the VM, registered under the `lua` build
+tag like `register_attach_command` (src/app/lua_plugin.go vs the
+`!lua` stub) and backed by the SAME bundle - plugin-provided labels
+localize through the same catalogs as core strings, and a plugin
+language is still selected by `[ui] language`, never by plugin
+config. The core i18n package imports nothing Lua; the binding lives
+in the lua-gated adapter. Default builds carry no VM and no binding.

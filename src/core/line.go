@@ -40,6 +40,10 @@ type Run struct {
 	// renderer inserts before every link. It never merges with mail
 	// text, so the TUI finds the marker under entry by exact run match.
 	Label bool
+	// Image marks an inline image's placeholder run: the pager blanks
+	// the run once the image decodes (Rows > 0), the pixels paint at
+	// the run's cell offset (the line's ImagePos).
+	Image *Image
 }
 
 // Image is a referenced mail image rendered on its own line(s): Data
@@ -77,4 +81,15 @@ type Line struct {
 	// the pad.
 	Bg    string
 	Image *Image // LineBody only; the line occupies Image.Rows rows
+	// Imgs holds a text line's inline images (the icon rows): each
+	// image's block sits at cell offset X on the line, the line keeps
+	// its words (the placeholder runs blank once the image decodes).
+	Imgs []ImagePos
+}
+
+// ImagePos is one inline image block on a text line: the image and
+// its cell offset.
+type ImagePos struct {
+	Image *Image
+	X     int
 }

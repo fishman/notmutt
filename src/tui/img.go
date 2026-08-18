@@ -154,22 +154,44 @@ func cropImage(src image.Image, x, y, w, h int) image.Image {
 	return dst
 }
 
-// cellRect is a screen rect in cells (paint-diff bookkeeping).
-type cellRect struct{ x, y, w, h int }
+// cellRect is a screen rect in cells (paint-diff bookkeeping), with
+// the block's clear background (the line's declared bg or the theme).
+type cellRect struct {
+	x, y, w, h int
+	bg         string
+}
 
-// clearRect fills a cell rect with the theme background (or the
-// terminal default when the theme leaves it unset) - the stale pixels
-// of a moved or vanished image never linger.
-func clearRect(w io.Writer, x, y, cols, rows int, bg string) {
-	if cols < 1 || rows < 1 {
+// clearRects erases a rect set to each rect's background - per-row EL,
+// the erase that also removes sixel graphics (a space fill leaves the
+// pixels). Runs BEFORE the text frame, so the frame's fresh content
+// draws over the cleared rows.
+func clearRects(w io.Writer, rects []cellRect) {
+	if w == nil {
 		return
 	}
-	fmt.Fprintf(w, "\x1b[%d;%dH", y+1, x+1)
-	if rgb := hexRGB(bg); rgb != "" {
-		fmt.Fprintf(w, "\x1b[48;2;%sm", rgb)
+	for _, r := range rects {
+		if r.w < 1 || r.h < 1 {
+			continue
+		}
+		for row := 0; row < r.h; row++ {
+			fmt.Fprintf(w, "\x1b[%d;%dH", r.y+1+row, r.x+1)
+			if rgb := hexRGB(r.bg); rgb != "" {
+				fmt.Fprintf(w, "\x1b[48;2;%sm", rgb)
+			}
+			fmt.Fprint(w, "\x1b[K")
+			fmt.Fprint(w, "\x1b[0m")
+		}
 	}
-	fmt.Fprint(w, strings.Repeat(" ", cols*rows))
-	fmt.Fprint(w, "\x1b[0m")
+}
+
+// imgBG is an image block's clear color: the line's declared
+// background (the mail's body/html bg, a table cell's bgcolor) or the
+// theme default when the line leaves it unset.
+func (m *Model) imgBG(line int) string {
+	if b := m.pager.lines[line].Bg; b != "" {
+		return b
+	}
+	return m.themeBG()
 }
 
 // paintImage emits one image block at the screen cell (x, y): cursor
@@ -221,7 +243,7 @@ func (m *Model) prepareImages() {
 	}
 	dirty := false
 	for _, b := range m.pager.visibleImages() {
-		img := m.pager.lines[b.line].Image
+		img := b.img
 		if img == nil {
 			continue
 		}
@@ -269,13 +291,27 @@ func (m *Model) fetchRemoteImages() {
 		return
 	}
 	for i := range m.pager.lines {
-		img := m.pager.lines[i].Image
-		if img == nil || img.URL == "" || len(img.Data) > 0 || m.imgFetching[img.URL] {
-			continue
+		for _, img := range lineImages(&m.pager.lines[i]) {
+			if img.URL == "" || len(img.Data) > 0 || m.imgFetching[img.URL] {
+				continue
+			}
+			m.imgFetching[img.URL] = true
+			onImageFetch(img.URL)
 		}
-		m.imgFetching[img.URL] = true
-		onImageFetch(img.URL)
 	}
+}
+
+// lineImages lists a line's image blocks: the block image line or the
+// inline row's images.
+func lineImages(l *core.Line) []*core.Image {
+	if l.Image != nil {
+		return []*core.Image{l.Image}
+	}
+	out := make([]*core.Image, 0, len(l.Imgs))
+	for _, im := range l.Imgs {
+		out = append(out, im.Image)
+	}
+	return out
 }
 
 // attachFetched attaches a fetch reply to its image lines (the remote
@@ -291,15 +327,17 @@ func (m *Model) attachFetched(e core.ImageFetched) {
 	dirty := false
 	for i := range m.pager.lines {
 		l := &m.pager.lines[i]
-		if l.Image == nil || l.Image.URL != e.URL {
-			continue
+		for _, img := range lineImages(l) {
+			if img.URL != e.URL {
+				continue
+			}
+			dirty = true
+			if e.Err != nil {
+				img.URL = ""
+				continue
+			}
+			img.Data = e.Data
 		}
-		dirty = true
-		if e.Err != nil {
-			l.Image.URL = ""
-			continue
-		}
-		l.Image.Data = e.Data
 	}
 	if !dirty {
 		return
@@ -321,41 +359,51 @@ func (m *Model) dropRemoteData() {
 	dirty := false
 	for i := range m.pager.lines {
 		l := &m.pager.lines[i]
-		if l.Image == nil || l.Image.URL == "" {
-			continue
+		for _, img := range lineImages(l) {
+			if img.URL == "" {
+				continue
+			}
+			delete(m.imgCache, img)
+			img.Data = nil
+			img.Cols, img.Rows = 0, 0
+			dirty = true
 		}
-		delete(m.imgCache, l.Image)
-		l.Image.Data = nil
-		l.Image.Cols, l.Image.Rows = 0, 0
-		dirty = true
 	}
 	if dirty {
 		m.pager.relayout()
 	}
 }
 
-// paintImages writes the pager's image blocks to the terminal after
-// the frame flush (pixels never race the text). Rects track the
-// previous frame: moved or vanished blocks clear to the theme bg
-// first. The non-pager and toggled-off paths clear every painted
+// imgPaint is one block's paint: its rect, the decoded image and the
+// visible pixel slice (rows into the decoded image).
+type imgPaint struct {
+	rect cellRect
+	img  image.Image
+	top  int
+	h    int
+}
+
+// paintRects computes the frame's image state: the blocks to paint
+// (unchanged rects excluded) and the stale rects the frame displaces
+// or drops. The non-pager and toggled-off paths stale every painted
 // rect - the safety net for a mode change that skips the dispatch
-// clears.
-func (m *Model) paintImages() {
+// clears. The caller clears the stale rects BEFORE the text frame
+// (EL removes sixel - an after-frame clear would erase the freshly
+// drawn text) and paints after it.
+func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 	if m.imgProto == "" {
-		return
+		return nil, nil
 	}
 	if m.mode != "pager" || m.pager == nil || !m.pager.images {
-		m.clearImageRects()
-		return
-	}
-	if imageWriter == nil {
-		return
+		for _, r := range m.painted {
+			stale = append(stale, r)
+		}
+		return nil, stale
 	}
 	off, height := m.pager.vp.offset, m.pager.vp.height
-	bg := m.themeBG()
-	next := map[*core.Image]cellRect{}
+	next = map[*core.Image]imgPaint{}
 	for _, b := range m.pager.visibleImages() {
-		img := m.pager.lines[b.line].Image
+		img := b.img
 		if img.Rows == 0 {
 			continue // not decoded: the Alt row shows
 		}
@@ -372,36 +420,52 @@ func (m *Model) paintImages() {
 		if visBot <= visTop {
 			continue
 		}
-		rect := cellRect{x: 0, y: 1 + max(windowTop, 0), w: b.cols, h: visBot - visTop}
+		rect := cellRect{x: b.x, y: 1 + max(windowTop, 0), w: b.cols, h: visBot - visTop, bg: m.imgBG(b.line)}
 		if prev, ok := m.painted[img]; ok && prev == rect {
 			continue // unchanged: the terminal still holds the pixels
 		}
 		if prev, ok := m.painted[img]; ok {
-			clearRect(imageWriter, prev.x, prev.y, prev.w, prev.h, bg)
+			stale = append(stale, prev)
 		}
-		paintImage(imageWriter, m.imgProto, scaled, visTop*imgCellH, (visBot-visTop)*imgCellH, rect.x, rect.y)
-		next[img] = rect
+		next[img] = imgPaint{rect: rect, img: scaled, top: visTop, h: visBot - visTop}
 	}
 	for img, prev := range m.painted {
 		if _, ok := next[img]; !ok {
-			clearRect(imageWriter, prev.x, prev.y, prev.w, prev.h, bg)
+			stale = append(stale, prev)
 		}
 	}
-	m.painted = next
+	return next, stale
 }
 
-// clearImageRects fills every painted rect with the theme bg - the
-// toggle-off, mode-exit and resize paths run it BEFORE the next frame
-// so the collapsed text never renders under stale pixels.
+// paintImages writes the frame's image blocks to the terminal after
+// the text frame (pixels never race the text; the stale rects were
+// cleared before the frame).
+func (m *Model) paintImages(next map[*core.Image]imgPaint) {
+	if imageWriter == nil {
+		return
+	}
+	for _, p := range next {
+		paintImage(imageWriter, m.imgProto, p.img, p.top*imgCellH, p.h*imgCellH, p.rect.x, p.rect.y)
+	}
+	m.painted = make(map[*core.Image]cellRect, len(next))
+	for img, p := range next {
+		m.painted[img] = p.rect
+	}
+}
+
+// clearImageRects erases every painted rect to its block background -
+// the toggle-off, mode-exit and resize paths run it BEFORE the next
+// frame so the collapsed text never renders under stale pixels.
 func (m *Model) clearImageRects() {
 	if len(m.painted) == 0 {
 		return
 	}
 	if imageWriter != nil {
-		bg := m.themeBG()
+		rects := make([]cellRect, 0, len(m.painted))
 		for _, r := range m.painted {
-			clearRect(imageWriter, r.x, r.y, r.w, r.h, bg)
+			rects = append(rects, r)
 		}
+		clearRects(imageWriter, rects)
 	}
 	clear(m.painted)
 }
@@ -416,7 +480,7 @@ func (m *Model) resetImages() {
 		return
 	}
 	for i := range m.pager.lines {
-		if img := m.pager.lines[i].Image; img != nil {
+		for _, img := range lineImages(&m.pager.lines[i]) {
 			img.Cols, img.Rows = 0, 0
 		}
 	}

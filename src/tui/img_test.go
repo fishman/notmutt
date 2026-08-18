@@ -309,24 +309,24 @@ func TestPaintImage(t *testing.T) {
 	}
 }
 
-func TestClearRect(t *testing.T) {
+func TestClearRects(t *testing.T) {
 	var buf bytes.Buffer
-	clearRect(&buf, 3, 5, 10, 2, "#112233")
+	clearRects(&buf, []cellRect{{x: 3, y: 5, w: 10, h: 2, bg: "#112233"}})
 	got := buf.String()
-	if !strings.HasPrefix(got, "\x1b[6;4H\x1b[48;2;17;34;51m") {
-		t.Fatalf("clear must home and fill with the theme bg, got %q", show(got))
+	if !strings.HasPrefix(got, "\x1b[6;4H\x1b[48;2;17;34;51m\x1b[K") {
+		t.Fatalf("clear must home and EL-fill with the block bg, got %q", show(got))
+	}
+	if !strings.Contains(got, "\x1b[7;4H") {
+		t.Fatalf("clear must erase every row, got %q", show(got))
 	}
 	if !strings.HasSuffix(got, "\x1b[0m") {
 		t.Fatalf("clear must reset the fill, got %q", show(got))
 	}
-	if !strings.Contains(got, strings.Repeat(" ", 20)) {
-		t.Fatalf("clear must fill 10x2 cells with spaces")
-	}
 
 	buf.Reset()
-	clearRect(&buf, 0, 0, 3, 1, "") // no theme bg: the terminal default
+	clearRects(&buf, []cellRect{{x: 0, y: 0, w: 3, h: 1}}) // no bg: the terminal default
 	if strings.Contains(buf.String(), "48;2") {
-		t.Fatalf("an unset theme bg must not emit an SGR fill")
+		t.Fatalf("an unset block bg must not emit an SGR fill")
 	}
 }
 
@@ -354,7 +354,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 24
+	m.width, m.height = 80, 100
 	png := testPNG(t, 100, 200)
 	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
@@ -374,8 +374,16 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	imageWriter = &buf
 	defer func() { imageWriter = old }()
 
+	// the loop split: the stale rects clear before the frame, the
+	// blocks paint after it
+	paint := func() {
+		next, stale := m.paintRects()
+		clearRects(imageWriter, stale)
+		m.paintImages(next)
+	}
+
 	// the privacy gate: the placeholder renders, the paint writes nothing
-	m.paintImages()
+	paint()
 	if buf.Len() != 0 {
 		t.Fatalf("collapsed images must not paint, got %d bytes", buf.Len())
 	}
@@ -393,7 +401,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	if strings.Contains(out, "[image]") || !strings.Contains(out, "after") {
 		t.Fatalf("the toggle must expand the image and keep the text:\n%s", out)
 	}
-	m.paintImages()
+	paint()
 	// the block sits at doc row 2 (before, blank, image) - screen row 4
 	if !strings.HasPrefix(buf.String(), "\x1b[4;1H\x1b_Gf=") {
 		t.Fatalf("the paint must emit a kitty frame at the image rows, got %q", show(buf.String()[:24]))
@@ -432,7 +440,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 24
+	m.width, m.height = 80, 100
 	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
@@ -519,7 +527,7 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 24
+	m.width, m.height = 80, 100
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   threadID,
@@ -562,6 +570,42 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	after := strings.Count(m.View(), "[image]")
 	if after >= before {
 		t.Fatalf("the fetched images must expand: [image] count %d -> %d", before, after)
+	}
+
+	// the buttons row carries its 4 icons as inline images at
+	// increasing offsets, and the paint emits one rect per icon at
+	// that offset (the icons are real images, not placeholder text)
+	var iconLine *core.Line
+	for i := range m.pager.lines {
+		if len(m.pager.lines[i].Imgs) == 4 {
+			iconLine = &m.pager.lines[i]
+			break
+		}
+	}
+	if iconLine == nil {
+		t.Fatalf("the buttons row must carry the 4 inline images")
+	}
+	for i := 1; i < len(iconLine.Imgs); i++ {
+		if iconLine.Imgs[i].X <= iconLine.Imgs[i-1].X {
+			t.Fatalf("inline images must sit at increasing offsets, got %d then %d",
+				iconLine.Imgs[i-1].X, iconLine.Imgs[i].X)
+		}
+	}
+	next, stale := m.paintRects()
+	var xs []int
+	for _, p := range next {
+		if p.rect.w < 1 || p.rect.h < 1 {
+			t.Fatalf("an icon rect must cover cells, got %+v", p.rect)
+		}
+		if p.rect.x > 0 {
+			xs = append(xs, p.rect.x)
+		}
+	}
+	if len(xs) < 4 {
+		t.Fatalf("the 4 icons must paint at their offsets, got %d rects with x>0", len(xs))
+	}
+	if len(stale) != 0 {
+		t.Fatalf("the first paint must not stale rects, got %d", len(stale))
 	}
 
 	// the toggle-off press restores the placeholders

@@ -117,6 +117,7 @@ type word struct {
 	text  string
 	st    *styleProps
 	label bool
+	img   *core.Image // inline image: the word is its placeholder
 }
 
 // cellLine is one line of a table cell's text: its words and the line's
@@ -127,6 +128,7 @@ type cellLine struct {
 	words []word
 	align string
 	img   *core.Image
+	bg    string // the cell's background: the image line's clear fill
 }
 
 var blockTags = map[string]bool{
@@ -389,8 +391,9 @@ func (w *htmlWalker) image(c *html.Node, st *styleProps) {
 		return
 	}
 	w.emitLine(nil)
-	w.lines[len(w.lines)-1].Image = img
-	w.lines[len(w.lines)-1].Text = img.Alt
+	i := len(w.lines) - 1
+	w.lines[i].Image = img
+	w.lines[i].Text = img.Alt
 }
 
 // resolveImage resolves an <img> src to its bytes + alt text: the
@@ -511,13 +514,22 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 			// image cells' columns blank
 			for ci := 0; ci < ncols; ci++ {
 				if ci < len(r) && li < len(r[ci]) && r[ci][li].img != nil {
+					before := len(w.lines)
 					w.emitLine(nil)
+					if len(w.lines) == before {
+						continue // line budget exhausted: the image drops with the truncated tail
+					}
 					i := len(w.lines) - 1
 					w.lines[i].Image = r[ci][li].img
 					w.lines[i].Text = r[ci][li].img.Alt
+					if bg := r[ci][li].bg; bg != "" {
+						w.lines[i].Bg = bg
+					}
 				}
 			}
 			var runs []core.Run
+			var imgs []core.ImagePos
+			rowX := 0
 			for ci := 0; ci < ncols; ci++ {
 				// a ragged row has no cell at ci: it renders as an empty
 				// column span, the same shape as an exhausted cell
@@ -536,19 +548,37 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 					}
 					if pre > 0 {
 						runs = append(runs, core.Run{Text: strings.Repeat(" ", pre)})
+						rowX += pre
 					}
-					runs = append(runs, runWords(cell.words)...)
+					for _, rn := range runWords(cell.words) {
+						if rn.Image != nil {
+							imgs = append(imgs, core.ImagePos{Image: rn.Image, X: rowX})
+						}
+						rowX += textWidth(rn.Text)
+						runs = append(runs, rn)
+					}
 					if post > 0 {
 						runs = append(runs, core.Run{Text: strings.Repeat(" ", post)})
+						rowX += post
 					}
 				} else {
 					runs = append(runs, core.Run{Text: strings.Repeat(" ", widths[ci])})
+					rowX += widths[ci]
 				}
 				if ci < ncols-1 {
 					runs = append(runs, core.Run{Text: "  "})
+					rowX += 2
 				}
 			}
+			before := len(w.lines)
 			w.emitLine(runs)
+			if len(w.lines) == before {
+				continue // line budget exhausted: the inline images drop with the truncated tail
+			}
+			if len(imgs) > 0 {
+				i := len(w.lines) - 1
+				w.lines[i].Imgs = imgs
+			}
 		}
 	}
 	w.flush()
@@ -661,12 +691,18 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 				case tag == "br" && !cs.pre:
 					flush()
 				case tag == "img":
-					// a resolved image becomes its own full-width line
-					// (the column join can hold one image per line);
-					// unresolved srcs stay text placeholders
+					// a resolved block image becomes its own full-width
+					// line (the column join can hold one image per
+					// line); an inline image (the icon rows) joins its
+					// line's words - the placeholder run rides the
+					// word, the row keeps the mail's one-line layout
 					if img := resolveImage(c, nil); img != nil {
+						if cs.display != "block" {
+							cur = append(cur, word{text: img.Alt, st: cs, img: img})
+							break
+						}
 						flush()
-						out = append(out, cellLine{img: img})
+						out = append(out, cellLine{img: img, bg: cs.bg})
 						break
 					}
 					if a := attr(c, "alt"); a != "" {
@@ -859,6 +895,7 @@ func runWords(words []word) []core.Run {
 	for _, wd := range words {
 		r := runFor(wd.st)
 		r.Label = wd.label
+		r.Image = wd.img
 		r.Text = wd.text
 		if len(runs) > 0 && r == runs[len(runs)-1] {
 			runs[len(runs)-1].Text += wd.text

@@ -98,9 +98,11 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			return nil
 		}
 		if m.ShouldRender() {
+			next, stale := m.paintRects()
+			clearRects(imageWriter, stale) // before the text frame: EL drops the stale pixels
 			x, y, show := m.textCursor()
 			pushFrame(s, m.View(), x, y, show)
-			m.paintImages() // pixels after the text frame, never before
+			m.paintImages(next) // pixels after the text frame, never before
 		}
 	}
 }

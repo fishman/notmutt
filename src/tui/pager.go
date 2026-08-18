@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mattn/go-runewidth"
+
 	"notmutt/core"
 )
 
@@ -72,11 +74,22 @@ func (p *pager) setSize(w, h int, st Styles) {
 // The per-line styled cache survives: doc rows resolve to lines via
 // imgFrom, so the toggle and a decode-gained resize never re-style.
 func (p *pager) relayout() {
+	// image-carrying lines re-style on every layout: their cached text
+	// holds the placeholder or the blanked run - the decode state
+	// (Rows) decides which, and it changed
+	for i := range p.styled {
+		if l := &p.lines[i]; l.Image != nil || len(l.Imgs) > 0 {
+			p.styled[i] = ""
+		}
+	}
 	n := len(p.lines)
 	if p.images {
-		for _, l := range p.lines {
+		for i := range p.lines {
+			l := &p.lines[i]
 			if l.Image != nil && l.Image.Rows > 0 {
 				n += l.Image.Rows - 1
+			} else if s := imgRowSpan(l); s > 1 {
+				n += s - 1
 			}
 		}
 	}
@@ -85,20 +98,39 @@ func (p *pager) relayout() {
 	isImg := make([]bool, n)
 	j := 0
 	for i := range p.lines {
-		expanded := p.images && p.lines[i].Image != nil && p.lines[i].Image.Rows > 0
+		l := &p.lines[i]
 		rows := 1
-		if expanded {
-			rows = p.lines[i].Image.Rows
+		blank := false
+		if p.images {
+			if l.Image != nil && l.Image.Rows > 0 {
+				rows, blank = l.Image.Rows, true
+			} else if s := imgRowSpan(l); s > 1 {
+				// an inline image row keeps its own text row; only
+				// the expansion rows below it blank
+				rows, blank = s, true
+			}
 		}
 		for r := 0; r < rows; r++ {
 			from[j] = i
-			isImg[j] = expanded
+			isImg[j] = blank && (l.Image != nil || r > 0)
 			j++
 		}
 	}
 	p.doc, p.imgFrom, p.imgRow = doc, from, isImg
 	p.vp.setLines(doc)
 	p.vp.clamp()
+}
+
+// imgRowSpan is the expansion row count of a text line's inline
+// images: the tallest decoded image (1 when none are decoded).
+func imgRowSpan(l *core.Line) int {
+	rows := 1
+	for _, im := range l.Imgs {
+		if im.Image.Rows > rows {
+			rows = im.Image.Rows
+		}
+	}
+	return rows
 }
 
 // ensureStyled styles the visible window plus a margin above and
@@ -155,13 +187,16 @@ func (p *pager) setImages(on bool) {
 }
 
 // imgBlock is one visible image block: the source line, its doc row
-// (first expanded row - the paint crop anchor), and the cell dims
-// (0 until the decode runs).
+// (first expanded row - the paint crop anchor), the cell dims (0
+// until the decode runs), the image (the line's block or one of its
+// inline row) and its cell offset.
 type imgBlock struct {
 	line int
 	doc  int
 	cols int
 	rows int
+	img  *core.Image
+	x    int
 }
 
 // visibleImages lists the window's image lines, one block per image:
@@ -181,7 +216,7 @@ func (p *pager) visibleImages() []imgBlock {
 			continue
 		}
 		l := &p.lines[li]
-		if l.Image == nil {
+		if l.Image == nil && len(l.Imgs) == 0 {
 			continue
 		}
 		seen[li] = true
@@ -189,7 +224,12 @@ func (p *pager) visibleImages() []imgBlock {
 		for doc > 0 && p.imgFrom[doc-1] == li {
 			doc--
 		}
-		out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows})
+		if l.Image != nil {
+			out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows, img: l.Image})
+		}
+		for _, im := range l.Imgs {
+			out = append(out, imgBlock{line: li, doc: doc, cols: im.Image.Cols, rows: im.Image.Rows, img: im.Image, x: im.X})
+		}
 	}
 	return out
 }
@@ -273,7 +313,13 @@ func (p *pager) styleRuns(runs []core.Run) string {
 		if open := runSGR(r); open != "" {
 			b.WriteString(open)
 		}
-		b.WriteString(r.Text)
+		// a decoded inline image's placeholder run blanks: the pixels
+		// paint at its offset, the words would render under them
+		if r.Image != nil && p.images && r.Image.Rows > 0 {
+			b.WriteString(strings.Repeat(" ", runewidth.StringWidth(r.Text)))
+		} else {
+			b.WriteString(r.Text)
+		}
 	}
 	// the trailing reset covers the selected marker's reverse too - a
 	// reverse pad row is a visible artifact, unlike a colored one

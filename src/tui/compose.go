@@ -12,6 +12,7 @@ import (
 
 	"notmutt/compose"
 	"notmutt/core"
+	"notmutt/i18n"
 )
 
 // composeForm is one form line: the settings rows carry a label +
@@ -154,7 +155,7 @@ func spinnerChar(i int) string {
 func (m *Model) syncPreviewPager(st compose.State) {
 	content := compose.BodyWithSig(st.Body, st.SignatureBody)
 	if st.Phase == compose.PhaseFailed {
-		content = "send failed:\n" + st.Output
+		content = i18n.T("send failed") + ":\n" + st.Output
 	}
 	if content != m.previewContent {
 		m.previewContent = content

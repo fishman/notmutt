@@ -22,6 +22,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/i18n"
 )
 
 // chainTimeout expires an armed multi-key prefix: a stray first key
@@ -835,7 +836,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// pending buffer asks first - the confirm re-dispatches
 		// quit-confirmed, which bypasses this gate
 		if m.mode == "index" && m.view.HasStaged() {
-			m.dialogue = &confirmDialogue{label: "Discard staged changes and quit?", action: "quit-confirmed"}
+			m.dialogue = &confirmDialogue{label: i18n.T("Discard staged changes and quit?"), action: "quit-confirmed"}
 			return m, nil
 		}
 		return m, quitCmd()
@@ -965,7 +966,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the s key in an attachment view: the save prompt prefills
 		// the viewed attachment's name, enter writes it via the app
 		if m.mode == "pager" && m.attView != nil {
-			m.dialogue = &textDialogue{field: "saveatt", label: "save attachment to: ", input: m.attView.name}
+			m.dialogue = &textDialogue{field: "saveatt", label: i18n.T("save attachment to: "), input: m.attView.name}
 			deferPaint()
 			deferred = true
 		}
@@ -1074,7 +1075,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		})
 	case "attach":
 		if m.composeTab().Phase != compose.PhaseSending {
-			m.dialogue = &textDialogue{field: "attach", label: "attach path: "}
+			m.dialogue = &textDialogue{field: "attach", label: i18n.T("attach path: ")}
 		}
 	case "detach":
 		t := m.composeTab()
@@ -1146,7 +1147,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.closeComposeTab(m.tabIdx - 1)
 		default:
 			st.Phase = compose.PhaseAborting
-			m.dialogue = &confirmDialogue{label: "Abort composition?", action: "abort", draft: true}
+			m.dialogue = &confirmDialogue{label: i18n.T("Abort composition?"), action: "abort", draft: true}
 		}
 	case "help":
 		m.help = true
@@ -1176,7 +1177,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// filter on every key, esc restores the pre-open text
 		if m.mode == "index" {
 			d := &textDialogue{field: "filter",
-				label: "filter: ", input: m.view.Filter(), saved: m.view.Filter()}
+				label: i18n.T("filter: "), input: m.view.Filter(), saved: m.view.Filter()}
 			d.cur = len(d.input)
 			m.dialogue = d
 		}
@@ -1544,7 +1545,7 @@ func (m *Model) onSendResult(e core.SendResult) {
 				}
 				m.logEntry("send failed", true)
 				m.dialogue = &errorDialogue{
-					label: "send failed", output: m.tabs[i].Output, tabID: e.TabID,
+					label: i18n.T("send failed"), output: m.tabs[i].Output, tabID: e.TabID,
 				}
 			}
 			break
@@ -3122,7 +3123,7 @@ func (d *confirmDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		// tab's phase resets so the user can fix or abort again
 		if err := onDraft(*m.composeTab()); err != nil {
 			m.composeTab().Phase = compose.PhaseEditing
-			return &errorDialogue{label: "draft failed", output: err.Error()}, nil
+			return &errorDialogue{label: i18n.T("draft failed"), output: err.Error()}, nil
 		}
 		m.dialogue = nil
 		m.closeComposeTab(m.tabIdx - 1)

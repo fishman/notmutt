@@ -19,10 +19,10 @@ require (
 	golang.org/x/text v0.41.0
 )
 
-// vendored build input: the fishman fork (notmuch/bindings/go.notmuch in
+// vendored build input: the fishman fork (references/go.notmuch in
 // this workspace), pinned by the workspace checkout's git history; never
 // fetched from the proxy.
-replace github.com/fishman/go.notmuch => ../notmuch/bindings/go.notmuch
+replace github.com/fishman/go.notmuch => ../references/go.notmuch
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect

@@ -167,9 +167,7 @@ func (m *Model) syncPreviewPager(st compose.State) {
 	}
 	if content != m.previewContent {
 		m.previewContent = content
-		m.previewPager.lines = previewLinesOf(content)
-		m.previewPager.styled = nil
-		m.previewPager.vp.offset = 0
+		m.previewPager.setLines(previewLinesOf(content))
 	}
 }
 

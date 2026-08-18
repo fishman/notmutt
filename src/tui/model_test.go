@@ -4729,7 +4729,7 @@ func TestSummaryView(t *testing.T) {
 	}
 	m.onAiChunk(core.AiChunk{JobID: "j1", Text: "Summary part"})
 	m.onAiChunk(core.AiChunk{JobID: "j1", Text: " 2"})
-	if got := pagerText(m.pager); got != "summarizing...Summary part 2" {
+	if got := pagerText(m.pager); got != "Summary part 2" {
 		t.Fatalf("chunked pager = %q", got)
 	}
 	// a stale chunk from another job drops

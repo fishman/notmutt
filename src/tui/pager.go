@@ -52,6 +52,17 @@ func newPager(threadID string, lines []core.Line) *pager {
 	return &pager{threadID: threadID, lines: lines}
 }
 
+// setLines replaces the pager content (the compose preview after a
+// body edit, the AI summary swap): the expanded layout drops with the
+// lines - a stale doc maps old rows into the new line list, and
+// ensureStyled rebuilds it from the new content.
+func (p *pager) setLines(lines []core.Line) {
+	p.lines = lines
+	p.doc = nil
+	p.styled = nil
+	p.vp.offset = 0
+}
+
 func (p *pager) setSize(w, h int, st Styles) {
 	p.width = w
 	p.st = st
@@ -165,12 +176,44 @@ func (p *pager) ensureStyled() {
 // entry; the styled cache drops so the visible window re-renders with
 // the reversed marker on the next paint.
 // append adds a line to the pager (the AI summary stream): the styled
-// cache extends and the document reflows; the viewport offset
-// survives, so a scrolled summary does not jump - the bottom only
-// follows when the view was already pinned there.
+// cache extends and the document grows with the line - a streamed
+// line is plain text, one row, never an image expansion. The viewport
+// offset survives, so a scrolled summary does not jump - the bottom
+// only follows when the view was already pinned there.
 func (p *pager) append(l core.Line) {
 	p.lines = append(p.lines, l)
+	if p.doc != nil {
+		p.doc = append(p.doc, "")
+		p.imgFrom = append(p.imgFrom, len(p.lines)-1)
+		p.imgRow = append(p.imgRow, false)
+	}
 	p.ensureStyled()
+}
+
+// appendText merges a streamed delta into the pager (the AI summary's
+// token stream): whole lines split off and append, a trailing partial
+// extends the last line in place - a token-per-event stream renders as
+// flowing text, never one row per token. A partial after a completed
+// line starts a fresh line.
+func (p *pager) appendText(text string) {
+	for len(text) > 0 {
+		i := strings.IndexByte(text, '\n')
+		if i < 0 {
+			n := len(p.lines)
+			if n > 0 && !strings.HasSuffix(p.lines[n-1].Text, "\n") {
+				p.lines[n-1].Text += text
+				if n-1 < len(p.styled) {
+					p.styled[n-1] = ""
+				}
+				p.ensureStyled()
+				return
+			}
+			p.append(core.Line{Text: text, Kind: core.LineBody})
+			return
+		}
+		p.append(core.Line{Text: text[:i+1], Kind: core.LineBody})
+		text = text[i+1:]
+	}
 }
 
 func (p *pager) setLinkSel(sel string) {

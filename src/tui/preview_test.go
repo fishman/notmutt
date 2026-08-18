@@ -11,6 +11,48 @@ import (
 	"notmutt/core"
 )
 
+// TestAiStreamAppendRenders pins the summary stream: the first delta
+// replaces the placeholder, token-per-event deltas merge into a
+// flowing line, and newline deltas start fresh lines - all visible as
+// they arrive (a stale document would hide every appended line).
+func TestAiStreamAppendRenders(t *testing.T) {
+	m := model()
+	m.width, m.height = 80, 24
+	next, _ := m.Update(EventMsg{Event: core.AiStarted{JobID: "j1", ThreadID: "t1"}})
+	m = next
+	for _, d := range []string{"alpha ", "beta ", "gamma", "\n", "next line"} {
+		next, _ = m.Update(EventMsg{Event: core.AiChunk{JobID: "j1", Text: d}})
+		m = next
+	}
+	got := stripANSI(m.render())
+	for _, want := range []string{"alpha beta gamma", "next line"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the streamed summary must render %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "summarizing...") {
+		t.Fatalf("the placeholder must be replaced by the first delta:\n%s", got)
+	}
+}
+
+// TestPreviewShrinkNoPanic pins the stale-layout bug: a render with a
+// long body builds the preview's expanded layout (doc/imgFrom), and
+// replacing the body with a shorter one must drop the layout - the old
+// row map pointed past the new, shorter line list (index out of range).
+func TestPreviewShrinkNoPanic(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.width, m.height = 80, 24
+	m.composeTab().Body = strings.Repeat("a line of reply text\n", 20)
+	if frame := stripANSI(m.render()); !strings.Contains(frame, "a line of reply text") {
+		t.Fatalf("the long body must render in the preview:\n%s", frame)
+	}
+	// the neovim edit: the reply is cut down to 11 lines
+	m.composeTab().Body = "short reply\n"
+	if frame := stripANSI(m.render()); !strings.Contains(frame, "short reply") {
+		t.Fatalf("the shortened body must render in the preview:\n%s", frame)
+	}
+}
+
 // TestPreviewStaysInIndexAndShowsBox pins the preview surface: p opens
 // the popup over the index (mode stays "index"), the box carries the
 // row's subject as its title, the loaded content lands inside it, and

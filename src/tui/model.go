@@ -1602,6 +1602,7 @@ type summary struct {
 	jobID    string
 	threadID string
 	saved    []core.Line
+	first    bool // the first delta replaces the placeholder line
 }
 
 // onAiStarted opens the summary view: the pager's lines are saved and
@@ -1616,7 +1617,7 @@ func (m *Model) onAiStarted(e core.AiStarted) {
 	if m.mode == "pager" && m.pager != nil && pagerThreadID(m.pager) == e.ThreadID {
 		saved = m.pager.lines
 	}
-	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, saved: saved}
+	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, saved: saved, first: true}
 	m.pager = newPager(e.ThreadID, []core.Line{{Text: i18n.T("summarizing...")}})
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
@@ -1632,7 +1633,12 @@ func (m *Model) onAiChunk(e core.AiChunk) {
 	if m.summary == nil || e.JobID != m.summary.jobID {
 		return
 	}
-	m.pager.append(core.Line{Text: e.Text, Kind: core.LineBody})
+	if m.summary.first {
+		// the first delta replaces the placeholder line
+		m.summary.first = false
+		m.pager.setLines(nil)
+	}
+	m.pager.appendText(e.Text)
 	m.paint = true
 }
 

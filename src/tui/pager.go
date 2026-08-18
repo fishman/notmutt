@@ -164,6 +164,15 @@ func (p *pager) ensureStyled() {
 // setLinkSel points the easyjump highlight at the label marker under
 // entry; the styled cache drops so the visible window re-renders with
 // the reversed marker on the next paint.
+// append adds a line to the pager (the AI summary stream): the styled
+// cache extends and the document reflows; the viewport offset
+// survives, so a scrolled summary does not jump - the bottom only
+// follows when the view was already pinned there.
+func (p *pager) append(l core.Line) {
+	p.lines = append(p.lines, l)
+	p.ensureStyled()
+}
+
 func (p *pager) setLinkSel(sel string) {
 	if p.linkSel == sel {
 		return

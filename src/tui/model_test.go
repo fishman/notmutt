@@ -4637,3 +4637,68 @@ func TestPagerEnterNextMail(t *testing.T) {
 		t.Fatalf("a same-thread press must not reload, opens=%d", opens)
 	}
 }
+
+// pagerText joins a pager's lines for assertions (the summary chunk
+// tests).
+func pagerText(p *pager) string {
+	var b strings.Builder
+	for _, l := range p.lines {
+		b.WriteString(l.Text)
+	}
+	return b.String()
+}
+
+// TestSummaryView pins the AI summary view (R8): AiStarted saves the
+// pager's lines and swaps in the placeholder, chunks append in order,
+// a stale chunk from another job drops, a failure appends an error
+// line, and the back key restores the mail.
+func TestSummaryView(t *testing.T) {
+	m := model()
+	m.pager = newPager("t1", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+	m.mode = "pager"
+
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	if m.summary == nil || m.summary.jobID != "j1" {
+		t.Fatalf("summary not open: %v", m.summary)
+	}
+	if got := pagerText(m.pager); got != "summarizing..." {
+		t.Fatalf("pager must show the placeholder, got %q", got)
+	}
+	m.onAiChunk(core.AiChunk{JobID: "j1", Text: "Summary part"})
+	m.onAiChunk(core.AiChunk{JobID: "j1", Text: " 2"})
+	if got := pagerText(m.pager); got != "summarizing...Summary part 2" {
+		t.Fatalf("chunked pager = %q", got)
+	}
+	// a stale chunk from another job drops
+	m.onAiChunk(core.AiChunk{JobID: "j2", Text: "junk"})
+	if got := pagerText(m.pager); strings.Contains(got, "junk") {
+		t.Fatalf("stale chunk appended: %q", got)
+	}
+	// a failure appends an error line and keeps the summary reviewable
+	m.onAiResult(core.AiResult{JobID: "j1", Err: errors.New("provider down")})
+	if got := pagerText(m.pager); !strings.Contains(got, "provider down") {
+		t.Fatalf("error not shown: %q", got)
+	}
+	// the back key restores the mail
+	m, _ = m.dispatchAction("back", 1)
+	if m.summary != nil || pagerText(m.pager) != "the mail body" {
+		t.Fatalf("back must restore the mail: summary=%v pager=%q", m.summary, pagerText(m.pager))
+	}
+}
+
+// TestSummaryViewFromIndex: a summary opened from the index has no mail
+// lines to restore - the back key returns to the index.
+func TestSummaryViewFromIndex(t *testing.T) {
+	m := model()
+	m.mode = "index"
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	if m.mode != "pager" {
+		t.Fatalf("summary must open the pager, mode=%q", m.mode)
+	}
+	m, _ = m.dispatchAction("back", 1)
+	if m.summary != nil || m.mode != "index" {
+		t.Fatalf("back must return to the index, summary=%v mode=%q", m.summary, m.mode)
+	}
+}

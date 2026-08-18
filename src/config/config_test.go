@@ -221,6 +221,48 @@ yazi = []
 	}
 }
 
+// TestLoadAIProviders pins the [ai.<name>] section (R8): type is the
+// wire protocol enum, pass_cmd is a tokenized argv (F4 - each element
+// one argv word, never a shell string), zero max-tokens/timeout keep
+// the call-site defaults.
+func TestLoadAIProviders(t *testing.T) {
+	cfg, err := Load(write(t, `
+[ai.claude]
+type = "anthropic"
+model = "claude-sonnet-4-5"
+pass_cmd = ["gpg", "-q", "-d", "/home/alpha/.ai/key.gpg"]
+
+[ai.local]
+type = "openai"
+model = "qwen3:8b"
+base-url = "http://localhost:11434/v1"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.AI["claude"]
+	if c.Type != "anthropic" || c.Model != "claude-sonnet-4-5" {
+		t.Fatalf("claude = %+v", c)
+	}
+	if len(c.PassCmd) != 4 || c.PassCmd[3] != "/home/alpha/.ai/key.gpg" {
+		t.Fatalf("claude pass_cmd = %v", c.PassCmd)
+	}
+	if cfg.AI["local"].BaseURL != "http://localhost:11434/v1" {
+		t.Fatalf("local = %+v", cfg.AI["local"])
+	}
+}
+
+func TestLoadAIUnknownTypeErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[ai.bad]
+type = "gemini"
+model = "x"
+`))
+	if err == nil || !strings.Contains(err.Error(), "ai.bad") {
+		t.Fatalf("unknown provider type must error naming the provider, got: %v", err)
+	}
+}
+
 // TestLoadOpener pins the opener key (the pager F key's urlopener):
 // the value decodes as argv - the url is appended as the last element
 // at open time (F4, never shell-interpolated) - and an empty argv is

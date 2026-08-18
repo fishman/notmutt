@@ -144,7 +144,11 @@ type Model struct {
 	// render, and back re-opens the message to restore. The viewed
 	// attachment's identity rides here for the s key (the save prompt
 	// prefills its name). nil = the pager shows the message.
-	attView    *attView
+	attView *attView
+	// summary is the AI summary view state (R8): the streaming job that
+	// owns the pager and the mail lines it displaced - back restores
+	// them. nil = no summary view.
+	summary    *summary
 	job        string
 	progress   core.Progress
 	progressOn bool
@@ -339,6 +343,11 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		if e, ok := m.bus.LatestAddressIndex(); ok && !m.addrSeen {
 			m.onAddressIndex(e)
 		}
+		if s := m.summary; s != nil {
+			if e, ok := m.bus.LatestAiResult(s.jobID); ok {
+				m.onAiResult(e)
+			}
+		}
 	}
 	// every message paints except the navigation deferrals below (they
 	// set paint false and let the frame tick re-arm it); the frameTick
@@ -517,7 +526,16 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.pendingAt = time.Now()
 			return m, chainTickCmd()
 		}
-		return m.dispatchAction(actionForKey(msg, km), n)
+		a := actionForKey(msg, km)
+		if a == "" && pluginKeyBound(msg.String(), m.bindingCtx()) {
+			// a plugin bind_key (record 20 point 7): core bindings win,
+			// the plugin fills the rest - the app runs the fn and
+			// publishes LuaResult
+			tid, _ := m.cursorThreadID()
+			onLuaKey(msg.String(), m.bindingCtx(), tid)
+			return m, nil
+		}
+		return m.dispatchAction(a, n)
 	case KeyReleaseMsg:
 		// the real keyup (kitty keyboard protocol release reporting):
 		// the legend resolves at the release, no debounce needed.
@@ -582,6 +600,27 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		os.Remove(msg.path)
 		return m, nil
+	case pickerCmdDoneMsg:
+		// the Lua picker's exec completed: the chooser file's paths
+		// ride PickerResult back to the app, which resumes the blocked
+		// action (R8)
+		if m.bus != nil {
+			var paths []string
+			if msg.err == nil {
+				if data, err := os.ReadFile(msg.path); err == nil {
+					for _, line := range strings.Split(string(data), "\n") {
+						if line = strings.TrimSpace(line); line != "" {
+							paths = append(paths, compose.ExpandHome(line))
+						}
+					}
+				} else {
+					msg.err = err
+				}
+			}
+			m.bus.Publish(core.PickerResult{ID: msg.id, Paths: paths, Err: msg.err})
+		}
+		os.Remove(msg.path)
+		return m, nil
 	case frameTick:
 		// the deferred paint lands here at the fixed cadence; a tick
 		// with nothing deferred (idle model) turns the gate off again
@@ -637,6 +676,50 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.onThreadLoaded(e)
 		case core.AttachmentLoaded:
 			m.onAttachmentLoaded(e)
+		case core.AiStarted:
+			m.onAiStarted(e)
+		case core.AiChunk:
+			m.onAiChunk(e)
+		case core.AiResult:
+			m.onAiResult(e)
+		case core.PickerRequest:
+			// the Lua action's picker call: run the argv through the
+			// attach-command exec path and publish the selection back
+			if cmd := m.runPicker(e); cmd != nil {
+				return m, batch(EventCmd(m.ch), cmd)
+			}
+			return m, EventCmd(m.ch)
+		case core.AttachFiles:
+			// the Lua action's attach_add drain: attach the paths to the
+			// active compose tab (no compose tab open = dropped - there
+			// is nowhere to attach)
+			if m.tabIdx > 0 {
+				for _, p := range e.Paths {
+					m.tabs[m.tabIdx-1].AddAttachment(p)
+				}
+				m.paint = true
+			}
+		case core.TagStaged:
+			// the Lua action's staged tag ops (R8, the AI-classification
+			// flow): staging is the ONLY tag surface a script gets - the
+			// ops land in the current folder's buffer exactly like a UI
+			// keypress (R14), the APPLY key flushes them, notmuch is
+			// never written from Lua. The op applies to the cursor
+			// message of the thread the script named; a moved cursor
+			// drops with a status entry.
+			if row, ok := m.view.CursorRow(); ok && row.Msg != nil && row.ThreadID == e.ThreadID {
+				identity := row.Msg.ID
+				if identity == "" {
+					identity = "t:" + row.ThreadID
+				}
+				for _, op := range e.Ops {
+					m.view.Stage(identity, op)
+				}
+				m.rows = m.view.Rows()
+				m.paint = true
+			} else {
+				m.logEntry("lua: staged tags dropped: no cursor message for thread "+e.ThreadID, true)
+			}
 		case core.AttachmentSaved:
 			// the s key's write result (the app extracted + wrote the
 			// attachment): the path or the failure surfaces on the
@@ -941,6 +1024,26 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				// message: the re-open reply replaces the pager (the
 				// onThreadLoaded attView guard) and clears the view
 				onToggleRender(m.attView.threadID, m.renderMode, m.showHeaders, m.width, false)
+				deferPaint()
+				deferred = true
+				break
+			}
+			if m.summary != nil {
+				// the q key in the summary view restores the mail: the
+				// displaced lines replace the summary body (the
+				// attachment-view back affordance); a summary opened
+				// from the index has nothing to restore
+				if m.summary.saved != nil {
+					m.pager = newPager(m.summary.threadID, m.summary.saved)
+					w, h := m.pagerSize()
+					m.pager.setSize(w, h, m.styles)
+				} else {
+					m.mode = "index"
+				}
+				if m.bus != nil {
+					m.bus.ClearAiResult(m.summary.jobID)
+				}
+				m.summary = nil
 				deferPaint()
 				deferred = true
 				break
@@ -1488,6 +1591,62 @@ type attView struct {
 	threadID string
 	ordinal  int
 	name     string
+}
+
+// summary is the pager's AI summary state (R8): the streaming job that
+// owns the pager and the mail lines it displaced (nil when the summary
+// opened from the index - back goes straight back). back restores
+// saved, ClearAiResult re-arms the snapshot.
+type summary struct {
+	jobID    string
+	threadID string
+	saved    []core.Line
+}
+
+// onAiStarted opens the summary view: the pager's lines are saved and
+// swapped for a placeholder, the streamed chunks append as they arrive
+// (the attachment-view swap precedent). A second job while one streams
+// is ignored - one summary at a time.
+func (m *Model) onAiStarted(e core.AiStarted) {
+	if m.summary != nil {
+		return
+	}
+	var saved []core.Line
+	if m.mode == "pager" && m.pager != nil && pagerThreadID(m.pager) == e.ThreadID {
+		saved = m.pager.lines
+	}
+	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, saved: saved}
+	m.pager = newPager(e.ThreadID, []core.Line{{Text: i18n.T("summarizing...")}})
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+	m.mode = "pager"
+	m.legendPending = true
+	m.paint = true
+}
+
+// onAiChunk appends one streamed delta to the summary pager (append,
+// never rebuild - the R3 diff discipline). Stale chunks (a new job, or
+// the view already closed) drop.
+func (m *Model) onAiChunk(e core.AiChunk) {
+	if m.summary == nil || e.JobID != m.summary.jobID {
+		return
+	}
+	m.pager.append(core.Line{Text: e.Text, Kind: core.LineBody})
+	m.paint = true
+}
+
+// onAiResult settles the summary stream: a failure appends an error
+// line and logs the reason. The summary stays until back restores the
+// mail - the text streamed so far stays reviewable.
+func (m *Model) onAiResult(e core.AiResult) {
+	if m.summary == nil || e.JobID != m.summary.jobID {
+		return
+	}
+	if e.Err != nil {
+		m.pager.append(core.Line{Text: "ai: " + e.Err.Error(), Kind: core.LineError})
+		m.logEntry("ai: "+e.Err.Error(), true)
+	}
+	m.paint = true
 }
 
 // attachmentEntries maps the pager's attachment lines to the v
@@ -2824,10 +2983,17 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return m.addrLookup()
 		}
 		if d.field == "attach" {
-			// Tab runs the default chooser when one is registered
+			// Tab runs the plugin's attach chooser when one is
+			// registered (the script IS the preference - the action
+			// owns the whole selection flow), else the default chooser
 			// (yazi, ranger, else any command - attach commands are all
 			// file choosers), and the built-in directory chooser
 			// otherwise
+			if pluginActions()["attach-choose"] {
+				tid, _ := m.cursorThreadID()
+				onLuaAction("attach-choose", tid)
+				return nil, nil
+			}
 			if name := defaultChooser(attachCommands()); name != "" {
 				cmd := m.runAttachCommand(name)
 				if cmd == nil {
@@ -3288,6 +3454,49 @@ func (m *Model) runAttachCommand(name string) Cmd {
 	return execCmd(cmd, func(err error) any {
 		return attachCmdDoneMsg{err: err, path: f.Name(), tabID: st.ID, name: name}
 	})
+}
+
+// runPicker serves the Lua picker round trip (R8): the request's argv
+// (by attach-command name or inline - F4, argv only) runs through the
+// attach-command exec path, the chooser file's paths ride the result
+// back to the app, which resumes the blocked action.
+func (m *Model) runPicker(req core.PickerRequest) Cmd {
+	argv := req.Argv
+	if len(argv) == 0 {
+		for _, c := range attachCommands() {
+			if c.Name == req.Name {
+				argv = c.Argv
+				break
+			}
+		}
+	}
+	if len(argv) == 0 {
+		if m.bus != nil {
+			m.bus.Publish(core.PickerResult{ID: req.ID, Err: fmt.Errorf("picker %q: no such command", req.Name)})
+		}
+		return nil
+	}
+	f, err := os.CreateTemp("", "notmutt-chooser-*")
+	if err != nil {
+		if m.bus != nil {
+			m.bus.Publish(core.PickerResult{ID: req.ID, Err: err})
+		}
+		return nil
+	}
+	f.Close() // the subprocess writes it
+	cmd := exec.Command(argv[0], append(argv[1:], f.Name())...)
+	return execCmd(cmd, func(err error) any {
+		return pickerCmdDoneMsg{id: req.ID, err: err, path: f.Name()}
+	})
+}
+
+// pickerCmdDoneMsg completes a picker exec: the chooser file's paths
+// publish back to the app (PickerResult), which resumes the blocked
+// Lua action.
+type pickerCmdDoneMsg struct {
+	id   string
+	err  error
+	path string
 }
 
 // attachCommandNames lists the registered attach commands, sorted (the

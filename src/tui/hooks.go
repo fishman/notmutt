@@ -176,3 +176,22 @@ func SetPluginActionSource(fn func() map[string]bool) {
 		pluginActions = fn
 	}
 }
+
+// pluginKeyBound answers the key dispatch fallback: a plugin bind_key
+// for the key/area with no core binding (core wins, the plugin fills
+// the rest - record 20 point 7).
+var pluginKeyBound = func(key, area string) bool { return false }
+
+func SetPluginKeyBoundSource(fn func(key, area string) bool) {
+	if fn != nil {
+		pluginKeyBound = fn
+	}
+}
+
+// onLuaKey runs a plugin bind_key fn (the key dispatch fallback): the
+// app resolves the binding in its Lua registry and publishes LuaResult.
+var onLuaKey = func(key, area, threadID string) {}
+
+func SetLuaKeyHandler(fn func(key, area, threadID string)) {
+	onLuaKey = fn
+}

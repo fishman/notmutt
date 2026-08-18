@@ -18,10 +18,11 @@ type Bus struct {
 	sendLast map[string]SendResult
 	openLast []ComposeOpened
 	addrLast *AddressIndex
+	aiLast   map[string]AiResult
 }
 
 func NewBus() *Bus {
-	return &Bus{progress: map[string]Progress{}, sendLast: map[string]SendResult{}}
+	return &Bus{progress: map[string]Progress{}, sendLast: map[string]SendResult{}, aiLast: map[string]AiResult{}}
 }
 
 func (b *Bus) Subscribe() <-chan Event {
@@ -44,6 +45,8 @@ func (b *Bus) Publish(e Event) {
 		b.openLast = append(b.openLast, e)
 	case AddressIndex:
 		b.addrLast = &e
+	case AiResult:
+		b.aiLast[e.JobID] = e
 	}
 	for _, s := range b.subs {
 		select {
@@ -94,6 +97,24 @@ func (b *Bus) LatestComposeOpened() (ComposeOpened, bool) {
 		return ComposeOpened{}, false
 	}
 	return b.openLast[len(b.openLast)-1], true
+}
+
+// LatestAiResult returns the last published AiResult for a summary
+// job. The map write never drops, so a stream completion dropped from
+// the channel under backpressure still resolves the summary view on
+// the next keypress.
+func (b *Bus) LatestAiResult(jobID string) (AiResult, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	r, ok := b.aiLast[jobID]
+	return r, ok
+}
+
+// ClearAiResult forgets a summary job's result when its view closes.
+func (b *Bus) ClearAiResult(jobID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.aiLast, jobID)
 }
 
 // LatestAddressIndex returns the last published sender corpus. The
@@ -305,6 +326,67 @@ type FilterDone struct {
 type LuaResult struct {
 	Output string
 	Err    error
+}
+
+// AiStarted opens the AI summary view (R8): the app publishes it when
+// an ai_chat plugin call begins streaming; the TUI saves the pager's
+// current lines and swaps in a placeholder.
+type AiStarted struct {
+	JobID    string
+	ThreadID string
+}
+
+// AiChunk carries one streamed text delta from the AI provider; the
+// TUI appends it to the summary pager (append-as-it-arrives, the R3
+// diff discipline).
+type AiChunk struct {
+	JobID string
+	Text  string
+}
+
+// AiResult reports a summary stream's completion: Err names the
+// failure, and the summary view shows an error banner with the mail
+// restored on the back key. The last value is snapshotted so a drop
+// never wedges the view.
+type AiResult struct {
+	JobID string
+	Err   error
+}
+
+// PickerRequest asks the TUI to run an external picker (R8): the Lua
+// action's picker_* call queues it, the TUI runs the argv (by name from
+// the attach-command registry, or the inline Argv - F4, argv only) with
+// the chooser-file temp file (the attach-command exec path), then
+// publishes PickerResult back and the app resumes the blocked VM.
+type PickerRequest struct {
+	ID   string
+	Name string   // registered attach command name ("" when Argv is set)
+	Argv []string // inline argv (picker_argv), appended with the chooser file
+}
+
+// PickerResult returns the picker's selection to the app: the paths
+// from the chooser file, one per line, or the error.
+type PickerResult struct {
+	ID    string
+	Paths []string
+	Err   error
+}
+
+// AttachFiles attaches files to the active compose tab (R8): the Lua
+// action's attach_add calls drain here after the action returns.
+type AttachFiles struct {
+	Paths []string
+}
+
+// TagStaged carries the Lua action's staged tag ops to the TUI (R8,
+// the AI-classification flow): staging is the ONLY tag surface a
+// script gets - the ops land in the current folder's staged buffer
+// exactly like a UI keypress, and the APPLY key flushes them (R14).
+// Lua never writes notmuch directly; ThreadID names the cursor
+// message the script classified.
+type TagStaged struct {
+	ThreadID string
+	Ops      []TagOp
 }
 
 // Progress reports a background job's batch progress (R15). Jobs report

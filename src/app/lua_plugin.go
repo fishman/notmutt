@@ -62,24 +62,10 @@ func loadLuaPlugins(dir string) {
 
 func loadLuaPlugin(path string) {
 	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
-	// the sandbox is a lib whitelist (decision record 20 point 3): no
-	// os/io/debug - no filesystem, no exec. Package opens first so
-	// require works for plugin-local files.
-	for _, pair := range []struct {
-		name string
-		fn   lua.LGFunction
-	}{
-		{lua.LoadLibName, lua.OpenPackage},
-		{lua.BaseLibName, lua.OpenBase},
-		{lua.TabLibName, lua.OpenTable},
-		{lua.StringLibName, lua.OpenString},
-		{lua.MathLibName, lua.OpenMath},
-	} {
-		if err := vm.CallByParam(lua.P{Fn: vm.NewFunction(pair.fn), NRet: 0, Protect: true}, lua.LString(pair.name)); err != nil {
-			log.Printf("lua plugin %s: open lib %s: %v", path, pair.name, err)
-			vm.Close()
-			return
-		}
+	if err := openSandboxLibs(vm, path); err != nil {
+		log.Printf("lua plugin %s: %v", path, err)
+		vm.Close()
+		return
 	}
 	// register_attach_command runs DURING DoFile (the reverse of the
 	// body_render read-after pattern): a plugin file calls it to add a
@@ -95,6 +81,19 @@ func loadLuaPlugin(path string) {
 			argv = append(argv, v.String())
 		}
 		registerAttachCommand(name, argv)
+		return 0
+	}))
+	// register_action and bind_key run during DoFile too: the registries
+	// map name/key to THIS plugin file, and an invocation re-runs the
+	// file in a fresh VM before calling the registered fn (lua_action.go)
+	vm.SetGlobal("register_action", vm.NewFunction(func(L *lua.LState) int {
+		registerAction(L.CheckString(1), path)
+		L.CheckFunction(2) // type-check the fn; the invocation re-registers the callable
+		return 0
+	}))
+	vm.SetGlobal("bind_key", vm.NewFunction(func(L *lua.LState) int {
+		registerBind(L.CheckString(1), L.CheckString(2), L.CheckString(3), path)
+		L.CheckFunction(4)
 		return 0
 	}))
 	// translate runs the session language lookup (decision record 24):
@@ -122,6 +121,28 @@ func loadLuaPlugin(path string) {
 	RegisterBodyRenderHook(func(ctx context.Context, lines []core.Line) ([]core.Line, error) {
 		return p.renderBody(ctx, lines)
 	})
+}
+
+// openSandboxLibs opens the whitelisted libs (decision record 20 point
+// 3): no os/io/debug - no filesystem, no exec. Package opens first so
+// require works for plugin-local files. Shared by the load-time and the
+// per-invocation VMs (the action layer, lua_action.go).
+func openSandboxLibs(vm *lua.LState, path string) error {
+	for _, pair := range []struct {
+		name string
+		fn   lua.LGFunction
+	}{
+		{lua.LoadLibName, lua.OpenPackage},
+		{lua.BaseLibName, lua.OpenBase},
+		{lua.TabLibName, lua.OpenTable},
+		{lua.StringLibName, lua.OpenString},
+		{lua.MathLibName, lua.OpenMath},
+	} {
+		if err := vm.CallByParam(lua.P{Fn: vm.NewFunction(pair.fn), NRet: 0, Protect: true}, lua.LString(pair.name)); err != nil {
+			return fmt.Errorf("open lib %s: %w", pair.name, err)
+		}
+	}
+	return nil
 }
 
 // renderBody runs the plugin's body_render under the chain context.

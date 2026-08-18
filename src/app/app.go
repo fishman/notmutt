@@ -54,9 +54,6 @@ func Run() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	i18n.SetLanguage(cfg.UI.Language)
-	if err := validateBindings(&cfg); err != nil {
-		return err
-	}
 	bus := core.NewBus()
 	st := config.NewStore(cfg)
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
@@ -169,6 +166,25 @@ func Run() error {
 	// builds run the no-op stub. Loaded before any open can fire.
 	loadLuaPlugins(filepath.Join(configDir(), "lua"))
 
+	// binding validation AFTER the plugin load: a binding may name a
+	// plugin-registered action (the lua build only - the stub registry
+	// is empty, so default builds reject them as unknown actions)
+	if err := validateBindings(&cfg); err != nil {
+		return err
+	}
+
+	// the Lua action seams (R8): the dispatch fallthrough invokes
+	// actions by name, the plugin-key fallback by key + area; both run
+	// on their own goroutine and publish LuaResult
+	tui.SetPluginActionSource(func() map[string]bool { return pluginActionNames() })
+	tui.SetPluginKeyBoundSource(func(key, area string) bool { return luaKeyBound(key, area) })
+	tui.SetLuaActionHandler(func(action, threadID string) {
+		go runLuaAction(action, threadID, bus, &cfg, worker)
+	})
+	tui.SetLuaKeyHandler(func(key, area, threadID string) {
+		go runLuaBind(key, area, threadID, bus, &cfg, worker)
+	})
+
 	// attach commands: config tables register first, then Lua plugin
 	// registrations (later, per-plugin load order) - both land in the
 	// registry; the TUI reads it through the seam
@@ -252,6 +268,17 @@ func Run() error {
 		for e := range ch {
 			if d, ok := e.(core.FilterDone); ok && !d.DryRun {
 				go notifyNewMail(st.Config(), backend, d.Entries, d.Priority)
+			}
+		}
+	}()
+
+	// the picker round trip (R8): the TUI publishes PickerResult on the
+	// bus, this subscriber resumes the Lua action blocked on its waiter
+	go func() {
+		ch := bus.Subscribe()
+		for e := range ch {
+			if p, ok := e.(core.PickerResult); ok {
+				deliverPickerResult(p)
 			}
 		}
 	}()
@@ -960,9 +987,11 @@ func touchPollStamp() error {
 
 // validateBindings checks the loaded bindings against the per-context
 // action vocabulary (R9): every value must be a builtin action of its
-// context or a declared tag action (index context only), no tag action
-// may shadow an index builtin name, and every tag action must be
-// referenced by at least one binding.
+// context, a plugin-registered action (the Lua registry, any context),
+// or a declared tag action (index context only), no tag action may
+// shadow an index builtin name, and every tag action must be
+// referenced by at least one binding. Runs after loadLuaPlugins - the
+// plugin action set must be in hand.
 func validateBindings(cfg *config.Config) error {
 	used := map[string]bool{}
 	for context, km := range cfg.Bindings {
@@ -976,6 +1005,9 @@ func validateBindings(cfg *config.Config) error {
 				if _, ok := cfg.Views[strings.TrimPrefix(action, "goto-")]; !ok {
 					return fmt.Errorf("bindings.%s: key %q: %q: no such view", context, key, action)
 				}
+				continue
+			}
+			if pluginActionNames()[action] {
 				continue
 			}
 			if context != "index" {

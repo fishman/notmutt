@@ -121,6 +121,7 @@ type Config struct {
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
+	AI             map[string]AIProvider      `toml:"ai"`
 	// Opener is the link opener argv (the pager F key): the url is
 	// appended as the final argv element (F4 - argv only, never
 	// shell-interpolated). Empty = xdg-open.
@@ -158,12 +159,25 @@ type Pager struct {
 
 // Lua configures the Lua plugin layer (R8): Tags is the config-level
 // tag list the plugins reference (cfg.tags) - the ai-tags example
-// restricts its proposals to these names; AI is the command argv that
-// runs an AI prompt (F4: tokenized at load, prompt on stdin, never a
-// shell string). Empty AI = the ai() plugin call fails.
+// restricts its proposals to these names.
 type Lua struct {
 	Tags []string `toml:"tags"`
-	AI   []string `toml:"ai"`
+}
+
+// AIProvider is one named AI backend ([ai.<name>], R8): Type selects
+// the wire protocol - "anthropic" (api.anthropic.com/v1/messages) or
+// "openai" (any OpenAI-compatible /chat/completions endpoint via
+// BaseURL - ollama, llama.cpp, groq, ...). PassCmd is the argv that
+// prints the API key on stdout (F4: tokenized at load, never a shell
+// string); empty = no auth header. The key is fetched per request,
+// held only for that request, never logged (F6).
+type AIProvider struct {
+	Type      string   `toml:"type"`
+	Model     string   `toml:"model"`
+	MaxTokens int      `toml:"max-tokens"` // anthropic requires it; default 1024
+	BaseURL   string   `toml:"base-url"`   // empty = provider default
+	Timeout   int      `toml:"timeout"`    // seconds, streaming budget; default 180
+	PassCmd   []string `toml:"pass_cmd"`
 }
 
 type UI struct {
@@ -1400,6 +1414,19 @@ func validate(cfg Config) error {
 				if strings.ContainsAny(c, `"`) {
 					return fmt.Errorf("accounts.%s.moves.%s: candidate %q: double quotes break the folder rule query", name, tag, c)
 				}
+			}
+		}
+	}
+	for name, p := range cfg.AI {
+		if p.Type != "anthropic" && p.Type != "openai" {
+			return fmt.Errorf("ai.%s: type must be \"anthropic\" or \"openai\"", name)
+		}
+		if strings.TrimSpace(p.Model) == "" {
+			return fmt.Errorf("ai.%s: model must not be blank", name)
+		}
+		for i, a := range p.PassCmd {
+			if strings.TrimSpace(a) == "" {
+				return fmt.Errorf("ai.%s: pass_cmd[%d] must not be blank", name, i)
 			}
 		}
 	}

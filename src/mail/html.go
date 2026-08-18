@@ -432,7 +432,7 @@ func resolveImage(c *html.Node, atts []Attachment) *core.Image {
 // each column to its widest cell, wrapped at a per-column cap). Cell
 // content is extracted as word-lines, so styles survive into the rows.
 func (w *htmlWalker) table(t *html.Node, st *styleProps) {
-	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks)
+	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG)
 	if len(rows) == 0 {
 		return
 	}
@@ -592,14 +592,14 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 // lines (block boundaries and <br> inside a cell start a new line).
 // The HTML5 parser inserts an implicit tbody between the table and
 // its rows, so the row groups descend into it.
-func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool) [][][]cellLine {
+func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
 		if r.Type != html.ElementNode {
 			continue
 		}
 		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
-			rows = append(rows, cellRows(r, st, rules, links, labelLinks)...)
+			rows = append(rows, cellRows(r, st, rules, links, labelLinks, defaultBG)...)
 			continue
 		}
 		if r.Data != "tr" {
@@ -610,7 +610,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
 				continue
 			}
-			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks))
+			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks, defaultBG))
 		}
 		if len(cells) > 0 {
 			rows = append(rows, cells)
@@ -629,7 +629,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 // inside the row - never re-aligns a line. Link mode (labelLinks)
 // labels anchors and bare URLs inside cells like the main walk - the
 // layout-table era wraps every link in a td.
-func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool) []cellLine {
+func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string) []cellLine {
 	var out []cellLine
 	var cur []word
 	align := ""
@@ -702,7 +702,14 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 							break
 						}
 						flush()
-						out = append(out, cellLine{img: img, bg: cs.bg})
+						// the block's clear fill: the cell's declared bg or
+						// the mail's page background - an image on a white
+						// page must clear to white, never to the theme
+						bg := cs.bg
+						if bg == "" {
+							bg = defaultBG
+						}
+						out = append(out, cellLine{img: img, bg: bg})
 						break
 					}
 					if a := attr(c, "alt"); a != "" {

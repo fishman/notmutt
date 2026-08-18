@@ -66,7 +66,7 @@ func (m *Model) renderCompose() string {
 	// row. The row content is laid out for the frame minus the column
 	// and the gap, so the mime info stays right-aligned to the edge.
 	colW := runewidth.StringWidth(m.ui.Glyphs.Cursor)
-	form := m.composeForm(st, m.width-colW-1)
+	form := m.composeForm(st, m.width-colW-1, m.formIdx)
 	// the form is a viewport (the pager widget): when the rows outgrow
 	// the frame, the window scrolls with the cursor (formIdx). The
 	// frame discipline holds - the keyhint/status rows stay anchored.
@@ -199,9 +199,12 @@ func previewLinesOf(content string) []core.Line {
 // markers: the message-text row (marker I, entry 1, its mime type,
 // the buffer file path) and the attached files (marker A, deletable),
 // separators. Address lists cap at two display rows (alignment never
-// shifts; "+N more" names the overflow). w is the row content width
-// (the frame minus the reserved cursor column).
-func (m *Model) composeForm(st compose.State, w int) []composeForm {
+// shifts; "+N more" names the overflow). The attachment list is a
+// three-row window around the cursor slot (cursor): the selected
+// attachment is always visible, "+N more" rows above and below name
+// the hidden count, and the window slides with the selection. w is
+// the row content width (the frame minus the reserved cursor column).
+func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 	capList := func(addrs []string) string {
 		if len(addrs) == 0 {
 			return ""
@@ -227,13 +230,34 @@ func (m *Model) composeForm(st compose.State, w int) []composeForm {
 	// the buffer file path, its wire facts
 	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath,
 		partCell(compose.InlineFacts(&st), int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))), w)})
-	for i, a := range st.Attachments {
-		if i >= 3 {
-			rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", len(st.Attachments)-3)})
-			break
-		}
+	n := len(st.Attachments)
+	sel := cursor - 9
+	if sel < 0 || sel >= n {
+		sel = 0
+	}
+	lo := sel - 2 // the cursor's row is the window's third
+	if lo < 0 {
+		lo = 0
+	}
+	if lo+3 > n {
+		lo = n - 3
+	}
+	if lo < 0 {
+		lo = 0
+	}
+	hi := lo + 3
+	if hi > n {
+		hi = n
+	}
+	if lo > 0 {
+		rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", lo)})
+	}
+	for i := lo; i < hi; i++ {
 		rows = append(rows, composeForm{slot: 9 + i,
-			text: attachRow("A", i+2, a.Name, partCell(compose.AttachmentFacts(a), a.Size), w)})
+			text: attachRow("A", i+2, st.Attachments[i].Name, partCell(compose.AttachmentFacts(st.Attachments[i]), st.Attachments[i].Size), w)})
+	}
+	if hi < n {
+		rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", n-hi)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "--- Preview", divider: true})
 	// the form rows render mail-derived text (Subject/To/Cc from the

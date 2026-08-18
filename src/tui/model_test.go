@@ -3165,6 +3165,66 @@ func TestFormNavRestrictedToAttachments(t *testing.T) {
 	}
 }
 
+// TestComposeAttachmentWindow pins the attachment-list window: three
+// rows around the selection, "+N more" above and below for the hidden
+// count. At the top of the list the window starts at the first
+// attachment with a bottom count only; as the cursor moves past the
+// third, the window slides and a top count appears.
+func TestComposeAttachmentWindow(t *testing.T) {
+	names := []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt", "g.txt"}
+	atts := make([]compose.Attachment, len(names))
+	for i, n := range names {
+		atts[i] = compose.Attachment{Name: n, Size: 3}
+	}
+	m := openDialogue(t, model(), "t1")
+	m.width, m.height = 80, 24
+	m.tabs[0].Attachments = atts
+	row := func(name string) string {
+		for _, l := range strings.Split(m.render(), "\n") {
+			if strings.Contains(l, name) {
+				return l
+			}
+		}
+		return ""
+	}
+	// the cursor starts on the message-text row: the window shows the
+	// first three attachments and a bottom count
+	frame := stripANSI(m.render())
+	if !strings.Contains(frame, "a.txt") || !strings.Contains(frame, "... +4 more") {
+		t.Fatalf("at the top the window must show a,b,c plus a bottom count:\n%s", frame)
+	}
+	// j down to the fifth attachment: the window slides, a top count
+	// appears, the selection stays visible with the marker
+	for i := 0; i < 5; i++ {
+		m = press(t, m, "j")
+	}
+	if m.formIdx != 13 {
+		t.Fatalf("five j presses must land on the fifth attachment, formIdx = %d", m.formIdx)
+	}
+	if got := strings.Count(stripANSI(m.render()), "... +2 more"); got != 2 {
+		t.Fatalf("mid-list the window must show two counts, got %d:\n%s", got, stripANSI(m.render()))
+	}
+	if got := stripANSI(row("e.txt")); !strings.HasPrefix(got, m.ui.Glyphs.Cursor) {
+		t.Fatalf("the selected attachment must stay visible with the marker: %q", got)
+	}
+	if strings.Contains(stripANSI(m.render()), "a.txt") {
+		t.Fatal("the first attachment must scroll out of the window")
+	}
+	// j to the last attachment: one top count, no bottom count
+	for i := 0; i < 2; i++ {
+		m = press(t, m, "j")
+	}
+	if m.formIdx != 15 {
+		t.Fatalf("six j presses must land on the last attachment, formIdx = %d", m.formIdx)
+	}
+	if got := strings.Count(stripANSI(m.render()), "... +4 more"); got != 1 {
+		t.Fatalf("at the bottom the window must show one top count, got %d:\n%s", got, stripANSI(m.render()))
+	}
+	if got := stripANSI(row("g.txt")); !strings.HasPrefix(got, m.ui.Glyphs.Cursor) {
+		t.Fatalf("the last attachment must stay visible with the marker: %q", got)
+	}
+}
+
 // TestDetachProtectsMessageText pins the mutt attach-list rule: the
 // message-text row (slot 8) is not an attachment - d on it is a no-op
 // and the cursor stays.

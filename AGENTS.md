@@ -638,12 +638,12 @@ the spec must say why it serves notmutt, not cite it as authority.
   identity.
 - Commits: Conventional Commits style (`type(scope): subject`), brief
   lowercase imperative subject. ALL code is owned by the human author -
-  code commits carry no AI-assisted trailer, whether or not an AI
-  drafted them (the README explains the rule: an AI-assisted marker is
-  like mail typed on an iPhone - the device produced the words, the
-  owner answers for them). Doc/spec commits may carry an
-  `AI-assisted: deepseek` trailer (the session model is deepseek);
-  review responsibility stays with the human either way.
+  code commits carry no AI marker and no co-author line, whether or
+  not an AI drafted them (the README explains the rule: an AI marker
+  is like mail typed on an iPhone - the device produced the words, the
+  owner answers for them). Doc/spec commits carry
+  `Co-Authored-By: Deepseek` (the model that drafted them); review
+  responsibility stays with the human either way.
 - Testing: treat AI-generated output like firmware - assume it fails in
   production until exercised. Non-trivial logic leaves ONE runnable check
   (assert-based self-test or a single small test). No test frameworks

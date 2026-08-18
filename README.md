@@ -71,7 +71,6 @@ what notmuch sees.
 | Exclusive folder tag groups | One message, one home: applying any group member removes the others, inbox included. No hand-maintained `-tag` chains in your config |
 | Async send and compose | The compose dialogue is a state machine separate from the UI - background sync and filter runs never interrupt typing; sends run as background jobs with output kept for review |
 | Terminal images | Sixel by default, kitty opt-in. Remote images fetch only on `alt+i` (a privacy gate), and 1x1 tracking pixels drop unless opted in |
-| Privacy by default | No telemetry, no phone-home, no mail content ever leaves your machine; crypto runs through your system gpg, never a vendored library |
 | Config as data | TOML everything: themes with palette indirection, declarative per-context keybindings (the help overlay derives from them), tag styles, glyphs |
 | notmuch is the only truth | No own database - a revision-keyed bbolt cache mirrors query output and re-syncs from notmuch's lastmod |
 | Lua plugins | Build-tag-gated gopher-lua layer with a lib whitelist sandbox; plugins register body-rendering transforms |

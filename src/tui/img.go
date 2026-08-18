@@ -27,7 +27,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 
 	_ "golang.org/x/image/webp" // decoder registrations: mail charts arrive as jpeg/gif/webp
 
@@ -41,13 +40,9 @@ import (
 const (
 	imgMaxCols = 100  // paint cap: an image line never exceeds 100 cells wide
 	kittyChunk = 4096 // kitty's max payload per DCS frame
-)
-
-// imgCellW/H are the terminal's cell size in pixels, probed at startup
-// (CSI 18 t); the 10x20 defaults when no terminal answers. An image's
-// reserved rows must match the pixels its raster occupies: a cell
-// taller than the default leaves a gap under every painted image.
-var (
+	// imgCellW/H are the assumed terminal cell size in pixels. No probe
+	// (queries race tcell's input and tmux answers them with screen
+	// garbage); a font that differs leaves a gap under painted images.
 	imgCellW = 10
 	imgCellH = 20
 )
@@ -79,64 +74,6 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 		return "sixel"
 	}
 	return ""
-}
-
-// probeCellSize asks the terminal for its cell size in pixels: the
-// CSI 14 t window-pixel reply divided by the CSI 18 t cell counts
-// (kitty/foot/wezterm/ghostty answer both). tmux answers such queries
-// itself and writes the reply into the pane's output - visible screen
-// garbage - so under tmux the probe is skipped and the 10x20 defaults
-// stay. No reply within the deadline keeps the defaults too. Runs
-// before tcell takes the tty over - the reply would otherwise race
-// tcell's input pump.
-func probeCellSize() {
-	if os.Getenv("TMUX") != "" {
-		return
-	}
-	f, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	if _, err := f.WriteString("\x1b[14t\x1b[18t"); err != nil {
-		return
-	}
-	f.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
-	buf := make([]byte, 128)
-	n, err := f.Read(buf)
-	if err != nil {
-		return
-	}
-	s := string(buf[:n])
-	ph, pw, ok := parseSizeReply(s, "4;") // the window's pixel size
-	if !ok {
-		return
-	}
-	rh, rw, ok := parseSizeReply(s, "8;") // the window's cell counts
-	if !ok {
-		return
-	}
-	ch, cw := ph/rh, pw/rw
-	if ch >= 1 && ch <= 60 && cw >= 1 && cw <= 60 {
-		imgCellH, imgCellW = ch, cw
-	}
-}
-
-// parseSizeReply extracts a size pair from a window-size reply
-// (CSI 4 ; h ; w t for pixels, CSI 8 ; r ; c t for cell counts);
-// ok=false for any other shape or an out-of-range size.
-func parseSizeReply(s, prefix string) (h, w int, ok bool) {
-	i := strings.Index(s, "\x1b["+prefix)
-	if i < 0 {
-		return 0, 0, false
-	}
-	if _, err := fmt.Sscanf(s[i+4:], "%d;%dt", &h, &w); err != nil {
-		return 0, 0, false
-	}
-	if h < 1 || h > 10000 || w < 1 || w > 10000 {
-		return 0, 0, false
-	}
-	return h, w, true
 }
 
 // sixelCapable is the negotiated sixel flag the screen exposes (the

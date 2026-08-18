@@ -197,46 +197,44 @@ func TestDecodeImage(t *testing.T) {
 	}
 }
 
+// stubCaps is the negotiated-capability stand-in: Sixel answers from a
+// field, so a test pins the screen's DA reply.
+type stubCaps struct{ sixel bool }
+
+func (s stubCaps) Sixel() bool { return s.sixel }
+
 func TestDetectImageProtocol(t *testing.T) {
 	base := config.Default()
 	kitty := config.Default()
 	kitty.Pager.ImageProtocol = "kitty"
-	orig := probeTmuxTerm
-	defer func() { probeTmuxTerm = orig }()
 	cases := []struct {
-		cfg   config.Pager
-		env   map[string]string
-		probe string // the stubbed tmux client termname
-		want  string
+		cfg  config.Pager
+		env  map[string]string
+		caps stubCaps
+		want string
 	}{
 		// kitty is opt-in: the kitty environment alone never selects it
-		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "", ""},
-		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1", "TERM": "xterm-256color"}, "", "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, "", "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, "", "kitty"},
-		{kitty.Pager, map[string]string{"TERM": "xterm-256color"}, "", ""},
-		// sixel by default when the terminal names it in TERM (foot
-		// variants included - foot-extra-direct is the real-world case)
-		{base.Pager, map[string]string{"TERM": "foot"}, "", "sixel"},
-		{base.Pager, map[string]string{"TERM": "foot-extra-direct"}, "", "sixel"},
-		{base.Pager, map[string]string{"TERM": "xterm-sixel"}, "", "sixel"},
-		{base.Pager, map[string]string{"TERM": "mlterm"}, "", "sixel"},
-		// a tmux wrapper TERM recurses on the client's real terminal
-		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "foot-extra-direct", "sixel"},
-		{base.Pager, map[string]string{"TERM": "tmux-256color"}, "xterm-sixel", "sixel"},
-		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "xterm-256color", ""},
-		{base.Pager, map[string]string{"TERM": "tmux-direct"}, "", ""},
-		// unsupported terminals
-		{base.Pager, map[string]string{"TERM": "xterm-256color"}, "", ""},
+		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1"}, stubCaps{}, ""},
+		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1"}, stubCaps{}, "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, stubCaps{}, "kitty"},
+		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, stubCaps{}, "kitty"},
+		{kitty.Pager, map[string]string{}, stubCaps{}, ""},
+		// sixel when the screen's DA negotiation reported it
+		{base.Pager, map[string]string{}, stubCaps{sixel: true}, "sixel"},
+		// a negative reply selects nothing
+		{base.Pager, map[string]string{}, stubCaps{}, ""},
 	}
 	for _, c := range cases {
-		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM", "TERM"} {
+		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM"} {
 			t.Setenv(k, c.env[k])
 		}
-		probeTmuxTerm = func() string { return c.probe }
-		if got := detectImageProtocol(c.cfg); got != c.want {
-			t.Errorf("detectImageProtocol(%v, probe %q) = %q, want %q", c.env, c.probe, got, c.want)
+		if got := detectImageProtocol(c.cfg, c.caps); got != c.want {
+			t.Errorf("detectImageProtocol(%v, %+v) = %q, want %q", c.env, c.caps, got, c.want)
 		}
+	}
+	// a never-engaged screen (nil) selects nothing either
+	if got := detectImageProtocol(base.Pager, nil); got != "" {
+		t.Errorf("detectImageProtocol(nil screen) = %q, want \"\"", got)
 	}
 }
 
@@ -325,7 +323,6 @@ func TestBgHexOf(t *testing.T) {
 // alt+i toggle expansion, the terminal paint, and the toggle-off
 // clear.
 func TestModelRenderImagesToggle(t *testing.T) {
-	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
@@ -334,6 +331,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 24
 	png := testPNG(t, 100, 200)
 	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
@@ -403,7 +401,6 @@ func TestModelRenderImagesToggle(t *testing.T) {
 // cycled away drops - network data never decodes outside the remote
 // mode.
 func TestModelRenderImagesRemote(t *testing.T) {
-	t.Setenv("KITTY_WINDOW_ID", "1") // New() detects the protocol
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
@@ -412,6 +409,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 24
 	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {

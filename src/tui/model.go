@@ -312,7 +312,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgProto: detectImageProtocol(cfg.Pager), imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
 }
 
 func (m Model) Init() Cmd {

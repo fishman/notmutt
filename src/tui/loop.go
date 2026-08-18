@@ -23,6 +23,7 @@ func Run(model Model, quitCh <-chan struct{}) error {
 		return err
 	}
 	defer s.Fini()
+	model.imgProto = detectImageProtocol(model.st.Config().Pager, s)
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
 		imageWriter = tty
 		defer func() {

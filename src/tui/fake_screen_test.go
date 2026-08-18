@@ -122,6 +122,7 @@ func (s *fakeScreen) SetTitle(string)                                  {}
 func (s *fakeScreen) SetClipboard([]byte)                              {}
 func (s *fakeScreen) GetClipboard()                                    {}
 func (s *fakeScreen) HasClipboard() bool                               { return false }
+func (s *fakeScreen) Sixel() bool                                      { return false }
 func (s *fakeScreen) ShowNotification(string, string)                  {}
 func (s *fakeScreen) KeyboardProtocol() tcell.KeyProtocol              { return tcell.LegacyKeyboard }
 func (s *fakeScreen) Terminal() (string, string)                       { return "", "" }

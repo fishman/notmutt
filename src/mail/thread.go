@@ -326,10 +326,11 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 	}
 	hasPlain, hasHTML := partFlags(m)
 	// The view selection: the html view renders the html part, the plain
-	// view the plain parts, the source view the html part's raw text. An
-	// html-only message renders its html in both non-html views - the
-	// plain view falls back to the raw source, the html view falls back
-	// to raw when the render comes out empty.
+	// view the plain parts, the source view the html part's raw text.
+	// An html-only message renders in all three: the plain view shows
+	// the html as unstyled text (runs stripped, images kept), the html
+	// view styled, the source view raw - the raw markup belongs to the
+	// source view alone.
 	for _, p := range m.Parts {
 		switch {
 		case p.HTML && mode == core.RenderHTML:
@@ -351,8 +352,20 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 			if p.Truncated {
 				add("[content truncated]", core.LineBody, 0)
 			}
-		case p.HTML && (mode == core.RenderSource || !hasPlain):
+		case p.HTML && mode == core.RenderSource:
 			lines = append(lines, renderPlain(p.Body)...)
+			if p.Truncated {
+				add("[content truncated]", core.LineBody, 0)
+			}
+		case p.HTML && !hasPlain:
+			htmlLines := RenderHTML(p.Body, m.Attachments, width)
+			for i := range htmlLines {
+				htmlLines[i].Runs = nil // unstyled: plain has no colors
+			}
+			if len(htmlLines) == 0 {
+				htmlLines = renderPlain(p.Body)
+			}
+			lines = append(lines, htmlLines...)
 			if p.Truncated {
 				add("[content truncated]", core.LineBody, 0)
 			}

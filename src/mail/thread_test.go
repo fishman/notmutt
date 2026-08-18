@@ -311,8 +311,17 @@ func TestRenderThreadTextView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(joinText(lines), "hello bold") || strings.Contains(joinText(lines), "<p>hello <b>bold</b></p>") {
+		t.Fatalf("the text view must show the html as text, not the markup:\n%s", joinText(lines))
+	}
+
+	// the raw markup is the source view's alone
+	lines, _, _, err = RenderThread(msgs, core.RenderSource, false, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !strings.Contains(joinText(lines), "<p>hello <b>bold</b></p>") {
-		t.Fatalf("the text view must show the raw source:\n%s", joinText(lines))
+		t.Fatalf("the source view must show the raw markup:\n%s", joinText(lines))
 	}
 }
 
@@ -370,8 +379,9 @@ func TestRenderThreadAlternative(t *testing.T) {
 }
 
 // TestRenderThreadSourceView pins the ctrl+u view: the raw html source
-// renders as plain lines, and the mime label says what is on screen -
-// the html-only mail's plain view is the source too.
+// renders as plain lines, and the mime label says what is on screen.
+// The three views of an html-only mail are distinct: plain shows the
+// html as unstyled text, html styled, source raw.
 func TestRenderThreadSourceView(t *testing.T) {
 	alt := "From: a@example.com\nTo: b@example.com\n" +
 		"Subject: alt\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
@@ -405,15 +415,35 @@ func TestRenderThreadSourceView(t *testing.T) {
 	if err := os.WriteFile(p2, []byte(htmlOnly), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, mime, _, err = RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p2}}}, core.RenderPlain, false, 0, false)
+	msgs2 := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p2}}}
+	lines, mime, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := joinText(lines)
+	if !strings.Contains(out, "only") || strings.Contains(out, "<p>only</p>") {
+		t.Fatalf("the plain view of an html-only mail must show the html text, not the markup:\n%s", out)
+	}
+	for i := range lines {
+		if len(lines[i].Runs) != 0 {
+			t.Fatalf("the html-only plain view must be unstyled, line %d carries runs", i)
+		}
+	}
+	if mime != "text/html" {
+		t.Fatalf("the html-only plain view must label text/html, got %q", mime)
+	}
+
+	// the same message in the source view keeps the raw markup - the
+	// views are distinct
+	lines, mime, _, err = RenderThread(msgs2, core.RenderSource, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out := joinText(lines); !strings.Contains(out, "<p>only</p>") {
-		t.Fatalf("the plain view of an html-only mail must show the raw source:\n%s", out)
+		t.Fatalf("the source view of an html-only mail must show the raw markup:\n%s", out)
 	}
 	if mime != "text/html" {
-		t.Fatalf("the html-only plain view must label text/html, got %q", mime)
+		t.Fatalf("the html-only source view must label text/html, got %q", mime)
 	}
 }
 

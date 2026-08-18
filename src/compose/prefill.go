@@ -30,21 +30,20 @@ func Quote(orig core.Message, parts []mail.Part) string {
 			continue
 		}
 		for _, line := range strings.Split(p.Body, "\n") {
-			b.WriteString(quoteLine(p.Quoted, line))
+			b.WriteString(quoteLine(line))
 			b.WriteByte('\n')
 		}
 	}
 	return b.String()
 }
 
-// quoteLine strips the line's remaining quote markers, then re-prefixes
-// one level deeper. base is the part's stored depth (splitBody's
-// strip runs past the cap only up to it - production bodies carry
-// residual markers beyond the cap, so base + residual markers is the
-// true depth). The true depth clamps at quoteDepth: a line deeper than
-// the cap re-prefixes at cap+1 - never deeper.
-func quoteLine(base int, line string) string {
-	depth := base
+// quoteLine counts the line's quote markers, then re-prefixes one
+// level deeper. The markers are the text itself (splitBody stores the
+// raw line, never a stripped copy). The true depth clamps at
+// quoteDepth: a line deeper than the cap re-prefixes at cap+1 - never
+// deeper.
+func quoteLine(line string) string {
+	depth := 0
 	for {
 		rest := strings.TrimPrefix(line, ">")
 		if rest == line {

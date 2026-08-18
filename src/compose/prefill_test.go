@@ -164,12 +164,11 @@ func TestQuoteDepthCap(t *testing.T) {
 			{Body: ">> two"},
 			{Body: ">>>>> deep"},
 			{Body: ">>>>>> six"},
-			{Body: "> six", Quoted: 5}, // splitBody's residual shape: cap-stripped, depth kept
 		},
 	}
 	body := Quote(orig, parsed.Parts)
 	lines := strings.Split(body, "\n")
-	want := []string{"> plain", ">> one", ">>> two", ">>>>>> deep", ">>>>>> six", ">>>>>> six"}
+	want := []string{"> plain", ">> one", ">>> two", ">>>>>> deep", ">>>>>> six"}
 	for i, w := range want {
 		if lines[i+1] != w {
 			t.Fatalf("line %d = %q, want %q\n%s", i, lines[i+1], w, body)

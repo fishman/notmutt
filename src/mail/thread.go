@@ -329,15 +329,15 @@ func splitBody(text string) []Part {
 			sig = true
 		}
 		depth := 0
+		rest := line
 		for depth < 5 {
-			rest := strings.TrimPrefix(line, ">")
-			if rest == line {
+			next := strings.TrimPrefix(rest, ">")
+			if next == rest {
 				break
 			}
 			depth++
-			line = strings.TrimPrefix(rest, " ")
+			rest = strings.TrimPrefix(next, " ")
 		}
-		line = strings.TrimPrefix(line, " ")
 		parts = append(parts, Part{Body: line, Quoted: depth, Signature: sig})
 	}
 	// the trailing newline is line termination, not an empty line

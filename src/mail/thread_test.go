@@ -208,8 +208,8 @@ func TestSplitBodyQuotedAndSignature(t *testing.T) {
 
 func TestSplitBodyQuotedDepthCap(t *testing.T) {
 	parts := splitBody("> > > > > > deep\n")
-	if parts[0].Quoted != 5 || parts[0].Body != "> deep" {
-		t.Fatalf("depth must cap at 5: %+v", parts[0])
+	if parts[0].Quoted != 5 || parts[0].Body != "> > > > > > deep" {
+		t.Fatalf("depth must cap at 5, markers kept: %+v", parts[0])
 	}
 }
 

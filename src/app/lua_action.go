@@ -223,8 +223,6 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 		ac.tags = append(ac.tags, core.TagOp{Tag: L.CheckString(1), Add: false})
 		return 0
 	}))
-	vm.SetGlobal("picker_yazi", vm.NewFunction(func(L *lua.LState) int { return ac.picker(L, yaziArgv) }))
-	vm.SetGlobal("picker_ranger", vm.NewFunction(func(L *lua.LState) int { return ac.picker(L, rangerArgv) }))
 	vm.SetGlobal("picker_argv", vm.NewFunction(func(L *lua.LState) int {
 		var argv []string
 		for i := 1; ; i++ {
@@ -255,6 +253,11 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 		ac.print.WriteString(strings.Join(parts, "\t") + "\n")
 		return 0
 	}))
+	// the bundled library runs first: picker_yazi/picker_ranger (and a
+	// plugin's overrides) land in the VM globals before the plugin file
+	if err := vm.DoString(pickersLib); err != nil {
+		return "", err
+	}
 	if err := vm.DoFile(path); err != nil {
 		return "", err
 	}
@@ -284,19 +287,12 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 	return ac.print.String(), nil
 }
 
-// the builtin picker argv (F4: the chooser-file path is appended at
-// exec, never interpolated). yazi and ranger are the reference file
-// choosers (decision record 20); a script with another preference
-// calls picker_argv.
-var (
-	yaziArgv   = []string{"yazi", "--chooser-file"}
-	rangerArgv = []string{"ranger", "--choosefile"}
-)
-
 // picker blocks the VM on the picker round trip: the request rides the
 // bus to the TUI (the attach-command exec path), the TUI publishes the
 // selection back, the waiter resolves. The wait selects on the action
 // deadline - a stalled chooser cannot wedge the plugin past its budget.
+// The tool wrappers (picker_yazi, picker_ranger) live in the bundled
+// Lua library (pickers.lua) - the core only exposes the argv primitive.
 func (ac *actionCtx) picker(L *lua.LState, argv []string) int {
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	ch := make(chan pickerReply, 1)

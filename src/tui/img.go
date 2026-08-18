@@ -8,9 +8,7 @@ package tui
 // (privacy gate - the bytes stay inert until then) and only for the
 // visible window. Protocol: kitty opt-in via [pager] image-protocol
 // (env match), sixel when the engaged screen's DA negotiation reports
-// it (tcell owns the negotiation - tmux relays its own client
-// detection, so the answer is correct through a tmux session too);
-// unsupported terminals keep the collapsed Alt row. The writer is
+// it; unsupported terminals keep the collapsed Alt row. The writer is
 // /dev/tty (the tcell screen cannot emit raw image protocols) and paint
 // runs AFTER the frame flush, so pixels never race the text.
 
@@ -45,13 +43,11 @@ const (
 // paint paths no-op, so the frame tests never write to a terminal).
 var imageWriter io.Writer
 
-// detectImageProtocol picks the terminal's image protocol: kitty only
-// when [pager] image-protocol opts into it AND the kitty environment
-// matches (KITTY_WINDOW_ID, or TERM_PROGRAM in the kitty family -
-// env vars pass through tmux) - the default never auto-selects kitty.
-// Otherwise sixel when the engaged screen's DA negotiation reported it
-// (tcell asks on Init). Unsupported terminals return "" - images stay
-// collapsed.
+// detectImageProtocol picks the image protocol: kitty only when
+// [pager] image-protocol opts in and the kitty env matches; sixel when
+// the engaged screen's DA negotiation reported it (tmux relays its own
+// client detection, so the answer is correct through tmux). "" = no
+// image support.
 func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	if p.ImageProtocol == "kitty" {
 		if os.Getenv("KITTY_WINDOW_ID") != "" {

@@ -245,9 +245,8 @@ type Screen interface {
 	// do, so a false indication is not necessarily conclusive.
 	HasClipboard() bool
 
-	// Sixel is true if the terminal reported sixel graphics support (DA
-	// 4). Negotiated during Init; false when negotiation is off or the
-	// reply did not claim it.
+	// Sixel is true if the terminal reported sixel graphics support
+	// (DA 4) during Init; false when negotiation is off.
 	Sixel() bool
 
 	// ShowNotification is used to show a desktop notification, when the terminal

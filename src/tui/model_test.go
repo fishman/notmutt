@@ -89,6 +89,9 @@ func TestChainDataCompletes(t *testing.T) {
 	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
 	defer SetReplyHandler(func(msg *core.Message, mode string) {})
 	m := model()
+	// the armed hint is one untruncated row: a wide window keeps the
+	// continuation list (g r ...) inside it
+	m.width, m.height = 200, 24
 	// g g completes as cursor-top (j moved the cursor down first)
 	m = press(t, m, "j")
 	m = press(t, m, "g")
@@ -127,6 +130,7 @@ func TestChainExpires(t *testing.T) {
 	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })
 	defer SetReplyHandler(func(msg *core.Message, mode string) {})
 	m := model()
+	m.width, m.height = 200, 24
 	m = press(t, m, "g") // arms the prefix; the next press sees it expired
 	m = press(t, m, "x") // an unbound key: the stale g r must not fire
 	if got != "" {
@@ -150,6 +154,7 @@ func TestChainExpiryResetsKeyhint(t *testing.T) {
 	chainTimeout = 0
 	defer func() { chainTimeout = old }()
 	m := model()
+	m.width, m.height = 200, 24
 	m = press(t, m, "g")
 	clean := stripANSI(m.render())
 	if !strings.Contains(clean, "g r reply-all") || strings.Contains(clean, "j cursor-down") {
@@ -300,11 +305,7 @@ func TestLogOverlay(t *testing.T) {
 	if strings.Count(frame, "\n")+1 != 24 {
 		t.Fatalf("the log frame must be exactly 24 lines, got %d", strings.Count(frame, "\n")+1)
 	}
-	for _, want := range []string{"log", "entry 0", "entry 1", "entry 2"} {
-		if !strings.Contains(frame, want) {
-			t.Fatalf("the log must render %q:\n%s", want, frame)
-		}
-	}
+	wantAll(t, frame, "log", "entry 0", "entry 1", "entry 2")
 	// the overlays intercept keys before dispatch (the help behavior):
 	// ? closes the log, ~ closes the help; each re-opens on its own
 	// next press - never both open at once
@@ -440,7 +441,7 @@ func model() Model {
 	cfg := config.Default()
 	// generated accounts: tests never use real account names
 	cfg.Accounts = map[string]config.Account{"alpha": {}, "beta": {}, "gamma": {}, "delta": {}}
-	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(cfg), cfg.UI)
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(cfg), cfg.UI))
 }
 
 // TestOpenReplyGhostRow: reply on a ghost row (nil Msg, multi-root
@@ -471,7 +472,7 @@ func ghostModel() Model {
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
 	})})
-	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
 func press(t *testing.T, m Model, key string) Model {
@@ -486,6 +487,32 @@ func pressType(t *testing.T, m Model, k rune) Model {
 	t.Helper()
 	next, _ := m.Update(KeyPressMsg{Code: k})
 	return next
+}
+
+// sized returns m at the standard render window (80x24), the size the
+// frame assertions assume. Fixtures default to it; only tests with a
+// custom size set width/height explicitly.
+func sized(m Model) Model {
+	m.width, m.height = 80, 24
+	return m
+}
+
+// stubOpenHandler parks the thread-open seam at a no-op (tests that do
+// not exercise opening), restoring it on test end.
+func stubOpenHandler(t *testing.T) {
+	t.Helper()
+	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	t.Cleanup(func() { SetOpenHandler(func(threadID string, preview, headers bool, _ int) {}) })
+}
+
+// wantAll fails the test when any want is absent from out.
+func wantAll(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, want := range wants {
+		if !strings.Contains(out, want) {
+			t.Fatalf("missing %q in output:\n%s", want, out)
+		}
+	}
 }
 
 // textD returns the active text dialogue (the form-entry prompt), or
@@ -516,7 +543,7 @@ func stubModel() Model {
 		core.NewThread("t1", []*core.Message{{ThreadID: "t1", Timestamp: 200, Author: "Ann", Subject: "hello", Tags: []string{"inbox", "unread"}}}),
 		core.NewThread("t2", []*core.Message{{ThreadID: "t2", Timestamp: 100, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
 	})
-	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
@@ -538,7 +565,6 @@ func TestStubThreadStaging(t *testing.T) {
 	if !row.Staged || !slices.Equal(row.StagedTags, []string{"archive"}) {
 		t.Fatalf("stub row must render the resolved thread state: staged=%v tags=%v", row.Staged, row.StagedTags)
 	}
-	m.width, m.height = 80, 24
 	if out := m.View(); !strings.Contains(out, "*") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
@@ -670,7 +696,7 @@ func TestCountedG(t *testing.T) {
 		}))
 	}
 	view.MergeThreads(threads)
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m = press(t, m, "1")
 	m = press(t, m, "2")
 	m = press(t, m, "g")
@@ -686,7 +712,6 @@ func TestCountedG(t *testing.T) {
 
 func TestRenderShowsRows(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	out := m.View()
 	if out == "" {
 		t.Fatal("empty render")
@@ -721,7 +746,6 @@ func TestEventMsgRepaints(t *testing.T) {
 
 func TestGhostRowRendersAndCursorSkips(t *testing.T) {
 	m := ghostModel()
-	m.width, m.height = 80, 24
 	out := m.View()
 	if !strings.Contains(out, "[...]") {
 		t.Fatalf("ghost row missing from render:\n%s", out)
@@ -759,7 +783,6 @@ func TestStageToggleRead(t *testing.T) {
 	if hasTag(row.Msg.Tags, "unread") {
 		t.Fatalf("applied state must be untouched: %v", row.Msg.Tags)
 	}
-	m.width, m.height = 80, 24
 	if out := m.View(); !strings.Contains(out, "*N") {
 		t.Fatalf("staged glyph missing:\n%s", out)
 	}
@@ -837,7 +860,7 @@ func TestStageUndoConcurrent(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox", "unread"}},
 	})})
 	view.SetCursor("a")
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -938,8 +961,7 @@ func TestRenderSanitizesControls(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Author: "\x1b]0;x\x07Ann", Subject: "hello\x1b[31m", Tags: []string{"inbox", "\x1b[41mred"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	out := m.View()
 	// the model's own cursor highlight (indicator style SGR) is not a
 	// leak; check the injected sequences specifically
@@ -958,7 +980,6 @@ func TestComposeFormSanitizesControls(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.tabs[0].Subject = "evil\x1b[31mred"
 	m.tabs[0].To = []string{"x\x07y@example.com"}
-	m.width, m.height = 80, 24
 	out := m.View()
 	for _, leak := range []string{"\x1b[31m", "\x07"} {
 		if strings.Contains(out, leak) {
@@ -973,7 +994,6 @@ func TestComposeFormSanitizesControls(t *testing.T) {
 
 func TestProgressBarRendersAndClears(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	if strings.Contains(m.View(), "refresh 5/10") {
 		t.Fatal("no bar before any progress event")
 	}
@@ -993,8 +1013,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 
 func TestProgressBarEmptyView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	if !strings.Contains(m.View(), "refresh 1/5") {
 		t.Fatalf("empty view must still render the status line:\n%s", m.View())
@@ -1008,7 +1027,7 @@ func TestProgressBarEmptyView(t *testing.T) {
 // literal "empty" text never appears.
 func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m.width, m.height = 160, 24
 	out := m.View()
 	if strings.Contains(out, "empty") {
@@ -1046,7 +1065,7 @@ func TestEmptyViewLooksFilled(t *testing.T) {
 // status line (h-1) stay visible while a prompt is open.
 func TestDialogueKeepsKeyhint(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m.width, m.height = 160, 24
 	m.dialogue = &confirmDialogue{label: "abort?", action: "abort"}
 	strip := stripANSI(m.View())
@@ -1074,7 +1093,7 @@ func TestDialogueKeepsKeyhint(t *testing.T) {
 // drops the hint row).
 func TestProgressBarEmptyViewHints(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m.width, m.height = 160, 24
 	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 1, Total: 5})
 	strip := stripANSI(m.View())
@@ -1124,8 +1143,7 @@ func TestThemeVariantSwitchLive(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	if out := m.View(); strings.Contains(out, "255;0;0") {
 		t.Fatalf("dark theme must not render the red status fg:\n%s", out)
 	}
@@ -1150,8 +1168,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	path := fixtureMsg(t, "body line\n")
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
@@ -1200,8 +1217,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
 	m = pump(t, m, ch)
@@ -1249,8 +1265,7 @@ func TestProgressBarPerView(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 
 	// another view's fill publishes: the inbox bar stays off
 	bus.Publish(core.Progress{Job: "refresh", View: "unread", Done: 1, Total: 5})
@@ -1302,7 +1317,7 @@ func rowsModel(n int) Model {
 		}))
 	}
 	view.MergeThreads(threads)
-	return New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
 // openPager presses the open key with an open handler that injects the
@@ -1337,7 +1352,6 @@ func openPager(t *testing.T, m Model, path string) Model {
 
 func TestOpenSwitchesToPager(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
@@ -1346,16 +1360,11 @@ func TestOpenSwitchesToPager(t *testing.T) {
 		t.Fatal("pager content missing")
 	}
 	out := stripANSI(m.View())
-	for _, want := range []string{"hello", "a@example.com", "body line"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("pager render missing %q:\n%s", want, out)
-		}
-	}
+	wantAll(t, out, "hello", "a@example.com", "body line")
 }
 
 func TestPagerBackReturnsToIndex(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	m = openPager(t, m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
@@ -1557,7 +1566,6 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 
 func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
@@ -1590,7 +1598,6 @@ func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 // rows pad to it and the column never re-aligns per row.
 func TestNumberColumnGrows(t *testing.T) {
 	m := rowsModel(12)
-	m.width, m.height = 80, 24
 	lines := strings.Split(stripANSI(m.View()), "\n")
 	if !strings.HasPrefix(lines[1], "▌1  ") {
 		t.Fatalf("row 1 must pad to the 2-cell slot: %q", lines[1])
@@ -1667,7 +1674,6 @@ func TestGGTopGToBottom(t *testing.T) {
 // separately in TestIndexPagesAtEdges).
 func TestCountedMove(t *testing.T) {
 	m := rowsModel(5)
-	m.width, m.height = 80, 24
 	m = press(t, m, "3")
 	m = press(t, m, "j")
 	if m.CursorIndex() != 3 {
@@ -1693,7 +1699,6 @@ func TestCountedMove(t *testing.T) {
 // page's first line (up: the new page's last line).
 func TestIndexPagesAtEdges(t *testing.T) {
 	m := rowsModel(60)
-	m.width, m.height = 80, 24
 	h := m.listHeight()
 	for i := 0; i < h-1; i++ {
 		m = press(t, m, "j")
@@ -1761,7 +1766,6 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := model()
-	m.width, m.height = 80, 24
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
@@ -1781,7 +1785,6 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 
 func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
 		m = next
@@ -1912,7 +1915,7 @@ func TestSendResultSnapshotResolvesDroppedCompletion(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseSending
 
@@ -1948,7 +1951,7 @@ func TestSendResultSnapshotFailureKeepsDialogue(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseSending
 
@@ -1974,7 +1977,7 @@ func TestSendRetryClearsSnapshot(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 	m = openDialogue(t, m, "t1")
 	m.tabs[0].Phase = compose.PhaseFailed
 	bus.Publish(core.SendResult{TabID: "t1", OK: false, Output: "old failure"})
@@ -1998,7 +2001,7 @@ func TestComposeOpenedSnapshotAttachesOnce(t *testing.T) {
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	m := New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)
+	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
 
 	// The open event drops: the channel is full when it publishes.
 	for i := 0; i < 64; i++ {
@@ -2899,11 +2902,7 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if !strings.Contains(stripANSI(lines[1]), "a attach") {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
-	for _, want := range []string{"Bcc:", "Reply-To:", "Fcc:", "Security: none", "I    1", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview"} {
-		if !strings.Contains(stripANSI(frame), want) {
-			t.Fatalf("the frame must show %q:\n%s", want, frame)
-		}
-	}
+	wantAll(t, stripANSI(frame), "Bcc:", "Reply-To:", "Fcc:", "Security: none", "I    1", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview")
 	// the message-text row shows the buffer file path (truncated to
 	// its column area like any long name), attachments the A marker
 	// (mutt's attach list)
@@ -3177,7 +3176,6 @@ func TestComposeAttachmentWindow(t *testing.T) {
 		atts[i] = compose.Attachment{Name: n, Size: 3}
 	}
 	m := openDialogue(t, model(), "t1")
-	m.width, m.height = 80, 24
 	m.tabs[0].Attachments = atts
 	row := func(name string) string {
 		for _, l := range strings.Split(m.render(), "\n") {
@@ -3419,7 +3417,6 @@ func TestComposeContentTypeRow(t *testing.T) {
 // phase-based, never a modal - the tab strip keeps its tabs.
 func TestSendOverlaySpinner(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m.width, m.height = 80, 24
 	m = press(t, m, "y") // arms PhaseSending + the spinner tick
 	if !m.anySending() {
 		t.Fatal("the send press must leave the tab in PhaseSending")
@@ -3926,8 +3923,7 @@ func TestModelToggleRender(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   threadID,
@@ -4013,8 +4009,7 @@ func TestModelCollapseThread(t *testing.T) {
 		}),
 		core.NewThread("t2", []*core.Message{{ID: "c", Timestamp: 80, Tags: []string{"inbox"}}}),
 	})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	if rows := m.view.Rows(); len(rows) != 3 {
 		t.Fatalf("the tree must render 3 rows, got %d", len(rows))
 	}
@@ -4063,8 +4058,7 @@ func TestModelAttachmentDialog(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
 		Lines: []core.Line{
@@ -4165,8 +4159,7 @@ func TestModelOpenHeaders(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	var gotTID string
 	var gotPreview, gotHeaders bool
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
@@ -4213,7 +4206,6 @@ func fixtureHtml(t *testing.T, body string) string {
 // seam records the requests.
 func TestOpenLinksHTML(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	path := fixtureHtml(t, "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>"+
 		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
@@ -4235,7 +4227,7 @@ func TestOpenLinksHTML(t *testing.T) {
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
-		SetOpenHandler(func(string, bool, bool, int) {})
+		stubOpenHandler(t)
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
@@ -4307,7 +4299,6 @@ func TestOpenLinksHTML(t *testing.T) {
 // is a no-op.
 func TestOpenLinksNoLinks(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	path := fixtureHtml(t, "<p>no links here, just text</p>\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
 	var labelCalls []bool
@@ -4317,7 +4308,7 @@ func TestOpenLinksNoLinks(t *testing.T) {
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
-		SetOpenHandler(func(string, bool, bool, int) {})
+		stubOpenHandler(t)
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
@@ -4356,7 +4347,6 @@ func TestOpenLinksNoLinks(t *testing.T) {
 // with the full raw block. h again drops the block.
 func TestHeadersTogglePager(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	path := fixtureMsg(t, "see the body\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
 	var headersSeen []bool
@@ -4364,7 +4354,7 @@ func TestHeadersTogglePager(t *testing.T) {
 		headersSeen = append(headersSeen, headers)
 	})
 	defer func() {
-		SetOpenHandler(func(string, bool, bool, int) {})
+		stubOpenHandler(t)
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
 	}()
 	m = openPager(t, m, path)
@@ -4401,7 +4391,6 @@ func TestHeadersTogglePager(t *testing.T) {
 // fuzzy picker, and selecting one opens it.
 func TestOpenLinksPlain(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	m = openPager(t, m, fixtureMsg(t, "see https://alpha.example.com/x\n"))
 	m = press(t, m, "F")
 	p := picker(m)
@@ -4423,7 +4412,6 @@ func TestOpenLinksPlain(t *testing.T) {
 // and a completed number opens its link on the spot.
 func TestLinkModeScrolls(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	var body strings.Builder
 	for i := 1; i <= 40; i++ {
 		fmt.Fprintf(&body, "<p><a href=\"https://example.com/%d\">link %d</a></p>\n", i, i)
@@ -4433,7 +4421,7 @@ func TestLinkModeScrolls(t *testing.T) {
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
-		SetOpenHandler(func(string, bool, bool, int) {})
+		stubOpenHandler(t)
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
@@ -4490,7 +4478,6 @@ func TestLinkModeScrolls(t *testing.T) {
 // with the digits.
 func TestEasyjumpHighlight(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	// 25 links: the digits 1-2 are incomplete (n*10 <= 25), so the
 	// highlight shows while the entry is still a prefix of a longer one
 	var body strings.Builder
@@ -4502,7 +4489,7 @@ func TestEasyjumpHighlight(t *testing.T) {
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
-		SetOpenHandler(func(string, bool, bool, int) {})
+		stubOpenHandler(t)
 		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
@@ -4608,8 +4595,7 @@ func TestIndexSearch(t *testing.T) {
 		core.NewThread("t2", []*core.Message{{ID: "b", Timestamp: 200, Author: "Boris", Subject: "beta notes", Tags: []string{"inbox"}}}),
 		core.NewThread("t3", []*core.Message{{ID: "c", Timestamp: 300, Author: "Carol", Subject: "gamma plan", Tags: []string{"inbox"}}}),
 	})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	searchSGR := sgrOf(m.styles.Index.Search).open
 
 	// / opens the prompt prefilled with the last pattern (empty here)
@@ -4670,8 +4656,7 @@ func TestPagerEnterNextMail(t *testing.T) {
 		core.NewThread("t1", []*core.Message{{ID: "a", Timestamp: 100, Tags: []string{"inbox"}}}),
 		core.NewThread("t2", []*core.Message{{ID: "b", Timestamp: 300, Tags: []string{"inbox"}}}),
 	})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.width, m.height = 80, 24
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	opens := 0
 	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
 		opens++
@@ -4866,7 +4851,6 @@ func TestFilePickerMark(t *testing.T) {
 		}
 	}
 	m := openDialogue(t, model(), "t1")
-	m.width, m.height = 80, 24
 	row := func(name string) string {
 		for _, l := range strings.Split(m.View(), "\n") {
 			if strings.Contains(l, name) {

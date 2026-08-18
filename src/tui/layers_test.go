@@ -18,7 +18,7 @@ import (
 // would otherwise keep the stale frame for these direct renders - a
 // real message arms it at Update entry.
 func frame(m Model) string {
-	m.width, m.height = 80, 24
+	m = sized(m)
 	m.paint = true
 	return m.View()
 }

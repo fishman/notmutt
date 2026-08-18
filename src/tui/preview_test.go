@@ -11,13 +11,18 @@ import (
 	"notmutt/core"
 )
 
+// openPreview presses P and delivers the preview content for id.
+func openPreview(t *testing.T, m Model, id string, lines []core.Line) Model {
+	m = press(t, m, "P")
+	return pressEvent(t, m, core.ThreadLoaded{ThreadID: id, Preview: true, Lines: lines})
+}
+
 // TestAiStreamAppendRenders pins the summary stream: the first delta
 // replaces the placeholder, token-per-event deltas merge into a
 // flowing line, and newline deltas start fresh lines - all visible as
 // they arrive (a stale document would hide every appended line).
 func TestAiStreamAppendRenders(t *testing.T) {
 	m := model()
-	m.width, m.height = 80, 24
 	next, _ := m.Update(EventMsg{Event: core.AiStarted{JobID: "j1", ThreadID: "t1"}})
 	m = next
 	for _, d := range []string{"alpha ", "beta ", "gamma", "\n", "next line"} {
@@ -25,11 +30,7 @@ func TestAiStreamAppendRenders(t *testing.T) {
 		m = next
 	}
 	got := stripANSI(m.render())
-	for _, want := range []string{"alpha beta gamma", "next line"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("the streamed summary must render %q:\n%s", want, got)
-		}
-	}
+	wantAll(t, got, "alpha beta gamma", "next line")
 	if strings.Contains(got, "summarizing...") {
 		t.Fatalf("the placeholder must be replaced by the first delta:\n%s", got)
 	}
@@ -41,7 +42,6 @@ func TestAiStreamAppendRenders(t *testing.T) {
 // row map pointed past the new, shorter line list (index out of range).
 func TestPreviewShrinkNoPanic(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m.width, m.height = 80, 24
 	m.composeTab().Body = strings.Repeat("a line of reply text\n", 20)
 	if frame := stripANSI(m.render()); !strings.Contains(frame, "a line of reply text") {
 		t.Fatalf("the long body must render in the preview:\n%s", frame)
@@ -59,27 +59,19 @@ func TestPreviewShrinkNoPanic(t *testing.T) {
 // the keyhint derives the pager keys (activeBindings flips with the
 // popup).
 func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
-	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	stubOpenHandler(t)
 	m := model()
-	m.width, m.height = 80, 24
-	m = press(t, m, "P")
+	m = openPreview(t, m, "t1", []core.Line{{Kind: core.LineBody, Text: "body line"}})
 	if !m.preview || m.mode != "index" {
 		t.Fatalf("p must open the preview popup over the index, preview=%v mode=%q", m.preview, m.mode)
 	}
 	if m.previewThread != "t1" || m.previewTitle == "" {
 		t.Fatalf("preview target missing: thread=%q title=%q", m.previewThread, m.previewTitle)
 	}
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true,
-		Lines: []core.Line{{Kind: core.LineBody, Text: "body line"}}})
 	out := stripANSI(m.View())
 	// the scroll hint lists every pager scroll key, arrows included
 	// (the live config's arrow overlay is part of the fixture)
-	for _, want := range []string{m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭" + strings.Repeat("─", 2), "╰─", "tab-prev"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("preview box missing %q:\n%s", want, out)
-		}
-	}
+	wantAll(t, out, m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭"+strings.Repeat("─", 2), "╰─", "tab-prev")
 	if strings.Contains(out, "cursor-down") {
 		t.Fatalf("the keyhint must derive the pager keys during preview:\n%s", out)
 	}
@@ -90,16 +82,13 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 // the pager. A long fixture body makes the preview window movable
 // (the box is only 14 rows at 80x24).
 func TestPreviewScrollsAndCloses(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
-	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	stubOpenHandler(t)
 	m := model()
-	m.width, m.height = 80, 24
-	m = press(t, m, "P")
 	lines := make([]core.Line, 40)
 	for i := range lines {
 		lines[i] = core.Line{Kind: core.LineBody, Text: "line"}
 	}
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
+	m = openPreview(t, m, "t1", lines)
 	if m.pager == nil {
 		t.Fatal("preview must hold a pager")
 	}
@@ -130,10 +119,8 @@ func TestPreviewOpensFull(t *testing.T) {
 	})
 	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
 	m := model()
-	m.width, m.height = 80, 24
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
-	m = press(t, m, "P")
-	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true, Lines: lines})
+	m = openPreview(t, m, "t1", lines)
 	m = press(t, m, "enter")
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Lines: lines})
 	if m.preview || m.previewThread != "" {
@@ -154,10 +141,8 @@ func TestPreviewOpensFull(t *testing.T) {
 // TestPreviewStaleReplyDrops pins the async guard: a preview reply
 // landing after the popup closed must not force the thread open.
 func TestPreviewStaleReplyDrops(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
-	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	stubOpenHandler(t)
 	m := model()
-	m.width, m.height = 80, 24
 	m = press(t, m, "P") // fetch in flight
 	m = press(t, m, "q") // closed before the reply lands
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t1", Preview: true})
@@ -170,10 +155,8 @@ func TestPreviewStaleReplyDrops(t *testing.T) {
 // open for another thread landing mid-preview must not stick - the
 // preview target's reply re-asserts the popup over the index.
 func TestPreviewTargetWinsOverRacingOpen(t *testing.T) {
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
-	defer SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
+	stubOpenHandler(t)
 	m := model()
-	m.width, m.height = 80, 24
 	m = press(t, m, "P") // preview fetch in flight
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
 	m = pressEvent(t, m, core.ThreadLoaded{ThreadID: "t2", Lines: lines})

@@ -19,12 +19,16 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"math"
 	"os"
 	"os/exec"
 	"strings"
+
+	_ "golang.org/x/image/webp" // decoder registrations: mail charts arrive as jpeg/gif/webp
 
 	"github.com/mattn/go-sixel"
 	"golang.org/x/image/draw"

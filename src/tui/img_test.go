@@ -15,6 +15,8 @@ import (
 	"encoding/base64"
 	"image"
 	"image/color"
+	"image/gif"
+	"image/jpeg"
 	"image/png"
 	"os"
 	"strings"
@@ -206,6 +208,24 @@ func TestDecodeImage(t *testing.T) {
 	// garbage bytes never decode
 	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100); err == nil {
 		t.Fatal("garbage must fail the decode")
+	}
+
+	// jpeg/gif/webp decode via the blank-imported registrations: mail
+	// charts are rarely png, and an undecoded chart never renders
+	var jbuf bytes.Buffer
+	src, _, _ := image.Decode(bytes.NewReader(testPNG(t, 400, 300)))
+	if err := jpeg.Encode(&jbuf, src, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, cols, rows, err := decodeImage(jbuf.Bytes(), 80, 100); err != nil || cols != 40 || rows != 15 {
+		t.Fatalf("jpeg must decode at its aspect, got %dx%d err=%v", cols, rows, err)
+	}
+	var gbuf bytes.Buffer
+	if err := gif.Encode(&gbuf, src, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, cols, rows, err := decodeImage(gbuf.Bytes(), 80, 100); err != nil || cols != 40 || rows != 15 {
+		t.Fatalf("gif must decode at its aspect, got %dx%d err=%v", cols, rows, err)
 	}
 }
 

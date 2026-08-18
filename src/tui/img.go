@@ -270,18 +270,28 @@ func (m *Model) imgBG(line int) string {
 // home, then the protocol encode of the visible pixel slice (srcY,
 // srcH - the crop keeps a window-edge block from overflowing onto the
 // keyhint/status rows).
-func paintImage(w io.Writer, proto string, src image.Image, srcY, srcH, x, y int) {
-	fmt.Fprintf(w, "\x1b[%d;%dH", y+1, x+1)
-	crop := src
-	if srcY != 0 || srcH != src.Bounds().Dy() {
-		crop = cropImage(src, 0, srcY, src.Bounds().Dx(), srcH)
+// composeImages builds one offscreen canvas covering the union of the
+// paint rects: each image's visible slice draws at its cell-aligned
+// offset, the gap cells stay transparent - P2=1 shows the page
+// background (and any unchanged image) through them. One DCS burst
+// paints the batch atomically; the per-image bursts were the flicker.
+func composeImages(paints []imgPaint) (image.Image, cellRect) {
+	ux, uy := paints[0].rect.x, paints[0].rect.y
+	bx, by := ux+paints[0].rect.w, uy+paints[0].rect.h
+	for _, p := range paints[1:] {
+		ux = min(ux, p.rect.x)
+		uy = min(uy, p.rect.y)
+		bx = max(bx, p.rect.x+p.rect.w)
+		by = max(by, p.rect.y+p.rect.h)
 	}
-	switch proto {
-	case "kitty":
-		kittyEncode(w, crop)
-	case "sixel":
-		sixelEncode(w, crop)
+	union := cellRect{x: ux, y: uy, w: bx - ux, h: by - uy}
+	canvas := image.NewNRGBA(image.Rect(0, 0, union.w*imgCellW, union.h*imgCellH))
+	for _, p := range paints {
+		slice := cropImage(p.img, 0, p.top*imgCellH, p.img.Bounds().Dx(), p.h*imgCellH)
+		ox, oy := (p.rect.x-ux)*imgCellW, (p.rect.y-uy)*imgCellH
+		draw.Draw(canvas, image.Rect(ox, oy, ox+slice.Bounds().Dx(), oy+slice.Bounds().Dy()), slice, image.Point{}, draw.Over)
 	}
+	return canvas, union
 }
 
 // bgHexOf renders a lipgloss background color as #rrggbb; "" when the
@@ -508,13 +518,24 @@ func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 
 // paintImages writes the frame's image blocks to the terminal after
 // the text frame (pixels never race the text; the stale rects were
-// cleared before the frame).
+// cleared before the frame). The whole batch composes into ONE
+// offscreen canvas and transmits as one DCS: the terminal paints the
+// frame's images atomically instead of sweeping burst by burst.
 func (m *Model) paintImages(next map[*core.Image]imgPaint) {
-	if imageWriter == nil {
+	if imageWriter == nil || len(next) == 0 {
 		return
 	}
+	paints := make([]imgPaint, 0, len(next))
 	for _, p := range next {
-		paintImage(imageWriter, m.imgProto, p.img, p.top*imgCellH, p.h*imgCellH, p.rect.x, p.rect.y)
+		paints = append(paints, p)
+	}
+	canvas, union := composeImages(paints)
+	fmt.Fprintf(imageWriter, "\x1b[%d;%dH", union.y+1, union.x+1)
+	switch m.imgProto {
+	case "kitty":
+		kittyEncode(imageWriter, canvas)
+	case "sixel":
+		sixelEncode(imageWriter, canvas)
 	}
 	m.painted = make(map[*core.Image]cellRect, len(next))
 	for img, p := range next {

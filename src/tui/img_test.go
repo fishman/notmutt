@@ -343,20 +343,32 @@ func TestSixelEncode(t *testing.T) {
 	}
 }
 
-func TestPaintImage(t *testing.T) {
-	src := testImg(100, 200)
-	var buf bytes.Buffer
-	paintImage(&buf, "kitty", src, 0, 200, 0, 5)
-	if !strings.HasPrefix(buf.String(), "\x1b[6;1H\x1b_Gf=") {
-		t.Fatalf("paint must home then transmit, got %q", show(buf.String()[:24]))
+// TestComposeImages pins the offscreen batch compose: two images at
+// different offsets land in one canvas whose dims are the rect union
+// (exact cell multiples), each image at its own pixel offset, and the
+// gap cells between them transparent (the page background shows
+// through).
+func TestComposeImages(t *testing.T) {
+	one := testImg(20, 40) // 2x2 cells
+	two := testImg(40, 40) // 4x2 cells
+	paints := []imgPaint{
+		{rect: cellRect{x: 2, y: 3, w: 2, h: 2}, img: one, top: 0, h: 2},
+		{rect: cellRect{x: 6, y: 3, w: 4, h: 2}, img: two, top: 0, h: 2},
 	}
-	buf.Reset()
-	paintImage(&buf, "kitty", src, 40, 80, 0, 5) // the visible slice
-	if !strings.HasPrefix(buf.String(), "\x1b[6;1H") {
-		t.Fatalf("cropped paint must home first, got %q", show(buf.String()[:8]))
+	canvas, union := composeImages(paints)
+	if union.x != 2 || union.y != 3 || union.w != 8 || union.h != 2 {
+		t.Fatalf("union must span both rects, got %+v", union)
 	}
-	if !strings.Contains(buf.String(), "\x1b_Gf=") {
-		t.Fatalf("cropped paint must still transmit, got %q", show(buf.String()[:16]))
+	b := canvas.Bounds()
+	if b.Dx() != 8*imgCellW || b.Dy() != 2*imgCellH {
+		t.Fatalf("canvas must snap to cell multiples: %dx%d", b.Dx(), b.Dy())
+	}
+	if _, _, _, a := canvas.At(3*imgCellW, 0).RGBA(); a != 0 {
+		t.Fatalf("the gap must stay transparent, alpha=%d", a)
+	}
+	// the second image lands at its own offset, not the canvas origin
+	if got := canvas.At((6-2)*imgCellW, 0); got != two.At(0, 0) {
+		t.Fatalf("the offset image must land at its rect, got %v", got)
 	}
 }
 

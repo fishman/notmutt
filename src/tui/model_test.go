@@ -4702,3 +4702,147 @@ func TestSummaryViewFromIndex(t *testing.T) {
 		t.Fatalf("back must return to the index, summary=%v mode=%q", m.summary, m.mode)
 	}
 }
+
+// TestAttachChooseReArmsBus pins the attach-choose Tab path: the Lua
+// action runs async and its picker request rides the bus, so the Tab
+// keypress must re-arm the event channel (a nil Cmd leaves the request
+// sitting in the buffer until the next keypress - the picker never
+// opens).
+func TestAttachChooseReArmsBus(t *testing.T) {
+	old := pluginActions
+	pluginActions = func() map[string]bool { return map[string]bool{"attach-choose": true} }
+	defer func() { pluginActions = old }()
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a")
+	next, cmd := m.Update(KeyPressMsg{Text: "tab", Code: []rune("tab")[0]})
+	m = next
+	if cmd == nil {
+		t.Fatal("the attach-choose Tab must re-arm the event channel")
+	}
+	if m.dialogue != nil {
+		t.Fatal("the action run must close the prompt")
+	}
+}
+
+// TestFilePickerTypedPath pins the path prompt: a typed absolute path
+// navigates into the dir on enter, and a typed file path attaches and
+// closes.
+func TestFilePickerTypedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f1 := filepath.Join(root, "f1.txt")
+	if err := os.WriteFile(f1, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a")
+	m = press(t, m, "tab")
+	if p := picker(m); p == nil || p.kind != "file" {
+		t.Fatalf("tab must open the file picker: %+v", m.dialogue)
+	}
+	for _, r := range root {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "enter")
+	if p := picker(m); p == nil {
+		t.Fatal("a typed dir path must keep the picker open, browsing the dir")
+	} else if got := strings.Join(p.entries, ","); got != "f1.txt,subdir/" {
+		t.Fatalf("entries = %q, want the dir listing f1.txt,subdir/", got)
+	}
+	// a typed file path attaches and closes
+	for _, r := range f1 {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "enter")
+	if picker(m) != nil {
+		t.Fatal("a typed file path must attach and close")
+	}
+	got := m.tabs[0].Attachments
+	if len(got) != 1 || got[0].Path != f1 {
+		t.Fatalf("attachments = %+v", got)
+	}
+}
+
+// TestFilePickerRightLeft pins the arrow navigation: right enters the
+// cursor folder, left walks back up, and left at the root stays in the
+// picker.
+func TestFilePickerRightLeft(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "d1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "f1.txt"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m := openDialogue(t, model(), "t1")
+	m.fileDir = root
+	m = press(t, m, "a")
+	m = press(t, m, "tab")
+	m = pressType(t, m, KeyRight)
+	if p := picker(m); p == nil || strings.Join(p.entries, ",") != "" {
+		t.Fatalf("right must enter the folder: %+v", picker(m))
+	}
+	m = pressType(t, m, KeyLeft)
+	if p := picker(m); p == nil || strings.Join(p.entries, ",") != "d1/,f1.txt" {
+		t.Fatalf("left must walk back up: %+v", picker(m))
+	}
+	m = pressType(t, m, KeyLeft)
+	if picker(m) == nil {
+		t.Fatal("left at the root must stay in the picker")
+	}
+}
+
+// TestFilePickerMark pins the t key: it marks the cursor file, renders
+// the marker, advances one line, and the commit attaches the marked
+// set together with the selection.
+func TestFilePickerMark(t *testing.T) {
+	root := t.TempDir()
+	for _, n := range []string{"a.txt", "b.txt", "c.txt"} {
+		if err := os.WriteFile(filepath.Join(root, n), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := openDialogue(t, model(), "t1")
+	m.width, m.height = 80, 24
+	row := func(name string) string {
+		for _, l := range strings.Split(m.View(), "\n") {
+			if strings.Contains(l, name) {
+				return l
+			}
+		}
+		return ""
+	}
+	m.fileDir = root
+	m = press(t, m, "a")
+	m = press(t, m, "tab")
+	m = press(t, m, "t")
+	if p := picker(m); p == nil || !p.marks["a.txt"] || p.sel != 1 {
+		t.Fatalf("t must mark a.txt and advance: marks=%v sel=%d", picker(m).marks, picker(m).sel)
+	}
+	if got := stripANSI(row("a.txt")); !strings.HasPrefix(got, m.ui.Glyphs.Cursor+"a.txt") {
+		t.Fatalf("the marked row must start with the cursor glyph: %q", got)
+	}
+	if blank := strings.Repeat(" ", runewidth.StringWidth(m.ui.Glyphs.Cursor)); !strings.HasPrefix(stripANSI(row("b.txt")), blank+"b.txt") {
+		t.Fatalf("an unmarked row keeps the blank mark column (no shift): %q", stripANSI(row("b.txt")))
+	}
+	m = press(t, m, "t")
+	if p := picker(m); p == nil || !p.marks["b.txt"] || p.sel != 2 {
+		t.Fatalf("the second t must mark b.txt: marks=%v sel=%d", picker(m).marks, picker(m).sel)
+	}
+	m = press(t, m, "enter")
+	if picker(m) != nil {
+		t.Fatal("enter must close the picker")
+	}
+	got := m.tabs[0].Attachments
+	if len(got) != 3 {
+		t.Fatalf("attachments = %d, want 3", len(got))
+	}
+	want := []string{"c.txt", "a.txt", "b.txt"}
+	for i, a := range got {
+		if a.Name != want[i] {
+			t.Fatalf("attachment %d = %q, want %q", i, a.Name, want[i])
+		}
+	}
+}

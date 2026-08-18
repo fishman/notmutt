@@ -667,6 +667,7 @@ func TestDefaultBindings(t *testing.T) {
 		"j": "fuzzy-down", "k": "fuzzy-up", "down": "fuzzy-down", "up": "fuzzy-up",
 		"ctrl+n": "fuzzy-down", "ctrl+p": "fuzzy-up",
 		"enter": "fuzzy-select", "esc": "fuzzy-cancel",
+		"right": "fuzzy-select", "left": "fuzzy-updir", "t": "fuzzy-mark",
 	}
 	if !maps.Equal(cfg.Bindings["fuzzy"], wantFuzzy) {
 		t.Fatalf("default fuzzy bindings = %v, want %v", cfg.Bindings["fuzzy"], wantFuzzy)

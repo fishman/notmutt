@@ -156,6 +156,9 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "fuzzy-up" }
 "enter" = { fun = "fuzzy-select", desc = "Select the highlighted candidate", show = true }
 "esc" = { fun = "fuzzy-cancel", desc = "Cancel the picker", show = true }
+"right" = { fun = "fuzzy-select", desc = "Enter the highlighted folder" }
+"left" = { fun = "fuzzy-updir", desc = "Go up one folder" }
+"t" = { fun = "fuzzy-mark", desc = "Mark for attachment", show = true }
 
 [schemes.emacs.index]
 "ctrl+n" = { fun = "cursor-down" }
@@ -247,3 +250,6 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "fuzzy-up" }
 "enter" = { fun = "fuzzy-select", show = true }
 "esc" = { fun = "fuzzy-cancel", show = true }
+"right" = { fun = "fuzzy-select" }
+"left" = { fun = "fuzzy-updir" }
+"t" = { fun = "fuzzy-mark", show = true }

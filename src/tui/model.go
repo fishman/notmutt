@@ -88,6 +88,7 @@ var Actions = map[string]map[string]bool{
 	"fuzzy": {
 		"fuzzy-down": true, "fuzzy-up": true,
 		"fuzzy-select": true, "fuzzy-cancel": true,
+		"fuzzy-updir": true, "fuzzy-mark": true,
 	},
 }
 
@@ -2661,7 +2662,15 @@ func (m Model) listFrame(f *fuzzy) string {
 		if i == f.sel {
 			outer = m.styles.Indicator
 		}
-		lines = append(lines, padRow(f.entries[matches[i]], m.width, outer))
+		// the file chooser's mark column: the cursor glyph (config
+		// data) at a reserved leading width - a marked row shows the
+		// glyph, rows never shift (the R11 slot rule)
+		g := m.ui.Glyphs.Cursor
+		mark := strings.Repeat(" ", runewidth.StringWidth(g))
+		if f.marks != nil && f.marks[f.entries[matches[i]]] {
+			mark = g
+		}
+		lines = append(lines, padRow(mark+f.entries[matches[i]], m.width, outer))
 	}
 	for len(lines) < rows {
 		lines = append(lines, padRow("", m.width, m.styles.Normal))
@@ -2992,7 +3001,11 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			if pluginActions()["attach-choose"] {
 				tid, _ := m.cursorThreadID()
 				onLuaAction("attach-choose", tid)
-				return nil, nil
+				// the action runs async and the picker request rides the
+				// bus: re-arm the event channel or the request sits in
+				// the buffer until the next keypress (the loop only
+				// reads it through EventCmd)
+				return nil, EventCmd(m.ch)
 			}
 			if name := defaultChooser(attachCommands()); name != "" {
 				cmd := m.runAttachCommand(name)
@@ -3210,14 +3223,20 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 // fileDialogue is the built-in file-choose dialogue (the chooser
 // fallback when no attach command is registered): a fuzzy listing of
 // the current directory - a directory entry descends, a file attaches
-// and closes; esc walks back up and closes at the root. back is the
-// attach prompt the dialogue returns to.
+// and closes, right enters like select and left walks up one layer;
+// esc closes at the root. The typed query doubles as a path prompt
+// (~/Downloads navigates). t marks files for attachment: the marked
+// set attaches together with the commit selection. back is the attach
+// prompt the dialogue returns to.
 type fileDialogue struct {
 	listDialogue
 }
 
 func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
-	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
+	// a typed path owns single-char keys: once the query looks like a
+	// path, letters type (a "t" in "/tmp/" is a literal, never the
+	// fuzzy-mark binding); arrows and enter keep dispatching
+	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" && !(isPathQuery(d.f.query) && len(msg.Text) == 1) {
 		switch a {
 		case "fuzzy-down":
 			d.f.move(1)
@@ -3225,6 +3244,13 @@ func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			d.f.move(-1)
 		case "fuzzy-select":
 			return d.selectEntry(m)
+		case "fuzzy-mark":
+			d.mark(m)
+		case "fuzzy-updir":
+			if up := filepath.Dir(m.fileDir); up != m.fileDir {
+				m.fileDir = up
+				return m.filePicker(d.back), nil
+			}
 		case "fuzzy-cancel":
 			m.cancelDialogue()
 			if up := filepath.Dir(m.fileDir); up != m.fileDir {
@@ -3239,7 +3265,44 @@ func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	return d, nil
 }
 
+// mark toggles the attachment mark on the cursor entry (files only -
+// a folder marks nothing, it is entered) and advances one line: a
+// t-t-t run marks a run of files. The marked set survives until the
+// dialogue closes.
+func (d *fileDialogue) mark(m *Model) {
+	entry, ok := d.f.selected()
+	if !ok || strings.HasSuffix(entry, "/") {
+		return
+	}
+	if d.f.marks == nil {
+		d.f.marks = map[string]bool{}
+	}
+	if d.f.marks[entry] {
+		delete(d.f.marks, entry)
+	} else {
+		d.f.marks[entry] = true
+	}
+	d.f.move(1)
+}
+
 func (d *fileDialogue) selectEntry(m *Model) (dialogue, Cmd) {
+	// a typed path (abs, ~, .) navigates or attaches directly: the
+	// query doubles as a path prompt. An unresolvable path keeps the
+	// picker open - the typo stays editable.
+	if q := strings.TrimSpace(d.f.query); isPathQuery(q) {
+		p := compose.ExpandHome(q)
+		if st, err := os.Stat(p); err == nil && st.IsDir() {
+			m.fileDir = p
+			return m.filePicker(d.back), nil
+		}
+		if _, err := os.Stat(p); err == nil {
+			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(p) != nil {
+				return d.back, nil
+			}
+			return nil, nil
+		}
+		return d, nil
+	}
 	entry, ok := d.f.selected()
 	if !ok {
 		return d.back, nil
@@ -3249,10 +3312,31 @@ func (d *fileDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		m.fileDir = path
 		return m.filePicker(d.back), nil
 	}
-	if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) != nil {
+	st := &m.tabs[m.tabIdx-1]
+	if st.AddAttachment(path) != nil {
 		return d.back, nil
 	}
+	// the marked files attach with the commit selection (the t key):
+	// sorted for a deterministic order, the cursor file first
+	if len(d.f.marks) > 0 {
+		names := make([]string, 0, len(d.f.marks))
+		for n := range d.f.marks {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+		for _, n := range names {
+			if st.AddAttachment(filepath.Join(m.fileDir, n)) != nil {
+				break
+			}
+		}
+	}
 	return nil, nil
+}
+
+// isPathQuery answers whether the filter input is a typed path (abs,
+// ~-expanded, or dot-relative) rather than a fuzzy filter.
+func isPathQuery(q string) bool {
+	return strings.HasPrefix(q, "/") || strings.HasPrefix(q, "~") || strings.HasPrefix(q, "./") || strings.HasPrefix(q, "../") || q == "."
 }
 
 // confirmDialogue asks yes/no (R4): enter dispatches the action, esc

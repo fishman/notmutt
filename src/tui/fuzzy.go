@@ -22,6 +22,10 @@ type fuzzy struct {
 	entries []string
 	query   string
 	sel     int
+	// marks is the file chooser's attachment marks (the t key): the
+	// marked entry names render with a marker and attach with the
+	// commit selection. Nil in every other picker.
+	marks map[string]bool
 }
 
 func newFuzzy(kind, title string, entries []string) *fuzzy {

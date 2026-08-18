@@ -1,0 +1,4 @@
+title: notmutt
+description: An async, command-line-first mail client built on notmuch
+remote_theme: pages-themes/cayman@v0.2.0
+show_downloads: false

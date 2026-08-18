@@ -34,3 +34,7 @@ go.work.sum
 # .vscode/
 
 afew/
+
+# build artifacts
+/notmutt
+/docs/_site/

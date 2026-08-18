@@ -1,29 +1,76 @@
 # notmutt
 
-notmutt is an async, command-line-first mail client built on notmuch.
-Tags are the logical model: every view, filter, and trigger is a notmuch
-query or tag operation; folders exist only for sync-tool compatibility.
-Written in Go - tcell v3 TUI (lipgloss v2 for layout math), go-message
-for mail parsing and composition, TOML config, vim keybindings by
-default.
+An async, command-line-first mail client built on notmuch. Tags are the
+logical model: every view, filter, and trigger is a notmuch query or tag
+operation; folders exist only for sync-tool compatibility. Written in Go
+- tcell v3 TUI (lipgloss v2 for layout math), go-message for mail
+parsing and composition, TOML config, vim keybindings by default.
 
 Requirements and architecture are normative in AGENTS.md; the design
 decisions and their measurements live in docs/design-decisions.md.
+User documentation (features, installation, usage) lives on the project
+site: <https://fishman.github.io/notmutt/> - the pages are in `docs/`.
+
+## Why notmutt
+
+- **Nothing blocks you.** Sync, filtering, tag pipelines and sends run
+  as background jobs; composing, reading and navigating never wait on a
+  query or a network round trip. A filter run can retag and re-render
+  the mailbox while you keep typing in the compose tab.
+- **Every tag op is undoable.** Actions (archive, delete, flag, read)
+  stage into a buffer and hit notmuch only when you apply (`$`). A
+  mis-tap is one `u` away - neomutt makes every tag application final.
+- **One message, one home.** Folder tags form a declarative exclusive
+  group: applying any member removes the others. No hand-maintained
+  `-tag` chains in your config, no conflicting folder tags.
+- **Privacy by default.** Remote images stay collapsed until the
+  load-remote-images key (alt+i) - and 1x1 tracking pixels drop even
+  then. No telemetry, no account sync, no mail content ever leaves
+  your machine (crypto runs through your system `gpg`, never a
+  vendored library).
+- **notmuch is the only truth.** No own database; the index is a
+  revision-keyed cache that re-syncs from notmuch's lastmod. Folder
+  state is derived, never authoritative.
+- **Terminal images.** Sixel by default, kitty opt-in - rendered
+  inline in the pager, decoded only on demand.
+- **Config as data.** Everything is TOML - themes with palette
+  indirection, declarative per-context keybindings (the help overlay
+  derives from the binding map), tag styles, glyphs.
 
 Status: M1 (mailbox view) and M2 (staged tag ops, send dialogue) are
-done, including the render-coalescing round. The cgo binding is the
-runtime backend (the batched walk closed the gap: 1.645s vs the CLI's
-1.534s on a 33k-thread inbox; the CLI survives behind `-tags cli`);
-the index is a materialized bbolt cache keyed by notmuch's revision.
+done. The cgo binding is the runtime backend (1.645s full walk vs the
+CLI's 1.534s on a 33k-thread inbox; the CLI survives behind `-tags
+cli`); the index is a materialized bbolt cache keyed by notmuch's
+revision. See [docs/faq](docs/faq.md) for what is and is not there yet.
 
-Keybindings: `o` opens a thread (marks it read), `p` previews it in a
-popup over the index without marking it read, `v` toggles the
-plain/html part view, `ctrl+u` shows the html part's raw source, `h`
-toggles the full raw header block (delivery headers included -
-Received, DKIM-Signature, SPF - not the curated from/date summary),
-`F` enters the easyjump link mode (see HTML rendering), `$` applies
-staged tag ops, `u` undoes them. The binding map is declarative per
-context; the help overlay (`?`) derives from it.
+## Quick start
+
+Requires a recent Go toolchain and libnotmuch (the default build links
+the cgo binding; `-tags cli` builds against the `notmuch` CLI instead,
+same code, one build tag away):
+
+```sh
+git clone git@github.com:fishman/notmutt.git
+cd notmutt/src
+go build -o ../notmutt .
+cd ..
+./notmutt
+```
+
+Config lives at `~/.config/notmutt/config.toml` (the built-in defaults
+in `src/config/base.toml` are the reference - search it first, the
+user file only overlays). See the [usage page](docs/usage.md) for the
+keybindings and configuration.
+
+Keybindings: `enter` opens a thread (marks it read), `P` previews it
+in a popup over the index without marking it read, `v` (in the pager)
+toggles the plain/html part view, `ctrl+u` (in the pager) shows the
+html part's raw source, `h` toggles the full raw header block
+(delivery headers included - Received, DKIM-Signature, SPF - not the
+curated from/date summary), `alt+i` loads remote images (see HTML
+rendering), `F` enters the easyjump link mode (see HTML rendering),
+`$` applies staged tag ops, `u` undoes them. The binding map is
+declarative per context; the help overlay (`?`) derives from it.
 
 ## Rendering
 
@@ -148,8 +195,14 @@ common mail shape. Layout is budgeted: wraps at 120 columns and caps
 at 5000 lines, so a hostile or broken doc cannot balloon the thread.
 
 Images render as placeholders - the bytes travel with the line and the
-TUI decodes them only on the render-images key (a privacy gate); remote
-image srcs are never fetched, so tracking pixels stay dead.
+TUI decodes them only on the load-remote-images key (alt+i, a privacy
+gate). Remote image srcs fetch on that key too, through the same gate:
+`[pager] image-protocol` selects the terminal protocol (sixel by
+default, kitty opt-in - most terminals do not speak kitty's graphics
+protocol), fetches are size-capped and time-bounded, and 1x1 tracking
+pixels drop unless `[pager] allow-tracking-images = true`. Note: tmux
+does not pass either image protocol through - images paint on a
+sixel-capable terminal outside tmux.
 
 The easyjump link mode (`F`): every link - an anchor href or a bare
 URL word - gets an inline [N] label, and the key input is just numbers

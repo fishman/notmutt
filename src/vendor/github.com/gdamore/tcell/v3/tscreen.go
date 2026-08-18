@@ -242,7 +242,7 @@ type tScreen struct {
 	noColor            bool
 	legacy             bool
 	hasClipboard       bool // true if OSC 52 reported via DA1
-	sixel              bool // true if the terminal reported sixel graphics (DA 4)
+	sixel              bool // true if the terminal reported sixel graphics (DA1, param 4)
 	finiOnce           sync.Once
 	initFiniLock       sync.Mutex
 	enterUrl           string

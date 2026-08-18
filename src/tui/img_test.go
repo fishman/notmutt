@@ -238,6 +238,27 @@ func TestDetectImageProtocol(t *testing.T) {
 	}
 }
 
+// TestDetectImageProtocolTmux pins the tmux path: tmux answers DA1
+// itself (build-time reply), so under tmux the tmux query is tried
+// first; the negotiation stays the fallback (both share the same build
+// flag, so they cannot genuinely disagree).
+func TestDetectImageProtocolTmux(t *testing.T) {
+	t.Setenv("TMUX", "x")
+	orig := tmuxSixel
+	defer func() { tmuxSixel = orig }()
+	tmuxSixel = func() bool { return true }
+	if got := detectImageProtocol(config.Default().Pager, stubCaps{}); got != "sixel" {
+		t.Fatalf("tmux with sixel support: got %q, want sixel", got)
+	}
+	tmuxSixel = func() bool { return false }
+	if got := detectImageProtocol(config.Default().Pager, stubCaps{sixel: true}); got != "sixel" {
+		t.Fatalf("query false + negotiated sixel: got %q, want sixel (fallback)", got)
+	}
+	if got := detectImageProtocol(config.Default().Pager, stubCaps{}); got != "" {
+		t.Fatalf("tmux without sixel: got %q, want empty", got)
+	}
+}
+
 func TestKittyEncode(t *testing.T) {
 	var buf bytes.Buffer
 	kittyEncode(&buf, testImg(600, 600))

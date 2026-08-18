@@ -7,8 +7,9 @@ package tui
 // + scaled + emitted to the terminal ONLY on the load-remote-images key
 // (privacy gate - the bytes stay inert until then) and only for the
 // visible window. Protocol: kitty opt-in via [pager] image-protocol
-// (env match), sixel when the engaged screen's DA negotiation reports
-// it; unsupported terminals keep the collapsed Alt row. The writer is
+// (env match), sixel via the engaged screen's DA negotiation (under
+// tmux a tmux query - tmux answers DA itself); unsupported terminals
+// keep the collapsed Alt row. The writer is
 // /dev/tty (the tcell screen cannot emit raw image protocols) and paint
 // runs AFTER the frame flush, so pixels never race the text.
 
@@ -22,6 +23,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"os/exec"
 	"strings"
 
 	"github.com/mattn/go-sixel"
@@ -45,9 +47,9 @@ var imageWriter io.Writer
 
 // detectImageProtocol picks the image protocol: kitty only when
 // [pager] image-protocol opts in and the kitty env matches; sixel when
-// the engaged screen's DA negotiation reported it (tmux relays its own
-// client detection, so the answer is correct through tmux). "" = no
-// image support.
+// the engaged screen's DA negotiation reported it (tmux answers DA1
+// itself with a build-time reply, so under tmux a tmux query replaces
+// the negotiation). "" = no image support.
 func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	if p.ImageProtocol == "kitty" {
 		if os.Getenv("KITTY_WINDOW_ID") != "" {
@@ -59,6 +61,9 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 		}
 		return ""
 	}
+	if os.Getenv("TMUX") != "" && tmuxSixel() {
+		return "sixel"
+	}
 	if s != nil && s.Sixel() {
 		return "sixel"
 	}
@@ -69,6 +74,13 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 // tcell Screen.Sixel seam; tests stub it).
 type sixelCapable interface {
 	Sixel() bool
+}
+
+// tmuxSixel asks tmux for its sixel support (the server format; tmux's
+// own DA1 reply to panes is fixed at build time and omits it).
+var tmuxSixel = func() bool {
+	out, err := exec.Command("tmux", "display", "-p", "#{sixel_support}").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "1"
 }
 
 // decodeImage decodes the raw image bytes and scales to the cell

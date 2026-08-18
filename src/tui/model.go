@@ -784,6 +784,15 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.previewCursorThread()
 		}
 	case "quit":
+		// staged ops are session-local: quitting discards them, so a
+		// pending buffer asks first - the confirm re-dispatches
+		// quit-confirmed, which bypasses this gate
+		if m.mode == "index" && m.view.HasStaged() {
+			m.dialogue = &confirmDialogue{label: "Discard staged changes and quit?", action: "quit-confirmed"}
+			return m, nil
+		}
+		return m, quitCmd()
+	case "quit-confirmed":
 		return m, quitCmd()
 	case "undo":
 		if m.undo() {

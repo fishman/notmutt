@@ -2037,6 +2037,32 @@ func TestSendArmsSeam(t *testing.T) {
 	}
 }
 
+func TestQuitConfirmDiscardsStaged(t *testing.T) {
+	m := model()
+	m.view.Stage("a", core.TagOp{Tag: "archive", Add: true})
+	m = press(t, m, "q")
+	if d, ok := m.dialogue.(*confirmDialogue); !ok || d.action != "quit-confirmed" {
+		t.Fatalf("q with staged ops must arm the quit confirm: %+v", m.dialogue)
+	}
+	m = press(t, m, "esc")
+	if m.dialogue != nil {
+		t.Fatalf("esc cancels the quit confirm: %+v", m.dialogue)
+	}
+	m = press(t, m, "q")
+	m = press(t, m, "enter")
+	if m.dialogue != nil {
+		t.Fatalf("enter confirms and closes the dialogue: %+v", m.dialogue)
+	}
+}
+
+func TestQuitSkipsConfirmWithoutStaged(t *testing.T) {
+	m := model()
+	m = press(t, m, "q")
+	if m.dialogue != nil {
+		t.Fatalf("plain quit must not arm a dialogue: %+v", m.dialogue)
+	}
+}
+
 func TestAbortConfirmDialogue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "q")

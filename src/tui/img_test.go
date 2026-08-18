@@ -169,7 +169,7 @@ func TestPagerVisibleImages(t *testing.T) {
 func TestDecodeImage(t *testing.T) {
 	// 400x900 px at an 80x30 window: the row budget binds first
 	// (aspect kept: 2/3), the pixel dims snap to exact cell multiples
-	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30)
+	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestDecodeImage(t *testing.T) {
 
 	// the same image in a 100-row window binds on the width instead:
 	// a tall chart renders at its natural aspect, not squashed
-	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 40 || rows != 45 {
@@ -190,7 +190,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// a wide image binds on the width cap
-	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80, 100); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80, 100, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 80 || rows != 1 {
@@ -198,7 +198,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// a tiny image still occupies one cell (no zero-size expansion)
-	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80, 100); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80, 100, 0, 0); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 1 || rows != 1 {
@@ -206,7 +206,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// garbage bytes never decode
-	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100); err == nil {
+	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100, 0, 0); err == nil {
 		t.Fatal("garbage must fail the decode")
 	}
 
@@ -217,15 +217,35 @@ func TestDecodeImage(t *testing.T) {
 	if err := jpeg.Encode(&jbuf, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, rows, err := decodeImage(jbuf.Bytes(), 80, 100); err != nil || cols != 40 || rows != 15 {
+	if _, cols, rows, err := decodeImage(jbuf.Bytes(), 80, 100, 0, 0); err != nil || cols != 40 || rows != 15 {
 		t.Fatalf("jpeg must decode at its aspect, got %dx%d err=%v", cols, rows, err)
 	}
 	var gbuf bytes.Buffer
 	if err := gif.Encode(&gbuf, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, rows, err := decodeImage(gbuf.Bytes(), 80, 100); err != nil || cols != 40 || rows != 15 {
+	if _, cols, rows, err := decodeImage(gbuf.Bytes(), 80, 100, 0, 0); err != nil || cols != 40 || rows != 15 {
 		t.Fatalf("gif must decode at its aspect, got %dx%d err=%v", cols, rows, err)
+	}
+
+	// a declared display size is the target: a 200x300 image declared
+	// 600x600 upscales to 600px wide (2x) - with no declaration the
+	// scale would cap at 1 and render 200px
+	if _, cols, rows, err = decodeImage(testPNG(t, 200, 300), 80, 100, 600, 600); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 40 || rows != 30 {
+		t.Fatalf("declared size must upscale the image, got %dx%d", cols, rows)
+	}
+
+	// the window cap still binds: a declared 10000px image cannot leave
+	// the view, and a one-axis declaration scales the other axis with
+	// it (aspect kept)
+	if _, cols, rows, err = decodeImage(testPNG(t, 400, 300), 80, 100, 10000, 0); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 80 || rows != 30 {
+		t.Fatalf("declared size must cap at the window, got %dx%d", cols, rows)
 	}
 }
 
@@ -760,7 +780,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 // the cleared page background visible (P2=0 paints them in the terminal's
 // default background), and the stream must round-trip to the same dims.
 func TestSixelEncodeTransparent(t *testing.T) {
-	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20)
+	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

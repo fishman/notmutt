@@ -4,7 +4,11 @@
 package mail
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +62,36 @@ func TestHTMLParseShapes(t *testing.T) {
 // text, never a label. The unlabeled render returns no links and
 // carries no labels - the labels are mode-scoped, never a permanent
 // decoration of the html view.
+// TestImageDeclaredSizes pins the email-declared display size (the
+// img width/height attrs or the style): the renderer carries it on
+// the image line and the decode targets it, so the mail's section
+// sizing and the rendered pixels agree. Percentages resolve against
+// the layout width; the style beats the presentation attributes.
+func TestImageDeclaredSizes(t *testing.T) {
+	var buf bytes.Buffer
+	png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 10, 10)))
+	src := "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+	body := "<img src=\"" + src + "\" width=\"600\" height=\"400\">\n" +
+		"<img src=\"" + src + "\" style=\"width: 50%; height: 300px\">\n" +
+		"<img src=\"" + src + "\">\n"
+	lines := RenderHTML(body, nil, 80)
+	var got [][2]int
+	for _, ln := range lines {
+		if ln.Image != nil {
+			got = append(got, [2]int{ln.Image.DispW, ln.Image.DispH})
+		}
+	}
+	want := [][2]int{{600, 400}, {400, 300}, {0, 0}}
+	if len(got) != len(want) {
+		t.Fatalf("want %d image lines, got %d", len(want), len(got))
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Fatalf("image %d: declared size %v, want %v", i, got[i], w)
+		}
+	}
+}
+
 func TestRenderHTMLLinks(t *testing.T) {
 	body := "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>" +
 		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n" +

@@ -385,7 +385,7 @@ func listMark(n int) string {
 // mode fetches them on the render-images key; never fetched here).
 func (w *htmlWalker) image(c *html.Node, st *styleProps) {
 	w.flush()
-	img := resolveImage(c, w.atts)
+	img := resolveImage(c, w.atts, w.width)
 	if img == nil {
 		w.addWord("[image]", st, false)
 		return
@@ -400,7 +400,7 @@ func (w *htmlWalker) image(c *html.Node, st *styleProps) {
 // cid: attachment or data: URI bytes, or a remote http(s) image as a
 // URL-only placeholder (Data stays empty - the fetch is the remote
 // mode's keypress-gated step).
-func resolveImage(c *html.Node, atts []Attachment) *core.Image {
+func resolveImage(c *html.Node, atts []Attachment, layoutCells int) *core.Image {
 	src := attr(c, "src")
 	var data []byte
 	var url string
@@ -425,14 +425,41 @@ func resolveImage(c *html.Node, atts []Attachment) *core.Image {
 	if alt == "" {
 		alt = "[image]"
 	}
-	return &core.Image{Data: data, URL: url, Alt: sanitize(alt)}
+	img := &core.Image{Data: data, URL: url, Alt: sanitize(alt)}
+	img.DispW, img.DispH = imgSize(c, layoutCells)
+	return img
+}
+
+// imgSize reads an <img>'s declared display size: the width/height
+// attributes or the style declarations. px numbers pass through;
+// percentages resolve against the layout width (the mail's section
+// sizing - a chart fills the space its layout reserves). 0 =
+// unspecified, the decode falls back to a window fit.
+func imgSize(c *html.Node, layoutCells int) (w, h int) {
+	decls := parseDecls(attr(c, "style"))
+	read := func(name string) int {
+		raw := decls[name]
+		if raw == "" {
+			raw = attr(c, name)
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(raw, "px"))); err == nil {
+			return n
+		}
+		if pct := strings.TrimSuffix(raw, "%"); pct != raw {
+			if n, err := strconv.Atoi(strings.TrimSpace(pct)); err == nil {
+				return n * layoutCells * 10 / 100
+			}
+		}
+		return 0
+	}
+	return read("width"), read("height")
 }
 
 // table renders a table as column-aligned rows (w3m's approach: pad
 // each column to its widest cell, wrapped at a per-column cap). Cell
 // content is extracted as word-lines, so styles survive into the rows.
 func (w *htmlWalker) table(t *html.Node, st *styleProps) {
-	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG)
+	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG, w.width)
 	if len(rows) == 0 {
 		return
 	}
@@ -592,14 +619,14 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 // lines (block boundaries and <br> inside a cell start a new line).
 // The HTML5 parser inserts an implicit tbody between the table and
 // its rows, so the row groups descend into it.
-func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string) [][][]cellLine {
+func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
 		if r.Type != html.ElementNode {
 			continue
 		}
 		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
-			rows = append(rows, cellRows(r, st, rules, links, labelLinks, defaultBG)...)
+			rows = append(rows, cellRows(r, st, rules, links, labelLinks, defaultBG, layoutCells)...)
 			continue
 		}
 		if r.Data != "tr" {
@@ -610,7 +637,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
 				continue
 			}
-			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks, defaultBG))
+			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks, defaultBG, layoutCells))
 		}
 		if len(cells) > 0 {
 			rows = append(rows, cells)
@@ -629,7 +656,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 // inside the row - never re-aligns a line. Link mode (labelLinks)
 // labels anchors and bare URLs inside cells like the main walk - the
 // layout-table era wraps every link in a td.
-func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string) []cellLine {
+func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
 	var out []cellLine
 	var cur []word
 	align := ""
@@ -696,7 +723,7 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					// line); an inline image (the icon rows) joins its
 					// line's words - the placeholder run rides the
 					// word, the row keeps the mail's one-line layout
-					if img := resolveImage(c, nil); img != nil {
+					if img := resolveImage(c, nil, layoutCells); img != nil {
 						if cs.display != "block" {
 							cur = append(cur, word{text: img.Alt, st: cs, img: img})
 							break

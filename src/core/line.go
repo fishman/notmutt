@@ -62,6 +62,11 @@ type Image struct {
 	Alt  string
 	Cols int
 	Rows int
+	// DispW/DispH are the email's declared display size in pixels (the
+	// img width/height attrs or style; 0 = unspecified). The decode
+	// targets it - the mail sizes its sections for this size.
+	DispW int
+	DispH int
 }
 
 // Line is one pager render line: the text plus the style kind. All text

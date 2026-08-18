@@ -140,12 +140,14 @@ var tmuxSixel = func() bool {
 // decodeImage decodes the raw image bytes and scales to the cell
 // grid: at most widthCells (capped at imgMaxCols) wide and heightRows
 // tall, aspect preserved, then snapped UP to exact cell multiples so
-// the pixel dims align with the terminal's cells. The row budget is
-// the pager window's height: a chart renders at its natural aspect
-// (a fixed row cap squashed wide images to a small rectangle), and no
-// image ever occupies more than one window. Returns the scaled image
+// the pixel dims align with the terminal's cells. dispW/dispH are the
+// email's declared display size in pixels (0 = unspecified): the
+// declared axis is the target scale - an email that sizes its section
+// for a 600px chart gets a 600px chart, capped by the window so the
+// paint never leaves the visible area. With no declared size the scale
+// caps at 1 (natural size, never upscale). Returns the scaled image
 // (always NRGBA) plus its cell dims.
-func decodeImage(data []byte, widthCells, heightRows int) (image.Image, int, int, error) {
+func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.Image, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, err
@@ -161,7 +163,13 @@ func decodeImage(data []byte, widthCells, heightRows int) (image.Image, int, int
 	}
 	sw, sh := float64(src.Bounds().Dx()), float64(src.Bounds().Dy())
 	scale := math.Min((float64(widthCells)*float64(imgCellW))/sw, (float64(heightRows)*float64(imgCellH))/sh)
-	if scale > 1 {
+	if dispW > 0 {
+		scale = math.Min(scale, float64(dispW)/sw)
+	}
+	if dispH > 0 {
+		scale = math.Min(scale, float64(dispH)/sh)
+	}
+	if scale > 1 && dispW == 0 && dispH == 0 {
 		scale = 1
 	}
 	cols := int(sw * scale / float64(imgCellW))
@@ -314,7 +322,7 @@ func (m *Model) prepareImages() {
 		if _, ok := m.imgCache[img]; ok {
 			continue
 		}
-		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height)
+		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height, img.DispW, img.DispH)
 		if err != nil {
 			continue
 		}

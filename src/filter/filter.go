@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 // Package filter is the classification engine (R2): it turns the
 // lastmod delta (the changed messages between two revisions) into tag
 // ops through the declarative rule set. The muttrc post-new hook and

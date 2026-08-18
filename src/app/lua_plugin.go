@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 //go:build lua
 
 // The Lua plugin layer (R8, decision record 20): plugin files from

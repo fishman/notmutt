@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 package mail
 
 // CSS subset engine (docs/html-rendering-analysis.md): parses inline

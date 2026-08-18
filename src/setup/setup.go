@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 // Package setup detects the accounts on disk by their folder
 // structure and generates the accounts config (the `notmutt setup`
 // subcommand). Detection is template-driven: a template names each

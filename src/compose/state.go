@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 // Package compose is the send/reply dialogue state machine (R4): pure
 // Go - no UI code, no notmuch handle (R5). The tui renders it, the
 // app runs its sends; the state survives pauses (tab parking, editor

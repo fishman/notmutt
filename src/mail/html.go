@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 package mail
 
 // The HTML flow renderer (docs/html-rendering-analysis.md): x/net/html

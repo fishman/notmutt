@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 package tui
 
 // The load-remote-images pipeline: image lines stay collapsed

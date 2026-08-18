@@ -1,3 +1,6 @@
+// Copyright 2026 Reza Jelveh
+// SPDX-License-Identifier: Apache-2.0
+
 // Package mail is the content pipeline: it opens message files with
 // go-message (R6) and produces F1-clean render lines. The TUI never
 // touches mail files - parse and sanitize happen here, at the mail

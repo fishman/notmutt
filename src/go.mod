@@ -4,7 +4,7 @@ go 1.26.5
 
 require (
 	charm.land/lipgloss/v2 v2.0.5
-	github.com/BurntSushi/toml v1.4.0
+	github.com/BurntSushi/toml v1.6.0
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928
@@ -16,6 +16,7 @@ require (
 	github.com/yuin/gopher-lua v1.1.2
 	go.etcd.io/bbolt v1.3.11
 	golang.org/x/net v0.58.0
+	golang.org/x/text v0.41.0
 )
 
 // vendored build input: the fishman fork (notmuch/bindings/go.notmuch in
@@ -41,6 +42,7 @@ require (
 	github.com/mattn/go-sixel v0.0.12 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
+	github.com/nicksnyder/go-i18n/v2 v2.6.1 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/sergeymakinen/go-bmp v1.0.0 // indirect
 	github.com/sergeymakinen/go-ico v1.0.0-beta.0 // indirect
@@ -51,5 +53,4 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 )

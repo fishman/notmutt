@@ -8,7 +8,7 @@ git.sr.ht/~jackmordaunt/go-toast/internal/winrt/data/xml/dom
 git.sr.ht/~jackmordaunt/go-toast/internal/winrt/ui/notifications
 git.sr.ht/~jackmordaunt/go-toast/tmpl
 git.sr.ht/~jackmordaunt/go-toast/wintoast
-# github.com/BurntSushi/toml v1.4.0
+# github.com/BurntSushi/toml v1.6.0
 ## explicit; go 1.18
 github.com/BurntSushi/toml
 github.com/BurntSushi/toml/internal
@@ -90,6 +90,8 @@ github.com/muesli/cancelreader
 # github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 ## explicit
 github.com/nfnt/resize
+# github.com/nicksnyder/go-i18n/v2 v2.6.1
+## explicit; go 1.24.0
 # github.com/rivo/uniseg v0.4.7
 ## explicit; go 1.18
 github.com/rivo/uniseg

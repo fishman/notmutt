@@ -400,6 +400,19 @@ func TestLoadInvalidEnum(t *testing.T) {
 	}
 }
 
+func TestLoadUILanguage(t *testing.T) {
+	cfg, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nlanguage = \"de\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Language != "de" {
+		t.Fatalf("language = %q", cfg.UI.Language)
+	}
+	if _, err := Load(write(t, "\n[ui]\nlanguage = \"not a language\"\n")); err == nil {
+		t.Fatal("expected error for invalid language tag")
+	}
+}
+
 func TestLoadDefaultsWhenMissing(t *testing.T) {
 	cfg, err := Load(t.TempDir())
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/BurntSushi/toml"
+	"golang.org/x/text/language"
 
 	"notmutt/core"
 )
@@ -164,8 +165,11 @@ type Lua struct {
 
 type UI struct {
 	Keymap string `toml:"keymap"`
-	Tags   UITags `toml:"tags"`
-	Glyphs Glyphs `toml:"glyphs"`
+	// Language selects the interface language: "auto" resolves from
+	// LANG/LC_MESSAGES at startup, or a BCP 47 tag pins one ("de").
+	Language string `toml:"language"`
+	Tags     UITags `toml:"tags"`
+	Glyphs   Glyphs `toml:"glyphs"`
 }
 
 // Refresh is the [refresh] section: the periodic new-mail poll (R2/R3).
@@ -950,7 +954,8 @@ func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[st
 func Default() Config {
 	cfg := Config{
 		UI: UI{
-			Keymap: "vim",
+			Keymap:   "vim",
+			Language: "auto",
 			Tags: UITags{
 				Max:       2,
 				Attach:    "attachment",
@@ -1231,6 +1236,11 @@ func mergeMaps(a, b map[string]any) map[string]any {
 func validate(cfg Config) error {
 	if _, ok := baseConfig.Schemes[cfg.UI.Keymap]; !ok {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", cfg.UI.Keymap)
+	}
+	if lang := cfg.UI.Language; lang != "" && lang != "auto" {
+		if _, err := language.Parse(lang); err != nil {
+			return fmt.Errorf("ui.language: must be \"auto\" or a BCP 47 tag, got %q", lang)
+		}
 	}
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)

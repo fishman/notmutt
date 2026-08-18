@@ -15,6 +15,13 @@
 # and paging keys (j/k, arrows, g g/G, enter, page keys) stay
 # unmarked.
 
+[ui]
+# keybinding scheme: vim (default) or emacs
+keymap = "vim"
+# interface language: "auto" resolves from LANG/LC_MESSAGES at
+# startup, or a BCP 47 tag ("de", "en-US") pins one
+language = "auto"
+
 [tag-actions]
 "toggle-read" = "unread"
 "archive" = "archive"

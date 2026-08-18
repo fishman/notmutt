@@ -7,7 +7,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
-	github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928
+	github.com/fishman/go.notmuch v0.40.0
 	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/gen2brain/beeep v0.11.2
 	github.com/godbus/dbus/v5 v5.1.0
@@ -18,11 +18,6 @@ require (
 	golang.org/x/net v0.58.0
 	golang.org/x/text v0.41.0
 )
-
-// vendored build input: the fishman fork (references/go.notmuch in
-// this workspace), pinned by the workspace checkout's git history; never
-// fetched from the proxy.
-replace github.com/fishman/go.notmuch => ../references/go.notmuch
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect

@@ -50,7 +50,7 @@ github.com/emersion/go-message/textproto
 # github.com/esiqveland/notify v0.13.3
 ## explicit; go 1.13
 github.com/esiqveland/notify
-# github.com/fishman/go.notmuch v0.0.0-20260815164219-528176721928 => ../references/go.notmuch
+# github.com/fishman/go.notmuch v0.40.0
 ## explicit; go 1.23
 github.com/fishman/go.notmuch
 # github.com/gdamore/encoding v1.0.1
@@ -165,4 +165,3 @@ golang.org/x/text/internal/utf8internal
 golang.org/x/text/language
 golang.org/x/text/runes
 golang.org/x/text/transform
-# github.com/fishman/go.notmuch => ../references/go.notmuch

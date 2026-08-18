@@ -2901,6 +2901,55 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	}
 }
 
+// TestComposeCursorIndexMarker pins the compose cursor: the focused
+// attachment row renders the index's selection marker - one
+// indicator-styled cell at the line start (ui.Glyphs.Cursor), never a
+// full-line highlight.
+func TestComposeCursorIndexMarker(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	if m.formIdx != 8 {
+		t.Fatalf("a fresh dialogue must land on the message-text row, formIdx = %d", m.formIdx)
+	}
+	row := ""
+	for _, l := range strings.Split(m.render(), "\n") {
+		if strings.Contains(stripANSI(l), "- I ") {
+			row = l
+			break
+		}
+	}
+	if row == "" {
+		t.Fatal("the message-text row must render")
+	}
+	// padRow wraps the line in the row style, so the marker run sits
+	// right after the outer open - the index's exact marker: the cursor
+	// glyph in the indicator style, one cell at the line start
+	marker := m.styles.sgr.normal.open + m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor)
+	if !strings.HasPrefix(row, marker) {
+		t.Fatalf("the focused row must start with the index cursor marker:\n%s", row)
+	}
+	if got := strings.Count(row, m.styles.sgr.indicator.open); got != 1 {
+		t.Fatalf("the indicator style must appear once (the marker cell), got %d:\n%s", got, row)
+	}
+	if !strings.Contains(row, m.styles.sgr.normal.open) {
+		t.Fatalf("the row content must keep the normal style (no full-line highlight):\n%s", row)
+	}
+
+	// j moves onto the first attachment - the marker travels with the
+	// cursor slot, the message-text row loses it
+	m.tabs[0].Attachments = []compose.Attachment{{Name: "x.txt", Size: 3}}
+	m = press(t, m, "j")
+	if m.formIdx != 9 {
+		t.Fatalf("j must move onto the first attachment, formIdx = %d", m.formIdx)
+	}
+	for _, l := range strings.Split(m.render(), "\n") {
+		if strings.Contains(stripANSI(l), "- I ") && strings.Contains(l, m.styles.sgr.indicator.open) {
+			t.Fatalf("the message-text row must lose the marker after j:\n%s", l)
+		}
+	}
+}
+
 // TestTabBarStrip pins the tab strip: the mail surface tab and every
 // dialogue, the active one highlighted, subjects F1-sanitized, the
 // strip padded to the full width (R11 slot reservation).

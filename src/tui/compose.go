@@ -88,12 +88,15 @@ func (m *Model) renderCompose() string {
 		if f.divider {
 			outer = m.styles.ComposeDivider
 		}
-		if f.slot == m.formIdx {
-			outer = m.styles.Indicator
-		}
 		line := f.text
 		if f.label != "" {
 			line = composeLabel(f.label, f.value, labelW, m.width, m.styles)
+		}
+		if f.slot == m.formIdx {
+			// the cursor is the index's selection marker: one
+			// indicator-styled cell at the line start (the same style
+			// as the index rows), never a full-line highlight
+			line = m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor) + truncateStyled(line, m.width-1)
 		}
 		b.WriteString(padRow(line, m.width, outer))
 		b.WriteByte('\n')

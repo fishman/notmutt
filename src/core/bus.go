@@ -211,6 +211,11 @@ const (
 	RenderPlain RenderMode = iota
 	RenderHTML
 	RenderSource
+	// RenderAuto is the open key's default: the app resolves it per
+	// sender domain ([pager] default-views) before publishing - the
+	// sentinel never rides the bus, the reply always carries the
+	// resolved view.
+	RenderAuto
 )
 
 type ThreadLoaded struct {

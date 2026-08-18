@@ -121,6 +121,7 @@ type Config struct {
 	// appended as the final argv element (F4 - argv only, never
 	// shell-interpolated). Empty = xdg-open.
 	Opener  []string                                 `toml:"opener"`
+	Pager   Pager                                    `toml:"pager"`
 	Palette Palette                                  `toml:"palette"`
 	Theme   Theme                                    `toml:"theme"`
 	Schemes map[string]map[string]map[string]Binding `toml:"schemes"`
@@ -135,6 +136,15 @@ type Config struct {
 // stay inert until listed). Empty = built-in templates only.
 type Setup struct {
 	Templates []string `toml:"templates"`
+}
+
+// Pager is the [pager] table: per-sender-domain default views. The
+// open key resolves the thread's sender domain against DefaultViews
+// and opens in the mapped view; unmapped domains keep the plain
+// default. The v toggle and the F/ctrl+u keys always request explicit
+// views, never the map.
+type Pager struct {
+	DefaultViews map[string]string `toml:"default-views"`
 }
 
 // Lua configures the Lua plugin layer (R8): Tags is the config-level
@@ -1233,6 +1243,14 @@ func validate(cfg Config) error {
 	}
 	if len(cfg.Opener) > 0 && strings.TrimSpace(cfg.Opener[0]) == "" {
 		return fmt.Errorf("opener: argv must not be empty")
+	}
+	for d, v := range cfg.Pager.DefaultViews {
+		if strings.TrimSpace(d) == "" {
+			return fmt.Errorf("pager.default-views: empty domain")
+		}
+		if v != "plain" && v != "html" {
+			return fmt.Errorf("pager.default-views.%s: must be plain or html, got %q", d, v)
+		}
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)

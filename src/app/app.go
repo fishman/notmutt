@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	netmail "net/mail"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,10 @@ func Run() error {
 	// for the popup. The headers flag is the h key: the render includes
 	// the full header block.
 	tui.SetOpenHandler(func(threadID string, preview, headers bool, width int) {
-		go openThread(worker, bus, threadID, preview, core.RenderPlain, headers, width, false)
+		// RenderAuto: the open default resolves per sender domain
+		// ([pager] default-views) once the thread's messages are in
+		// hand - the domain is message data, only the fetch has it
+		go openThread(worker, bus, threadID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
 	})
 
 	// the render toggle (the v key in the pager), the source view
@@ -123,9 +127,10 @@ func Run() error {
 	// with the other view - the worker refetches the thread (the open
 	// job is the render owner, R13; the TUI never renders). labelLinks
 	// is the F key: the renderer prefixes every link with its "[N]"
-	// label and the target list rides the reply.
+	// label and the target list rides the reply. The explicit modes
+	// never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks)
+		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks, nil)
 	})
 
 	// the remote image fetch (the render-images remote mode): http(s)
@@ -299,7 +304,7 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // the refresh cycle reconciles it into the view). The tag failure
 // keeps the thread open - the fetch already succeeded - and surfaces
 // as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool) {
+func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
@@ -308,6 +313,9 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 	if rpl.Err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
 		return
+	}
+	if mode == core.RenderAuto {
+		mode = openViewMode(defViews, rpl.Msgs)
 	}
 	lines, mime, links, err := mail.RenderThread(rpl.Msgs, mode, headers, width, labelLinks)
 	if err != nil {
@@ -326,6 +334,35 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", threadID, err, rpl.Err)})
 		}
 	}
+}
+
+// openViewMode resolves the open key's default view for a thread: the
+// sender domain's configured default ([pager] default-views), plain
+// otherwise. The thread's first message is the thread identity - a
+// mapped domain's thread opens in that domain's view.
+func openViewMode(defViews map[string]string, msgs []core.Message) core.RenderMode {
+	if len(msgs) > 0 && defViews != nil {
+		if d := senderDomain(msgs[0].Author); d != "" {
+			if v, ok := defViews[d]; ok && v == "html" {
+				return core.RenderHTML
+			}
+		}
+	}
+	return core.RenderPlain
+}
+
+// senderDomain extracts the address part's domain, lowercased (the
+// lookup is case-insensitive); an unparseable From has no domain and
+// keeps the plain default.
+func senderDomain(from string) string {
+	a, err := netmail.ParseAddress(from)
+	if err != nil || a.Address == "" {
+		return ""
+	}
+	if _, d, ok := strings.Cut(a.Address, "@"); ok {
+		return strings.ToLower(d)
+	}
+	return ""
 }
 
 // runRefresher is the refresh loop: the poll ticker refreshes the view

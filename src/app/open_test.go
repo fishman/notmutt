@@ -17,7 +17,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -45,7 +45,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", true, core.RenderPlain, false, 0, false)
+	openThread(fw, bus, "t1", true, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -61,6 +61,40 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	}
 }
 
+// TestOpenViewMode pins the open key's per-domain default view: a
+// sender domain mapped to html opens in the html view, plain and
+// unmapped domains keep the plain default, the lookup is
+// case-insensitive (the From string is display text), and an
+// unparseable From has no domain. An empty message set keeps the
+// plain default - the domain is message data, only the fetch has it.
+func TestOpenViewMode(t *testing.T) {
+	defs := map[string]string{"alpha.example.com": "html", "atlas.example.com": "plain"}
+	cases := []struct {
+		name string
+		from string
+		want core.RenderMode
+	}{
+		{"mapped html", "Alpha <a@alpha.example.com>", core.RenderHTML},
+		{"mapped plain", "Atlas <a@atlas.example.com>", core.RenderPlain},
+		{"unknown domain", "Sender <sender@example.com>", core.RenderPlain},
+		{"case-insensitive", "Alpha <a@ALPHA.EXAMPLE.COM>", core.RenderHTML},
+		{"unparseable", "not an address", core.RenderPlain},
+		{"bare address", "bare@alpha.example.com", core.RenderHTML},
+	}
+	for _, c := range cases {
+		msgs := []core.Message{{ID: "a", ThreadID: "t1", Author: c.from}}
+		if got := openViewMode(defs, msgs); got != c.want {
+			t.Errorf("%s: openViewMode = %v, want %v", c.name, got, c.want)
+		}
+	}
+	if got := openViewMode(defs, nil); got != core.RenderPlain {
+		t.Fatalf("no messages must keep the plain default, got %v", got)
+	}
+	if got := openViewMode(nil, []core.Message{{Author: "a@alpha.example.com"}}); got != core.RenderPlain {
+		t.Fatalf("no config must keep the plain default, got %v", got)
+	}
+}
+
 // TestOpenThreadTagFailureKeepsOpen pins the failure surface: a failed
 // mark-read (lock timeout) must not lose the open - ThreadLoaded still
 // publishes, the JobError reports the tag.
@@ -71,7 +105,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false)
+	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:

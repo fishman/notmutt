@@ -243,6 +243,38 @@ opener = [""]
 	}
 }
 
+// TestLoadPagerDefaultViews pins the [pager] default-views table: the
+// open key resolves the thread's sender domain against it (html opens
+// in the html view, plain keeps the default). Both values load;
+// anything else is a load error naming the domain.
+func TestLoadPagerDefaultViews(t *testing.T) {
+	cfg, err := Load(write(t, `
+[pager]
+default-views = { "alpha.example.com" = "html", "atlas.example.com" = "plain" }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := cfg.Pager.DefaultViews["alpha.example.com"]; v != "html" {
+		t.Fatalf("alpha.example.com = %q, want html", v)
+	}
+	if v := cfg.Pager.DefaultViews["atlas.example.com"]; v != "plain" {
+		t.Fatalf("atlas.example.com = %q, want plain", v)
+	}
+}
+
+func TestLoadPagerDefaultViewsInvalid(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"bad value", `default-views = { "alpha.example.com" = "markdown" }`},
+		{"empty domain", `default-views = { "" = "html" }`},
+	} {
+		_, err := Load(write(t, "[pager]\n"+tc.body+"\n"))
+		if err == nil || !strings.Contains(err.Error(), "default-views") {
+			t.Fatalf("%s: must error naming default-views, got: %v", tc.name, err)
+		}
+	}
+}
+
 func TestLoadNotify(t *testing.T) {
 	cfg, err := Load(write(t, `
 [notify]

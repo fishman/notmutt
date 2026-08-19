@@ -4813,9 +4813,10 @@ func TestFilePickerTypedPath(t *testing.T) {
 
 // TestFilePickerStateRoundTrip pins the last-dir persistence: the
 // chooser's directory survives a restart (saved on the quit path,
-// loaded at model start), and a dead saved dir is ignored.
+// loaded at model start), and the state file degrades to defaults on
+// a dead dir or corrupt content.
 func TestFilePickerStateRoundTrip(t *testing.T) {
-	state := filepath.Join(t.TempDir(), "last-dir")
+	state := filepath.Join(t.TempDir(), "state.toml")
 	SetFileDirState(state)
 	t.Cleanup(func() { SetFileDirState("") })
 
@@ -4834,6 +4835,9 @@ func TestFilePickerStateRoundTrip(t *testing.T) {
 	if m.fileDir != root {
 		t.Fatalf("fileDir = %q", m.fileDir)
 	}
+	if b, _ := os.ReadFile(state); !strings.Contains(string(b), "[chooser]") || !strings.Contains(string(b), "last-dir") {
+		t.Fatalf("the state file must be TOML: %q", b)
+	}
 
 	m2 := openDialogue(t, model(), "t1")
 	if m2.fileDir != root {
@@ -4845,9 +4849,20 @@ func TestFilePickerStateRoundTrip(t *testing.T) {
 		t.Fatalf("a restart must browse the saved dir: %+v", m2.dialogue)
 	}
 
-	SetFileDirState(filepath.Join(t.TempDir(), "gone"))
+	writeState := func(body string) {
+		if err := os.WriteFile(state, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a dead saved dir is ignored
+	writeState("[chooser]\nlast-dir = \"" + filepath.Join(t.TempDir(), "gone") + "\"\n")
 	if m3 := model(); m3.fileDir != "" {
 		t.Fatalf("a dead saved dir must not seed the picker: %q", m3.fileDir)
+	}
+	// corrupt content degrades to defaults, never a startup error
+	writeState("not toml [[[")
+	if m4 := model(); m4.fileDir != "" {
+		t.Fatalf("corrupt state must not seed the picker: %q", m4.fileDir)
 	}
 }
 

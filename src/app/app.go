@@ -294,7 +294,7 @@ func Run() error {
 		<-ctx.Done()
 		close(quitCh)
 	}()
-	tui.SetFileDirState(filepath.Join(stateDir(), "last-dir"))
+	tui.SetFileDirState(filepath.Join(stateDir(), "state.toml"))
 	return tui.Run(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), quitCh)
 }
 

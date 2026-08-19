@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/BurntSushi/toml"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
 
@@ -3587,8 +3588,19 @@ func defaultChooser(cmds []AttachCommand) string {
 	return cmds[0].Name
 }
 
-// fileDirState is the persisted last chooser directory: the app
-// resolves the path (empty in tests disables persistence).
+// stateFile is the persisted client state (XDG state dir): the
+// chooser's last directory. TOML like config (same parser, vendored
+// for config), but load is LENIENT - state is machine-written, a
+// corrupt file degrades to defaults, never a startup error (config's
+// strict load exists for human typos, state has no user to correct).
+type stateFile struct {
+	Chooser struct {
+		LastDir string `toml:"last-dir"`
+	} `toml:"chooser"`
+}
+
+// fileDirState is the state file path: the app resolves it (empty in
+// tests disables persistence).
 var fileDirState string
 
 func SetFileDirState(path string) {
@@ -3605,7 +3617,11 @@ func loadFileDirState() string {
 	if err != nil {
 		return ""
 	}
-	p := strings.TrimSpace(string(b))
+	var sf stateFile
+	if err := toml.Unmarshal(b, &sf); err != nil {
+		return ""
+	}
+	p := sf.Chooser.LastDir
 	if st, err := os.Stat(p); err != nil || !st.IsDir() {
 		return ""
 	}
@@ -3614,7 +3630,9 @@ func loadFileDirState() string {
 
 // saveFileDirState persists the chooser's directory on quit (the
 // runLoop defer sees the final model); a failed write just loses the
-// position.
+// position. The write is atomic (same-dir temp + rename): a full
+// disk mid-write fails the temp and the old state survives, the
+// target is never truncated.
 func saveFileDirState(m Model) {
 	if fileDirState == "" || m.fileDir == "" {
 		return
@@ -3622,7 +3640,17 @@ func saveFileDirState(m Model) {
 	if err := os.MkdirAll(filepath.Dir(fileDirState), 0700); err != nil {
 		return
 	}
-	os.WriteFile(fileDirState, []byte(m.fileDir+"\n"), 0600)
+	var sf stateFile
+	sf.Chooser.LastDir = m.fileDir
+	b, err := toml.Marshal(sf)
+	if err != nil {
+		return
+	}
+	tmp := fileDirState + ".tmp"
+	if err := os.WriteFile(tmp, b, 0600); err != nil {
+		return
+	}
+	os.Rename(tmp, fileDirState)
 }
 
 // filePicker builds the built-in fallback chooser: a fuzzy picker

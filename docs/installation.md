@@ -46,6 +46,110 @@ edit.
 Configuration is strict by design: unknown keys are load errors, not
 silently ignored typos.
 
+## Transport: mbsync and msmtp
+
+notmutt is a front-end: it never talks IMAP or SMTP itself (see the
+non-goals). Delivery in is mbsync (or vdirsyncer), delivery out is
+msmtp (or any mutt-compatible sendmail). The client reads the
+maildirs mbsync writes and calls the send command with the message
+on stdin. The reference setup ships in this repository -
+`references/.mbsyncrc` and `references/.msmtprc` are the live
+working shape: copy them, edit, and use them as the template for
+every additional account.
+
+### Receive: mbsync
+
+One account is three blocks: an IMAPStore (the remote side), a
+MaildirStore (the local maildir), and a Channel wiring them
+together:
+
+```ini
+IMAPStore your.email@gmail.com-remote
+PipelineDepth 3
+Host imap.gmail.com
+Port 993
+User your.email@gmail.com
+PassCmd "oama access your.email@gmail.com"
+AuthMechs XOAUTH2
+TLSType IMAPS
+CertificateFile /etc/ssl/certs/ca-certificates.crt
+
+MaildirStore your.email@gmail.com-local
+Subfolders Verbatim
+Path /home/you/Mail/gmail/
+Inbox /home/you/Mail/gmail/INBOX
+
+Channel your.email@gmail.com
+Expunge Both
+Far :your.email@gmail.com-remote:
+Near :your.email@gmail.com-local:
+Patterns INBOX "[Gmail]/Drafts" "[Gmail]/Sent Mail" "[Gmail]/Spam" "[Gmail]/Trash" Archives Pending
+Create Both
+SyncState *
+MaxMessages 0
+ExpireUnread no
+```
+
+The points that matter to notmutt:
+
+- The MaildirStore `Path` is the account root. notmutt's setup
+  detection walks these roots, so every account needs its own
+  directory (`~/Mail/<account>/`) and its own store/channel block
+  trio, named by the account.
+- `Subfolders Verbatim` keeps the provider's real folder names
+  (`[Gmail]/Drafts`, ...) as subdirectories. Setup's provider
+  detection and the client's folder rules match against exactly
+  those names - do not rename them away.
+- `PassCmd` runs a command that prints the credential on stdout;
+  nothing secret sits in the config. The reference uses `oama` (an
+  OAuth token helper) with `AuthMechs XOAUTH2` - the Gmail shape.
+  App passwords work the same way: `PassCmd "echo ..."` is the
+  mechanism, oama is just the reference's command.
+- `Patterns` lists the folders to mirror. Everything the client's
+  tag pipeline classifies (see the mail concept) must be mirrored;
+  the Gmail special folders are the bracketed names above.
+
+Index once, before the client ever runs:
+
+```sh
+notmuch new
+```
+
+### Send: msmtp
+
+msmtp is a mutt-compatible sendmail: it reads the message on stdin,
+authenticates, and hands it to the server. The reference
+`references/.msmtprc` shows the shape:
+
+```ini
+defaults
+auth on
+tls on
+logfile ~/.msmtp.log
+
+account gmail
+host smtp.gmail.com
+from your.email@gmail.com
+user your.email@gmail.com
+port 587
+auth oauthbearer
+passwordeval "oama access your.email@gmail.com"
+tls_trust_file /etc/ssl/certs/ca-certificates.crt
+```
+
+The contract with notmutt: the client runs the configured `[send]
+command` (default `msmtp`) with the envelope recipients as argv and
+the assembled message on stdin, and msmtp picks the account from
+the message's From header (its `--read-envelope-from` default).
+That is what makes per-account sending seamless: choose the sender
+in the compose dialogue (`A`), the From header follows, msmtp
+routes. One account block per address, `from` and `user` matching
+the account's From address.
+
+Like mbsync, the credential is a command, never plaintext:
+`passwordeval` runs it and reads stdout (oama again for the Gmail
+OAuth case). `tls_trust_file` is your distribution's CA bundle.
+
 ## Accounts
 
 Run `notmutt setup` once after indexing your mail. It walks the

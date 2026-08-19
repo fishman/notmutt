@@ -126,3 +126,22 @@ staged state immediately, notmuch is untouched. `$` applies the
 buffer (one batch per message); `u` discards the cursor message's
 staged ops. Staged state is session-local and lost on exit - apply
 before you quit.
+
+### Filters
+
+The classification pipeline (folder tags, header rules, physical
+moves) runs on every poll - the `=` key, the automatic interval, or
+the headless `notmutt poll`. During the current testing period
+every filter op is dry-run by default: the run computes and reports
+the full diff (tag changes, moves), writes nothing, and never
+touches your mailbox. When you trust the rules, flip the config:
+
+```toml
+[filter]
+enabled = true
+dry-run = false
+```
+
+`notmutt poll --apply` runs one live pass on demand, overriding the
+dry-run config for that run only and leaving the file untouched -
+the review flow: read a dry-run report, then apply.

@@ -5034,12 +5034,12 @@ func threadChain(n int) []*core.Message {
 	return chain
 }
 
-// TestPageDownContinuesThread pins the page-down continuation (the
-// pgdown key): while the cursor's thread still has rows hidden below
-// the tree window, a page advances the window one chunk and re-anchors
-// at the thread start - the "+N more" tail scrolls through page by
-// page. The page past the tail crosses into the next thread normally.
-func TestPageDownContinuesThread(t *testing.T) {
+// TestPageDownPagesPlainly pins the plain pgdown flip: a page is a
+// counted move through the windowed thread, never a re-anchor at the
+// thread head - the walk reveals the next chunk under the cursor and
+// the page keeps its offset (the tree window slides, the offset does
+// not snap). The second page crosses into the next thread normally.
+func TestPageDownPagesPlainly(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
 		core.NewThread("t0", threadChain(40)),
@@ -5055,29 +5055,20 @@ func TestPageDownContinuesThread(t *testing.T) {
 		return r.Msg.ID
 	}
 	m = press(t, m, "pgdown")
-	if cursorID() != "m11" || m.indexOffset != 0 {
-		t.Fatalf("the page must continue the thread at m11, got %s @ offset %d", cursorID(), m.indexOffset)
+	if cursorID() != "m22" || m.indexOffset != 0 {
+		t.Fatalf("a page must walk the window without re-anchoring, got %s @ offset %d", cursorID(), m.indexOffset)
 	}
 	m = press(t, m, "pgdown")
-	if cursorID() != "m21" {
-		t.Fatalf("the second page must reach m21, got %s", cursorID())
-	}
-	m = press(t, m, "pgdown")
-	if cursorID() != "m31" {
-		t.Fatalf("the third page must reach m31, got %s", cursorID())
-	}
-	// the tail chunk is exhausted: the next page crosses into t1
-	m = press(t, m, "pgdown")
-	if cursorID() != "other" {
-		t.Fatalf("the page past the tail must cross into the next thread, got %s", cursorID())
+	if cursorID() != "other" || m.indexOffset != 0 {
+		t.Fatalf("the second page must cross into the next thread, got %s @ offset %d", cursorID(), m.indexOffset)
 	}
 }
 
-// TestPageDownFoldThread pins the fold rule: when a truncated thread's
-// window end sits at the view's bottom edge, the page re-anchors at
-// that thread's continuation - the interrupted thread starts the new
-// page, and the overflow indicator shows its remaining tail.
-func TestPageDownFoldThread(t *testing.T) {
+// TestPageDownFoldKeepsPlainFlip pins the fold's plain page: when a
+// truncated thread's window end sits at the view's bottom edge, a page
+// still walks through the window - the cursor crosses the fold and
+// continues into the revealed rows, no re-anchor at the thread head.
+func TestPageDownFoldKeepsPlainFlip(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
 		core.NewThread("t0", []*core.Message{{ID: "x1", Timestamp: 2}, {ID: "x2", Timestamp: 1, References: []string{"x1"}}}),
@@ -5091,21 +5082,19 @@ func TestPageDownFoldThread(t *testing.T) {
 	}
 	m = press(t, m, "pgdown")
 	r, _ := m.view.CursorRow()
-	if r.Msg.ID != "m11" || m.indexOffset != 0 {
-		t.Fatalf("the interrupted thread must start the new page at m11, got %s @ offset %d", r.Msg.ID, m.indexOffset)
-	}
-	if out := m.View(); !strings.Contains(out, "+20 more") {
-		t.Fatalf("the overflow indicator must show the remaining tail:\n%s", out)
+	if r.Msg.ID != "m13" || m.indexOffset != 0 {
+		t.Fatalf("a page must walk through the fold, got %s @ offset %d", r.Msg.ID, m.indexOffset)
 	}
 }
 
-// TestScrollSnapsToThreadHead pins the j-scroll snap: a page change
-// while the cursor walks inside a windowed thread whose head scrolled
-// above the page advances the window to the next chunk boundary and
-// re-anchors the page at the thread head - the top of the page becomes
-// "beginning of thread -1" (the leading "+N more" ghost when the
-// window is cut). Page down keeps the plain flip: a counted move never
-// snaps.
+// TestScrollSnapsToThreadHead pins the j-scroll snap: a down step
+// crossing the page bottom inside a windowed thread advances the
+// window to the next chunk boundary and re-anchors the page at the
+// thread head - the top of the page becomes "beginning of thread -1"
+// (the leading "+N more" ghost when the window is cut), head-visible
+// or not. The snap repeats chunk by chunk; once the tail is reached
+// the crossing flips plainly. Page down keeps the plain flip: a
+// counted move never snaps.
 func TestScrollSnapsToThreadHead(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
@@ -5121,42 +5110,45 @@ func TestScrollSnapsToThreadHead(t *testing.T) {
 		}
 		return r.Msg.ID
 	}
-	// five steps scroll the page under the cursor: the thread head (m1)
-	// ends up above the page
-	for i := 0; i < 5; i++ {
+	// four steps walk the page under the cursor: the head (m1) is still
+	// on the page, the cursor sits on the bottom row
+	for i := 0; i < 4; i++ {
 		m = press(t, m, "j")
 	}
-	if cursorID() != "m6" || m.indexOffset != 5 {
-		t.Fatalf("fixture wrong: mid-thread with the head above the page, got %s @ %d", cursorID(), m.indexOffset)
+	if cursorID() != "m5" || m.indexOffset != 0 {
+		t.Fatalf("fixture wrong: four steps must reach the bottom, got %s @ %d", cursorID(), m.indexOffset)
 	}
-	// five more walk the window tail: the crossing snaps to the next
-	// chunk's head
-	for i := 0; i < 5; i++ {
-		m = press(t, m, "j")
-	}
+	// the bottom crossing snaps to the thread head even though the head
+	// is still on the page
+	m = press(t, m, "j")
 	if cursorID() != "m11" || m.indexOffset != 0 {
-		t.Fatalf("the page must snap to the thread head, got %s @ %d", cursorID(), m.indexOffset)
+		t.Fatalf("the bottom crossing must snap to the thread head, got %s @ %d", cursorID(), m.indexOffset)
 	}
 	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop != 10 {
 		t.Fatalf("the head ghost must start the page: %+v", rows[0])
 	}
-	// the snap repeats chunk by chunk until the tail
-	for i := 0; i < 9; i++ {
+	// the snap repeats chunk by chunk until the tail (three in-page
+	// steps, then the crossing snap)
+	for _, want := range []string{"m21", "m31"} {
+		for i := 0; i < 3; i++ {
+			m = press(t, m, "j")
+		}
+		m = press(t, m, "j")
+		if cursorID() != want || m.indexOffset != 0 {
+			t.Fatalf("the snap must reach %s, got %s @ %d", want, cursorID(), m.indexOffset)
+		}
+	}
+	// the tail chunk is exhausted: the crossing flips plainly
+	for i := 0; i < 3; i++ {
 		m = press(t, m, "j")
 	}
-	if cursorID() != "m21" || m.indexOffset != 0 {
-		t.Fatalf("the second snap must reach m21, got %s @ %d", cursorID(), m.indexOffset)
+	m = press(t, m, "j")
+	if cursorID() != "m35" || m.indexOffset != 5 {
+		t.Fatalf("the tail crossing must flip plainly, got %s @ %d", cursorID(), m.indexOffset)
 	}
-	for i := 0; i < 9; i++ {
-		m = press(t, m, "j")
-	}
-	if cursorID() != "m31" || m.indexOffset != 0 {
-		t.Fatalf("the third snap must reach m31, got %s @ %d", cursorID(), m.indexOffset)
-	}
-	// page down from the head keeps the raw scroll: a counted move
-	// never snaps
+	// page down keeps the raw flip: a counted move never snaps
 	m = press(t, m, "pgdown")
-	if cursorID() != "m36" || m.indexOffset != 5 {
-		t.Fatalf("page down must raw-scroll from the head, got %s @ %d", cursorID(), m.indexOffset)
+	if cursorID() != "m36" || m.indexOffset != 6 {
+		t.Fatalf("page down must raw-scroll at the tail, got %s @ %d", cursorID(), m.indexOffset)
 	}
 }

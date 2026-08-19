@@ -275,7 +275,7 @@ func (w *htmlWalker) addText(txt string, st *html.Style) {
 		if w.labelLinks {
 			// a bare URL word (no anchor) is a link too: label it and
 			// record the trimmed target
-			if ls := core.Links(f, true); len(ls) > 0 {
+			if ls := html.Links(f, true); len(ls) > 0 {
 				w.links = append(w.links, ls[0])
 				w.addWord(fmt.Sprintf("[%d]", len(w.links)), st, true)
 			}
@@ -691,7 +691,7 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 			case xhtml.TextNode:
 				for _, f := range strings.Fields(c.Data) {
 					if labelLinks {
-						if ls := core.Links(f, true); len(ls) > 0 {
+						if ls := html.Links(f, true); len(ls) > 0 {
 							*links = append(*links, ls[0])
 							cur = append(cur, word{text: fmt.Sprintf("[%d]", len(*links)), st: st, label: true})
 						}

@@ -3,10 +3,11 @@
 
 // Package html holds the HTML layout primitives for terminal
 // renderers: the CSS-subset cascade engine (x/net/html parses, the
-// selector matching is cascadia - the mature, fuzzed piece) and the
-// cell-width helpers. The flow walker that emits a client's line
-// model is NOT here - the mail renderer owns it (docs/html-rendering-
-// analysis.md describes the full pipeline).
+// selector matching is cascadia - the mature, fuzzed piece), the
+// cell-width helpers, and the hyperlink scanner (the aerc port in
+// links.go). The flow walker that emits a client's line model is NOT
+// here - the mail renderer owns it (docs/html-rendering-analysis.md
+// describes the full pipeline).
 package html
 
 import (

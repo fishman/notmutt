@@ -23,6 +23,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/i18n"
+	"notmutt/lib/html"
 	"notmutt/lib/state"
 )
 
@@ -1495,7 +1496,7 @@ func linksOfLines(lines []core.Line, isHTML bool) []string {
 		b.WriteString(l.Text)
 		b.WriteByte('\n')
 	}
-	return core.Links(b.String(), isHTML)
+	return html.Links(b.String(), isHTML)
 }
 
 // numberedLinks prefixes each link with its 1-based number (the

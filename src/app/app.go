@@ -294,6 +294,7 @@ func Run() error {
 		<-ctx.Done()
 		close(quitCh)
 	}()
+	tui.SetFileDirState(filepath.Join(stateDir(), "last-dir"))
 	return tui.Run(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), quitCh)
 }
 
@@ -748,6 +749,21 @@ func configDir() string {
 		return "notmutt"
 	}
 	return filepath.Join(base, "notmutt")
+}
+
+// stateDir is the client-state home (XDG state): non-derived,
+// survives cache clears - the file chooser's last directory.
+// os.UserStateDir is absent from this toolchain's stdlib, so the
+// spec is read directly.
+func stateDir() string {
+	if p := os.Getenv("XDG_STATE_HOME"); p != "" {
+		return filepath.Join(p, "notmutt")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return configDir()
+	}
+	return filepath.Join(home, ".local", "state", "notmutt")
 }
 
 func cachePath() string {

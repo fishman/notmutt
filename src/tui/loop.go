@@ -45,6 +45,9 @@ func Run(model Model, quitCh <-chan struct{}) error {
 func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	loopScreen = s
 	defer func() { loopScreen = nil }()
+	// the quit path persists the chooser's last directory: the defer
+	// sees the loop's final model
+	defer saveFileDirState(m)
 	cmdCh := make(chan []any, 64)
 	run := func(c Cmd) {
 		if c != nil {

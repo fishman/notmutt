@@ -318,7 +318,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: loadFileDirState()}
 }
 
 func (m Model) Init() Cmd {
@@ -3585,6 +3585,44 @@ func defaultChooser(cmds []AttachCommand) string {
 		return ""
 	}
 	return cmds[0].Name
+}
+
+// fileDirState is the persisted last chooser directory: the app
+// resolves the path (empty in tests disables persistence).
+var fileDirState string
+
+func SetFileDirState(path string) {
+	fileDirState = path
+}
+
+// loadFileDirState seeds the chooser's directory from the state file;
+// a dead path is ignored so the picker never opens on an error box.
+func loadFileDirState() string {
+	if fileDirState == "" {
+		return ""
+	}
+	b, err := os.ReadFile(fileDirState)
+	if err != nil {
+		return ""
+	}
+	p := strings.TrimSpace(string(b))
+	if st, err := os.Stat(p); err != nil || !st.IsDir() {
+		return ""
+	}
+	return p
+}
+
+// saveFileDirState persists the chooser's directory on quit (the
+// runLoop defer sees the final model); a failed write just loses the
+// position.
+func saveFileDirState(m Model) {
+	if fileDirState == "" || m.fileDir == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(fileDirState), 0700); err != nil {
+		return
+	}
+	os.WriteFile(fileDirState, []byte(m.fileDir+"\n"), 0600)
 }
 
 // filePicker builds the built-in fallback chooser: a fuzzy picker

@@ -4811,6 +4811,46 @@ func TestFilePickerTypedPath(t *testing.T) {
 	}
 }
 
+// TestFilePickerStateRoundTrip pins the last-dir persistence: the
+// chooser's directory survives a restart (saved on the quit path,
+// loaded at model start), and a dead saved dir is ignored.
+func TestFilePickerStateRoundTrip(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "last-dir")
+	SetFileDirState(state)
+	t.Cleanup(func() { SetFileDirState("") })
+
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "subdir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a")
+	m = press(t, m, "tab")
+	for _, r := range root {
+		m = press(t, m, string(r))
+	}
+	m = press(t, m, "enter")
+	saveFileDirState(m) // the runLoop quit path
+	if m.fileDir != root {
+		t.Fatalf("fileDir = %q", m.fileDir)
+	}
+
+	m2 := openDialogue(t, model(), "t1")
+	if m2.fileDir != root {
+		t.Fatalf("a restart must resume %q, got %q", root, m2.fileDir)
+	}
+	m2 = press(t, m2, "a")
+	m2 = press(t, m2, "tab")
+	if p := picker(m2); p == nil || strings.Join(p.entries, ",") != "subdir/" {
+		t.Fatalf("a restart must browse the saved dir: %+v", m2.dialogue)
+	}
+
+	SetFileDirState(filepath.Join(t.TempDir(), "gone"))
+	if m3 := model(); m3.fileDir != "" {
+		t.Fatalf("a dead saved dir must not seed the picker: %q", m3.fileDir)
+	}
+}
+
 // TestFilePickerRightLeft pins the arrow navigation: right enters the
 // cursor folder, left walks back up, and left at the root stays in the
 // picker.

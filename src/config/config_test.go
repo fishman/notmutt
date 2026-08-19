@@ -129,6 +129,41 @@ threads = true
 // dir loads, tables merge across files, config.toml wins on conflicts
 // (the splits merge first, the main file last), keys absent from
 // config.toml survive from the splits, and a single-file dir loads.
+// TestLoadGlyphSet pins the [ui] glyph-set preset: "utf-8" swaps in
+// box-drawing tree glyphs, an explicit [ui.glyphs] tree key overrides
+// the preset, "ascii" (the default) keeps the ASCII set, and an
+// unknown value is a load error.
+func TestLoadGlyphSet(t *testing.T) {
+	cfg, err := Load(write(t, "[ui]\nglyph-set = \"utf-8\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Glyphs.Tree != "▸ " || cfg.UI.Glyphs.TreeChild != "│ " ||
+		cfg.UI.Glyphs.TreeBranch != "├─" || cfg.UI.Glyphs.TreeLeaf != "└─" {
+		t.Fatalf("utf-8 glyph-set must swap the tree glyphs: %+v", cfg.UI.Glyphs)
+	}
+	if cfg.UI.Glyphs.Staged != "*" {
+		t.Fatalf("glyph-set must not touch non-tree glyphs: %+v", cfg.UI.Glyphs)
+	}
+	cfg, err = Load(write(t, "[ui]\nglyph-set = \"utf-8\"\n\n[ui.glyphs]\ntree = \"> \"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Glyphs.Tree != "> " || cfg.UI.Glyphs.TreeChild != "│ " {
+		t.Fatalf("an explicit tree glyph must override the preset: %+v", cfg.UI.Glyphs)
+	}
+	cfg, err = Load(write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.UI.Glyphs.Tree != "+ " {
+		t.Fatalf("ascii glyphs must stay the default: %+v", cfg.UI.Glyphs)
+	}
+	if _, err := Load(write(t, "[ui]\nglyph-set = \"box\"\n")); err == nil {
+		t.Fatal("an unknown glyph-set must be a load error")
+	}
+}
+
 func TestLoadMultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {

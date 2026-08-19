@@ -188,6 +188,10 @@ type UI struct {
 	// LANG/LC_MESSAGES at startup, or a BCP 47 tag pins one ("de").
 	Language string `toml:"language"`
 	Tags     UITags `toml:"tags"`
+	// GlyphSet selects the thread tree glyph set: "ascii" (default) or
+	// "utf-8" (box-drawing). Per-glyph [ui.glyphs] tree keys override
+	// the preset.
+	GlyphSet string `toml:"glyph-set"`
 	Glyphs   Glyphs `toml:"glyphs"`
 }
 
@@ -256,9 +260,10 @@ type Glyphs struct {
 	BorderH       string `toml:"border_h"`
 	BorderV       string `toml:"border_v"`
 	// the tree glyphs: the thread root marker, one level of indentation,
-	// and the branch/leaf markers. ASCII defaults: box-drawing glyphs are
-	// ambiguous-width (2 cells on wide terminals), which drifts the slot
-	// math; the 2-cells-per-level invariant must hold in any font.
+	// and the branch/leaf markers. ASCII defaults ([ui] glyph-set swaps
+	// in box-drawing): ambiguous-width box-drawing glyphs drift the slot
+	// math on wide terminals, so the 2-cells-per-level invariant must
+	// hold in any font.
 	Tree       string `toml:"tree"`
 	TreeChild  string `toml:"tree_child"`
 	TreeBranch string `toml:"tree_branch"`
@@ -999,6 +1004,7 @@ func Default() Config {
 		UI: UI{
 			Keymap:   "vim",
 			Language: "auto",
+			GlyphSet: "ascii",
 			Tags: UITags{
 				Max:       2,
 				Attach:    "attachment",
@@ -1216,6 +1222,7 @@ func Load(dir string) (Config, error) {
 	if _, err := toml.Decode(string(raw), &cfg); err != nil {
 		return cfg, err
 	}
+	applyGlyphSet(&cfg, merged)
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
 	deriveAccountViews(&cfg)
 	cfg.ActiveView = defaultView(cfg)
@@ -1243,6 +1250,26 @@ func undecodedKeys(md toml.MetaData) []string {
 		keys = append(keys, k.String())
 	}
 	return keys
+}
+
+// applyGlyphSet resolves the [ui] glyph-set preset onto the tree
+// glyphs after the TOML merge: the preset fills only the glyphs the
+// user's files did not set explicitly (per-glyph keys always win).
+func applyGlyphSet(cfg *Config, merged map[string]any) {
+	if cfg.UI.GlyphSet != "utf-8" {
+		return
+	}
+	ui, _ := merged["ui"].(map[string]any)
+	g, _ := ui["glyphs"].(map[string]any)
+	apply := func(dst *string, key, glyph string) {
+		if _, ok := g[key]; !ok {
+			*dst = glyph
+		}
+	}
+	apply(&cfg.UI.Glyphs.Tree, "tree", "▸ ")
+	apply(&cfg.UI.Glyphs.TreeChild, "tree_child", "│ ")
+	apply(&cfg.UI.Glyphs.TreeBranch, "tree_branch", "├─")
+	apply(&cfg.UI.Glyphs.TreeLeaf, "tree_leaf", "└─")
 }
 
 // configLast moves config.toml to the end of the load order: it wins
@@ -1293,6 +1320,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
+	}
+	if cfg.UI.GlyphSet != "ascii" && cfg.UI.GlyphSet != "utf-8" {
+		return fmt.Errorf("ui.glyph-set: must be ascii or utf-8, got %q", cfg.UI.GlyphSet)
 	}
 	if cfg.Refresh.Interval < 0 {
 		return fmt.Errorf("refresh.interval: must be >= 0 seconds (0 disables the poll), got %d", cfg.Refresh.Interval)

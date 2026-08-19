@@ -625,10 +625,10 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 	}
 }
 
-// refreshInterval is the [refresh] poll cadence as a duration
-// (validated >= 1s at load).
+// refreshInterval is the [refresh] poll cadence as a duration (the
+// config value is minutes - mbsync syncs in minutes, never seconds).
 func refreshInterval(st *config.Store) time.Duration {
-	return time.Duration(st.Config().Refresh.Interval) * time.Second
+	return time.Duration(st.Config().Refresh.Interval) * time.Minute
 }
 
 // setupAccounts is the `notmutt setup` subcommand: resolve the

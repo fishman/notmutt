@@ -619,7 +619,7 @@ func TestValidateSendCommand(t *testing.T) {
 
 func TestRefreshDefaultInterval(t *testing.T) {
 	cfg := Default()
-	if cfg.Refresh.Interval != 1200 {
+	if cfg.Refresh.Interval != 20 {
 		t.Fatalf("default refresh interval = %d", cfg.Refresh.Interval)
 	}
 }

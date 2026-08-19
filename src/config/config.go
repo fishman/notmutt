@@ -199,8 +199,8 @@ type UI struct {
 // The poll runs `notmuch new` and refreshes the view at the cadence
 // (default 20 min - the refresh key checks manually in between).
 type Refresh struct {
-	// Interval is the poll cadence in seconds (default 1200 = 20 min;
-	// 0 disables the automatic poll - the refresh key still works).
+	// Interval is the poll cadence in minutes (default 20; 0 disables
+	// the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
 }
 
@@ -1054,7 +1054,7 @@ func Default() Config {
 			Args:    []string{"--read-envelope-from"},
 		},
 		Refresh: Refresh{
-			Interval: 1200,
+			Interval: 20,
 		},
 		Filter: Filter{
 			Enabled: true,
@@ -1329,7 +1329,7 @@ func validate(cfg Config) error {
 		return fmt.Errorf("ui.glyph-set: must be ascii or utf-8, got %q", cfg.UI.GlyphSet)
 	}
 	if cfg.Refresh.Interval < 0 {
-		return fmt.Errorf("refresh.interval: must be >= 0 seconds (0 disables the poll), got %d", cfg.Refresh.Interval)
+		return fmt.Errorf("refresh.interval: must be >= 0 minutes (0 disables the poll), got %d", cfg.Refresh.Interval)
 	}
 	for name, argv := range cfg.AttachCommands {
 		if strings.TrimSpace(name) == "" {

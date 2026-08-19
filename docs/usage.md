@@ -109,6 +109,11 @@ yazi = ["yazi", "--chooser-file"]
 [tag-actions]
 "toggle-read" = "unread"
 "archive" = "archive"
+
+# the new-mail poll cadence in minutes (mbsync syncs in minutes, never
+# seconds; 0 disables the automatic poll - the refresh key still works)
+[refresh]
+interval = 20
 ```
 
 ### Themes

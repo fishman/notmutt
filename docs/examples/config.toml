@@ -4,3 +4,7 @@ keymap = "vim"
 [view.inbox]
 query = "tag:inbox"
 threads = true
+
+# new-mail poll cadence in minutes; 0 disables the automatic poll
+[refresh]
+interval = 20

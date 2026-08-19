@@ -229,3 +229,69 @@ end)
 		t.Fatal("picker round trip did not complete")
 	}
 }
+
+func TestRunLuaCommand(t *testing.T) {
+	f := filepath.Join(t.TempDir(), "mail1.eml")
+	fixture := "From: sender@example.com\nTo: alpha@example.com\nSubject: quarterly report\nMessage-ID: <m1@example.com>\nDate: Mon, 17 Aug 2026 10:00:00 +0000\nContent-Type: text/plain\n\nQ2 numbers attached.\n"
+	if err := os.WriteFile(f, []byte(fixture), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{f}}})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	runLuaCommand(`lua print(ctx.thread_id .. "|" .. table.concat(ctx.mail_lines(), "|"))`, "t1", bus, &config.Config{}, fw)
+	var lr core.LuaResult
+	for e := range ch {
+		if v, ok := e.(core.LuaResult); ok {
+			lr = v
+			break
+		}
+	}
+	if lr.Err != nil {
+		t.Fatal(lr.Err)
+	}
+	if !strings.Contains(lr.Output, "t1|") || !strings.Contains(lr.Output, "Q2 numbers attached.") {
+		t.Fatalf(":lua output = %q", lr.Output)
+	}
+
+	// a non-lua command is an error, never silently dropped
+	runLuaCommand("quit", "t1", bus, &config.Config{}, fw)
+	for e := range ch {
+		if v, ok := e.(core.LuaResult); ok {
+			if v.Err == nil || !strings.Contains(v.Err.Error(), "unknown command") {
+				t.Fatalf("unknown command must error: %+v", v)
+			}
+			break
+		}
+	}
+}
+
+func TestLuaCommandPrompt(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	done := make(chan core.LuaResult, 1)
+	go runLuaCommand(`lua local a = prompt("Language:"); print(a or "none")`, "t1", bus, &config.Config{}, &fakeWorker{})
+	// the runner publishes on the same bus; deliver the TUI's answer for
+	// the request it must publish
+	for e := range ch {
+		if v, ok := e.(core.PromptRequest); ok {
+			deliverPromptResult(core.PromptResult{ID: v.ID, Text: "english"})
+		}
+		if v, ok := e.(core.LuaResult); ok {
+			done <- v
+			break
+		}
+	}
+	select {
+	case lr := <-done:
+		if lr.Err != nil {
+			t.Fatal(lr.Err)
+		}
+		if lr.Output != "english\n" {
+			t.Fatalf("prompt output = %q", lr.Output)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("prompt round trip did not complete")
+	}
+}

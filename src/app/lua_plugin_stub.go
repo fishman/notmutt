@@ -6,6 +6,8 @@
 package app
 
 import (
+	"fmt"
+
 	"notmutt/config"
 	"notmutt/core"
 )
@@ -35,3 +37,14 @@ func runLuaBind(key, area, threadID string, bus *core.Bus, cfg *config.Config, w
 // deliverPickerResult is a no-op in default builds: no Lua action can
 // block on a picker, so no waiter exists to resume.
 func deliverPickerResult(e core.PickerResult) {}
+
+// runLuaCommand answers the :lua command line in default builds: no
+// Lua runtime, so the command reports the missing tag instead of
+// silently dropping.
+func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, worker workerAPI) {
+	bus.Publish(core.LuaResult{Err: fmt.Errorf("lua: not built in (compile with -tags lua)")})
+}
+
+// deliverPromptResult is a no-op in default builds: no Lua action can
+// block on a prompt, so no waiter exists to resume.
+func deliverPromptResult(e core.PromptResult) {}

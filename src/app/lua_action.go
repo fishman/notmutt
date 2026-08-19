@@ -183,13 +183,74 @@ func runLuaBind(key, area, threadID string, bus *core.Bus, cfg *config.Config, w
 // is called with the ctx table. The VM is sandboxed (the shared lib
 // whitelist) and dies with the deadline.
 func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lua.LFunction) (string, error) {
-	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
-	defer vm.Close()
-	if err := openSandboxLibs(vm, path); err != nil {
+	vm, reg, cancel, err := ac.newVM()
+	if err != nil {
 		return "", err
 	}
-	deadline, cancel := context.WithTimeout(context.Background(), actionDeadline)
 	defer cancel()
+	defer vm.Close()
+	if err := vm.DoFile(path); err != nil {
+		return "", err
+	}
+	fn := lookup(reg)
+	if fn == nil {
+		return "", fmt.Errorf("lua: %s: no such function registered", path)
+	}
+	vm.Push(fn)
+	vm.Push(ac.ctxTable(vm))
+	if err := vm.PCall(1, 0, nil); err != nil {
+		return "", err
+	}
+	return ac.print.String(), nil
+}
+
+// runLuaCommand runs a :lua chunk (the command line, R8): the chunk IS
+// the program - compile it and call it with the same ctx table as an
+// action. The prefix dispatch is the seam for future builtin
+// ex-commands; anything not "lua ..." errors.
+func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, worker workerAPI) {
+	code, ok := strings.CutPrefix(command, "lua ")
+	if !ok {
+		bus.Publish(core.LuaResult{Err: fmt.Errorf("unknown command: %q", command)})
+		return
+	}
+	ac := &actionCtx{bus: bus, cfg: cfg, worker: worker, tid: threadID}
+	vm, _, cancel, err := ac.newVM()
+	if err != nil {
+		bus.Publish(core.LuaResult{Err: err})
+		return
+	}
+	defer cancel()
+	defer vm.Close()
+	var runErr error
+	if fn, err := vm.LoadString(code); err != nil {
+		runErr = err
+	} else {
+		// the chunk is a bare statement list, not function(ctx): the ctx
+		// table is a global it reads by name (and its first arg too)
+		ctx := ac.ctxTable(vm)
+		vm.SetGlobal("ctx", ctx)
+		vm.Push(fn)
+		vm.Push(ctx)
+		if err := vm.PCall(1, 0, nil); err != nil {
+			runErr = err
+		}
+	}
+	ac.drain()
+	bus.Publish(core.LuaResult{Output: ac.print.String(), Err: runErr})
+}
+
+// newVM builds one invocation's VM: the sandboxed libs, the action
+// deadline (the SetContext kill), the API globals (the shared R8
+// surface - actions and :lua chunks see the same functions), and the
+// bundled picker library. The caller owns the returned cancel.
+func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), error) {
+	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
+	if err := openSandboxLibs(vm, "<invocation>"); err != nil {
+		vm.Close()
+		return nil, nil, nil, err
+	}
+	deadline, cancel := context.WithTimeout(context.Background(), actionDeadline)
 	ac.ctx = deadline
 	vm.SetContext(deadline)
 	// the invocation-scoped registry: what THIS run of the file
@@ -237,6 +298,7 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 		}
 		return ac.picker(L, argv)
 	}))
+	vm.SetGlobal("prompt", vm.NewFunction(func(L *lua.LState) int { return ac.promptDialog(L) }))
 	vm.SetGlobal("ai_chat", vm.NewFunction(func(L *lua.LState) int { return ac.aiChat(L) }))
 	vm.SetGlobal("translate", vm.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(i18n.T(L.CheckString(1))))
@@ -256,15 +318,16 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 	// the bundled library runs first: picker_yazi/picker_ranger (and a
 	// plugin's overrides) land in the VM globals before the plugin file
 	if err := vm.DoString(pickersLib); err != nil {
-		return "", err
+		vm.Close()
+		cancel()
+		return nil, nil, nil, err
 	}
-	if err := vm.DoFile(path); err != nil {
-		return "", err
-	}
-	fn := lookup(reg)
-	if fn == nil {
-		return "", fmt.Errorf("lua: %s: no such function registered", path)
-	}
+	return vm, reg, cancel, nil
+}
+
+// ctxTable is the invocation context the chunk or action receives: the
+// thread id and the lazy full-thread plain text (mail_lines).
+func (ac *actionCtx) ctxTable(vm *lua.LState) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_id", lua.LString(ac.tid))
 	ctx.RawSetString("mail_lines", vm.NewFunction(func(L *lua.LState) int {
@@ -279,12 +342,7 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 		L.Push(tbl)
 		return 1
 	}))
-	vm.Push(fn)
-	vm.Push(ctx)
-	if err := vm.PCall(1, 0, nil); err != nil {
-		return "", err
-	}
-	return ac.print.String(), nil
+	return ctx
 }
 
 // picker blocks the VM on the picker round trip: the request rides the
@@ -383,5 +441,66 @@ func deliverPickerResult(e core.PickerResult) {
 	pickersMu.Unlock()
 	if ok {
 		ch <- pickerReply{paths: e.Paths, err: e.Err}
+	}
+}
+
+// promptDialog blocks the VM on the prompt round trip: the request
+// rides the bus to the TUI (the native text dialogue), the answer (or
+// the esc cancel) publishes back, the waiter resolves - committed text
+// returns as the string, a cancel as Lua nil. The wait selects on the
+// action deadline - a never-answered prompt cannot wedge the plugin
+// past its budget.
+func (ac *actionCtx) promptDialog(L *lua.LState) int {
+	id := fmt.Sprintf("%d", time.Now().UnixNano())
+	ch := make(chan promptReply, 1)
+	promptsMu.Lock()
+	prompts[id] = ch
+	promptsMu.Unlock()
+	defer func() {
+		promptsMu.Lock()
+		delete(prompts, id)
+		promptsMu.Unlock()
+	}()
+	prefill := ""
+	if v := L.Get(2); v != lua.LNil {
+		prefill = L.CheckString(2)
+	}
+	ac.bus.Publish(core.PromptRequest{ID: id, Label: L.CheckString(1), Prefill: prefill})
+	select {
+	case r := <-ch:
+		if r.canceled {
+			L.Push(lua.LNil)
+		} else {
+			L.Push(lua.LString(r.text))
+		}
+		return 1
+	case <-ac.ctx.Done():
+		L.RaiseError("prompt timed out")
+	}
+	return 0
+}
+
+type promptReply struct {
+	text     string
+	canceled bool
+}
+
+// prompts is the blocked-VM waiter registry for prompt() calls: the
+// mirror of pickers, resolved by the app's bus subscriber.
+var (
+	promptsMu sync.Mutex
+	prompts   = map[string]chan promptReply{}
+)
+
+// deliverPromptResult resolves one blocked prompt call. The buffered
+// channel keeps a reply whose waiter died (deadline kill) from
+// blocking the deliverer; the map entry is gone either way.
+func deliverPromptResult(e core.PromptResult) {
+	promptsMu.Lock()
+	ch, ok := prompts[e.ID]
+	delete(prompts, e.ID)
+	promptsMu.Unlock()
+	if ok {
+		ch <- promptReply{text: e.Text, canceled: e.Canceled}
 	}
 }

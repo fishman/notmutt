@@ -382,6 +382,23 @@ type PickerResult struct {
 	Err   error
 }
 
+// PromptRequest asks the TUI to open a native prompt dialogue (R8):
+// the Lua prompt() call queues it, the user's answer (or the cancel)
+// publishes PromptResult back and the app resumes the blocked VM.
+type PromptRequest struct {
+	ID      string
+	Label   string // the prompt label, e.g. "Language:"
+	Prefill string // initial input ("" = empty)
+}
+
+// PromptResult returns the prompt's outcome: Text is the committed
+// input, Canceled marks the esc cancel (Text empty).
+type PromptResult struct {
+	ID       string
+	Text     string
+	Canceled bool
+}
+
 // AttachFiles attaches files to the active compose tab (R8): the Lua
 // action's attach_add calls drain here after the action returns.
 type AttachFiles struct {

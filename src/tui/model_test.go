@@ -79,6 +79,15 @@ func TestActionsCoverComposeAndFuzzy(t *testing.T) {
 			t.Errorf("bindings[%q] must bind ~ to log", ctx)
 		}
 	}
+	// the : command line is bound and builtin in every tabbed context
+	for _, ctx := range []string{"index", "pager", "compose"} {
+		if !Actions[ctx]["command"] {
+			t.Errorf("Actions[%q] must define command", ctx)
+		}
+		if km[ctx][":"] != "command" {
+			t.Errorf("bindings[%q] must bind : to command", ctx)
+		}
+	}
 }
 
 // TestChainDataCompletes pins the data-driven chain resolver: the
@@ -681,6 +690,69 @@ func TestFilterPrompt(t *testing.T) {
 	}
 	if len(m.rows) != 1 {
 		t.Fatalf("esc must restore the committed filter: %d rows", len(m.rows))
+	}
+}
+
+// TestCommandPromptRunsLua pins the : command line (R8): the key opens
+// the standard text dialogue, enter hands the chunk and the cursor
+// thread to the :lua seam.
+func TestCommandPromptRunsLua(t *testing.T) {
+	var got struct {
+		code, tid string
+	}
+	SetLuaCommandHandler(func(code, tid string) { got.code, got.tid = code, tid })
+	t.Cleanup(func() { SetLuaCommandHandler(func(code, tid string) {}) })
+
+	m := stubModel()
+	m = press(t, m, ":")
+	if d := textD(m); d == nil || d.field != "command" {
+		t.Fatalf(": must open the command line: %+v", m.dialogue)
+	}
+	m = press(t, m, "lua print(1)")
+	m = pressType(t, m, KeyEnter)
+	if m.dialogue != nil {
+		t.Fatal("enter must close the command line")
+	}
+	if got.code != "lua print(1)" || got.tid != "t1" {
+		t.Fatalf("the :lua seam must run the chunk on the cursor thread, got %q %q", got.code, got.tid)
+	}
+}
+
+// TestLuaPromptRoundTrip pins the Lua prompt() round trip: the bus
+// request opens the native text dialogue prefilled, enter publishes the
+// answer back, esc publishes the cancel.
+func TestLuaPromptRoundTrip(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := stubModel()
+	m.bus = bus
+
+	m = pressEvent(t, m, core.PromptRequest{ID: "p1", Label: "Language:", Prefill: "en"})
+	if d := textD(m); d == nil || d.field != "luaprompt" || d.promptID != "p1" {
+		t.Fatalf("PromptRequest must open the prompt: %+v", m.dialogue)
+	}
+	m = press(t, m, "glish") // the prefill is editable: "en" + "glish"
+	m = pressType(t, m, KeyEnter)
+	select {
+	case e := <-ch:
+		r, ok := e.(core.PromptResult)
+		if !ok || r.ID != "p1" || r.Text != "english" || r.Canceled {
+			t.Fatalf("enter must publish the answer: %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no PromptResult")
+	}
+
+	m = pressEvent(t, m, core.PromptRequest{ID: "p2", Label: "Confirm:"})
+	m = pressType(t, m, KeyEsc)
+	select {
+	case e := <-ch:
+		r, ok := e.(core.PromptResult)
+		if !ok || r.ID != "p2" || !r.Canceled || r.Text != "" {
+			t.Fatalf("esc must publish the cancel: %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no PromptResult")
 	}
 }
 
@@ -2321,7 +2393,7 @@ func TestAttachPromptRendersBox(t *testing.T) {
 		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
-	if !strings.Contains(lines[1], "a attach") {
+	if !strings.Contains(lines[1], ": command") {
 		t.Fatalf("the keyhint must stay on its row:\n%s", frame)
 	}
 	if !strings.Contains(lines[len(lines)-4], "attach path:") {
@@ -2899,7 +2971,7 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if lines[0] != m.tabBar() {
 		t.Fatalf("line 0 must be the tab bar: %q", lines[0])
 	}
-	if !strings.Contains(stripANSI(lines[1]), "a attach") {
+	if !strings.Contains(stripANSI(lines[1]), ": command") {
 		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
 	}
 	wantAll(t, stripANSI(frame), "Bcc:", "Reply-To:", "Fcc:", "Security: none", "I    1", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview")
@@ -2918,7 +2990,7 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	// on line 1
 	m = press(t, m, "a")
 	frame = m.render()
-	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), "a attach") {
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), ": command") {
 		t.Fatalf("the keyhint must stay on line 1: %q", stripANSI(strings.Split(frame, "\n")[1]))
 	}
 	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[20]), "attach path:") {

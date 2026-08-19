@@ -694,7 +694,7 @@ func TestDefaultBindings(t *testing.T) {
 		"e": "edit", "a": "attach", "tab": "attach", "d": "detach",
 		"A": "account", "C": "signature", "y": "send", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
-		"?": "help", "~": "log",
+		"?": "help", "~": "log", ":": "command",
 	}
 	if !maps.Equal(cfg.Bindings["compose"], wantCompose) {
 		t.Fatalf("default compose bindings = %v, want %v", cfg.Bindings["compose"], wantCompose)

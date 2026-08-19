@@ -195,6 +195,9 @@ func Run() error {
 	tui.SetLuaKeyHandler(func(key, area, threadID string) {
 		go runLuaBind(key, area, threadID, bus, &cfg, worker)
 	})
+	tui.SetLuaCommandHandler(func(command, threadID string) {
+		go runLuaCommand(command, threadID, bus, &cfg, worker)
+	})
 
 	// attach commands: config tables register first, then Lua plugin
 	// registrations (later, per-plugin load order) - both land in the
@@ -283,13 +286,17 @@ func Run() error {
 		}
 	}()
 
-	// the picker round trip (R8): the TUI publishes PickerResult on the
-	// bus, this subscriber resumes the Lua action blocked on its waiter
+	// the picker and prompt round trips (R8): the TUI publishes the
+	// results on the bus, this subscriber resumes the Lua action blocked
+	// on its waiter
 	go func() {
 		ch := bus.Subscribe()
 		for e := range ch {
 			if p, ok := e.(core.PickerResult); ok {
 				deliverPickerResult(p)
+			}
+			if p, ok := e.(core.PromptResult); ok {
+				deliverPromptResult(p)
 			}
 		}
 	}()

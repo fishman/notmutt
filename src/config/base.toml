@@ -51,6 +51,7 @@ opener = ["xdg-open"]
 "k" = { fun = "cursor-up", desc = "Move the cursor up" }
 "down" = { fun = "cursor-down" }
 "up" = { fun = "cursor-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "enter" = { fun = "open", desc = "Open the message under the cursor" }
 "h" = { fun = "open-headers", desc = "Open the message with the full headers", show = true }
 "q" = { fun = "quit", desc = "Quit notmutt", show = true }
@@ -98,6 +99,7 @@ opener = ["xdg-open"]
 "k" = { fun = "scroll-up", desc = "Scroll up one line" }
 "down" = { fun = "scroll-down" }
 "up" = { fun = "scroll-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "space" = { fun = "page-down" }
 "ctrl+d" = { fun = "half-page-down" }
 "pgdown" = { fun = "page-down" }
@@ -123,6 +125,7 @@ opener = ["xdg-open"]
 "k" = { fun = "form-up", desc = "Move to the previous attachment" }
 "down" = { fun = "form-down" }
 "up" = { fun = "form-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+d" = { fun = "half-page-down" }
 "ctrl+u" = { fun = "half-page-up" }
 "ctrl+f" = { fun = "page-down" }
@@ -165,6 +168,7 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "cursor-up" }
 "down" = { fun = "cursor-down" }
 "up" = { fun = "cursor-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "enter" = { fun = "open" }
 "q" = { fun = "quit", show = true }
 "r" = { fun = "reply", show = true }
@@ -196,6 +200,7 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "scroll-up" }
 "down" = { fun = "scroll-down" }
 "up" = { fun = "scroll-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
 "pgdown" = { fun = "page-down" }
@@ -219,6 +224,7 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "form-up" }
 "down" = { fun = "form-down" }
 "up" = { fun = "form-up" }
+":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
 "t" = { fun = "edit-to", show = true }

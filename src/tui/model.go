@@ -698,6 +698,14 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				return m, batch(EventCmd(m.ch), cmd)
 			}
 			return m, EventCmd(m.ch)
+		case core.PromptRequest:
+			// the Lua action's prompt() call: the native text dialogue
+			// opens, the answer (or the esc cancel) rides PromptResult
+			// back to the blocked VM
+			d := &textDialogue{field: "luaprompt", label: e.Label, input: e.Prefill, promptID: e.ID}
+			d.cur = len(d.input) // the prefill edits at its end
+			m.dialogue = d
+			m.paint = true
 		case core.AttachFiles:
 			// the Lua action's attach_add drain: attach the paths to the
 			// active compose tab (no compose tab open = dropped - there
@@ -3069,6 +3077,9 @@ type textDialogue struct {
 	// cur is the byte offset of the edit cursor into input
 	cur   int
 	saved string // the state the prompt opened with (the filter text): esc restores it
+	// promptID is the Lua prompt() round trip (field "luaprompt"): the
+	// committed text (or the cancel) rides PromptResult back to the VM
+	promptID string
 }
 
 // cancelDialogue resets the abort gate (q opened the confirm with the
@@ -3105,6 +3116,13 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			if input != "" {
 				tid, _, _ := m.cursorThread()
 				onLuaCommand(input, tid)
+			}
+			return nil, nil
+		case "luaprompt":
+			// the Lua prompt() round trip: the answer resolves the
+			// blocked VM; a nil bus (tests) just closes
+			if m.bus != nil {
+				m.bus.Publish(core.PromptResult{ID: d.promptID, Text: input})
 			}
 			return nil, nil
 		case "filter":
@@ -3150,6 +3168,12 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 		if d.field == "filter" {
 			m.view.SetFilter(d.saved)
 			m.rows = m.view.Rows()
+		}
+		if d.field == "luaprompt" {
+			// the Lua prompt() waiter resolves on the cancel
+			if m.bus != nil {
+				m.bus.Publish(core.PromptResult{ID: d.promptID, Canceled: true})
+			}
 		}
 		m.cancelDialogue()
 		return nil, nil

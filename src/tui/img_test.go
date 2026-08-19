@@ -301,6 +301,10 @@ func TestDetectImageProtocol(t *testing.T) {
 		// a negative reply selects nothing
 		{base.Pager, map[string]string{}, stubCaps{}, ""},
 	}
+	// the non-tmux cases must not inherit the ambient session's TMUX
+	// (the tmux query path is pinned separately in
+	// TestDetectImageProtocolTmux)
+	t.Setenv("TMUX", "")
 	for _, c := range cases {
 		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM"} {
 			t.Setenv(k, c.env[k])

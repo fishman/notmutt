@@ -104,12 +104,11 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 
 // treePrefix renders the thread tree run (R3): the root marker for a
 // thread with children (depth 0, Count > 1), indentation plus the
-// branch/leaf marker below the root. The indent at level k is the
-// vertical only while the ancestor k levels up has a next sibling
-// (aerc/mutt's conditional tree); the indent loop is bounded by the
-// clamped Depth so a windowed row never draws past maxDepth. The
-// glyphs carry their own trailing space (config data), so a zero-width
-// prefix (stubs, single messages) leaves the flat layout byte-identical.
+// branch/leaf marker below the root. The vertical at column c draws
+// iff the ancestor at depth c+1 (Depth-1-c levels up, neomutt's
+// conditional pfx) has a next sibling. The glyphs carry their own
+// trailing space (config data), so a zero-width prefix (stubs, single
+// messages) leaves the flat layout byte-identical.
 func treePrefix(r core.Row, g config.Glyphs) string {
 	if r.Depth == 0 {
 		if r.Count > 1 {
@@ -118,8 +117,9 @@ func treePrefix(r core.Row, g config.Glyphs) string {
 		return ""
 	}
 	var b strings.Builder
-	for k := 1; k < len(r.Siblings) && k < r.Depth; k++ {
-		if r.Siblings[k] {
+	lo := max(0, r.Depth-len(r.Siblings))
+	for c := lo; c < r.Depth-1; c++ {
+		if r.Siblings[len(r.Siblings)-1-c] {
 			b.WriteString(g.TreeChild)
 		} else {
 			b.WriteString(strings.Repeat(" ", runewidth.StringWidth(g.TreeChild)))

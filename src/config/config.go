@@ -747,16 +747,15 @@ type View struct {
 
 // IndexSection is the [index] table (R11): the index surface budgets.
 // Thread is the threaded views' tree window (R3): a deep thread renders
-// at most MaxRows rows with indentation clamped at MaxDepth; navigating
-// through the thread slides the window under the cursor. Zero MaxRows
-// disables the window (the full tree renders).
+// at most MaxRows rows; navigating through the thread slides the window
+// under the cursor. Zero MaxRows disables the window (the full tree
+// renders).
 type IndexSection struct {
 	Thread ThreadBudget `toml:"thread"`
 }
 
 type ThreadBudget struct {
-	MaxDepth int `toml:"max-depth"`
-	MaxRows  int `toml:"max-rows"`
+	MaxRows int `toml:"max-rows"`
 }
 
 // Send is the send transport argv (R4): ONE configurable command,
@@ -1033,7 +1032,7 @@ func Default() Config {
 			"archive": {Query: "tag:archive", Threads: true},
 		},
 		Index: IndexSection{
-			Thread: ThreadBudget{MaxDepth: 4, MaxRows: 10},
+			Thread: ThreadBudget{MaxRows: 10},
 		},
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},

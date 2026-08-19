@@ -47,19 +47,18 @@ type View struct {
 	// intermediate keypresses and rebuilds once per batch end.
 	mergeDepth int
 	mergeDirty bool
-	// the tree window budget ([index.thread]): winRows rows per thread,
-	// indentation clamped at winDepth. Zero winRows = no window.
-	winRows  int
-	winDepth int
+	// the tree window budget ([index.thread]): winRows rows per thread.
+	// Zero winRows = no window.
+	winRows int
 }
 
 // SetWindowBudget bounds the tree window (the [index.thread] config):
-// each thread renders at most winRows rows starting at its WinStart,
-// with Depth clamped at winDepth. Zero winRows disables the window.
-func (v *View) SetWindowBudget(winRows, winDepth int) {
+// each thread renders at most winRows rows starting at its WinStart.
+// Zero winRows disables the window.
+func (v *View) SetWindowBudget(winRows int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	v.winRows, v.winDepth = winRows, winDepth
+	v.winRows = winRows
 }
 
 func NewView(name, query string) *View {
@@ -136,7 +135,7 @@ func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
 		full := flattenThread(t, t.Collapsed)
-		out := window(full, t.WinStart, v.winRows, v.winDepth)
+		out := window(full, t.WinStart, v.winRows)
 		// the tree-window overflow: a thread with rows hidden below the
 		// window marks its last emitted row with the count (the page
 		// move continues the thread there) and emits a ghost "+N more"
@@ -242,12 +241,44 @@ func (v *View) Filter() string {
 	return v.filter
 }
 
+// collapseMsg is the message a collapsed thread row shows: the newest
+// unread message in the thread, or the newest message when nothing is
+// unread (the row keeps the root's tree position; the subject tells
+// what still needs reading). Nil for a thread without messages - the
+// ghost root renders the stub.
+func collapseMsg(root *Node) *Message {
+	var last, unread *Message
+	var walk func(*Node)
+	walk = func(n *Node) {
+		if n.Msg != nil {
+			if last == nil || n.Msg.Timestamp > last.Timestamp {
+				last = n.Msg
+			}
+			if slices.Contains(n.Msg.Tags, "unread") && (unread == nil || n.Msg.Timestamp > unread.Timestamp) {
+				unread = n.Msg
+			}
+		}
+		for _, c := range n.Children {
+			walk(c)
+		}
+	}
+	walk(root)
+	if unread != nil {
+		return unread
+	}
+	return last
+}
+
 func flattenThread(t *Thread, collapsed bool) []Row {
 	var rows []Row
 	if t.Root == nil {
 		return rows
 	}
 	count := t.Count()
+	if collapsed {
+		rows = append(rows, Row{Msg: collapseMsg(t.Root), ThreadID: t.ID, Count: count})
+		return rows
+	}
 	child := func(siblings []bool, last bool) []bool {
 		s := make([]bool, 0, len(siblings)+1)
 		s = append(s, !last)
@@ -256,19 +287,13 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 	var walk func(*Node, int, []bool)
 	walk = func(node *Node, depth int, siblings []bool) {
 		if node.Msg == nil {
-			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Count: count})
-			if collapsed {
-				return
-			}
+			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count})
 			for i, c := range node.Children {
 				walk(c, depth+1, child(siblings, i == len(node.Children)-1))
 			}
 			return
 		}
 		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
-		if collapsed {
-			return
-		}
 		for i, c := range node.Children {
 			walk(c, depth+1, child(siblings, i == len(node.Children)-1))
 		}
@@ -278,30 +303,18 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 }
 
 // window bounds one thread's flattened rows to the tree window: the
-// rows [start, start+winRows) with Depth clamped at winDepth (the
-// indentation budget - a clamped row keeps its Branch glyph, so the
-// tree stays readable). Zero winRows passes the thread through
+// rows [start, start+winRows). Zero winRows passes the thread through
 // untouched; start is clamped to the valid range (merges can shrink
 // the flatten between slides).
-func window(full []Row, start, winRows, winDepth int) []Row {
+func window(full []Row, start, winRows int) []Row {
 	if winRows <= 0 {
 		return full
 	}
-	clamp := func(rows []Row) {
-		for i := range rows {
-			if rows[i].Depth > winDepth {
-				rows[i].Depth = winDepth
-			}
-		}
-	}
 	if len(full) <= winRows {
-		clamp(full)
 		return full
 	}
 	start = max(0, min(start, len(full)-winRows))
-	out := full[start : start+winRows]
-	clamp(out)
-	return out
+	return full[start : start+winRows]
 }
 
 // MergeThreads diffs the incoming threads into the view: thread-level
@@ -607,8 +620,10 @@ func (v *View) ToggleCollapsed(id string) error {
 		if t.ID == id {
 			t.Collapsed = !t.Collapsed
 			if t.Collapsed {
-				if t.Root != nil && t.Root.Msg != nil {
-					v.cursorID = t.Root.Msg.ID
+				// the anchor must name the row that survives the collapse:
+				// the summary shows collapseMsg, not the root
+				if m := collapseMsg(t.Root); m != nil {
+					v.cursorID = m.ID
 				}
 			} else {
 				t.WinStart = 0

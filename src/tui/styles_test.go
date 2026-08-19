@@ -292,6 +292,24 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	if got := render(last); strings.Contains(got, "|") {
 		t.Fatalf("a row under a last child drops the vertical indent: %q", got)
 	}
+	// neomutt's pfx order: the verticals fill from the nearest ancestor -
+	// the depth-3 row under a last child of a siblinged node keeps its
+	// vertical at column 0 (the grandparent's level), not under the leaf
+	deep := base()
+	deep.Depth, deep.Count, deep.Siblings = 3, 4, []bool{false, false, true}
+	if got := render(deep); !strings.Contains(got, "|   `-hello") {
+		t.Fatalf("depth-3 ancestors must draw nearest-outward: %q", got)
+	}
+	// a depth-9 row must draw its verticals from the shallow ancestors -
+	// the ones displayed at those columns, never the deep ones: the
+	// depth-1 node (chain tail) has a next sibling, so the vertical sits
+	// at column 0, not under a deep branch
+	deep9 := base()
+	deep9.Depth, deep9.Count = 9, 10
+	deep9.Siblings = []bool{false, false, false, false, false, false, false, false, true}
+	if got := render(deep9); !strings.Contains(got, "|               `-hello") {
+		t.Fatalf("deep rows must index the shallow ancestors: %q", got)
+	}
 	stub := base()
 	stub.Count = 1 // the summary stub carries the thread count but no tree
 	if got := render(stub); strings.Contains(got, "+ ") {

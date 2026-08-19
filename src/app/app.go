@@ -99,7 +99,7 @@ func Run() error {
 	groups := st.Config().TagGroupList()
 	view.SetGroups(groups)
 	b := st.Config().Index.Thread
-	view.SetWindowBudget(b.MaxRows, b.MaxDepth)
+	view.SetWindowBudget(b.MaxRows)
 
 	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
 	// ONE resolution for the filter job, the fcc derivation, and the

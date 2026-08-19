@@ -37,8 +37,8 @@ func TestRowsFlattenThreadTree(t *testing.T) {
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})
-	// a reply arrives, sorts before its parent in the message list under
-	// reverse-date; the tree still renders the parent above the child
+	// a reply arrives, sorts after its parent in the message list under
+	// date-asc; the tree still renders the parent above the child
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100), msg("reply", 200, "root")})})
 	rows := v.Rows()
 	if len(rows) != 2 {
@@ -67,8 +67,11 @@ func TestMergeThreadMoves(t *testing.T) {
 	if !rows[0].Ghost {
 		t.Fatalf("moved thread has two roots, must render ghost first: %+v", rows[0])
 	}
-	if rows[1].Msg.ID != "c" {
+	if rows[1].Msg.ID != "a" {
 		t.Fatalf("moved thread should be first, got %+v", rows[1])
+	}
+	if rows[2].Msg.ID != "c" {
+		t.Fatalf("sibling order must be chronological, got %+v", rows[2])
 	}
 }
 
@@ -111,6 +114,45 @@ func TestCollapseHidesChildren(t *testing.T) {
 	}
 	if rows[0].Count != 2 {
 		t.Fatalf("collapsed row must still count the thread, got %d", rows[0].Count)
+	}
+}
+
+// TestCollapseShowsLastUnread pins the summary row: a collapsed thread
+// shows the newest unread message, falling back to the newest message
+// when nothing is unread (the row still counts the whole thread).
+func TestCollapseShowsLastUnread(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	root := msg("root", 100)
+	kid := msg("kid", 200, "root")
+	kid.Tags = []string{"unread"}
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{root, kid})})
+	if err := v.SetCollapsed("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	rows := v.Rows()
+	if len(rows) != 1 || rows[0].Msg != kid || rows[0].Count != 2 {
+		t.Fatalf("collapsed row must show the last unread: %+v", rows[0])
+	}
+	// all read: the fallback is the newest message
+	kid.Tags = nil
+	v.SetCollapsed("t1", false)
+	if err := v.SetCollapsed("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	rows = v.Rows()
+	if rows[0].Msg != kid {
+		t.Fatalf("collapsed row must fall back to the newest message: %+v", rows[0].Msg)
+	}
+	// toggling re-anchors the cursor to the message the row shows
+	if err := v.ToggleCollapsed("t1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.ToggleCollapsed("t1"); err != nil {
+		t.Fatal(err)
+	}
+	r, ok := v.CursorRow()
+	if !ok || r.Msg != kid {
+		t.Fatalf("collapse must anchor the cursor to the summary message: %+v ok=%v", r.Msg, ok)
 	}
 }
 
@@ -229,10 +271,11 @@ func TestGhostRootRow(t *testing.T) {
 	if !rows[0].Ghost || rows[0].Msg != nil || rows[0].Depth != 0 || rows[0].Count != 2 {
 		t.Fatalf("first row must be the ghost marker: %+v", rows[0])
 	}
-	if rows[1].Msg.ID != "b" || rows[1].Depth != 1 || rows[1].Root {
+	// siblings render in the thread's own order (oldest first)
+	if rows[1].Msg.ID != "a" || rows[1].Depth != 1 || rows[1].Root {
 		t.Fatalf("second row wrong: %+v", rows[1])
 	}
-	if rows[2].Msg.ID != "a" || rows[2].Depth != 1 || rows[2].Root {
+	if rows[2].Msg.ID != "b" || rows[2].Depth != 1 || rows[2].Root {
 		t.Fatalf("third row wrong: %+v", rows[2])
 	}
 }
@@ -681,7 +724,7 @@ func TestThreadWindow(t *testing.T) {
 		chain[i] = msg("m"+strconv.Itoa(i+1), int64(i+1), "m"+strconv.Itoa(i))
 	}
 	v.MergeThreads([]*Thread{NewThread("t1", chain)})
-	v.SetWindowBudget(10, 4)
+	v.SetWindowBudget(10)
 	rows := v.Rows()
 	if len(rows) != 11 {
 		t.Fatalf("window must emit maxRows rows plus the overflow indicator: %d", len(rows))
@@ -689,11 +732,11 @@ func TestThreadWindow(t *testing.T) {
 	if rows[0].Depth != 0 || rows[0].Msg.ID != "m1" {
 		t.Fatalf("window must start at the thread root: %+v", rows[0])
 	}
-	if rows[9].Depth != 4 {
-		t.Fatalf("depth must clamp at maxDepth: %+v", rows[9])
+	if rows[9].Depth != 9 {
+		t.Fatalf("depth must stay true, never clamped: %+v", rows[9])
 	}
 	if len(rows[9].Siblings) != 9 {
-		t.Fatalf("a clamped row keeps its full sibling chain: %+v", rows[9])
+		t.Fatalf("a deep row keeps its full sibling chain: %+v", rows[9])
 	}
 	for i, s := range rows[9].Siblings {
 		if s {
@@ -755,7 +798,7 @@ func TestThreadWindow(t *testing.T) {
 		t.Fatal("the tail edge must refuse the page slide")
 	}
 	// a thread that fits the budget never slides
-	v.SetWindowBudget(10, 4)
+	v.SetWindowBudget(10)
 	v.MergeThreads([]*Thread{NewThread("t2", []*Message{msg("solo", 1)})})
 	if v.SlideWindow("t2", 1) || v.SlideWindow("t2", -1) {
 		t.Fatal("a fitting thread must refuse every slide")

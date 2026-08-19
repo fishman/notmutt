@@ -11,10 +11,12 @@ func ThreadLess(a, b *Thread) bool {
 	return a.ID < b.ID
 }
 
-// MsgLess orders messages by date desc, then id bytes.
+// MsgLess orders messages by date asc, then id bytes: notmuch builds
+// every thread oldest-first (lib/thread.cc), and the flatten follows the
+// tree, so a deeply nested chain reads top-down with its replies.
 func MsgLess(a, b *Message) bool {
 	if a.Timestamp != b.Timestamp {
-		return a.Timestamp > b.Timestamp
+		return a.Timestamp < b.Timestamp
 	}
 	return a.ID < b.ID
 }

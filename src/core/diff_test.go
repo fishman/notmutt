@@ -122,10 +122,10 @@ func TestDiffApplyPropertyThreads(t *testing.T) {
 }
 
 func TestDiffMoveCollapse(t *testing.T) {
-	// a sinks from newest to oldest: the walk emits Remove then Insert
+	// a rises from oldest to newest: the walk emits Remove then Insert
 	// of the same key - the second pass collapses the pair into a Move.
-	old := []*Message{{ID: "a", Timestamp: 5}, {ID: "c", Timestamp: 3}, {ID: "b", Timestamp: 2}}
-	new := []*Message{{ID: "c", Timestamp: 3}, {ID: "b", Timestamp: 2}, {ID: "a", Timestamp: 1}}
+	old := []*Message{{ID: "a", Timestamp: 1}, {ID: "c", Timestamp: 3}, {ID: "b", Timestamp: 5}}
+	new := []*Message{{ID: "c", Timestamp: 3}, {ID: "b", Timestamp: 5}, {ID: "a", Timestamp: 7}}
 	ops := DiffSorted(old, new, MsgLess, msgKey)
 	found := false
 	for _, op := range ops {

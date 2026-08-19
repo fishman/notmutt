@@ -4958,7 +4958,7 @@ func TestWindowSlidesWithCursor(t *testing.T) {
 		core.NewThread("t0", threadChain(40)),
 		core.NewThread("t1", []*core.Message{{ID: "other", Timestamp: 1, Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}),
 	})
-	view.SetWindowBudget(10, 4)
+	view.SetWindowBudget(10)
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	cursorID := func() string {
 		r, ok := m.view.CursorRow()
@@ -5042,7 +5042,7 @@ func TestPageDownContinuesThread(t *testing.T) {
 		core.NewThread("t0", threadChain(40)),
 		core.NewThread("t1", []*core.Message{{ID: "other", Timestamp: 1, Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}),
 	})
-	view.SetWindowBudget(10, 4)
+	view.SetWindowBudget(10)
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	cursorID := func() string {
 		r, ok := m.view.CursorRow()
@@ -5080,7 +5080,7 @@ func TestPageDownFoldThread(t *testing.T) {
 		core.NewThread("t0", []*core.Message{{ID: "x1", Timestamp: 2}, {ID: "x2", Timestamp: 1, References: []string{"x1"}}}),
 		core.NewThread("t1", threadChain(40)),
 	})
-	view.SetWindowBudget(10, 4)
+	view.SetWindowBudget(10)
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 	m.height = 15 // listHeight 12: the fold lands on t1's window end
 	if rows := view.Rows(); len(rows) != 13 || !rows[10].Ghost || rows[10].More != 30 || rows[11].Msg == nil || rows[11].ThreadID != "t0" {

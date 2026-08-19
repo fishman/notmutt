@@ -14,8 +14,8 @@ func TestMsgLessOrder(t *testing.T) {
 	c := &Message{ID: "c", Timestamp: 200}
 	msgs := []*Message{b, c, a}
 	sort.Slice(msgs, func(i, j int) bool { return MsgLess(msgs[i], msgs[j]) })
-	if msgs[0] != c || msgs[1] != a || msgs[2] != b {
-		t.Fatalf("want [c a b], got [%s %s %s]", msgs[0].ID, msgs[1].ID, msgs[2].ID)
+	if msgs[0] != a || msgs[1] != b || msgs[2] != c {
+		t.Fatalf("want [a b c], got [%s %s %s]", msgs[0].ID, msgs[1].ID, msgs[2].ID)
 	}
 }
 

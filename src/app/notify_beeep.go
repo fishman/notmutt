@@ -16,7 +16,10 @@ import (
 // darwin): the title is the deduped sender list, the body the count
 // plus the aligned sender/subject/time rows - the same payload as the
 // command backend's {count}/{subjects}, never bodies or ids (F6).
+// beeep.AppName is the notification daemon's source label: it defaults
+// to "DefaultAppName" and must be set explicitly.
 func notifyBeeep(entries int, head []core.NotifyHeadline) {
+	beeep.AppName = "notmutt"
 	body := strconv.Itoa(entries) + " new messages"
 	if rows := notifyRows(head); rows != "" {
 		body += "\n" + rows

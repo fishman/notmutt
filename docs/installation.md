@@ -63,7 +63,7 @@ One account is three blocks: an IMAPStore (the remote side), a
 MaildirStore (the local maildir), and a Channel wiring them
 together:
 
-```ini
+```text
 IMAPStore your.email@gmail.com-remote
 PipelineDepth 3
 Host imap.gmail.com
@@ -157,7 +157,7 @@ msmtp is a mutt-compatible sendmail: it reads the message on stdin,
 authenticates, and hands it to the server. The reference
 `references/.msmtprc` shows the shape:
 
-```ini
+```text
 defaults
 auth on
 tls on

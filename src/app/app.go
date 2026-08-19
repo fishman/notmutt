@@ -358,10 +358,10 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // async job, never on the TUI's event path). The thread fetch narrows
 // to the message (msgID): the pager shows one message, never the
 // whole thread - a bare open (empty msgID) renders the thread's
-// first. A full open (preview=false) marks the thread read with an
-// ActTag -unread (R1 - read is a tag; the refresh cycle reconciles it
-// into the view). The tag failure keeps the thread open - the fetch
-// already succeeded - and surfaces as a JobError.
+// first. A full open (preview=false) marks the opened message read
+// with an ActTag -unread (R1 - read is a tag; the refresh cycle
+// reconciles it into the view). The tag failure keeps the thread open
+// - the fetch already succeeded - and surfaces as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
@@ -398,14 +398,16 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 	}
 	lines = applyBodyRenderHooks(lines)
 	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
-	if !preview {
+	// the read mark names the opened message, never the whole thread:
+	// the other messages in the thread keep their unread state
+	if !preview && msgID != "" {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,
-			Query:  "thread:" + threadID,
+			Query:  "id:" + msgID,
 			TagOps: []core.TagOp{{Tag: "unread", Add: false}},
 		})
 		if err != nil || rpl.Err != nil {
-			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", threadID, err, rpl.Err)})
+			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", msgID, err, rpl.Err)})
 		}
 	}
 }

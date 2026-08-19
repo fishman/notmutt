@@ -62,8 +62,10 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 }
 
 // TestOpenThreadMarksRead pins the open-reads contract: a full open
-// loads the thread AND tags it -unread (R1 - read is a tag, the
-// refresh cycle reconciles it into the view), ThreadLoaded first.
+// loads the thread AND tags the opened message -unread (R1 - read is a
+// tag, the refresh cycle reconciles it into the view), never the whole
+// thread - the other messages keep their unread state. ThreadLoaded
+// publishes first.
 func TestOpenThreadMarksRead(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -85,8 +87,24 @@ func TestOpenThreadMarksRead(t *testing.T) {
 		t.Fatal("no ThreadLoaded")
 	}
 	calls := fw.tagCallsSnapshot()
-	if len(calls) != 1 || calls[0].query != "thread:t1" || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Tag != "unread" || calls[0].tagOps[0].Add {
-		t.Fatalf("open must tag the thread -unread: %+v", calls)
+	if len(calls) != 1 || calls[0].query != "id:a" || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Tag != "unread" || calls[0].tagOps[0].Add {
+		t.Fatalf("open must tag the opened message -unread: %+v", calls)
+	}
+
+	// a mid-thread open names the opened message, not the thread
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
+	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 0, false, nil)
+	select {
+	case e := <-ch:
+		if _, ok := e.(core.ThreadLoaded); !ok {
+			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+	calls = fw.tagCallsSnapshot()
+	if len(calls) != 2 || calls[1].query != "id:b" {
+		t.Fatalf("a mid-thread open must tag its own message only: %+v", calls)
 	}
 }
 

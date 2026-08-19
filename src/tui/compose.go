@@ -13,6 +13,7 @@ import (
 	"notmutt/compose"
 	"notmutt/core"
 	"notmutt/i18n"
+	"notmutt/mail"
 )
 
 // composeForm is one form line: the settings rows carry a label +
@@ -172,9 +173,11 @@ func (m *Model) syncPreviewPager(st compose.State) {
 }
 
 // previewLinesOf converts the compose content to pager lines: body
-// lines, the "-- " marker and everything after it as signature. The
-// F1 sanitize runs here - the compose body is editor text, not the
-// mail path's pre-sanitized lines.
+// lines, the "-- " marker and everything after it as signature. Quote
+// depth follows the mail renderer's ">" rule, so the quoted original
+// highlights in the quotedN colors like the mail pager. The F1
+// sanitize runs here - the compose body is editor text, not the mail
+// path's pre-sanitized lines.
 func previewLinesOf(content string) []core.Line {
 	var lines []core.Line
 	sig := false
@@ -186,7 +189,7 @@ func previewLinesOf(content string) []core.Line {
 		if sig {
 			kind = core.LineSignature
 		}
-		lines = append(lines, core.Line{Text: core.SanitizeControls(l), Kind: kind})
+		lines = append(lines, core.Line{Text: core.SanitizeControls(l), Kind: kind, Quoted: mail.QuoteDepth(l)})
 	}
 	return lines
 }

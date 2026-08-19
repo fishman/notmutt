@@ -985,6 +985,7 @@ func Default() Config {
 					"later": "⏳", "personal": "👤", "cfp": "🎤",
 					"conference": "🎫", "exhibition": "🏛", "flagged": "🚩",
 					"signed": "🔒", "meeting": "📅", "newsletter": "📰",
+					"forwarded": "↪",
 				},
 			},
 			Glyphs: Glyphs{

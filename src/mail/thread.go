@@ -312,6 +312,23 @@ func RenderAttachment(data []byte) []core.Line {
 	return lines
 }
 
+// QuoteDepth counts a line's leading ">" markers (mutt-style quote
+// nesting, one optional space per layer), capped at the 5 visible
+// quote layers.
+func QuoteDepth(line string) int {
+	depth := 0
+	rest := line
+	for depth < 5 {
+		next := strings.TrimPrefix(rest, ">")
+		if next == rest {
+			break
+		}
+		depth++
+		rest = strings.TrimPrefix(next, " ")
+	}
+	return depth
+}
+
 // splitBody splits the raw text into parts: quoted depth by leading
 // ">" count (capped at 5), signature after the first standalone "-- ".
 // The marker line itself stays a part - renderMessage emits it as-is,
@@ -328,17 +345,7 @@ func splitBody(text string) []Part {
 		if !sig && line == "-- " {
 			sig = true
 		}
-		depth := 0
-		rest := line
-		for depth < 5 {
-			next := strings.TrimPrefix(rest, ">")
-			if next == rest {
-				break
-			}
-			depth++
-			rest = strings.TrimPrefix(next, " ")
-		}
-		parts = append(parts, Part{Body: line, Quoted: depth, Signature: sig})
+		parts = append(parts, Part{Body: line, Quoted: QuoteDepth(line), Signature: sig})
 	}
 	// the trailing newline is line termination, not an empty line
 	if len(parts) > 0 && strings.HasSuffix(text, "\n") {

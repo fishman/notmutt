@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mattn/go-runewidth"
+
+	"notmutt/core"
 )
 
 // TestAttachRowTable pins the 4-column table (mutt's attach-menu
@@ -63,5 +65,22 @@ func TestSizeStr(t *testing.T) {
 		if got := sizeStr(n); got != want {
 			t.Fatalf("sizeStr(%d) = %q, want %q", n, got, want)
 		}
+	}
+}
+
+// TestPreviewQuoteHighlight pins the preview pager's quote coloring:
+// the quoted original in a reply body carries the mail renderer's
+// quote depth (the pager styles those lines quotedN), and the
+// signature marker stays the signature kind.
+func TestPreviewQuoteHighlight(t *testing.T) {
+	lines := previewLinesOf("plain\n> quoted\n> > nested\n-- \nsig\n")
+	if len(lines) != 5 {
+		t.Fatalf("want 5 lines, got %d", len(lines))
+	}
+	if lines[0].Quoted != 0 || lines[1].Quoted != 1 || lines[2].Quoted != 2 {
+		t.Fatalf("quote depths must follow the > rule: %+v", lines[:3])
+	}
+	if lines[3].Kind != core.LineSignature || lines[4].Kind != core.LineSignature {
+		t.Fatalf("the signature marker must flip the kind: %+v", lines[3:])
 	}
 }

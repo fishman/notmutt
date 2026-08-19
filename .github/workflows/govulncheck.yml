@@ -27,6 +27,9 @@ jobs:
         with:
           go-version-file: src/go.mod
 
+      - name: Install libnotmuch
+        run: .github/install-libnotmuch.sh
+
       - name: Scan
         working-directory: src
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

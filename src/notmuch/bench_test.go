@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"notmutt/core"
+	"notmutt/lib/testutil"
 )
 
 // Run: NOTMUCH_BENCH=1 go test -tags cli ./notmuch/ -run TestBench -v
@@ -21,10 +22,7 @@ func TestBench(t *testing.T) {
 	if os.Getenv("NOTMUCH_BENCH") == "" {
 		t.Skip("set NOTMUCH_BENCH=1 to run")
 	}
-	db := os.Getenv("NOTMUCH_DB")
-	if db == "" {
-		db = "/home/user/Mail"
-	}
+	db := testutil.DevMailbox(t)
 	ctx := context.Background()
 
 	cli := NewCLI()

@@ -5,8 +5,9 @@ package notmuch
 
 import (
 	"context"
-	"os"
 	"testing"
+
+	"notmutt/lib/testutil"
 )
 
 // TestCGOWalkExhausts pins the progressive walk: the full walk must
@@ -14,10 +15,7 @@ import (
 // per-chunk restart bug made it loop forever re-yielding the head of
 // the result.
 func TestCGOWalkExhausts(t *testing.T) {
-	db := os.Getenv("NOTMUCH_DB")
-	if db == "" {
-		db = "/home/user/Mail"
-	}
+	db := testutil.DevMailbox(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), db); err != nil {
 		t.Fatal(err)

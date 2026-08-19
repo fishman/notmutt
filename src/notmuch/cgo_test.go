@@ -12,13 +12,11 @@ import (
 	"testing"
 
 	"notmutt/core"
+	"notmutt/lib/testutil"
 )
 
 func TestCGOSmoke(t *testing.T) {
-	db := os.Getenv("NOTMUCH_DB")
-	if db == "" {
-		db = "/home/user/Mail"
-	}
+	db := testutil.DevMailbox(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -79,8 +77,10 @@ func TestCGOTagRoundTrip(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// the binding resolves the config from the process env; export the
+	// scratch config so the test is hermetic (no ~/.notmuch-config)
+	t.Setenv("NOTMUCH_CONFIG", cfgPath)
 	cmd := exec.Command("notmuch", "new")
-	cmd.Env = append(os.Environ(), "NOTMUCH_CONFIG="+cfgPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("notmuch new: %v: %s", err, out)
 	}
@@ -138,8 +138,10 @@ func TestCGODeltaRoundTrip(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// the binding resolves the config from the process env; export the
+	// scratch config so the test is hermetic (no ~/.notmuch-config)
+	t.Setenv("NOTMUCH_CONFIG", cfgPath)
 	cmd := exec.Command("notmuch", "new")
-	cmd.Env = append(os.Environ(), "NOTMUCH_CONFIG="+cfgPath)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("notmuch new: %v: %s", err, out)
 	}

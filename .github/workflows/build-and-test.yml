@@ -1,0 +1,56 @@
+name: Build and test
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: src/go.mod
+
+      - name: Install libnotmuch
+        run: sudo apt-get install -y libnotmuch-dev
+
+      - name: Format
+        working-directory: src
+        run: test -z "$(gofmt -l .)"
+
+      - name: Vet
+        working-directory: src
+        run: go vet ./...
+
+      - name: Build
+        working-directory: src
+        run: go build ./...
+
+      - name: Build (lua)
+        working-directory: src
+        run: go build -tags lua ./...
+
+      - name: Test
+        working-directory: src
+        run: go test ./...
+
+      - name: Test (race)
+        working-directory: src
+        run: go test -race ./...
+
+      - name: Test (lua)
+        working-directory: src
+        run: go test -tags lua ./app/

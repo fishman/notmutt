@@ -1,0 +1,41 @@
+name: Fuzz
+
+on:
+  pull_request:
+    branches: [ "master" ]
+  schedule:
+    - cron: "13 3 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: FuzzRenderHTML
+            pkg: ./mail/
+          - target: FuzzCSSDeclarations
+            pkg: ./lib/html/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: src/go.mod
+
+      - name: Install libnotmuch
+        run: sudo apt-get install -y libnotmuch-dev
+
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: src
+        run: go test -fuzz=${{ matrix.target }} -fuzztime=120s ${{ matrix.pkg }}

@@ -10,6 +10,27 @@ package html
 
 import "testing"
 
+// TestBackgroundShorthand pins the background shorthand (the commonest
+// way mail declares a body color): the first color token becomes the
+// background-color, and the longhand wins when both are present.
+func TestBackgroundShorthand(t *testing.T) {
+	cases := []struct{ css, want string }{
+		{"background: #111111", "#111111"},
+		{"background: #fff url(bg.png) no-repeat", "#ffffff"},
+		{"background: url(bg.png) #fff", "#ffffff"},
+		{"background: transparent", ""},
+		{"background-color: #222", "#222222"},
+		{"background: #111; background-color: #222", "#222222"},
+	}
+	for _, c := range cases {
+		s := Style{}
+		s.apply(ParseDecls(c.css))
+		if s.Bg != c.want {
+			t.Errorf("%s: got %q, want %q", c.css, s.Bg, c.want)
+		}
+	}
+}
+
 func FuzzCSSDeclarations(f *testing.F) {
 	f.Add("color: red; font-weight: bold")
 	f.Add("background-color: #fff; text-align: center")

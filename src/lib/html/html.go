@@ -27,6 +27,7 @@ import (
 // when empty.
 type Style struct {
 	Fg        string // #rrggbb, "" = inherit
+	FgSet     bool   // an explicit color source at this node, not inherited
 	Bg        string
 	Bold      bool
 	Italic    bool
@@ -108,11 +109,21 @@ func (s *Style) apply(decls map[string]string) {
 	if v, ok := decls["color"]; ok {
 		if c := cssColor(v); c != "" {
 			s.Fg = c
+			s.FgSet = true
 		}
 	}
 	if v, ok := decls["background-color"]; ok {
 		if c := cssColor(v); c != "" {
 			s.Bg = c
+		}
+	} else if v, ok := decls["background"]; ok {
+		// the shorthand (background: #fff url(...) no-repeat): the first
+		// color token; the longhand above wins when both are present
+		for _, tok := range strings.Fields(v) {
+			if c := cssColor(tok); c != "" {
+				s.Bg = c
+				break
+			}
 		}
 	}
 	if v, ok := decls["font-weight"]; ok {
@@ -232,6 +243,7 @@ func stripCSSComments(s string) string {
 func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s := *parent
 	s.AlignSet = false // align inherits, its explicit-source flag never does
+	s.FgSet = false    // same for color: the contrast derivation must override an inherited value
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {

@@ -179,8 +179,12 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 				}
 				// the default foreground must read on that background:
 				// an unstyled mail inherits the contrast color instead
-				// of the theme's light text on a dark terminal
-				if cs.Fg == "" {
+				// of the theme's light text on a dark terminal. The
+				// contrast derives only when no author color set it -
+				// FgSet does not inherit, so the body's background
+				// recomputes what the html element derived against the
+				// fallback (the dark-bg mail bug: dark on dark)
+				if !cs.FgSet {
 					cs.Fg = html.ContrastFG(w.defaultBG)
 				}
 			}

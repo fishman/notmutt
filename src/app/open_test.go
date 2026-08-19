@@ -5,11 +5,60 @@ package app
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"notmutt/core"
 )
+
+// TestOpenThreadHtmlOnlyDefaultsHTML pins the html-only open default:
+// a thread whose first message has no plain part opens in the html
+// view (RenderAuto), colored runs included - the old default rendered
+// the html structure with the colors stripped (the html-background
+// with plain-font-colors report), a hybrid plain view had no reason
+// to win over the real html view.
+func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	path := filepath.Join(t.TempDir(), "msg")
+	msg := "From: sender@example.com\nTo: alpha@example.com\nSubject: html only\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: text/html; charset=utf-8\n\n" +
+		"<html><body style=\"background:#111111\"><p style=\"color:#eeeeee\">Hello on dark</p></body></html>"
+	if err := os.WriteFile(path, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
+
+	openThread(fw, bus, "t1", false, core.RenderAuto, false, 80, false, nil)
+
+	select {
+	case e := <-ch:
+		tl, ok := e.(core.ThreadLoaded)
+		if !ok {
+			t.Fatalf("expected ThreadLoaded, got %T", e)
+		}
+		if tl.RenderMode != core.RenderHTML {
+			t.Fatalf("html-only thread must open in the html view, got %v", tl.RenderMode)
+		}
+		colored := false
+		for _, l := range tl.Lines {
+			for _, r := range l.Runs {
+				if r.Fg != "" || r.Bg != "" {
+					colored = true
+				}
+			}
+		}
+		if !colored {
+			t.Fatal("the html view must carry colored runs")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+}
 
 // TestOpenThreadMarksRead pins the open-reads contract: a full open
 // loads the thread AND tags it -unread (R1 - read is a tag, the

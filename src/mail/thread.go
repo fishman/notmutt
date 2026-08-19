@@ -84,7 +84,7 @@ func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width
 			continue
 		}
 		if mime == "" {
-			mime = viewMime(parsed, mode)
+			mime = ViewMime(parsed, mode)
 		}
 		subj := m.Subject
 		if subj == "" {
@@ -474,9 +474,9 @@ func partFlags(m *Message) (hasPlain, hasHTML bool) {
 	return
 }
 
-// viewMime labels what the mode actually renders: the html part (or
+// ViewMime labels what the mode actually renders: the html part (or
 // its raw source) when the view selects it, the plain parts otherwise.
-func viewMime(m *Message, mode core.RenderMode) string {
+func ViewMime(m *Message, mode core.RenderMode) string {
 	hasPlain, hasHTML := partFlags(m)
 	if hasHTML && (mode == core.RenderHTML || mode == core.RenderSource || (mode == core.RenderPlain && !hasPlain)) {
 		return "text/html"

@@ -362,6 +362,15 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 	}
 	if mode == core.RenderAuto {
 		mode = openViewMode(defViews, rpl.Msgs)
+		// an html-only thread has no plain content: its plain render is
+		// the html structure with the colors stripped, so the open
+		// default upgrades it to the html view (an explicit default-views
+		// plain mapping cannot prefer content that does not exist)
+		if mode == core.RenderPlain && len(rpl.Msgs) > 0 && len(rpl.Msgs[0].Paths) > 0 {
+			if parsed, err := mail.ParseMessage(rpl.Msgs[0].Paths[0]); err == nil && mail.ViewMime(parsed, core.RenderPlain) == "text/html" {
+				mode = core.RenderHTML
+			}
+		}
 	}
 	lines, mime, links, err := mail.RenderThread(rpl.Msgs, mode, headers, width, labelLinks)
 	if err != nil {

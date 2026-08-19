@@ -152,13 +152,35 @@ func TestRenderHTMLBackground(t *testing.T) {
 	}
 
 	for name, body := range map[string]string{
-		"css body":     `<body style="background-color:#f0f0f0"><p>hi</p></body>`,
-		"bgcolor body": `<body bgcolor="#e8e8e8"><p>hi</p></body>`,
+		"css body":         `<body style="background-color:#f0f0f0"><p>hi</p></body>`,
+		"css shorthand":    `<body style="background:#f0f0f0"><p>hi</p></body>`,
+		"bgcolor body":     `<body bgcolor="#e8e8e8"><p>hi</p></body>`,
+		"html bg + body":   `<html style="background:#f0f0f0"><body><p>hi</p></body></html>`,
+		"shorthand + html": `<html><body style="background:#f0f0f0"><p>hi</p></body></html>`,
 	} {
 		lines = RenderHTML(body, nil, 0)
 		if len(lines) == 0 || lines[0].Bg == "" || lines[0].Bg == "#ffffff" {
 			t.Fatalf("%s: the declared background must be respected: %+v", name, lines[0])
 		}
+	}
+
+	// a dark background forces the contrast foreground: the unstyled
+	// text must read light on the dark page (the dark-bg mail bug was
+	// dark text derived against the white fallback)
+	dark := RenderHTML(`<html><body style="background:#111111"><p>on dark</p></body></html>`, nil, 0)
+	if dark[0].Bg != "#111111" {
+		t.Fatalf("the dark background must be respected: %+v", dark[0])
+	}
+	light := false
+	for _, l := range dark {
+		for _, r := range l.Runs {
+			if r.Fg == "#f5f5f5" {
+				light = true
+			}
+		}
+	}
+	if !light {
+		t.Fatalf("unstyled text on a dark page must derive the light contrast fg: %+v", dark)
 	}
 	// a nested colored block (bgcolor table) paints its OWN runs over
 	// the region default: the cell run carries the table's bg

@@ -501,8 +501,8 @@ func sized(m Model) Model {
 // not exercise opening), restoring it on test end.
 func stubOpenHandler(t *testing.T) {
 	t.Helper()
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {})
-	t.Cleanup(func() { SetOpenHandler(func(threadID string, preview, headers bool, _ int) {}) })
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {})
+	t.Cleanup(func() { SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {}) })
 }
 
 // wantAll fails the test when any want is absent from out.
@@ -1170,7 +1170,7 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	})})
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	path := fixtureMsg(t, "body line\n")
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1339,7 +1339,7 @@ func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 // carries the pager state.
 func openPager(t *testing.T, m Model, path string) Model {
 	t.Helper()
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1533,7 +1533,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1567,7 +1567,7 @@ func TestPagerReopenPreservesContentAndScroll(t *testing.T) {
 func TestPagerResizeInIndexModeUpdatesWidth(t *testing.T) {
 	m := model()
 	path := fixtureMsg(t, strings.Repeat("line\n", 30))
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
@@ -1766,7 +1766,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := model()
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{bad}}}),
@@ -1785,7 +1785,7 @@ func TestThreadLoadedParseFailureShowsErrorLine(t *testing.T) {
 
 func TestThreadLoadedErrorFallsBackToIndex(t *testing.T) {
 	m := model()
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{ThreadID: threadID, Err: errors.New("boom")}})
 		m = next
 	})
@@ -3924,7 +3924,7 @@ func TestModelToggleRender(t *testing.T) {
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   threadID,
 			RenderMode: core.RenderPlain,
@@ -3935,7 +3935,7 @@ func TestModelToggleRender(t *testing.T) {
 	})
 	var got string
 	var gotMode core.RenderMode
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, _ bool) {
+	SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, _ int, _ bool) {
 		got, gotMode = threadID, mode
 	})
 	press(t, m, "enter") // discard: the open handler rebinds m
@@ -4070,27 +4070,27 @@ func TestModelAttachmentDialog(t *testing.T) {
 	m = next
 	var viewedTID string
 	var viewedOrdinal int
-	SetAttachmentViewHandler(func(threadID string, ordinal int) {
+	SetAttachmentViewHandler(func(threadID, msgID string, ordinal int) {
 		viewedTID, viewedOrdinal = threadID, ordinal
 	})
-	defer func() { SetAttachmentViewHandler(func(string, int) {}) }()
+	defer func() { SetAttachmentViewHandler(func(string, string, int) {}) }()
 	var savedTID string
 	var savedOrdinal int
 	var savedPath string
-	SetAttachmentSaveHandler(func(threadID string, ordinal int, path string) {
+	SetAttachmentSaveHandler(func(threadID, msgID string, ordinal int, path string) {
 		savedTID, savedOrdinal, savedPath = threadID, ordinal, path
 	})
-	defer func() { SetAttachmentSaveHandler(func(string, int, string) {}) }()
+	defer func() { SetAttachmentSaveHandler(func(string, string, int, string) {}) }()
 	// the back restore: the app re-opens the message in the current
 	// view and the reply replaces the attachment content
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+	SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID, RenderMode: mode, Mime: "text/plain",
 			Lines: []core.Line{{Text: "body line", Kind: core.LineBody}},
 		}})
 		m = next
 	})
-	defer func() { SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {}) }()
+	defer func() { SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {}) }()
 
 	// the v key opens the picker with the attachment lines in order
 	m = press(t, m, "v")
@@ -4162,7 +4162,7 @@ func TestModelOpenHeaders(t *testing.T) {
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	var gotTID string
 	var gotPreview, gotHeaders bool
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		gotTID, gotPreview, gotHeaders = threadID, preview, headers
 	})
 	m = press(t, m, "h")
@@ -4221,14 +4221,14 @@ func TestOpenLinksHTML(t *testing.T) {
 		m = next
 	}
 	var labelCalls []bool
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+	SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
 		labelCalls = append(labelCalls, labelLinks)
 	})
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
 		stubOpenHandler(t)
-		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
 
@@ -4302,14 +4302,14 @@ func TestOpenLinksNoLinks(t *testing.T) {
 	path := fixtureHtml(t, "<p>no links here, just text</p>\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
 	var labelCalls []bool
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
+	SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, _ int, labelLinks bool) {
 		labelCalls = append(labelCalls, labelLinks)
 	})
 	var opened string
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
 		stubOpenHandler(t)
-		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
 	inject := func(mode core.RenderMode, labelLinks bool) {
@@ -4350,12 +4350,12 @@ func TestHeadersTogglePager(t *testing.T) {
 	path := fixtureMsg(t, "see the body\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
 	var headersSeen []bool
-	SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, _ int, _ bool) {
+	SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, _ int, _ bool) {
 		headersSeen = append(headersSeen, headers)
 	})
 	defer func() {
 		stubOpenHandler(t)
-		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {})
 	}()
 	m = openPager(t, m, path)
 	inject := func(headers bool) {
@@ -4422,7 +4422,7 @@ func TestLinkModeScrolls(t *testing.T) {
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
 		stubOpenHandler(t)
-		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
 	m = press(t, m, "enter") // open: the default handler is a no-op
@@ -4490,7 +4490,7 @@ func TestEasyjumpHighlight(t *testing.T) {
 	SetOpenLinkHandler(func(url string) { opened = url })
 	defer func() {
 		stubOpenHandler(t)
-		SetRenderHandler(func(string, core.RenderMode, bool, int, bool) {})
+		SetRenderHandler(func(string, string, core.RenderMode, bool, int, bool) {})
 		SetOpenLinkHandler(func(string) {})
 	}()
 	m = press(t, m, "enter") // open: the default handler is a no-op
@@ -4645,8 +4645,9 @@ func TestIndexSearch(t *testing.T) {
 }
 
 // TestPagerEnterNextMail pins the pager's enter key: the index cursor
-// advances and the pager loads the next thread; a press on the last
-// row is a no-op (the same-thread guard skips the reload).
+// advances and the pager loads the next message; a press on the last
+// row is a no-op (the same-message guard skips the reload - a same-
+// thread press on another message DOES reload it).
 func TestPagerEnterNextMail(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
@@ -4658,10 +4659,10 @@ func TestPagerEnterNextMail(t *testing.T) {
 	})
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
 	opens := 0
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		opens++
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: threadID, RenderMode: core.RenderPlain, Mime: "text/plain",
+			ThreadID: threadID, MsgID: msgID, RenderMode: core.RenderPlain, Mime: "text/plain",
 			Lines: []core.Line{{Text: "mail " + threadID}},
 		}})
 		m = next
@@ -4700,7 +4701,7 @@ func pagerText(p *pager) string {
 // line, and the back key restores the mail.
 func TestSummaryView(t *testing.T) {
 	m := model()
-	m.pager = newPager("t1", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
+	m.pager = newPager("t1", "", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
 	m.mode = "pager"

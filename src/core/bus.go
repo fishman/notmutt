@@ -244,7 +244,11 @@ const (
 
 type ThreadLoaded struct {
 	ThreadID string
-	Preview  bool
+	// MsgID is the opened message: the pager renders that message's
+	// content only, never the whole thread (the thread-wide text stays
+	// queryable via the lua layer, not as the default view).
+	MsgID   string
+	Preview bool
 	// RenderMode names the view the lines were rendered with (the
 	// toggle-render and source keys): the TUI compares it against its
 	// own mode so a same-thread reload with another view replaces the
@@ -276,10 +280,13 @@ type ThreadLoaded struct {
 // re-extraction index).
 type AttachmentLoaded struct {
 	ThreadID string
-	Ordinal  int
-	Name     string
-	Lines    []Line
-	Err      error
+	// MsgID is the message the attachment came from (the pager's
+	// identity is message-scoped: back re-opens the same message).
+	MsgID   string
+	Ordinal int
+	Name    string
+	Lines   []Line
+	Err     error
 }
 
 // AttachmentSaved carries the attachment save result (the s key in an
@@ -330,10 +337,13 @@ type LuaResult struct {
 
 // AiStarted opens the AI summary view (R8): the app publishes it when
 // an ai_chat plugin call begins streaming; the TUI saves the pager's
-// current lines and swaps in a placeholder.
+// current lines and swaps in a placeholder. MsgID is the message the
+// summary displaced (the TUI fills it from the pager when the app
+// cannot know it) - back restores that message's render.
 type AiStarted struct {
 	JobID    string
 	ThreadID string
+	MsgID    string
 }
 
 // AiChunk carries one streamed text delta from the AI provider; the

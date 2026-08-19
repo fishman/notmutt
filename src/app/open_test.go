@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,7 +34,7 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
 
-	openThread(fw, bus, "t1", false, core.RenderAuto, false, 80, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderAuto, false, 80, false, nil)
 
 	select {
 	case e := <-ch:
@@ -69,7 +70,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -97,7 +98,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", true, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", true, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -157,7 +158,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -175,5 +176,64 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no JobError")
+	}
+}
+
+// TestOpenThreadRendersOnlyOpenedMessage pins the message-scoped
+// pager: the open carries the cursor message's id, the thread fetch
+// narrows to that message, and the reply names it - the pager shows
+// one email, never the whole thread (the thread-wide text stays
+// queryable via the lua layer, not as the default view). A bare open
+// (empty id) falls back to the thread's first.
+func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	dir := t.TempDir()
+	writeMsg := func(id, subject string) string {
+		path := filepath.Join(dir, id)
+		msg := "From: sender@example.com\nTo: alpha@example.com\nSubject: " + subject + "\n" +
+			"Date: Tue, 01 Jan 2019 00:00:00 +0000\n\nbody of " + subject + "\n"
+		if err := os.WriteFile(path, []byte(msg), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	p1, p2 := writeMsg("a", "first message"), writeMsg("b", "second message")
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{
+		{ID: "a", ThreadID: "t1", Paths: []string{p1}},
+		{ID: "b", ThreadID: "t1", Paths: []string{p2}},
+	})
+
+	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 80, false, nil)
+	loaded := func() core.ThreadLoaded {
+		select {
+		case e := <-ch:
+			tl, ok := e.(core.ThreadLoaded)
+			if !ok {
+				t.Fatalf("expected ThreadLoaded, got %T", e)
+			}
+			return tl
+		case <-time.After(time.Second):
+			t.Fatal("no ThreadLoaded")
+			return core.ThreadLoaded{}
+		}
+	}
+	tl := loaded()
+	if tl.MsgID != "b" {
+		t.Fatalf("the reply must name the opened message, got %q", tl.MsgID)
+	}
+	var text strings.Builder
+	for _, l := range tl.Lines {
+		text.WriteString(l.Text)
+	}
+	if got := text.String(); strings.Contains(got, "first") || !strings.Contains(got, "second") {
+		t.Fatalf("the pager must render the opened message only:\n%s", got)
+	}
+
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 80, false, nil)
+	tl = loaded()
+	if tl.MsgID != "a" {
+		t.Fatalf("a bare open must fall back to the thread's first, got %q", tl.MsgID)
 	}
 }

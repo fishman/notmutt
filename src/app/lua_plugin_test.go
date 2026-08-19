@@ -64,7 +64,7 @@ end
 `})
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -101,7 +101,7 @@ end
 `})
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -141,7 +141,7 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -170,7 +170,7 @@ end
 `})
 	loadLuaPlugins(dir)
 
-	openThread(fw, bus, "t1", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)

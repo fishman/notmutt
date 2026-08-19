@@ -320,7 +320,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -534,7 +534,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			// a plugin bind_key (record 20 point 7): core bindings win,
 			// the plugin fills the rest - the app runs the fn and
 			// publishes LuaResult
-			tid, _ := m.cursorThreadID()
+			tid, _, _ := m.cursorThread()
 			onLuaKey(msg.String(), m.bindingCtx(), tid)
 			return m, nil
 		}
@@ -890,12 +890,12 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
 			// enter in the pager: the next mail (mutt's next-message).
-			// The index cursor advances; a same-thread press at the
-			// last row is a no-op. The reload guard replaces the
-			// pager content on arrival.
+			// The index cursor advances; a press that did not move the
+			// cursor is a no-op. The reload guard replaces the pager
+			// content on arrival.
 			m.moveCursor(1)
-			if tid, _ := m.cursorThreadID(); tid != "" && tid != pagerThreadID(m.pager) {
-				onOpen(tid, false, m.showHeaders, m.width)
+			if tid, mid, _ := m.cursorThread(); tid != "" && (tid != pagerThreadID(m.pager) || mid != pagerMsgID(m.pager)) {
+				onOpen(tid, mid, false, m.showHeaders, m.width)
 				deferPaint()
 				deferred = true
 			}
@@ -909,7 +909,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
-			onToggleRender(pagerThreadID(m.pager), m.renderMode, !m.showHeaders, m.width, false)
+			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, !m.showHeaders, m.width, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1026,7 +1026,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				// the q key in an attachment view returns to the
 				// message: the re-open reply replaces the pager (the
 				// onThreadLoaded attView guard) and clears the view
-				onToggleRender(m.attView.threadID, m.renderMode, m.showHeaders, m.width, false)
+				onToggleRender(m.attView.threadID, m.attView.msgID, m.renderMode, m.showHeaders, m.width, false)
 				deferPaint()
 				deferred = true
 				break
@@ -1037,7 +1037,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				// attachment-view back affordance); a summary opened
 				// from the index has nothing to restore
 				if m.summary.saved != nil {
-					m.pager = newPager(m.summary.threadID, m.summary.saved)
+					m.pager = newPager(m.summary.threadID, m.summary.msgID, m.summary.saved)
 					w, h := m.pagerSize()
 					m.pager.setSize(w, h, m.styles)
 				} else {
@@ -1098,7 +1098,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			if m.renderMode == core.RenderHTML {
 				mode = core.RenderPlain
 			}
-			onToggleRender(pagerThreadID(m.pager), mode, m.showHeaders, m.width, false)
+			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), mode, m.showHeaders, m.width, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1106,7 +1106,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the raw html source view (ctrl+u): re-opens the thread in
 		// the source view unless it is already showing it.
 		if m.mode == "pager" && m.pager != nil && m.renderMode != core.RenderSource {
-			onToggleRender(pagerThreadID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
+			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1124,7 +1124,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the request and skip the replace.
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderHTML {
-				onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, true)
+				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.width, true)
 			} else if links := linksOfLines(m.pager.lines, m.renderMode == core.RenderSource); len(links) > 0 {
 				m.dialogue = &listDialogue{f: newFuzzy("openlink", "open link:", numberedLinks(links))}
 			} else {
@@ -1308,7 +1308,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// a plugin-registered action (R8): the app runs it in the
 		// plugin's VM with the cursor thread as msg() context
 		if pluginActions()[action] {
-			tid, _ := m.cursorThreadID()
+			tid, _, _ := m.cursorThread()
 			onLuaAction(action, tid)
 			break
 		}
@@ -1396,7 +1396,7 @@ func (m *Model) exitLinkMode() {
 	m.linkInput = ""
 	if m.pager != nil {
 		m.pager.setLinkSel("")
-		onToggleRender(pagerThreadID(m.pager), m.renderMode, m.showHeaders, m.width, false)
+		onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.width, false)
 	}
 }
 
@@ -1525,8 +1525,8 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 				m.closePreview()
 				return
 			}
-			if e.ThreadID != pagerThreadID(m.pager) {
-				m.pager = newPager(e.ThreadID, e.Lines)
+			if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) {
+				m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 				w, h := m.pagerSize()
 				m.pager.setSize(w, h, m.styles)
 			}
@@ -1540,10 +1540,10 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	// the attView term: any message render while an attachment view is
 	// active replaces it (the back key's restore) - the reply carries
 	// the message's own mode/headers, which alone never differ
-	if e.ThreadID != pagerThreadID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || m.attView != nil {
+	if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || m.attView != nil {
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
 		m.attView = nil // the attachment view ends with the restore
-		m.pager = newPager(e.ThreadID, e.Lines)
+		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
@@ -1578,20 +1578,22 @@ func (m *Model) onAttachmentLoaded(e core.AttachmentLoaded) {
 		m.logEntry("attachment: "+e.Err.Error(), true)
 		return
 	}
-	if m.mode != "pager" || e.ThreadID != pagerThreadID(m.pager) {
+	if m.mode != "pager" || e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) {
 		return
 	}
-	m.attView = &attView{threadID: e.ThreadID, ordinal: e.Ordinal, name: e.Name}
-	m.pager = newPager(e.ThreadID, e.Lines)
+	m.attView = &attView{threadID: e.ThreadID, msgID: e.MsgID, ordinal: e.Ordinal, name: e.Name}
+	m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
 }
 
 // attView is the pager's attachment view state: the viewed
-// attachment's thread + ordinal (the save seam's re-extraction key)
-// and name (the save prompt's prefill).
+// attachment's thread + message (the back restore's identity),
+// ordinal (the save seam's re-extraction key) and name (the save
+// prompt's prefill).
 type attView struct {
 	threadID string
+	msgID    string
 	ordinal  int
 	name     string
 }
@@ -1603,6 +1605,7 @@ type attView struct {
 type summary struct {
 	jobID    string
 	threadID string
+	msgID    string
 	saved    []core.Line
 	first    bool // the first delta replaces the placeholder line
 }
@@ -1618,9 +1621,10 @@ func (m *Model) onAiStarted(e core.AiStarted) {
 	var saved []core.Line
 	if m.mode == "pager" && m.pager != nil && pagerThreadID(m.pager) == e.ThreadID {
 		saved = m.pager.lines
+		e.MsgID = pagerMsgID(m.pager)
 	}
-	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, saved: saved, first: true}
-	m.pager = newPager(e.ThreadID, []core.Line{{Text: i18n.T("summarizing...")}})
+	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, msgID: e.MsgID, saved: saved, first: true}
+	m.pager = newPager(e.ThreadID, e.MsgID, []core.Line{{Text: i18n.T("summarizing...")}})
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
 	m.mode = "pager"
@@ -1852,14 +1856,15 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	m.attachTab()
 }
 
-// cursorThreadID resolves the cursor row's thread id and subject (the
-// preview title source); empty tid means no openable thread. Ghost and
-// stub rows carry the thread id in the row itself; the message
-// fallback covers rows built before the thread id landed on them.
-func (m *Model) cursorThreadID() (tid, subject string) {
+// cursorThread resolves the cursor row's thread + message ids and
+// subject (the preview title source); empty tid means no openable
+// thread. Ghost and stub rows carry the thread id in the row itself;
+// the message fallback covers rows built before the thread id landed
+// on them.
+func (m *Model) cursorThread() (tid, msgID, subject string) {
 	row, ok := m.view.CursorRow()
 	if !ok {
-		return "", ""
+		return "", "", ""
 	}
 	tid = row.ThreadID
 	if tid == "" && row.Msg != nil {
@@ -1867,8 +1872,9 @@ func (m *Model) cursorThreadID() (tid, subject string) {
 	}
 	if row.Msg != nil {
 		subject = row.Msg.Subject
+		msgID = row.Msg.ID
 	}
-	return tid, subject
+	return tid, msgID, subject
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the
@@ -1876,9 +1882,9 @@ func (m *Model) cursorThreadID() (tid, subject string) {
 // headers flag is the h toggle: the open renders the full header
 // block.
 func (m *Model) openCursorThread() {
-	tid, _ := m.cursorThreadID()
+	tid, msgID, _ := m.cursorThread()
 	if tid != "" {
-		onOpen(tid, false, m.showHeaders, m.width)
+		onOpen(tid, msgID, false, m.showHeaders, m.width)
 	}
 }
 
@@ -1890,7 +1896,7 @@ func (m *Model) openCursorThread() {
 // carries an EMPTY threadID: the load's idempotent guard must rebuild,
 // not mistake the empty box for the loaded thread.
 func (m *Model) previewCursorThread() {
-	tid, subject := m.cursorThreadID()
+	tid, msgID, subject := m.cursorThread()
 	if tid == "" {
 		return
 	}
@@ -1900,10 +1906,10 @@ func (m *Model) previewCursorThread() {
 	m.preview = true
 	m.previewThread = tid
 	m.previewTitle = subject
-	m.pager = newPager("", nil)
+	m.pager = newPager("", "", nil)
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
-	onOpen(tid, true, m.showHeaders, m.width)
+	onOpen(tid, msgID, true, m.showHeaders, m.width)
 }
 
 // previewKey drives the popup: the pager scroll actions scroll the
@@ -1915,6 +1921,7 @@ func (m *Model) previewCursorThread() {
 func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 	if actionForKey(msg, m.bindings["index"]) == "open" {
 		tid := m.previewThread
+		msgID := pagerMsgID(m.pager)
 		m.preview, m.previewThread, m.previewTitle = false, "", ""
 		if len(m.pager.lines) > 0 {
 			// the pager leaves the box: re-size it to the full frame
@@ -1923,7 +1930,7 @@ func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 		} else {
 			m.pager = nil
 		}
-		onOpen(tid, false, m.showHeaders, m.width)
+		onOpen(tid, msgID, false, m.showHeaders, m.width)
 		return m, nil
 	}
 	switch actionForKey(msg, m.bindings["pager"]) {
@@ -2000,6 +2007,13 @@ func pagerThreadID(p *pager) string {
 		return ""
 	}
 	return p.threadID
+}
+
+func pagerMsgID(p *pager) string {
+	if p == nil {
+		return ""
+	}
+	return p.msgID
 }
 
 // refreshProgress re-reads the bus snapshot for the current job and
@@ -3095,7 +3109,7 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return d, nil
 		case "command":
 			if input != "" {
-				tid, _ := m.cursorThreadID()
+				tid, _, _ := m.cursorThread()
 				onLuaCommand(input, tid)
 			}
 			return nil, nil
@@ -3117,7 +3131,7 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			// viewed attachment to the path (0600) and the result
 			// surfaces on the status line
 			if input != "" && m.attView != nil {
-				onAttachmentSave(m.attView.threadID, m.attView.ordinal, compose.ExpandHome(input))
+				onAttachmentSave(m.attView.threadID, m.attView.msgID, m.attView.ordinal, compose.ExpandHome(input))
 			}
 			return nil, nil
 		}
@@ -3160,7 +3174,7 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			// file choosers), and the built-in directory chooser
 			// otherwise
 			if pluginActions()["attach-choose"] {
-				tid, _ := m.cursorThreadID()
+				tid, _, _ := m.cursorThread()
 				onLuaAction("attach-choose", tid)
 				// the action runs async and the picker request rides the
 				// bus: re-arm the event channel or the request sits in
@@ -3362,7 +3376,7 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		// number is the attachment's ordinal.
 		if i := strings.Index(entry, ". "); i > 0 {
 			if n, err := strconv.Atoi(entry[:i]); err == nil && n > 0 && m.mode == "pager" && m.pager != nil {
-				onAttachmentView(pagerThreadID(m.pager), n-1)
+				onAttachmentView(pagerThreadID(m.pager), pagerMsgID(m.pager), n-1)
 			}
 		}
 		m.cancelDialogue()

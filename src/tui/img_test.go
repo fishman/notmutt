@@ -101,7 +101,7 @@ func TestPagerImageLayout(t *testing.T) {
 		{Kind: core.LineBody, Text: "[image]", Image: &core.Image{Alt: "[image]", Cols: 40, Rows: 3}},
 		{Kind: core.LineBody, Text: "after"},
 	}
-	p := newPager("t1", lines)
+	p := newPager("t1", "", lines)
 	p.setSize(80, 22, st)
 
 	// collapsed default: 1:1, the Alt row shows
@@ -157,7 +157,7 @@ func TestPagerVisibleImages(t *testing.T) {
 	for range 40 {
 		lines = append(lines, core.Line{Kind: core.LineBody, Text: "b"})
 	}
-	p := newPager("t1", lines)
+	p := newPager("t1", "", lines)
 	p.setSize(80, 22, st)
 	p.setImages(true)
 
@@ -449,7 +449,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	m.width, m.height = 80, 100
 	png := testPNG(t, 100, 200)
 	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    mail.RenderHTML(body, nil, 0),
@@ -534,7 +534,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 100
 	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   threadID,
 			RenderMode: core.RenderHTML,
@@ -620,7 +620,7 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 100
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   threadID,
 			RenderMode: core.RenderHTML,
@@ -732,7 +732,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	for range 20 {
 		body.WriteString("<p>tail</p>")
 	}
-	SetOpenHandler(func(threadID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID: threadID,
 			Lines:    mail.RenderHTML(body.String(), nil, 0),

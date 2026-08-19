@@ -17,28 +17,29 @@ func SetApplyHandler(fn func()) {
 }
 
 // onOpen is the open seam: the app wires it with SetOpenHandler (the
-// open key hands the thread id to the app, which loads the thread's
-// messages and publishes ThreadLoaded); the default is a no-op so the
-// model works in tests. preview=true is the preview fetch - the app
-// skips the read-marking, the model keeps the index mode. headers is
-// the h key: the render includes the full header block. width is the
-// pager's terminal width: the html wrap caps at 120, narrower
-// terminals reflow.
-var onOpen = func(threadID string, preview, headers bool, width int) {}
+// open key hands the thread id and the cursor message to the app, which
+// loads the message and publishes ThreadLoaded); the default is a no-op
+// so the model works in tests. msgID is the opened message - the pager
+// renders that message only, never the whole thread. preview=true is
+// the preview fetch - the app skips the read-marking, the model keeps
+// the index mode. headers is the h key: the render includes the full
+// header block. width is the pager's terminal width: the html wrap
+// caps at 120, narrower terminals reflow.
+var onOpen = func(threadID, msgID string, preview, headers bool, width int) {}
 
-func SetOpenHandler(fn func(string, bool, bool, int)) {
+func SetOpenHandler(fn func(string, string, bool, bool, int)) {
 	onOpen = fn
 }
 
 // onToggleRender is the render-toggle seam (the v key in the pager),
 // the source view (ctrl+u), and the link labels (the F key): the app
-// re-runs the open path with the requested view and publishes a
-// fresh ThreadLoaded; the default is a no-op so the model works in
-// tests. labelLinks is the F key: the renderer prefixes every link
-// with its "[N]" label and the target list rides the reply.
-var onToggleRender = func(threadID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {}
+// re-runs the open path with the requested view on the opened message
+// and publishes a fresh ThreadLoaded; the default is a no-op so the
+// model works in tests. labelLinks is the F key: the renderer prefixes
+// every link with its "[N]" label and the target list rides the reply.
+var onToggleRender = func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {}
 
-func SetRenderHandler(fn func(string, core.RenderMode, bool, int, bool)) {
+func SetRenderHandler(fn func(string, string, core.RenderMode, bool, int, bool)) {
 	onToggleRender = fn
 }
 
@@ -53,13 +54,14 @@ func SetOpenLinkHandler(fn func(string)) {
 }
 
 // onAttachmentView is the attachment-view seam (the v dialog's enter):
-// the app re-opens the thread's message, extracts the chosen
-// attachment, renders it to pager lines and publishes
-// AttachmentLoaded; the default is a no-op so the model works in
-// tests. ordinal is the attachment's index in the parsed message.
-var onAttachmentView = func(threadID string, ordinal int) {}
+// the app re-opens the opened message, extracts the chosen attachment,
+// renders it to pager lines and publishes AttachmentLoaded; the
+// default is a no-op so the model works in tests. msgID is the message
+// the attachment lines came from. ordinal is the attachment's index in
+// the parsed message.
+var onAttachmentView = func(threadID, msgID string, ordinal int) {}
 
-func SetAttachmentViewHandler(fn func(string, int)) {
+func SetAttachmentViewHandler(fn func(string, string, int)) {
 	onAttachmentView = fn
 }
 
@@ -67,9 +69,9 @@ func SetAttachmentViewHandler(fn func(string, int)) {
 // attachment view): the app re-extracts the attachment and writes it
 // to the path (0600, F5), publishing AttachmentSaved; the default is
 // a no-op so the model works in tests.
-var onAttachmentSave = func(threadID string, ordinal int, path string) {}
+var onAttachmentSave = func(threadID, msgID string, ordinal int, path string) {}
 
-func SetAttachmentSaveHandler(fn func(string, int, string)) {
+func SetAttachmentSaveHandler(fn func(string, string, int, string)) {
 	onAttachmentSave = fn
 }
 

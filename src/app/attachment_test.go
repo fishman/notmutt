@@ -31,7 +31,7 @@ func TestAttachmentSeams(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}})
 
-	viewAttachment(fw, bus, "t1", 0)
+	viewAttachment(fw, bus, "t1", "", 0)
 	select {
 	case e := <-ch:
 		ev, ok := e.(core.AttachmentLoaded)
@@ -52,7 +52,7 @@ func TestAttachmentSeams(t *testing.T) {
 	}
 
 	out := filepath.Join(t.TempDir(), "out.txt")
-	saveAttachment(fw, bus, "t1", 0, out)
+	saveAttachment(fw, bus, "t1", "", 0, out)
 	select {
 	case e := <-ch:
 		ev, ok := e.(core.AttachmentSaved)

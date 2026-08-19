@@ -108,7 +108,7 @@ func TestRepaintPagerScroll(t *testing.T) {
 	km := config.Default().Bindings["pager"]
 	d := statusData{view: "inbox", visible: 100}
 
-	p := newPager("t1", lines)
+	p := newPager("t1", "", lines)
 	p.setSize(80, 22, st)
 	s := newSim(t, 80, 24)
 
@@ -174,7 +174,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 
 	// empty thread: pager renders 22 blank rows, keyhint and status
 	// anchored at the bottom - a 24-line frame every time
-	p := newPager("t1", nil)
+	p := newPager("t1", "", nil)
 	p.setSize(80, 22, st)
 	frame := pagerFrame(p, km, st, ui, d)
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
@@ -215,7 +215,7 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	for i := range lines {
 		lines[i] = core.Line{Kind: core.LineBody, Text: fmt.Sprintf("line %d of the large thread body", i)}
 	}
-	p := newPager("t1", lines)
+	p := newPager("t1", "", lines)
 
 	styled := func() int {
 		n := 0

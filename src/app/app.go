@@ -128,11 +128,11 @@ func Run() error {
 	// p key) skips the read-marking; the TUI keeps the index surface
 	// for the popup. The headers flag is the h key: the render includes
 	// the full header block.
-	tui.SetOpenHandler(func(threadID string, preview, headers bool, width int) {
+	tui.SetOpenHandler(func(threadID, msgID string, preview, headers bool, width int) {
 		// RenderAuto: the open default resolves per sender domain
-		// ([pager] default-views) once the thread's messages are in
-		// hand - the domain is message data, only the fetch has it
-		go openThread(worker, bus, threadID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
+		// ([pager] default-views) once the message is in hand - the
+		// domain is message data, only the fetch has it
+		go openThread(worker, bus, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
 	})
 
 	// the render toggle (the v key in the pager), the source view
@@ -142,19 +142,19 @@ func Run() error {
 	// is the F key: the renderer prefixes every link with its "[N]"
 	// label and the target list rides the reply. The explicit modes
 	// never resolve against the domain map.
-	tui.SetRenderHandler(func(threadID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, threadID, false, mode, headers, width, labelLinks, nil)
+	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
+		go openThread(worker, bus, threadID, msgID, false, mode, headers, width, labelLinks, nil)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key
 	// in an attachment view): both re-extract the chosen attachment
 	// from the thread's message on demand - ParseMessage never keeps
 	// non-image part bytes, the demand path reads one part
-	tui.SetAttachmentViewHandler(func(threadID string, ordinal int) {
-		go viewAttachment(worker, bus, threadID, ordinal)
+	tui.SetAttachmentViewHandler(func(threadID, msgID string, ordinal int) {
+		go viewAttachment(worker, bus, threadID, msgID, ordinal)
 	})
-	tui.SetAttachmentSaveHandler(func(threadID string, ordinal int, path string) {
-		go saveAttachment(worker, bus, threadID, ordinal, path)
+	tui.SetAttachmentSaveHandler(func(threadID, msgID string, ordinal int, path string) {
+		go saveAttachment(worker, bus, threadID, msgID, ordinal, path)
 	})
 
 	// the remote image fetch (the load-remote-images mode): http(s)
@@ -352,27 +352,36 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 	return lines
 }
 
-// openThread loads a thread through the worker, renders it, and
-// publishes ThreadLoaded with the render lines (R13 two-step: content
-// loads on open only; the render + transforms run here on the async
-// job, never on the TUI's event path). A full open (preview=false)
-// marks the thread read with an ActTag -unread (R1 - read is a tag;
-// the refresh cycle reconciles it into the view). The tag failure
-// keeps the thread open - the fetch already succeeded - and surfaces
-// as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
+// openThread loads the opened message through the worker, renders it,
+// and publishes ThreadLoaded with the render lines (R13 two-step:
+// content loads on open only; the render + transforms run here on the
+// async job, never on the TUI's event path). The thread fetch narrows
+// to the message (msgID): the pager shows one message, never the
+// whole thread - a bare open (empty msgID) renders the thread's
+// first. A full open (preview=false) marks the thread read with an
+// ActTag -unread (R1 - read is a tag; the refresh cycle reconciles it
+// into the view). The tag failure keeps the thread open - the fetch
+// already succeeded - and surfaces as a JobError.
+func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 		return
 	}
 	if rpl.Err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: rpl.Err})
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
 		return
+	}
+	if msg, ok := findMsg(rpl.Msgs, msgID); ok {
+		rpl.Msgs = []core.Message{msg}
+	}
+	msgID = ""
+	if len(rpl.Msgs) > 0 {
+		msgID = rpl.Msgs[0].ID
 	}
 	if mode == core.RenderAuto {
 		mode = openViewMode(defViews, rpl.Msgs)
-		// an html-only thread has no plain content: its plain render is
+		// an html-only message has no plain content: its plain render is
 		// the html structure with the colors stripped, so the open
 		// default upgrades it to the html view (an explicit default-views
 		// plain mapping cannot prefer content that does not exist)
@@ -384,11 +393,11 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 	}
 	lines, mime, links, err := mail.RenderThread(rpl.Msgs, mode, headers, width, labelLinks)
 	if err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, Err: err})
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
 	if !preview {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,
@@ -401,22 +410,44 @@ func openThread(worker workerAPI, bus *core.Bus, threadID string, preview bool, 
 	}
 }
 
-// extractAttachment fetches the thread's message and reads the
+// findMsg locates the opened message in the thread fetch by id; the
+// thread's first when no id rode the request (a bare open). The
+// request's id can be stale (the message moved between the index
+// fetch and the open): the fallback keeps the pager functional on the
+// first message.
+func findMsg(msgs []core.Message, msgID string) (core.Message, bool) {
+	if msgID != "" {
+		for _, msg := range msgs {
+			if msg.ID == msgID {
+				return msg, true
+			}
+		}
+	}
+	if len(msgs) == 0 {
+		return core.Message{}, false
+	}
+	return msgs[0], true
+}
+
+// extractAttachment fetches the opened message and reads the
 // ordinal-th attachment's bytes and type - the shared demand path of
 // the view and save seams (one file open per demand, never held in
-// memory).
-func extractAttachment(worker workerAPI, threadID string, ordinal int) (name, typ string, data []byte, err error) {
+// memory). foundID is the message actually used: the reply identity
+// must match the pager's.
+func extractAttachment(worker workerAPI, threadID, msgID string, ordinal int) (name, typ string, data []byte, foundID string, err error) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, msgID, err
 	}
 	if rpl.Err != nil {
-		return "", "", nil, rpl.Err
+		return "", "", nil, msgID, rpl.Err
 	}
-	if len(rpl.Msgs) == 0 || len(rpl.Msgs[0].Paths) == 0 {
-		return "", "", nil, fmt.Errorf("no message path")
+	msg, ok := findMsg(rpl.Msgs, msgID)
+	if !ok || len(msg.Paths) == 0 {
+		return "", "", nil, msgID, fmt.Errorf("no message path")
 	}
-	return mail.ExtractAttachment(rpl.Msgs[0].Paths[0], ordinal)
+	name, typ, data, err = mail.ExtractAttachment(msg.Paths[0], ordinal)
+	return name, typ, data, msg.ID, err
 }
 
 // viewAttachment serves the v dialog's enter: extract + render the
@@ -425,21 +456,21 @@ func extractAttachment(worker workerAPI, threadID string, ordinal int) (name, ty
 // matching mailcap copiousoutput entry replaces the bytes with its
 // preview text (a pdf renders as pdftotext output, never as bytes);
 // a preview failure is an error, not a fallback to the raw dump.
-func viewAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int) {
-	name, typ, data, err := extractAttachment(worker, threadID, ordinal)
+func viewAttachment(worker workerAPI, bus *core.Bus, threadID, msgID string, ordinal int) {
+	name, typ, data, foundID, err := extractAttachment(worker, threadID, msgID, ordinal)
 	if err != nil {
-		bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Err: err})
+		bus.Publish(core.AttachmentLoaded{ThreadID: threadID, MsgID: foundID, Err: err})
 		return
 	}
 	if argv, ok := previewMailcap(typ); ok {
 		if out, err := mail.RunPreview(argv, data); err != nil {
-			bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Err: err})
+			bus.Publish(core.AttachmentLoaded{ThreadID: threadID, MsgID: foundID, Err: err})
 			return
 		} else {
 			data = out
 		}
 	}
-	bus.Publish(core.AttachmentLoaded{ThreadID: threadID, Ordinal: ordinal, Name: name, Lines: mail.RenderAttachment(data)})
+	bus.Publish(core.AttachmentLoaded{ThreadID: threadID, MsgID: foundID, Ordinal: ordinal, Name: name, Lines: mail.RenderAttachment(data)})
 }
 
 // previewMailcap resolves an attachment type to its mailcap preview
@@ -456,8 +487,8 @@ func previewMailcap(typ string) ([]string, bool) {
 // saveAttachment serves the s key in an attachment view: extract the
 // attachment and write it to the path (0600, F5); the result rides
 // AttachmentSaved for the status line.
-func saveAttachment(worker workerAPI, bus *core.Bus, threadID string, ordinal int, path string) {
-	_, _, data, err := extractAttachment(worker, threadID, ordinal)
+func saveAttachment(worker workerAPI, bus *core.Bus, threadID, msgID string, ordinal int, path string) {
+	_, _, data, _, err := extractAttachment(worker, threadID, msgID, ordinal)
 	if err != nil {
 		bus.Publish(core.AttachmentSaved{Path: path, Err: err})
 		return

@@ -31,7 +31,11 @@ import (
 // wrapping is future work).
 type pager struct {
 	threadID string
-	lines    []core.Line
+	// msgID is the opened message: the pager shows that message's
+	// render only, never the whole thread. The identity guards the
+	// reloads - a same-message re-render replaces the content.
+	msgID string
+	lines []core.Line
 	// linkSel is the F key's selected label marker ("[N]", "" = none):
 	// that run renders reversed - the easyjump highlight follows the
 	// digits live
@@ -48,8 +52,8 @@ type pager struct {
 	vp         viewport
 }
 
-func newPager(threadID string, lines []core.Line) *pager {
-	return &pager{threadID: threadID, lines: lines}
+func newPager(threadID, msgID string, lines []core.Line) *pager {
+	return &pager{threadID: threadID, msgID: msgID, lines: lines}
 }
 
 // setLines replaces the pager content (the compose preview after a

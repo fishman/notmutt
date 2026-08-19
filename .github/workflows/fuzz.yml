@@ -34,7 +34,7 @@ jobs:
           go-version-file: src/go.mod
 
       - name: Install libnotmuch
-        run: sudo apt-get install -y libnotmuch-dev
+        run: .github/install-libnotmuch.sh
 
       - name: Fuzz ${{ matrix.target }}
         working-directory: src

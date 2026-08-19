@@ -188,8 +188,8 @@ type UI struct {
 	// LANG/LC_MESSAGES at startup, or a BCP 47 tag pins one ("de").
 	Language string `toml:"language"`
 	Tags     UITags `toml:"tags"`
-	// GlyphSet selects the thread tree glyph set: "ascii" or "utf-8"
-	// (default, box-drawing). Per-glyph [ui.glyphs] tree keys override
+	// GlyphSet selects the thread tree glyph set: "ascii" (default) or
+	// "utf-8" (box-drawing). Per-glyph [ui.glyphs] tree keys override
 	// the preset.
 	GlyphSet string `toml:"glyph-set"`
 	Glyphs   Glyphs `toml:"glyphs"`
@@ -260,9 +260,10 @@ type Glyphs struct {
 	BorderH       string `toml:"border_h"`
 	BorderV       string `toml:"border_v"`
 	// the tree glyphs: the thread root marker, one level of indentation,
-	// and the branch/leaf markers. utf-8 defaults; [ui] glyph-set swaps
-	// to ASCII, per-glyph keys override both. The 2-cells-per-level
-	// invariant must hold in any font.
+	// and the branch/leaf markers. ASCII defaults ([ui] glyph-set swaps
+	// in box-drawing): ambiguous-width box-drawing glyphs drift the slot
+	// math on wide terminals, so the 2-cells-per-level invariant must
+	// hold in any font.
 	Tree       string `toml:"tree"`
 	TreeChild  string `toml:"tree_child"`
 	TreeBranch string `toml:"tree_branch"`
@@ -1003,7 +1004,7 @@ func Default() Config {
 		UI: UI{
 			Keymap:   "vim",
 			Language: "auto",
-			GlyphSet: "utf-8",
+			GlyphSet: "ascii",
 			Tags: UITags{
 				Max:       2,
 				Attach:    "attachment",
@@ -1023,7 +1024,7 @@ func Default() Config {
 				Staged: "*", Cursor: "▌", ProgressFill: "#", ProgressEmpty: "-",
 				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
 				BorderH: "─", BorderV: "│",
-				Tree: "▸ ", TreeChild: "│ ", TreeBranch: "├─", TreeLeaf: "└─",
+				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-",
 			},
 		},
 		Views: map[string]View{

@@ -27,11 +27,13 @@ jobs:
         with:
           go-version-file: src/go.mod
 
+      - name: Install libnotmuch runtime deps
+        run: sudo apt-get update && sudo apt-get install -y libxapian-dev libtalloc-dev libgmime-3.0-dev libz-dev
       - name: Cache libnotmuch
         uses: actions/cache@v6
         with:
           path: ~/notmuch-install
-          key: notmuch-0.40-${{ runner.os }}
+          key: notmuch-0.40-${{ runner.os }}-${{ runner.image }}
 
       - name: Install libnotmuch
         run: .github/install-libnotmuch.sh

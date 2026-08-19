@@ -683,8 +683,8 @@ func TestThreadWindow(t *testing.T) {
 	v.MergeThreads([]*Thread{NewThread("t1", chain)})
 	v.SetWindowBudget(10, 4)
 	rows := v.Rows()
-	if len(rows) != 10 {
-		t.Fatalf("window must emit maxRows rows: %d", len(rows))
+	if len(rows) != 11 {
+		t.Fatalf("window must emit maxRows rows plus the overflow indicator: %d", len(rows))
 	}
 	if rows[0].Depth != 0 || rows[0].Msg.ID != "m1" {
 		t.Fatalf("window must start at the thread root: %+v", rows[0])
@@ -699,6 +699,14 @@ func TestThreadWindow(t *testing.T) {
 		if s {
 			t.Fatalf("the single-child chain has no next siblings, got %d: %+v", i, rows[9])
 		}
+	}
+	// the overflow indicator: the window's last row counts the hidden
+	// tail and a ghost row renders it in the free space under the thread
+	if rows[9].More != 30 {
+		t.Fatalf("the window's last row must count the hidden rows: %d", rows[9].More)
+	}
+	if !rows[10].Ghost || rows[10].More != 30 || rows[10].ThreadID != "t1" {
+		t.Fatalf("the overflow indicator row wrong: %+v", rows[10])
 	}
 	// slide down to the tail: 30 moves, then the edge refuses
 	for i := 0; i < 30; i++ {
@@ -723,6 +731,28 @@ func TestThreadWindow(t *testing.T) {
 	}
 	if rows := v.Rows(); rows[0].Msg.ID != "m1" {
 		t.Fatalf("the root window wrong: %+v", rows[0])
+	}
+	// a page-chunk slide (the page move) advances one window: the
+	// continuation chunk starts the window and the tail count shrinks
+	if !v.SlideWindow("t1", 10) {
+		t.Fatal("the page slide must move one chunk")
+	}
+	if rows := v.Rows(); rows[0].Msg.ID != "m11" || rows[9].More != 20 || !rows[10].Ghost {
+		t.Fatalf("the page-chunk window wrong: %+v", rows[0])
+	}
+	if !v.SlideWindow("t1", 10) {
+		t.Fatal("the second page slide must move one chunk")
+	}
+	if !v.SlideWindow("t1", 10) {
+		t.Fatal("the third page slide must move one chunk")
+	}
+	// the chunk near the tail clamps to the last window: the tail row
+	// count drops to zero and the indicator disappears
+	if rows := v.Rows(); rows[0].Msg.ID != "m31" || len(rows) != 10 {
+		t.Fatalf("the tail clamp wrong: %+v", rows[0])
+	}
+	if v.SlideWindow("t1", 10) {
+		t.Fatal("the tail edge must refuse the page slide")
 	}
 	// a thread that fits the budget never slides
 	v.SetWindowBudget(10, 4)

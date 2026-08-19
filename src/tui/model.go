@@ -966,7 +966,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.pageDown()
 		} else if m.mode == "index" {
-			m.moveCursor(m.pageRows())
+			m.pageMove(m.pageRows())
 		}
 		deferPaint()
 		deferred = true
@@ -2192,6 +2192,64 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 	return m.view.SlideWindow(r.ThreadID, step)
 }
 
+// pageMove pages the index (the pgdown key). In threaded views a page
+// re-anchors on a truncated thread instead of raw-stepping: the page
+// continues the cursor's thread while its window still has hidden rows
+// below (the "+N more" tail), or the thread whose window end sits at
+// the fold - the window advances one chunk and the thread starts the
+// new page, so the interrupted thread stays in view. A fold cutting
+// the cursor's thread mid-window pages normally - the contiguous
+// continuation lands at the page top on its own.
+func (m *Model) pageMove(delta int) {
+	if delta <= 0 {
+		m.moveCursor(delta)
+		return
+	}
+	rows := m.view.Rows()
+	m.rows = rows
+	h := m.listHeight()
+	if h <= 0 || len(rows) == 0 {
+		return
+	}
+	f := min(m.indexOffset+h-1, len(rows)-1)
+	tid := ""
+	// the cursor's thread continues first: the user reads its +N tail
+	if i := m.CursorIndex(); i >= 0 && i < len(rows) && rows[i].Msg != nil &&
+		!(rows[f].Msg != nil && rows[f].ThreadID == rows[i].ThreadID) {
+		j := i
+		for j+1 < len(rows) && rows[j+1].Msg != nil && rows[j+1].ThreadID == rows[i].ThreadID {
+			j++
+		}
+		if rows[j].More > 0 {
+			tid = rows[i].ThreadID
+		}
+	}
+	// else the thread interrupted at the fold (its window end is the
+	// view's bottom edge)
+	if tid == "" && rows[f].Msg != nil && rows[f].More > 0 {
+		tid = rows[f].ThreadID
+	}
+	if tid == "" {
+		m.moveCursor(delta)
+		return
+	}
+	if m.view.SlideWindow(tid, m.view.WindowRows()) {
+		// the window advanced one chunk: the page re-anchors at the
+		// thread's first row, so the continuation starts the new page
+		rows = m.view.Rows()
+		m.rows = rows
+		for i := 0; i < len(rows); i++ {
+			if rows[i].Msg != nil && rows[i].ThreadID == tid {
+				m.indexOffset = i
+				m.clampIndexOffset()
+				m.setCursorAt(rows, i)
+				return
+			}
+		}
+	}
+	m.moveCursor(delta)
+}
+
 // searchNext jumps the cursor to the next search match at or after
 // the current row (the / prompt's enter and the n key). The scan
 // wraps; a miss logs the mutt "Pattern not found" notice and leaves
@@ -2596,15 +2654,8 @@ func (m Model) renderBase() string {
 			tagWidth = w
 		}
 	}
-	// the tree slot reserves the same way: the widest tree run on the
-	// page sets the width every row pads to (stubs and single messages
-	// pad blank), so the title column holds its place across the depth
-	treeWidth := 0
-	for _, r := range rows[top:bottom] {
-		if w := runewidth.StringWidth(treePrefix(r, m.ui.Glyphs)); w > treeWidth {
-			treeWidth = w
-		}
-	}
+	// the tree run lives in the subject slot (renderRow), so there is
+	// no tree width to align - the subject moves with the thread indent
 	sg := st.sgr
 	var b strings.Builder
 	b.WriteString(m.tabBar())
@@ -2616,7 +2667,7 @@ func (m Model) renderBase() string {
 		// plus every style-affecting parameter; the outer row style is
 		// a function of the row's own fields and selected, so the
 		// rendered line is fully keyed.
-		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, treeWidth: treeWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
+		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
@@ -2625,7 +2676,7 @@ func (m Model) renderBase() string {
 			if len(m.rowCache) > rowCacheMax {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
-			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, treeWidth, i == cur, m.accountTags, m.searchQuery)
+			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
 			outer := sg.normal
 			if rows[i].Ghost {
 				outer = sg.ghost

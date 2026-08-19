@@ -27,7 +27,7 @@ func TestRowStyled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, 0, false, config.Default().AccountTags(), "")
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -54,7 +54,7 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, 0, false, config.Default().AccountTags(), "")
+	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
 }
 
 // TestRowSelectedMarker pins the cursor row look: the row keeps its
@@ -66,7 +66,7 @@ func TestRowSelectedMarker(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, 0, true, config.Default().AccountTags(), "")
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, true, config.Default().AccountTags(), "")
 	if !strings.HasPrefix(out, "\x1b[38;2;33;37;43;48;2;229;192;123m▌") { // indicator fg #21252b + bg on the marker
 		t.Fatalf("cursor marker must carry the indicator style: %q", out)
 	}
@@ -75,7 +75,7 @@ func TestRowSelectedMarker(t *testing.T) {
 	}
 	// the marker cell reserves its column on unselected rows, so the
 	// line never shifts when the cursor moves
-	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, 0, false, config.Default().AccountTags(), "")
+	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
 	if !strings.HasPrefix(stripANSI(plain), " ") {
 		t.Fatalf("the marker cell must reserve its column on unselected rows: %q", plain)
 	}
@@ -90,7 +90,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 5, 0, false, config.Default().AccountTags(), ""))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 5, false, config.Default().AccountTags(), ""))
 	if !strings.HasPrefix(out, " 1    A ") {
 		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
 	}
@@ -117,7 +117,7 @@ func TestRowFlagSlot(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"replied", "signed", "work"},
 	}}
-	out := stripANSI(renderRow(1, row, st, ui, 1, 4, 0, false, acc, ""))
+	out := stripANSI(renderRow(1, row, st, ui, 1, 4, false, acc, ""))
 	if !strings.HasPrefix(out, " 1 R ") {
 		t.Fatalf("flags slot must show replied: %q", out)
 	}
@@ -132,7 +132,7 @@ func TestRowFlagSlot(t *testing.T) {
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"work"},
-	}}, st, ui, 1, 4, 0, false, acc, ""))
+	}}, st, ui, 1, 4, false, acc, ""))
 	col := func(s string) int { return runewidth.StringWidth(s[:strings.Index(s, "25/08/14")]) }
 	if col(out) != col(plain) {
 		t.Fatalf("the signed slot must reserve width:\n%q\n%q", out, plain)
@@ -149,7 +149,7 @@ func TestRowTagIcon(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, 0, false, config.Default().AccountTags(), ""))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, false, config.Default().AccountTags(), ""))
 	// number + blank flags slot precede the attachment slot; the icon must
 	// sit before the date column, not in the tag slot
 	if !strings.HasPrefix(out, " 1    x ") {
@@ -167,7 +167,7 @@ func TestRowTagIcon(t *testing.T) {
 	// icons nor names carry fixed padding (a padded cell would leave
 	// gaps between glyphs)
 	row.Msg.Tags = []string{"inbox", "newsletter"}
-	glyphs := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 3, 0, false, config.Default().AccountTags(), ""))
+	glyphs := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), ""))
 	if !strings.Contains(glyphs, "y z") || strings.Contains(glyphs, "y  z") {
 		t.Fatalf("icons must join with a single space: %q", glyphs)
 	}
@@ -176,7 +176,7 @@ func TestRowTagIcon(t *testing.T) {
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
-	}}, DefaultStyles(), ui, 1, 3, 0, false, config.Default().AccountTags(), ""))
+	}}, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), ""))
 	if strings.Index(out, "25/08/14") != strings.Index(plain, "25/08/14") {
 		t.Fatalf("attachment icon shifted the date column:\n%q\n%q", out, plain)
 	}
@@ -194,11 +194,11 @@ func TestRowTagSlotAlignsPage(t *testing.T) {
 	wide := renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox", "work"},
-	}}, st, ui, 1, 10, 0, false, acc, "")
+	}}, st, ui, 1, 10, false, acc, "")
 	none := renderRow(2, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello",
-	}}, st, ui, 1, 10, 0, false, acc, "")
+	}}, st, ui, 1, 10, false, acc, "")
 	if si := strings.Index(stripANSI(wide), "hello"); si != strings.Index(stripANSI(none), "hello") {
 		t.Fatalf("the subject column must align on the page:\n%q\n%q", wide, none)
 	}
@@ -206,7 +206,7 @@ func TestRowTagSlotAlignsPage(t *testing.T) {
 	wide13 := renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m3", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox", "newsletter"},
-	}}, st, ui, 1, 13, 0, false, acc, "")
+	}}, st, ui, 1, 13, false, acc, "")
 	if !strings.Contains(wide13, "hello") {
 		t.Fatalf("the wider run must render in full: %q", wide13)
 	}
@@ -262,7 +262,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 		return core.Row{Msg: &core.Message{ID: "m1", ThreadID: "t1", Timestamp: 1755150000, Author: "Ann", Subject: "hello"}}
 	}
 	render := func(r core.Row) string {
-		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, 6, false, config.Default().AccountTags(), ""))
+		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
 	}
 	if got := render(base()); strings.Contains(got, "+ ") {
 		t.Fatalf("a single message renders no tree glyph: %q", got)
@@ -297,19 +297,34 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	if got := render(stub); strings.Contains(got, "+ ") {
 		t.Fatalf("a single-row thread renders no tree glyph: %q", got)
 	}
-	// the tree slot reserves the page width: a depth-2 row and a stub
-	// pad to the same treeWidth, so the subject column holds its place
-	render2 := func(r core.Row) string {
-		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, 6, false, config.Default().AccountTags(), ""))
+	// the tree run is prepended in the subject slot: the prefix flows
+	// directly into the title, and the subject moves with the indent -
+	// no column alignment involved
+	if got := render(under); !strings.Contains(got, "| `-hello") {
+		t.Fatalf("the tree run must sit inside the subject slot: %q", got)
 	}
-	deep := base()
-	deep.Depth, deep.Count, deep.Siblings = 2, 3, []bool{false, true}
-	flat := base()
-	flat.Count = 1
 	cell := func(s string) int {
 		return runewidth.StringWidth(s[:strings.Index(s, "hello")])
 	}
-	if si, fi := cell(render2(deep)), cell(render2(flat)); si != fi {
-		t.Fatalf("the tree slot must reserve width for the title column: %d != %d\n%q\n%q", si, fi, render2(deep), render2(flat))
+	if c0, c1, c2 := cell(render(base())), cell(render(branch)), cell(render(under)); !(c0 < c1 && c1 < c2) {
+		t.Fatalf("the subject must move with the thread indent: %d %d %d\n%q\n%q\n%q", c0, c1, c2, render(base()), render(branch), render(under))
+	}
+}
+
+// TestRowMoreIndicator pins the overflow row (the page move scrolls
+// through a windowed thread's hidden tail): the ghost row renders the
+// hidden count in the subject slot, and a real windowed row keeps its
+// count off the line - the indicator row owns the number.
+func TestRowMoreIndicator(t *testing.T) {
+	render := func(r core.Row) string {
+		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
+	}
+	ind := core.Row{Ghost: true, ThreadID: "t1", More: 30}
+	if got := render(ind); !strings.Contains(got, "+30 more") {
+		t.Fatalf("the overflow indicator must render the hidden count: %q", got)
+	}
+	windowed := core.Row{Msg: &core.Message{ID: "m10", ThreadID: "t1", Timestamp: 1755150000, Author: "Ann", Subject: "hello"}, More: 20}
+	if got := render(windowed); strings.Contains(got, "+20") || !strings.Contains(got, "hello") {
+		t.Fatalf("a real windowed row keeps its count off the line: %q", got)
 	}
 }

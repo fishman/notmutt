@@ -38,13 +38,12 @@ const rowCacheMax = 8192
 // icon reads only len(Atts) > 0) covers it. styleVer bumps on theme
 // changes.
 type rowKey struct {
-	row       *core.Row
-	numWidth  int
-	tagWidth  int
-	treeWidth int
-	width     int
-	styles    int
-	selected  bool
-	atts      bool
-	query     string // the search pattern: a change re-renders every row
+	row      *core.Row
+	numWidth int
+	tagWidth int
+	width    int
+	styles   int
+	selected bool
+	atts     bool
+	query    string // the search pattern: a change re-renders every row
 }

@@ -135,7 +135,20 @@ func (v *View) Rows() []Row {
 func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
-		rows = append(rows, window(flattenThread(t, t.Collapsed), t.WinStart, v.winRows, v.winDepth)...)
+		full := flattenThread(t, t.Collapsed)
+		out := window(full, t.WinStart, v.winRows, v.winDepth)
+		// the tree-window overflow: a thread with rows hidden below the
+		// window marks its last emitted row with the count (the page
+		// move continues the thread there) and emits a ghost "+N more"
+		// indicator row in the free space under the thread
+		if v.winRows > 0 && len(full) > v.winRows {
+			start := max(0, min(t.WinStart, len(full)-v.winRows))
+			if n := len(full) - (start + v.winRows); n > 0 {
+				out[len(out)-1].More = n
+				out = append(out, Row{Ghost: true, ThreadID: t.ID, More: n})
+			}
+		}
+		rows = append(rows, out...)
 	}
 	// re-anchor the cursor index by id at materialization (once per
 	// merge, never per paint): the render's CursorIndex read is O(1)
@@ -426,11 +439,13 @@ func (v *View) Hydrated(id string) bool {
 	return false
 }
 
-// SlideWindow advances the thread's tree window by one row and reports
-// whether it moved. False at the edges (nothing hidden in that
-// direction, or the thread fits the budget) - the caller steps on
-// normally.
-func (v *View) SlideWindow(threadID string, dir int) bool {
+// SlideWindow advances the thread's tree window by step rows and
+// reports whether it moved. False at the edges: the walk-through steps
+// (+-1) refuse when nothing hides in that direction or the thread fits
+// the budget, so the caller steps on normally. A larger step (the page
+// move) clamps to the tail instead of refusing - the hidden rows
+// exist, the tail window is the last chunk.
+func (v *View) SlideWindow(threadID string, step int) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if v.winRows <= 0 {
@@ -444,15 +459,31 @@ func (v *View) SlideWindow(threadID string, dir int) bool {
 		if len(full) <= v.winRows {
 			return false
 		}
-		next := t.WinStart + dir
-		if next < 0 || next > len(full)-v.winRows {
+		next := t.WinStart + step
+		if next < 0 {
 			return false
+		}
+		if next > len(full)-v.winRows {
+			// the overshoot clamps to the tail; at the tail itself the
+			// clamp lands on the current start and the slide refuses
+			next = len(full) - v.winRows
+			if next == t.WinStart {
+				return false
+			}
 		}
 		t.WinStart = next
 		v.dirty = true
 		return true
 	}
 	return false
+}
+
+// WindowRows is the per-thread tree window budget ([index.thread]
+// max-rows); the page move advances a truncated thread by one chunk.
+func (v *View) WindowRows() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.winRows
 }
 
 // reconcileMsg copies snapshot fields from the fresh message onto the

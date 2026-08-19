@@ -4954,16 +4954,8 @@ func TestFilePickerMark(t *testing.T) {
 // the next thread; stepping up slides back to the root.
 func TestWindowSlidesWithCursor(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
-	chain := make([]*core.Message, 40)
-	for i := range chain {
-		ref := ""
-		if i > 0 {
-			ref = fmt.Sprintf("m%d", i)
-		}
-		chain[i] = &core.Message{ID: fmt.Sprintf("m%d", i+1), Timestamp: int64(i + 1), References: []string{ref}, Author: "Ann", Subject: "s", Tags: []string{"inbox"}}
-	}
 	view.MergeThreads([]*core.Thread{
-		core.NewThread("t0", chain),
+		core.NewThread("t0", threadChain(40)),
 		core.NewThread("t1", []*core.Message{{ID: "other", Timestamp: 1, Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}),
 	})
 	view.SetWindowBudget(10, 4)
@@ -4990,9 +4982,10 @@ func TestWindowSlidesWithCursor(t *testing.T) {
 	if cursorID() != "m11" || m.CursorIndex() != 9 {
 		t.Fatalf("the step must land on the revealed row at the same position: %s @ %d", cursorID(), m.CursorIndex())
 	}
-	// the emission re-read: the window starts at m2
+	// the emission re-read: the window starts at m2 (plus the overflow
+	// indicator row and the second thread)
 	rows := view.Rows()
-	if rows[0].Msg.ID != "m2" || len(rows) != 11 {
+	if rows[0].Msg.ID != "m2" || len(rows) != 12 {
 		t.Fatalf("the window must slide under the cursor: first=%s rows=%d", rows[0].Msg.ID, len(rows))
 	}
 	// 29 more steps reach the tail (m40); the window slides each time
@@ -5021,5 +5014,84 @@ func TestWindowSlidesWithCursor(t *testing.T) {
 	rows = view.Rows()
 	if rows[0].Msg.ID != "m1" {
 		t.Fatalf("the window must be back at the thread root: %s", rows[0].Msg.ID)
+	}
+}
+
+// threadChain is a fabricated deep thread: n messages chained through
+// References (tests never use real addresses).
+func threadChain(n int) []*core.Message {
+	chain := make([]*core.Message, n)
+	for i := range chain {
+		ref := ""
+		if i > 0 {
+			ref = fmt.Sprintf("m%d", i)
+		}
+		chain[i] = &core.Message{ID: fmt.Sprintf("m%d", i+1), Timestamp: int64(i + 1), References: []string{ref}, Author: "Ann", Subject: "s", Tags: []string{"inbox"}}
+	}
+	return chain
+}
+
+// TestPageDownContinuesThread pins the page-down continuation (the
+// pgdown key): while the cursor's thread still has rows hidden below
+// the tree window, a page advances the window one chunk and re-anchors
+// at the thread start - the "+N more" tail scrolls through page by
+// page. The page past the tail crosses into the next thread normally.
+func TestPageDownContinuesThread(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t0", threadChain(40)),
+		core.NewThread("t1", []*core.Message{{ID: "other", Timestamp: 1, Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}),
+	})
+	view.SetWindowBudget(10, 4)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	cursorID := func() string {
+		r, ok := m.view.CursorRow()
+		if !ok {
+			t.Fatal("cursor lost")
+		}
+		return r.Msg.ID
+	}
+	m = press(t, m, "pgdown")
+	if cursorID() != "m11" || m.indexOffset != 0 {
+		t.Fatalf("the page must continue the thread at m11, got %s @ offset %d", cursorID(), m.indexOffset)
+	}
+	m = press(t, m, "pgdown")
+	if cursorID() != "m21" {
+		t.Fatalf("the second page must reach m21, got %s", cursorID())
+	}
+	m = press(t, m, "pgdown")
+	if cursorID() != "m31" {
+		t.Fatalf("the third page must reach m31, got %s", cursorID())
+	}
+	// the tail chunk is exhausted: the next page crosses into t1
+	m = press(t, m, "pgdown")
+	if cursorID() != "other" {
+		t.Fatalf("the page past the tail must cross into the next thread, got %s", cursorID())
+	}
+}
+
+// TestPageDownFoldThread pins the fold rule: when a truncated thread's
+// window end sits at the view's bottom edge, the page re-anchors at
+// that thread's continuation - the interrupted thread starts the new
+// page, and the overflow indicator shows its remaining tail.
+func TestPageDownFoldThread(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t0", []*core.Message{{ID: "x1", Timestamp: 2}, {ID: "x2", Timestamp: 1, References: []string{"x1"}}}),
+		core.NewThread("t1", threadChain(40)),
+	})
+	view.SetWindowBudget(10, 4)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	m.height = 15 // listHeight 12: the fold lands on t1's window end
+	if rows := view.Rows(); len(rows) != 13 || !rows[10].Ghost || rows[10].More != 30 || rows[11].Msg == nil || rows[11].ThreadID != "t0" {
+		t.Fatalf("fixture wrong: %d rows, indicator %+v, fold row %+v", len(rows), rows[10], rows[11])
+	}
+	m = press(t, m, "pgdown")
+	r, _ := m.view.CursorRow()
+	if r.Msg.ID != "m11" || m.indexOffset != 0 {
+		t.Fatalf("the interrupted thread must start the new page at m11, got %s @ offset %d", r.Msg.ID, m.indexOffset)
+	}
+	if out := m.View(); !strings.Contains(out, "+20 more") {
+		t.Fatalf("the overflow indicator must show the remaining tail:\n%s", out)
 	}
 }

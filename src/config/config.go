@@ -101,6 +101,8 @@ type Config struct {
 	UI         UI              `toml:"ui"`
 	Views      map[string]View `toml:"view"`
 	ActiveView string          `toml:"-"`
+	// Index is the [index] section: the index surface budgets (R11).
+	Index IndexSection `toml:"index"`
 	// DerivedGKeys tracks the per-account goto keys deriveAccountViews
 	// added (key -> tag): the next derivation run removes them first,
 	// so re-numbering over the merged accounts never collides with
@@ -253,6 +255,12 @@ type Glyphs struct {
 	BorderBR      string `toml:"border_br"`
 	BorderH       string `toml:"border_h"`
 	BorderV       string `toml:"border_v"`
+	// the tree glyphs: the thread root marker, one level of indentation,
+	// and the branch/leaf markers (box-drawing set, 2 cells per level)
+	Tree       string `toml:"tree"`
+	TreeChild  string `toml:"tree_child"`
+	TreeBranch string `toml:"tree_branch"`
+	TreeLeaf   string `toml:"tree_leaf"`
 }
 
 // Style is one theme style: palette names or raw hex for fg/bg, a
@@ -384,6 +392,7 @@ type IndexStyleTable struct {
 	Staged  Style
 	Ghost   Style
 	Search  Style
+	Tree    Style
 	Tag     TagStyleTable
 }
 
@@ -600,6 +609,8 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 					t.Index.Ghost = style
 				case "search":
 					t.Index.Search = style
+				case "tree":
+					t.Index.Tree = style
 				default:
 					return StyleTable{}, fmt.Errorf("index: unknown key %q", ik)
 				}
@@ -709,7 +720,7 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
 		"index.flags": table.Index.Flags, "index.staged": table.Index.Staged,
-		"index.ghost": table.Index.Ghost,
+		"index.ghost": table.Index.Ghost, "index.tree": table.Index.Tree,
 	} {
 		out[id] = apply(id, s)
 	}
@@ -730,6 +741,20 @@ func (t Theme) Resolved(p Palette, variant string) map[string]Style {
 type View struct {
 	Query   string `toml:"query"`
 	Threads bool   `toml:"threads"`
+}
+
+// IndexSection is the [index] table (R11): the index surface budgets.
+// Thread is the threaded views' tree window (R3): a deep thread renders
+// at most MaxRows rows with indentation clamped at MaxDepth; navigating
+// through the thread slides the window under the cursor. Zero MaxRows
+// disables the window (the full tree renders).
+type IndexSection struct {
+	Thread ThreadBudget `toml:"thread"`
+}
+
+type ThreadBudget struct {
+	MaxDepth int `toml:"max-depth"`
+	MaxRows  int `toml:"max-rows"`
 }
 
 // Send is the send transport argv (R4): ONE configurable command,
@@ -992,6 +1017,7 @@ func Default() Config {
 				Staged: "*", Cursor: "▌", ProgressFill: "#", ProgressEmpty: "-",
 				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
 				BorderH: "─", BorderV: "│",
+				Tree: "▸ ", TreeChild: "│ ", TreeBranch: "├─", TreeLeaf: "└─",
 			},
 		},
 		Views: map[string]View{
@@ -1003,6 +1029,9 @@ func Default() Config {
 			"deleted": {Query: "tag:deleted", Threads: true},
 			"draft":   {Query: "tag:draft", Threads: true},
 			"archive": {Query: "tag:archive", Threads: true},
+		},
+		Index: IndexSection{
+			Thread: ThreadBudget{MaxDepth: 4, MaxRows: 10},
 		},
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
@@ -1098,6 +1127,7 @@ func defaultTheme() Theme {
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},
 					Flags: Style{Fg: "base08"}, Staged: Style{Fg: "base04", Attrs: []string{"bold"}},
 					Ghost: Style{Fg: "base03"}, Search: Style{Fg: "base0A", Attrs: []string{"bold"}},
+					Tree: Style{Fg: "base03"},
 					Tag: TagStyleTable{
 						// the base.colors tag markers (muttrc/base.colors):
 						// a color per hard tag; inbox stays plain green -
@@ -1447,7 +1477,8 @@ func validateStyleTable(t StyleTable, p Palette) error {
 		{"index.number", t.Index.Number}, {"index.date", t.Index.Date},
 		{"index.author", t.Index.Author}, {"index.subject", t.Index.Subject},
 		{"index.flags", t.Index.Flags}, {"index.staged", t.Index.Staged},
-		{"index.ghost", t.Index.Ghost}, {"index.tag", t.Index.Tag.Default},
+		{"index.ghost", t.Index.Ghost}, {"index.tree", t.Index.Tree},
+		{"index.tag", t.Index.Tag.Default},
 		{"pager.header", t.Pager.Header}, {"pager.hdrdefault", t.Pager.HdrDefault},
 		{"pager.signature", t.Pager.Signature}, {"pager.attachment", t.Pager.Attachment},
 	}

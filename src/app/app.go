@@ -88,8 +88,18 @@ func Run() error {
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)
 
+	// the hydrator fills stub rows into real thread trees (R3); the
+	// threaded closure reads the store, so a view-config change picks up
+	// on the next scan
+	tjob := newThreadJob(bus, worker, view, func() bool {
+		return st.Config().Views[st.Config().ActiveView].Threads
+	})
+	go tjob.Run(ctx)
+
 	groups := st.Config().TagGroupList()
 	view.SetGroups(groups)
+	b := st.Config().Index.Thread
+	view.SetWindowBudget(b.MaxRows, b.MaxDepth)
 
 	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
 	// ONE resolution for the filter job, the fcc derivation, and the

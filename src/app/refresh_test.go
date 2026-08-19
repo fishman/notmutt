@@ -28,6 +28,14 @@ type fakeWorker struct {
 	threads   atomic.Int32 // ActThread calls - must stay zero in the load path
 	countErr  atomic.Value // error: fails every ActCount when set
 	pruneErr  atomic.Value // error: fails the prune intersect queries when set
+	threadMap atomic.Value // ActThread content per thread id (the hydrated-thread re-fetch)
+}
+
+// setThreadMsgs installs the full thread content for ActThread fetches,
+// keyed by thread id: the changed set may carry only summary stubs
+// while the thread fetch returns the real messages.
+func (f *fakeWorker) setThreadMsgs(byID map[string][]core.Message) {
+	f.threadMap.Store(byID)
 }
 
 func (f *fakeWorker) setPruneErr(err error) { f.pruneErr.Store(&err) }
@@ -109,6 +117,12 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		}
 	case notmuch.ActThread:
 		f.threads.Add(1)
+		if byID, ok := f.threadMap.Load().(map[string][]core.Message); ok {
+			if m, ok := byID[a.ThreadID]; ok {
+				r.Msgs = m
+				break
+			}
+		}
 		msgs, _ := f.msgs.Load().([]core.Message)
 		if len(msgs) == 0 {
 			msgs = []core.Message{{ID: "changed", ThreadID: a.ThreadID}}
@@ -239,6 +253,53 @@ func TestCycleIncremental(t *testing.T) {
 	}
 	if r.rPrev != 12 || r.uuid != "u" {
 		t.Fatalf("state not advanced: %v %v", r.uuid, r.rPrev)
+	}
+}
+
+// TestCycleRefetchesHydratedThread pins the R3 diff-and-insert: a
+// hydrated thread's changed set carries only summary stubs (the
+// refresh feed shape), so the cycle re-fetches the thread content -
+// the new message appears in the existing tree, no full reload.
+func TestCycleRefetchesHydratedThread(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.set("u", 10)
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}}})
+	view := core.NewView("inbox", "tag:inbox")
+	r := newRefresher(bus, fw, view, 10)
+	// first cycle: the full reload path, t1 loads as real content
+	r.cycle()
+	if !r.view.Hydrated("t1") {
+		t.Fatal("t1 must be hydrated after the load")
+	}
+	// a reply lands: the changed set is a stub (no message id), the
+	// thread fetch returns the full tree
+	fw.setMsgs([]core.Message{{ID: "", ThreadID: "t1", Tags: []string{"inbox"}}})
+	fw.setThreadMsgs(map[string][]core.Message{"t1": {
+		{ID: "m1", ThreadID: "t1"},
+		{ID: "m2", ThreadID: "t1", References: []string{"m1"}},
+	}})
+	fw.set("u", 11)
+	r.cycle()
+	rows := view.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("the reply must appear in the tree: %d rows", len(rows))
+	}
+	if rows[0].Msg.ID != "m1" || !rows[0].Root || rows[1].Msg.ID != "m2" || rows[1].Depth != 1 {
+		t.Fatalf("tree content wrong: %+v", rows)
+	}
+	// a failed thread fetch keeps rPrev stale: the consumed lastmod
+	// would lose the new message
+	fw.setMsgs([]core.Message{{ID: "", ThreadID: "t1", Tags: []string{"inbox"}}})
+	fw.setThreadMsgs(map[string][]core.Message{}) // empty map: the fallback serves f.msgs
+	fw.set("u", 12)
+	fw.setPruneErr(errors.New("boom"))
+	r.cycle()
+	if r.rPrev != 11 {
+		t.Fatalf("rPrev advanced past the failed fetch: %d", r.rPrev)
+	}
+	if len(view.Rows()) != 2 {
+		t.Fatalf("the failed cycle must not touch the tree: %d rows", len(view.Rows()))
 	}
 }
 

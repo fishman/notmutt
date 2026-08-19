@@ -27,6 +27,10 @@ type Thread struct {
 	Collapsed bool
 	Root      *Node
 	msgs      []*Message
+	// WinStart is the tree window's first emitted row (the [index.thread]
+	// budget): deep threads render at most winRows rows starting here.
+	// Index into the thread's full flatten, clamped at materialization.
+	WinStart int
 }
 
 type Node struct {
@@ -39,6 +43,7 @@ type Row struct {
 	ThreadID   string
 	Depth      int
 	Root       bool
+	Siblings   []bool // sibling chain, root-ward: Siblings[0] is the row's own has-next-sibling, Siblings[k] the ancestor k levels up (the conditional tree indent)
 	Count      int
 	Ghost      bool     // synthetic multi-root marker row; has no Msg
 	Staged     bool     // pending ops staged for this row (R14)

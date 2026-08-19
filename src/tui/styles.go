@@ -43,6 +43,7 @@ type IndexStyles struct {
 	Staged  lipgloss.Style
 	Ghost   lipgloss.Style
 	Search  lipgloss.Style
+	Tree    lipgloss.Style                   // the thread tree glyphs (R3)
 	Tag     func(name string) lipgloss.Style // per-tag styles (R11)
 }
 
@@ -97,7 +98,7 @@ type sgrSet struct {
 	stagedNormal, stagedGhost                    sgr
 	border                                       sgr // the popup border: the indicator's fg over the normal bg (no fill)
 	number, flags, date, author, subject, staged sgr
-	search                                       sgr
+	search, tree                                 sgr
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
 	pagerDef                                     sgr
@@ -124,6 +125,7 @@ func sgrSetOf(st Styles) sgrSet {
 		author:       sgrOf(st.Index.Author),
 		subject:      sgrOf(st.Index.Subject),
 		search:       sgrOf(st.Index.Search),
+		tree:         sgrOf(st.Index.Tree),
 		staged:       sgrOf(st.Index.Staged),
 		tag: func(name string) sgr {
 			if g, ok := cache[name]; ok {
@@ -179,6 +181,7 @@ func DefaultStyles() Styles {
 			Staged:  lipgloss.NewStyle().Foreground(c("#565c64")).Bold(true),
 			Ghost:   lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Search:  lipgloss.NewStyle().Foreground(c("#e5c07b")).Bold(true),
+			Tree:    lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Tag: func(string) lipgloss.Style {
 				return lipgloss.NewStyle().Foreground(c("#c678dd"))
 			},
@@ -254,7 +257,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 			Number: to("index.number", normal), Date: to("index.date", normal),
 			Author: to("index.author", normal), Subject: to("index.subject", normal),
 			Flags: to("index.flags", normal), Staged: to("index.staged", normal),
-			Ghost: to("index.ghost", normal),
+			Ghost: to("index.ghost", normal), Tree: to("index.tree", normal),
 			Tag: func(name string) lipgloss.Style {
 				if _, ok := ids["index.tag."+name]; ok {
 					return to("index.tag."+name, normal)

@@ -6,6 +6,7 @@ package core
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 )
 
@@ -619,5 +620,114 @@ func TestRemoveUnknownIdentity(t *testing.T) {
 	v.Remove("t:nope")
 	if len(v.Rows()) != 1 {
 		t.Fatalf("unknown identities must be no-ops: %+v", v.Rows())
+	}
+}
+
+// TestMergeThreadReplacesStub pins the hydrator path: a stub thread in
+// the view (no message id - the refresh feed shape) gets replaced by the
+// fetched content WITHOUT losing the collapse state (MergeThread keeps
+// the thread object; SetCollapsed survives).
+func TestMergeThreadReplacesStub(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{{ID: "", Timestamp: 100}})})
+	if err := v.SetCollapsed("t1", true); err != nil {
+		t.Fatal(err)
+	}
+	// the hydrator's merge: the fetched tree replaces the stub
+	v.MergeThread(NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")}))
+	rows := v.Rows()
+	if len(rows) != 1 {
+		t.Fatalf("collapsed thread must stay one row: %d", len(rows))
+	}
+	if rows[0].Count != 2 {
+		t.Fatalf("collapsed row must count the fetched tree: %d", rows[0].Count)
+	}
+	if err := v.ToggleCollapsed("t1"); err != nil {
+		t.Fatal(err)
+	}
+	rows = v.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("expand must show the fetched tree: %d rows", len(rows))
+	}
+	if rows[1].Msg.ID != "kid" || rows[1].Depth != 1 {
+		t.Fatalf("kid not at depth 1: %+v", rows[1])
+	}
+}
+
+// TestStubMergeKeepsHydratedTree pins the stub guard: a hydrated thread
+// receiving a stub snapshot (the refresh carry-over) must keep its tree -
+// the stub's summary data updates, the tree rows stay.
+func TestStubMergeKeepsHydratedTree(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})})
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{{ID: "", Timestamp: 200}})})
+	rows := v.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("the stub must not delete the tree: %d rows", len(rows))
+	}
+	if rows[0].Msg.ID != "root" || rows[1].Msg.ID != "kid" {
+		t.Fatalf("tree rows wrong: %+v", rows)
+	}
+}
+
+// TestThreadWindow pins the bounded tree window: a deep thread renders
+// at most winRows rows with Depth clamped at winDepth, and SlideWindow
+// advances the window until the tail. A thread that fits the budget is
+// untouched.
+func TestThreadWindow(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	chain := make([]*Message, 40)
+	for i := range chain {
+		chain[i] = msg("m"+strconv.Itoa(i+1), int64(i+1), "m"+strconv.Itoa(i))
+	}
+	v.MergeThreads([]*Thread{NewThread("t1", chain)})
+	v.SetWindowBudget(10, 4)
+	rows := v.Rows()
+	if len(rows) != 10 {
+		t.Fatalf("window must emit maxRows rows: %d", len(rows))
+	}
+	if rows[0].Depth != 0 || rows[0].Msg.ID != "m1" {
+		t.Fatalf("window must start at the thread root: %+v", rows[0])
+	}
+	if rows[9].Depth != 4 {
+		t.Fatalf("depth must clamp at maxDepth: %+v", rows[9])
+	}
+	if len(rows[9].Siblings) != 9 {
+		t.Fatalf("a clamped row keeps its full sibling chain: %+v", rows[9])
+	}
+	for i, s := range rows[9].Siblings {
+		if s {
+			t.Fatalf("the single-child chain has no next siblings, got %d: %+v", i, rows[9])
+		}
+	}
+	// slide down to the tail: 30 moves, then the edge refuses
+	for i := 0; i < 30; i++ {
+		if !v.SlideWindow("t1", 1) {
+			t.Fatalf("slide %d must move", i)
+		}
+	}
+	if v.SlideWindow("t1", 1) {
+		t.Fatal("the tail edge must refuse the slide")
+	}
+	if rows := v.Rows(); len(rows) != 10 || rows[0].Msg.ID != "m31" {
+		t.Fatalf("the tail window wrong: %+v", rows[0])
+	}
+	// slide back up to the root
+	for i := 0; i < 30; i++ {
+		if !v.SlideWindow("t1", -1) {
+			t.Fatalf("slide-up %d must move", i)
+		}
+	}
+	if v.SlideWindow("t1", -1) {
+		t.Fatal("the root edge must refuse the slide")
+	}
+	if rows := v.Rows(); rows[0].Msg.ID != "m1" {
+		t.Fatalf("the root window wrong: %+v", rows[0])
+	}
+	// a thread that fits the budget never slides
+	v.SetWindowBudget(10, 4)
+	v.MergeThreads([]*Thread{NewThread("t2", []*Message{msg("solo", 1)})})
+	if v.SlideWindow("t2", 1) || v.SlideWindow("t2", -1) {
+		t.Fatal("a fitting thread must refuse every slide")
 	}
 }

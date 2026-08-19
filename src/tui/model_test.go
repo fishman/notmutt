@@ -4946,3 +4946,80 @@ func TestFilePickerMark(t *testing.T) {
 		}
 	}
 }
+
+// TestWindowSlidesWithCursor pins the bounded tree window navigation
+// (R3): stepping past a thread's window edge slides the window instead
+// of leaving the thread - the cursor keeps its row while the revealed
+// message lands under it; at the thread's tail the step crosses into
+// the next thread; stepping up slides back to the root.
+func TestWindowSlidesWithCursor(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	chain := make([]*core.Message, 40)
+	for i := range chain {
+		ref := ""
+		if i > 0 {
+			ref = fmt.Sprintf("m%d", i)
+		}
+		chain[i] = &core.Message{ID: fmt.Sprintf("m%d", i+1), Timestamp: int64(i + 1), References: []string{ref}, Author: "Ann", Subject: "s", Tags: []string{"inbox"}}
+	}
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t0", chain),
+		core.NewThread("t1", []*core.Message{{ID: "other", Timestamp: 1, Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}),
+	})
+	view.SetWindowBudget(10, 4)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	cursorID := func() string {
+		r, ok := m.view.CursorRow()
+		if !ok {
+			t.Fatal("cursor lost")
+		}
+		return r.Msg.ID
+	}
+	// nine steps: m10 at the window edge, the window still at the root
+	for i := 0; i < 9; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m10" || m.CursorIndex() != 9 {
+		t.Fatalf("cursor must rest on m10 at the window edge, got %s @ %d", cursorID(), m.CursorIndex())
+	}
+	if r, _ := m.view.CursorRow(); r.Msg.ID != "m10" {
+		t.Fatalf("window must still show the root rows: %s", r.Msg.ID)
+	}
+	// the tenth step slides: the cursor keeps its row, m11 is revealed
+	m = press(t, m, "j")
+	if cursorID() != "m11" || m.CursorIndex() != 9 {
+		t.Fatalf("the step must land on the revealed row at the same position: %s @ %d", cursorID(), m.CursorIndex())
+	}
+	// the emission re-read: the window starts at m2
+	rows := view.Rows()
+	if rows[0].Msg.ID != "m2" || len(rows) != 11 {
+		t.Fatalf("the window must slide under the cursor: first=%s rows=%d", rows[0].Msg.ID, len(rows))
+	}
+	// 29 more steps reach the tail (m40); the window slides each time
+	for i := 0; i < 29; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m40" {
+		t.Fatalf("39 steps must reach the thread tail, got %s", cursorID())
+	}
+	// the tail step crosses into the next thread (the window is exhausted)
+	m = press(t, m, "j")
+	if cursorID() != "other" {
+		t.Fatalf("the step past the tail must cross into the next thread, got %s", cursorID())
+	}
+	// stepping up slides back: 40 steps return to m1 at the root
+	m = press(t, m, "k")
+	if cursorID() != "m40" {
+		t.Fatalf("k must return to the thread tail, got %s", cursorID())
+	}
+	for i := 0; i < 39; i++ {
+		m = press(t, m, "k")
+	}
+	if cursorID() != "m1" || m.CursorIndex() != 0 {
+		t.Fatalf("40 up-steps must return to the root row, got %s @ %d", cursorID(), m.CursorIndex())
+	}
+	rows = view.Rows()
+	if rows[0].Msg.ID != "m1" {
+		t.Fatalf("the window must be back at the thread root: %s", rows[0].Msg.ID)
+	}
+}

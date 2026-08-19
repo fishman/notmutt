@@ -2149,10 +2149,47 @@ func (m *Model) moveCursor(delta int) {
 		step = -1
 	}
 	for i := 0; i < n; i++ {
+		if m.windowSlideAt(rows, idx, step) {
+			// the window moved under the cursor: the emission re-flattens
+			// (the view re-anchored the cursor by id) and the step lands
+			// on the revealed row at the cursor's old screen position
+			rows = m.view.Rows()
+			m.rows = rows
+			idx = m.CursorIndex()
+		}
 		idx = cursorStepAt(rows, idx, step)
 		m.setCursorAt(rows, idx)
 		idx = m.pageAtEdgeAt(rows, idx)
 	}
+}
+
+// windowSlideAt slides the cursor thread's tree window when the next
+// step would cross the thread's boundary in the emission: the cursor
+// sits on the thread's last emitted real row stepping down, or its
+// first emitted real row stepping up (ghost rows pass through,
+// cursorStepAt's rule). SlideWindow refuses at the edges - nothing
+// hidden in that direction - and the step then crosses into the next
+// thread normally. Stub and single-message threads (no window) never
+// slide: their rows are the whole thread.
+func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
+	r := rows[idx]
+	if r.Msg == nil || r.ThreadID == "" {
+		return false
+	}
+	next := idx
+	for {
+		next += step
+		if next < 0 || next >= len(rows) {
+			return m.view.SlideWindow(r.ThreadID, step)
+		}
+		if rows[next].Msg != nil {
+			break
+		}
+	}
+	if rows[next].ThreadID == r.ThreadID {
+		return false
+	}
+	return m.view.SlideWindow(r.ThreadID, step)
 }
 
 // searchNext jumps the cursor to the next search match at or after
@@ -2394,6 +2431,8 @@ func (m *Model) undo() bool {
 	identity := row.Msg.ID
 	if identity == "" {
 		identity = "t:" + row.ThreadID
+	} else if !m.view.IsStaged(identity) && row.ThreadID != "" {
+		identity = "t:" + row.ThreadID // the stub-staged thread op survives hydration
 	}
 	if !m.view.IsStaged(identity) {
 		return false

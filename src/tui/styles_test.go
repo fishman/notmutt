@@ -251,3 +251,50 @@ func TestPadRowTruncatesWellFormed(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderTreeGlyphs pins the tree run (R3): the root marker on a
+// thread with children, the branch/leaf markers below the root, the
+// conditional indent (a vertical only under a sibling), and zero-width
+// prefixes for stubs and single messages - the flat layout stays
+// byte-identical.
+func TestRenderTreeGlyphs(t *testing.T) {
+	base := func() core.Row {
+		return core.Row{Msg: &core.Message{ID: "m1", ThreadID: "t1", Timestamp: 1755150000, Author: "Ann", Subject: "hello"}}
+	}
+	render := func(r core.Row) string {
+		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
+	}
+	if got := render(base()); strings.Contains(got, "▸ ") {
+		t.Fatalf("a single message renders no tree glyph: %q", got)
+	}
+	root := base()
+	root.Count = 3
+	if got := render(root); !strings.Contains(got, "▸ ") {
+		t.Fatalf("a thread root renders the root marker: %q", got)
+	}
+	branch := base()
+	branch.Depth, branch.Count, branch.Siblings = 1, 3, []bool{true}
+	if got := render(branch); !strings.Contains(got, "├─") {
+		t.Fatalf("a depth-1 branch renders the branch marker: %q", got)
+	}
+	leaf := base()
+	leaf.Depth, leaf.Count, leaf.Siblings = 1, 3, []bool{false}
+	if got := render(leaf); !strings.Contains(got, "└─") {
+		t.Fatalf("a depth-1 leaf renders the leaf marker: %q", got)
+	}
+	under := base()
+	under.Depth, under.Count, under.Siblings = 2, 3, []bool{false, true}
+	if got := render(under); !strings.Contains(got, "│ └─") {
+		t.Fatalf("a row under a sibling renders the vertical indent: %q", got)
+	}
+	last := base()
+	last.Depth, last.Count, last.Siblings = 2, 3, []bool{false, false}
+	if got := render(last); strings.Contains(got, "│") {
+		t.Fatalf("a row under a last child drops the vertical indent: %q", got)
+	}
+	stub := base()
+	stub.Count = 1 // the summary stub carries the thread count but no tree
+	if got := render(stub); strings.Contains(got, "▸ ") {
+		t.Fatalf("a single-row thread renders no tree glyph: %q", got)
+	}
+}

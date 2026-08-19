@@ -69,7 +69,8 @@ func (r *refresher) cycle() {
 	}
 	// The changed set IS the merge input: search summaries (thread-level
 	// index data), the same shape from both backends. No show in the
-	// refresh path - content loads only on open (R13).
+	// refresh path - content loads only on open (R13); a hydrated
+	// thread re-fetches below (R3 supersedes R13 there).
 	page := groupThreads(msgs)
 	sortThreads(page)
 	if len(page) > 0 {
@@ -82,9 +83,40 @@ func (r *refresher) cycle() {
 			diag.Warn("refresh: prune", "err", err.Error())
 			return
 		}
+		// a hydrated thread's changed stub carries summaries only: the
+		// tree must show the new messages, so the content re-fetches
+		// (R3 diff-and-insert - the stub guard in MergeThreads kept the
+		// old tree until here). A fetch failure keeps rPrev stale like
+		// the prune failure: the consumed lastmod would lose the new
+		// messages, and the next cycle retries the same range.
+		for i, t := range kept {
+			if !r.view.Hydrated(t.ID) {
+				continue
+			}
+			ft, err := r.fetchThread(t.ID)
+			if err != nil {
+				diag.Warn("refresh: thread", "err", err.Error())
+				return
+			}
+			kept[i] = ft
+		}
 		r.merge(kept)
 	}
 	r.rPrev = rpl.Rev
+}
+
+// fetchThread fetches a thread's full message set (the hydrated-thread
+// re-fetch): ActThread -> NewThread, the same shape the hydrator merges.
+func (r *refresher) fetchThread(id string) (*core.Thread, error) {
+	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: id})
+	if err != nil || rpl.Err != nil {
+		return nil, fmt.Errorf("thread %s: %v %v", id, err, rpl.Err)
+	}
+	msgs := make([]*core.Message, len(rpl.Msgs))
+	for i := range rpl.Msgs {
+		msgs[i] = &rpl.Msgs[i]
+	}
+	return core.NewThread(id, msgs), nil
 }
 
 // prune answers view-query membership for the changed threads: a

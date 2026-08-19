@@ -47,6 +47,19 @@ type View struct {
 	// intermediate keypresses and rebuilds once per batch end.
 	mergeDepth int
 	mergeDirty bool
+	// the tree window budget ([index.thread]): winRows rows per thread,
+	// indentation clamped at winDepth. Zero winRows = no window.
+	winRows  int
+	winDepth int
+}
+
+// SetWindowBudget bounds the tree window (the [index.thread] config):
+// each thread renders at most winRows rows starting at its WinStart,
+// with Depth clamped at winDepth. Zero winRows disables the window.
+func (v *View) SetWindowBudget(winRows, winDepth int) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.winRows, v.winDepth = winRows, winDepth
 }
 
 func NewView(name, query string) *View {
@@ -122,7 +135,7 @@ func (v *View) Rows() []Row {
 func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
-		rows = append(rows, flattenThread(t, t.Collapsed)...)
+		rows = append(rows, window(flattenThread(t, t.Collapsed), t.WinStart, v.winRows, v.winDepth)...)
 	}
 	// re-anchor the cursor index by id at materialization (once per
 	// merge, never per paint): the render's CursorIndex read is O(1)
@@ -141,9 +154,13 @@ func (v *View) rowsLocked() []Row {
 		}
 		// the staged key is the row's identity: the message id, or the
 		// thread identity for summary rows (no message id - the index
-		// is search data)
+		// is search data). A message whose id carries no ops falls back
+		// to its thread's ops: an op staged on the stub row survives
+		// hydration (R14 - the staged state never vanishes mid-session).
 		identity := msg.ID
 		if identity == "" {
+			identity = "t:" + rows[i].ThreadID
+		} else if _, ok := v.staged[identity]; !ok && rows[i].ThreadID != "" {
 			identity = "t:" + rows[i].ThreadID
 		}
 		if ops, ok := v.staged[identity]; ok {
@@ -218,28 +235,60 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 		return rows
 	}
 	count := t.Count()
-	var walk func(*Node, int)
-	walk = func(node *Node, depth int) {
+	child := func(siblings []bool, last bool) []bool {
+		s := make([]bool, 0, len(siblings)+1)
+		s = append(s, !last)
+		return append(s, siblings...)
+	}
+	var walk func(*Node, int, []bool)
+	walk = func(node *Node, depth int, siblings []bool) {
 		if node.Msg == nil {
 			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Count: count})
 			if collapsed {
 				return
 			}
-			for _, c := range node.Children {
-				walk(c, depth+1)
+			for i, c := range node.Children {
+				walk(c, depth+1, child(siblings, i == len(node.Children)-1))
 			}
 			return
 		}
-		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Count: count})
+		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
 		if collapsed {
 			return
 		}
-		for _, c := range node.Children {
-			walk(c, depth+1)
+		for i, c := range node.Children {
+			walk(c, depth+1, child(siblings, i == len(node.Children)-1))
 		}
 	}
-	walk(t.Root, 0)
+	walk(t.Root, 0, nil)
 	return rows
+}
+
+// window bounds one thread's flattened rows to the tree window: the
+// rows [start, start+winRows) with Depth clamped at winDepth (the
+// indentation budget - a clamped row keeps its Branch glyph, so the
+// tree stays readable). Zero winRows passes the thread through
+// untouched; start is clamped to the valid range (merges can shrink
+// the flatten between slides).
+func window(full []Row, start, winRows, winDepth int) []Row {
+	if winRows <= 0 {
+		return full
+	}
+	clamp := func(rows []Row) {
+		for i := range rows {
+			if rows[i].Depth > winDepth {
+				rows[i].Depth = winDepth
+			}
+		}
+	}
+	if len(full) <= winRows {
+		clamp(full)
+		return full
+	}
+	start = max(0, min(start, len(full)-winRows))
+	out := full[start : start+winRows]
+	clamp(out)
+	return out
 }
 
 // MergeThreads diffs the incoming threads into the view: thread-level
@@ -266,6 +315,10 @@ func (v *View) MergeThreads(threads []*Thread) {
 		cur := byID[in.ID]
 		if cur == nil {
 			continue // pure insert: already carries its tree
+		}
+		if stubThread(in) && hasRealMsg(cur) {
+			cur.LastDate = in.LastDate // summary ordering data is still fresh
+			continue                   // a stub snapshot must not delete a hydrated tree
 		}
 		mops := DiffSorted(cur.msgs, in.msgs, MsgLess, func(m *Message) string { return m.ID })
 		cur.msgs = Apply(cur.msgs, mops)
@@ -324,6 +377,82 @@ func (v *View) EndMerge() {
 		v.dirty = true
 		v.mergeDirty = false
 	}
+}
+
+// stubThread reports a thread with only summary rows (no message has an
+// id - the refresh feed shape). A stub snapshot must never delete a
+// hydrated tree (the MergeThreads guard).
+func stubThread(t *Thread) bool { return !hasRealMsg(t) }
+
+func hasRealMsg(t *Thread) bool {
+	for _, m := range t.msgs {
+		if m.ID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// MergeThread replaces one thread's messages with a fetched snapshot
+// (the hydrator path): the thread keeps its collapse and window state
+// and its sorted position; other threads are untouched. No-op when the
+// thread left the view mid-fetch (a view switch raced the reply).
+func (v *View) MergeThread(in *Thread) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	cur := findThread(v.Threads, in.ID)
+	if cur == nil {
+		return
+	}
+	cur.msgs = append([]*Message(nil), in.msgs...)
+	sort.Slice(cur.msgs, func(i, j int) bool { return MsgLess(cur.msgs[i], cur.msgs[j]) })
+	cur.LastDate = in.LastDate
+	cur.Root = buildTree(cur.msgs)
+	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
+	v.dirty = true
+}
+
+// Hydrated reports whether the thread holds real messages (the stub
+// guard's positive side): the hydrator skips hydrated threads and the
+// refresher re-fetches changed ones.
+func (v *View) Hydrated(id string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			return hasRealMsg(t)
+		}
+	}
+	return false
+}
+
+// SlideWindow advances the thread's tree window by one row and reports
+// whether it moved. False at the edges (nothing hidden in that
+// direction, or the thread fits the budget) - the caller steps on
+// normally.
+func (v *View) SlideWindow(threadID string, dir int) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.winRows <= 0 {
+		return false
+	}
+	for _, t := range v.Threads {
+		if t.ID != threadID {
+			continue
+		}
+		full := flattenThread(t, t.Collapsed)
+		if len(full) <= v.winRows {
+			return false
+		}
+		next := t.WinStart + dir
+		if next < 0 || next > len(full)-v.winRows {
+			return false
+		}
+		t.WinStart = next
+		v.dirty = true
+		return true
+	}
+	return false
 }
 
 // reconcileMsg copies snapshot fields from the fresh message onto the
@@ -426,6 +555,9 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 	for _, t := range v.Threads {
 		if t.ID == id {
 			t.Collapsed = collapsed
+			if !collapsed {
+				t.WinStart = 0 // expand shows the thread from the top
+			}
 			v.dirty = true
 			return nil
 		}
@@ -443,8 +575,12 @@ func (v *View) ToggleCollapsed(id string) error {
 	for _, t := range v.Threads {
 		if t.ID == id {
 			t.Collapsed = !t.Collapsed
-			if t.Collapsed && t.Root != nil && t.Root.Msg != nil {
-				v.cursorID = t.Root.Msg.ID
+			if t.Collapsed {
+				if t.Root != nil && t.Root.Msg != nil {
+					v.cursorID = t.Root.Msg.ID
+				}
+			} else {
+				t.WinStart = 0
 			}
 			v.dirty = true
 			return nil
@@ -469,6 +605,9 @@ func (v *View) ToggleCollapseAll() {
 	}
 	for _, t := range v.Threads {
 		t.Collapsed = !all
+		if all {
+			t.WinStart = 0
+		}
 	}
 	v.dirty = true
 }

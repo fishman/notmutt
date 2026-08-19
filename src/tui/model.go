@@ -2596,6 +2596,15 @@ func (m Model) renderBase() string {
 			tagWidth = w
 		}
 	}
+	// the tree slot reserves the same way: the widest tree run on the
+	// page sets the width every row pads to (stubs and single messages
+	// pad blank), so the title column holds its place across the depth
+	treeWidth := 0
+	for _, r := range rows[top:bottom] {
+		if w := runewidth.StringWidth(treePrefix(r, m.ui.Glyphs)); w > treeWidth {
+			treeWidth = w
+		}
+	}
 	sg := st.sgr
 	var b strings.Builder
 	b.WriteString(m.tabBar())
@@ -2607,7 +2616,7 @@ func (m Model) renderBase() string {
 		// plus every style-affecting parameter; the outer row style is
 		// a function of the row's own fields and selected, so the
 		// rendered line is fully keyed.
-		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
+		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, treeWidth: treeWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
@@ -2616,7 +2625,7 @@ func (m Model) renderBase() string {
 			if len(m.rowCache) > rowCacheMax {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
-			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
+			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, treeWidth, i == cur, m.accountTags, m.searchQuery)
 			outer := sg.normal
 			if rows[i].Ghost {
 				outer = sg.ghost

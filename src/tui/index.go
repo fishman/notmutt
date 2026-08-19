@@ -17,10 +17,10 @@ import (
 )
 
 // renderRow renders the fixed-slot template (R11): number, flags,
-// attachment, signed, date, author, tags, subject. The number slot and the tag
-// slot are the variable-width slots: each grows to the widest on the
-// page (the caller passes the per-render widths) so the columns align
-// without padding waste. The subject is the flexible last slot - it
+// attachment, signed, date, author, tags, tree, subject. The number, tag,
+// and tree slots are the variable-width slots: each grows to the widest
+// on the page (the caller passes the per-render widths) so the columns
+// align without padding waste. The subject is the flexible last slot - it
 // renders in full and padRow clamps the row to the terminal width, so
 // the title takes the rest of the line. Optional slots reserve width;
 // every slot renders through its style, so the line carries per-slot
@@ -28,7 +28,7 @@ import (
 // and the tag-slot cap come from config data, never hardcoded.
 // Account tags never render here - the account lives in the status
 // bar (R2), not the mail title.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool, query string) string {
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth, treeWidth int, selected bool, accountTags map[string]bool, query string) string {
 	sg := st.sgr
 	// the row keeps its slot styles; the selection is the cursor
 	// marker cell (config glyph, indicator-styled) at the line start
@@ -55,8 +55,10 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 			b.WriteString(padCellsRight("", tagWidth))
 			b.WriteByte(' ')
 		}
-		if prefix := treePrefix(row, ui.Glyphs); prefix != "" {
-			b.WriteString(sg.tree.render(prefix))
+		if treeWidth > 0 {
+			// the tree slot reserves the page width: a row without a tree
+			// (stub, single message) pads blank so the title aligns
+			b.WriteString(sg.tree.render(padCellsRight(treePrefix(row, ui.Glyphs), treeWidth)))
 		}
 		b.WriteString("[...] " + strconv.Itoa(row.Count))
 		return b.String()
@@ -85,11 +87,11 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		b.WriteString(padTagRun(tagGlyphs(tags, ui.Tags.Max, sg.tag, ui.Tags, accountTags), tagWidth, sg.tag))
 		b.WriteByte(' ')
 	}
-	// the tree run sits right before the flexible subject slot, so its
-	// variable width shifts the title only - the fixed columns (date,
-	// author, tags) never move with the tree depth
-	if prefix := treePrefix(row, ui.Glyphs); prefix != "" {
-		b.WriteString(sg.tree.render(prefix))
+	// the tree run sits right before the flexible subject slot; the slot
+	// reserves the page width, so the title column never shifts with the
+	// tree depth and the fixed columns (date, author, tags) never move
+	if treeWidth > 0 {
+		b.WriteString(sg.tree.render(padCellsRight(treePrefix(row, ui.Glyphs), treeWidth)))
 	}
 	subject := core.SanitizeControls(row.Msg.Subject)
 	b.WriteString(renderHighlighted(subject, query, sg.subject, sg.search))

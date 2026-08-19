@@ -256,7 +256,9 @@ type Glyphs struct {
 	BorderH       string `toml:"border_h"`
 	BorderV       string `toml:"border_v"`
 	// the tree glyphs: the thread root marker, one level of indentation,
-	// and the branch/leaf markers (box-drawing set, 2 cells per level)
+	// and the branch/leaf markers. ASCII defaults: box-drawing glyphs are
+	// ambiguous-width (2 cells on wide terminals), which drifts the slot
+	// math; the 2-cells-per-level invariant must hold in any font.
 	Tree       string `toml:"tree"`
 	TreeChild  string `toml:"tree_child"`
 	TreeBranch string `toml:"tree_branch"`
@@ -1017,7 +1019,7 @@ func Default() Config {
 				Staged: "*", Cursor: "▌", ProgressFill: "#", ProgressEmpty: "-",
 				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
 				BorderH: "─", BorderV: "│",
-				Tree: "▸ ", TreeChild: "│ ", TreeBranch: "├─", TreeLeaf: "└─",
+				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-",
 			},
 		},
 		Views: map[string]View{

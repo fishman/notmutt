@@ -264,37 +264,37 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	render := func(r core.Row) string {
 		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, 6, false, config.Default().AccountTags(), ""))
 	}
-	if got := render(base()); strings.Contains(got, "▸ ") {
+	if got := render(base()); strings.Contains(got, "+ ") {
 		t.Fatalf("a single message renders no tree glyph: %q", got)
 	}
 	root := base()
 	root.Count = 3
-	if got := render(root); !strings.Contains(got, "▸ ") {
+	if got := render(root); !strings.Contains(got, "+ ") {
 		t.Fatalf("a thread root renders the root marker: %q", got)
 	}
 	branch := base()
 	branch.Depth, branch.Count, branch.Siblings = 1, 3, []bool{true}
-	if got := render(branch); !strings.Contains(got, "├─") {
+	if got := render(branch); !strings.Contains(got, "|-") {
 		t.Fatalf("a depth-1 branch renders the branch marker: %q", got)
 	}
 	leaf := base()
 	leaf.Depth, leaf.Count, leaf.Siblings = 1, 3, []bool{false}
-	if got := render(leaf); !strings.Contains(got, "└─") {
+	if got := render(leaf); !strings.Contains(got, "`-") {
 		t.Fatalf("a depth-1 leaf renders the leaf marker: %q", got)
 	}
 	under := base()
 	under.Depth, under.Count, under.Siblings = 2, 3, []bool{false, true}
-	if got := render(under); !strings.Contains(got, "│ └─") {
+	if got := render(under); !strings.Contains(got, "| `-") {
 		t.Fatalf("a row under a sibling renders the vertical indent: %q", got)
 	}
 	last := base()
 	last.Depth, last.Count, last.Siblings = 2, 3, []bool{false, false}
-	if got := render(last); strings.Contains(got, "│") {
+	if got := render(last); strings.Contains(got, "|") {
 		t.Fatalf("a row under a last child drops the vertical indent: %q", got)
 	}
 	stub := base()
 	stub.Count = 1 // the summary stub carries the thread count but no tree
-	if got := render(stub); strings.Contains(got, "▸ ") {
+	if got := render(stub); strings.Contains(got, "+ ") {
 		t.Fatalf("a single-row thread renders no tree glyph: %q", got)
 	}
 	// the tree slot reserves the page width: a depth-2 row and a stub

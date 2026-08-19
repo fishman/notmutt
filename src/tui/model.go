@@ -131,6 +131,12 @@ type Model struct {
 	// author or subject contains it render the match highlighted, and
 	// the n key jumps to the next match. Empty means no active search.
 	searchQuery string
+	// pendingCollapse is the thread the C key collapsed last: the
+	// collapse is a cursor-scoped view (its summary row), so moving the
+	// cursor off the thread expands it again - the index never leaves a
+	// thread hidden after the cursor moved past it. Empty = no pending
+	// escape (ctrl+v's global flat mode is persistent, not scoped).
+	pendingCollapse string
 	// imgProto is the terminal's image protocol ("" = unsupported:
 	// images stay collapsed); imgCache holds the decoded+scaled window
 	// images; painted the rects the terminal currently holds (the
@@ -862,13 +868,21 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferred = true
 	case "collapse-thread":
 		// the C key: the cursor thread collapses to its root row
-		// (re-anchored in the view) or expands back to its tree
+		// (re-anchored in the view) or expands back to its tree. A
+		// collapse arms the escape: the thread expands again when the
+		// cursor moves off it.
 		if m.mode == "index" {
 			rows := m.view.Rows()
 			m.rows = rows
 			idx := m.CursorIndex()
 			if idx >= 0 && idx < len(rows) && rows[idx].Msg != nil {
-				m.view.ToggleCollapsed(rows[idx].ThreadID)
+				threadID := rows[idx].ThreadID
+				m.view.ToggleCollapsed(threadID)
+				if m.view.Collapsed(threadID) {
+					m.pendingCollapse = threadID
+				} else if m.pendingCollapse == threadID {
+					m.pendingCollapse = ""
+				}
 				m.rows = m.view.Rows()
 				m.clampIndexOffset()
 				deferPaint()
@@ -2177,6 +2191,14 @@ func (m *Model) moveCursor(delta int) {
 		}
 		idx = cursorStepAt(rows, idx, step)
 		m.setCursorAt(rows, idx)
+		if m.collapseEscapeAt(rows, idx, step) {
+			// the step left the C-collapsed thread: the expansion
+			// re-flattens, the cursor stays on the destination (the view
+			// re-anchored it by id)
+			rows = m.view.Rows()
+			m.rows = rows
+			idx = m.CursorIndex()
+		}
 		idx = m.pageAtEdgeAt(rows, idx, snap)
 	}
 }
@@ -2208,6 +2230,39 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 		return false
 	}
 	return m.view.SlideWindow(r.ThreadID, step)
+}
+
+// collapseEscapeAt expands the pending C-collapsed thread when the
+// cursor stepped off it: the collapse is a cursor-scoped view (its
+// summary row), so leaving the thread restores its tree - otherwise
+// the collapsed rows stay hidden with no way to see where the thread
+// went. The previous real row in the move direction names the thread
+// the step left (ghosts pass through). Returns false when the cursor
+// still rests on the collapsed row or the step could not move.
+func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
+	if m.pendingCollapse == "" {
+		return false
+	}
+	r := rows[idx]
+	if r.Msg == nil || r.ThreadID == m.pendingCollapse {
+		return false
+	}
+	prev := idx
+	for {
+		prev -= step
+		if prev < 0 || prev >= len(rows) {
+			return false
+		}
+		if rows[prev].Msg != nil {
+			break
+		}
+	}
+	if rows[prev].ThreadID != m.pendingCollapse {
+		return false
+	}
+	m.view.SetCollapsed(m.pendingCollapse, false)
+	m.pendingCollapse = ""
+	return true
 }
 
 // searchNext jumps the cursor to the next search match at or after
@@ -2457,6 +2512,12 @@ func (m *Model) cursorEdge(dir int) {
 	}
 	for i >= 0 && i < len(rows) {
 		if rows[i].Msg != nil {
+			// an edge jump off the C-collapsed thread expands it (the
+			// escape is scoped to the cursor's row, not the walk)
+			if m.pendingCollapse != "" && rows[i].ThreadID != m.pendingCollapse {
+				m.view.SetCollapsed(m.pendingCollapse, false)
+				m.pendingCollapse = ""
+			}
 			m.setCursorAt(rows, i)
 			return
 		}

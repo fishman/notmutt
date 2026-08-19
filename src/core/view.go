@@ -640,6 +640,18 @@ func (v *View) SetCollapsed(id string, collapsed bool) error {
 	return fmt.Errorf("view: unknown thread %q", id)
 }
 
+// Collapsed reports the thread's collapse state (the C/ctrl+v keys).
+func (v *View) Collapsed(id string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			return t.Collapsed
+		}
+	}
+	return false
+}
+
 // ToggleCollapsed flips the thread's collapse state (the C key).
 // Collapsing re-anchors the cursor to the thread's root row - the
 // child rows vanish at the next materialization, so the anchor must

@@ -4046,6 +4046,62 @@ func TestModelCollapseThread(t *testing.T) {
 	}
 }
 
+// TestModelCollapseEscapesOnMove pins the collapse escape: the C
+// collapse is a cursor-scoped view - moving the cursor off the
+// collapsed thread expands it again, so the thread's rows never stay
+// hidden once the cursor moved past its summary row. A manual C
+// expand clears the escape; an edge jump (G) off the thread expands
+// it too.
+func TestModelCollapseEscapesOnMove(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{
+			{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+			{ID: "b", Timestamp: 90, References: []string{"a"}, Tags: []string{"inbox"}},
+		}),
+		core.NewThread("t2", []*core.Message{{ID: "c", Timestamp: 80, Tags: []string{"inbox"}}}),
+		core.NewThread("t3", []*core.Message{{ID: "d", Timestamp: 70, Tags: []string{"inbox"}}}),
+	})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
+	m = press(t, m, "C") // collapse t1 (the cursor is on its root row)
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("collapse must leave 3 rows, got %d", len(rows))
+	}
+	// the next step leaves the collapsed thread: it expands, the cursor
+	// lands on t2
+	m = press(t, m, "j")
+	rows := m.view.Rows()
+	if len(rows) != 4 {
+		t.Fatalf("leaving the collapsed thread must expand it, got %d rows", len(rows))
+	}
+	r, _ := m.view.CursorRow()
+	if r.Msg == nil || r.Msg.ID != "c" {
+		t.Fatalf("the cursor must land on t2, got %+v", r.Msg)
+	}
+	// a manual expand clears the escape: moving away keeps the tree
+	m = press(t, m, "k")
+	m = press(t, m, "C") // collapse t1 again
+	m = press(t, m, "C") // expand manually
+	m = press(t, m, "j")
+	if rows := m.view.Rows(); len(rows) != 4 {
+		t.Fatalf("a manually expanded thread must stay expanded, got %d rows", len(rows))
+	}
+	// an edge jump off the collapsed thread expands it too
+	m = press(t, m, "k")
+	m = press(t, m, "C") // collapse t1 again
+	m = press(t, m, "G")
+	rows = m.view.Rows()
+	if len(rows) != 4 {
+		t.Fatalf("an edge jump off the collapsed thread must expand it, got %d rows", len(rows))
+	}
+	r, _ = m.view.CursorRow()
+	if r.Msg == nil || r.Msg.ID != "d" {
+		t.Fatalf("G must land on the last row, got %+v", r.Msg)
+	}
+}
+
 // TestModelAttachmentDialog pins the v key's attachment flow: the
 // picker lists the pager's attachment lines, enter views the chosen
 // attachment through the seam (the AttachmentLoaded reply swaps the

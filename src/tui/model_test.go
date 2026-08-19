@@ -4831,7 +4831,7 @@ func TestFilePickerStateRoundTrip(t *testing.T) {
 		m = press(t, m, string(r))
 	}
 	m = press(t, m, "enter")
-	saveFileDirState(m) // the runLoop quit path
+	saveChooserDir(m) // the runLoop quit path
 	if m.fileDir != root {
 		t.Fatalf("fileDir = %q", m.fileDir)
 	}

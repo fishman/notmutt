@@ -5,7 +5,7 @@ package mail
 
 // The HTML flow renderer (docs/html-rendering-analysis.md): x/net/html
 // parses (error-tolerant, fuzz-exercised - the trust boundary), the
-// CSS cascade from css.go computes styles, and the flow walk emits
+// CSS cascade from lib/html computes styles, and the flow walk emits
 // pager lines. Layout is CSS 2.1 block flow + inline runs + column-
 // aligned tables; everything else (position, flex, media queries)
 // drops. Images render as placeholders - the bytes travel with the
@@ -17,12 +17,11 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
-	"github.com/mattn/go-runewidth"
-	"golang.org/x/net/html"
+	xhtml "golang.org/x/net/html"
 
 	"notmutt/core"
+	"notmutt/lib/html"
 )
 
 const (
@@ -51,7 +50,7 @@ func RenderHTMLWithLinks(body string, atts []Attachment, width int) ([]core.Line
 }
 
 func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]core.Line, []string) {
-	doc, err := html.Parse(strings.NewReader(body))
+	doc, err := xhtml.Parse(strings.NewReader(body))
 	if err != nil {
 		return nil, nil // x/net/html recovers from malformed input by spec; guard anyway
 	}
@@ -65,7 +64,7 @@ func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]c
 		width:      width,
 		labelLinks: labelLinks,
 	}
-	w.walk(doc, &styleProps{})
+	w.walk(doc, &html.Style{})
 	w.flush()
 	if w.truncated {
 		w.lines = append(w.lines, core.Line{Text: "[content truncated]", Kind: core.LineBody})
@@ -78,7 +77,7 @@ func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]c
 
 type htmlWalker struct {
 	atts      []Attachment
-	rules     []cssRule
+	rules     []html.CSSRule
 	lines     []core.Line
 	linesLeft int
 	truncated bool
@@ -115,7 +114,7 @@ type htmlWalker struct {
 // F key's link marker ("[N]") - its run never merges with mail text.
 type word struct {
 	text  string
-	st    *styleProps
+	st    *html.Style
 	label bool
 	img   *core.Image // inline image: the word is its placeholder
 }
@@ -152,19 +151,19 @@ var skipTags = map[string]bool{
 // walk flows the subtree in its computed style: block elements flush
 // and recurse as block contexts, inline elements accumulate into the
 // pending word buffer.
-func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
+func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if w.linesLeft <= 0 {
 			w.truncated = true
 			return
 		}
 		switch c.Type {
-		case html.TextNode:
+		case xhtml.TextNode:
 			w.addText(c.Data, st)
-		case html.ElementNode:
-			cs := styleOf(c, st, w.rules)
+		case xhtml.ElementNode:
+			cs := html.StyleOf(c, st, w.rules)
 			tag := c.Data
-			if cs.display == "none" || skipTags[tag] {
+			if cs.Display == "none" || skipTags[tag] {
 				continue
 			}
 			if tag == "html" || tag == "body" {
@@ -173,22 +172,22 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 				// default), or the light fallback: mail renders for a
 				// light page - a mail without a background is
 				// unreadable on a dark theme
-				if cs.bg != "" {
-					w.defaultBG = cs.bg
+				if cs.Bg != "" {
+					w.defaultBG = cs.Bg
 				} else if w.defaultBG == "" {
 					w.defaultBG = "#ffffff"
 				}
 				// the default foreground must read on that background:
 				// an unstyled mail inherits the contrast color instead
 				// of the theme's light text on a dark terminal
-				if cs.fg == "" {
-					cs.fg = contrastFG(w.defaultBG)
+				if cs.Fg == "" {
+					cs.Fg = html.ContrastFG(w.defaultBG)
 				}
 			}
 			switch {
 			case tag == "img":
 				w.image(c, cs)
-			case tag == "br" && !cs.pre:
+			case tag == "br" && !cs.Pre:
 				w.flush()
 			case tag == "table" && isBlock(tag, cs):
 				w.table(c, cs)
@@ -198,7 +197,7 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 				// only an explicit text-align at this node sets the line's
 				// alignment; inherited text-align (button-internal
 				// align="center" scaffolds) must not re-align a line
-				if a := cs.align; (a == "center" || a == "right") && cs.alignSet {
+				if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
 					w.align = a
 				}
 				switch tag {
@@ -207,7 +206,7 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 				case "li":
 					if len(w.lists) > 0 {
 						w.lists[len(w.lists)-1]++
-						w.pendingMark = &word{text: listMark(w.lists[len(w.lists)-1]), st: cs}
+						w.pendingMark = &word{text: html.ListMark(w.lists[len(w.lists)-1]), st: cs}
 					}
 				}
 				w.walk(c, cs)
@@ -225,7 +224,7 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 				// "[N]" label inline before the anchor text (an
 				// anchor without an href is plain text)
 				if w.labelLinks {
-					if href := attr(c, "href"); href != "" {
+					if href := html.Attr(c, "href"); href != "" {
 						href = sanitize(href)
 						w.links = append(w.links, href)
 						w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs, true)
@@ -239,11 +238,11 @@ func (w *htmlWalker) walk(n *html.Node, st *styleProps) {
 	}
 }
 
-func isBlock(tag string, cs *styleProps) bool {
+func isBlock(tag string, cs *html.Style) bool {
 	if blockTags[tag] {
 		return true
 	}
-	switch cs.display {
+	switch cs.Display {
 	case "block", "flex", "grid", "list-item", "table", "table-cell",
 		"table-footer-group", "table-header-group", "table-row",
 		"table-row-group":
@@ -255,7 +254,7 @@ func isBlock(tag string, cs *styleProps) bool {
 // addText ingests a text node: pre content preserves spaces and line
 // breaks (tab-expanded, sanitized per line), inline content collapses
 // to space-separated words.
-func (w *htmlWalker) addText(txt string, st *styleProps) {
+func (w *htmlWalker) addText(txt string, st *html.Style) {
 	if w.linesLeft <= 0 {
 		w.truncated = true
 		return
@@ -285,23 +284,23 @@ func (w *htmlWalker) addText(txt string, st *styleProps) {
 	}
 }
 
-func (w *htmlWalker) addWord(text string, st *styleProps, label bool) {
+func (w *htmlWalker) addWord(text string, st *html.Style, label bool) {
 	if w.linesLeft <= 0 {
 		w.truncated = true
 		return
 	}
 	text = sanitize(text) // F1: DOM text is raw - ESC/C0 never reach the pager
-	tw := textWidth(text)
+	tw := html.TextWidth(text)
 	// a single word wider than the line hard-splits into chunks
 	for tw > w.width {
-		chunk := takeCells(text, w.width)
+		chunk := html.TakeCells(text, w.width)
 		if w.cells > 0 {
 			w.flush()
 		}
 		w.words = append(w.words, word{text: chunk, st: st, label: label})
-		w.cells = textWidth(chunk)
+		w.cells = html.TextWidth(chunk)
 		text = text[len(chunk):]
-		tw = textWidth(text)
+		tw = html.TextWidth(text)
 		if w.cells > 0 {
 			w.flush()
 		}
@@ -370,20 +369,11 @@ func (w *htmlWalker) emitLine(runs []core.Run) {
 	w.blockSeen = true
 }
 
-// listMark renders a list item's marker: "N. " in an ol (the counter
-// counts the item), "* " in a ul (the counter is meaningless there).
-func listMark(n int) string {
-	if n > 0 {
-		return strconv.Itoa(n) + "."
-	}
-	return "*"
-}
-
 // image emits an <img> as its own line: the placeholder text, or the
 // image line when the src resolves - cid: attachments and data: URIs
 // carry their bytes, http(s) srcs carry their URL (the remote images
 // mode fetches them on the render-images key; never fetched here).
-func (w *htmlWalker) image(c *html.Node, st *styleProps) {
+func (w *htmlWalker) image(c *xhtml.Node, st *html.Style) {
 	w.flush()
 	img := resolveImage(c, w.atts, w.width)
 	if img == nil {
@@ -400,8 +390,8 @@ func (w *htmlWalker) image(c *html.Node, st *styleProps) {
 // cid: attachment or data: URI bytes, or a remote http(s) image as a
 // URL-only placeholder (Data stays empty - the fetch is the remote
 // mode's keypress-gated step).
-func resolveImage(c *html.Node, atts []Attachment, layoutCells int) *core.Image {
-	src := attr(c, "src")
+func resolveImage(c *xhtml.Node, atts []Attachment, layoutCells int) *core.Image {
+	src := html.Attr(c, "src")
 	var data []byte
 	var url string
 	switch {
@@ -421,7 +411,7 @@ func resolveImage(c *html.Node, atts []Attachment, layoutCells int) *core.Image 
 	if len(data) == 0 && url == "" {
 		return nil
 	}
-	alt := attr(c, "alt")
+	alt := html.Attr(c, "alt")
 	if alt == "" {
 		alt = "[image]"
 	}
@@ -435,12 +425,12 @@ func resolveImage(c *html.Node, atts []Attachment, layoutCells int) *core.Image 
 // percentages resolve against the layout width (the mail's section
 // sizing - a chart fills the space its layout reserves). 0 =
 // unspecified, the decode falls back to a window fit.
-func imgSize(c *html.Node, layoutCells int) (w, h int) {
-	decls := parseDecls(attr(c, "style"))
+func imgSize(c *xhtml.Node, layoutCells int) (w, h int) {
+	decls := html.ParseDecls(html.Attr(c, "style"))
 	read := func(name string) int {
 		raw := decls[name]
 		if raw == "" {
-			raw = attr(c, name)
+			raw = html.Attr(c, name)
 		}
 		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(raw, "px"))); err == nil {
 			return n
@@ -458,7 +448,7 @@ func imgSize(c *html.Node, layoutCells int) (w, h int) {
 // table renders a table as column-aligned rows (w3m's approach: pad
 // each column to its widest cell, wrapped at a per-column cap). Cell
 // content is extracted as word-lines, so styles survive into the rows.
-func (w *htmlWalker) table(t *html.Node, st *styleProps) {
+func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG, w.width)
 	if len(rows) == 0 {
 		return
@@ -566,7 +556,7 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 				}
 				if li < len(lines) {
 					cell := lines[li]
-					pad := widths[ci] - textWidth(joinWordText(cell.words))
+					pad := widths[ci] - html.TextWidth(joinWordText(cell.words))
 					pre, post := 0, pad
 					if cell.align == "right" {
 						pre, post = pad, 0
@@ -581,7 +571,7 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 						if rn.Image != nil {
 							imgs = append(imgs, core.ImagePos{Image: rn.Image, X: rowX})
 						}
-						rowX += textWidth(rn.Text)
+						rowX += html.TextWidth(rn.Text)
 						runs = append(runs, rn)
 					}
 					if post > 0 {
@@ -619,10 +609,10 @@ func (w *htmlWalker) table(t *html.Node, st *styleProps) {
 // lines (block boundaries and <br> inside a cell start a new line).
 // The HTML5 parser inserts an implicit tbody between the table and
 // its rows, so the row groups descend into it.
-func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) [][][]cellLine {
+func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
-		if r.Type != html.ElementNode {
+		if r.Type != xhtml.ElementNode {
 			continue
 		}
 		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
@@ -634,10 +624,10 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 		}
 		var cells [][]cellLine
 		for c := r.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+			if c.Type != xhtml.ElementNode || (c.Data != "td" && c.Data != "th") {
 				continue
 			}
-			cells = append(cells, collectCell(c, styleOf(c, st, rules), rules, links, labelLinks, defaultBG, layoutCells))
+			cells = append(cells, collectCell(c, html.StyleOf(c, st, rules), rules, links, labelLinks, defaultBG, layoutCells))
 		}
 		if len(cells) > 0 {
 			rows = append(rows, cells)
@@ -656,7 +646,7 @@ func cellRows(t *html.Node, st *styleProps, rules []cssRule, links *[]string, la
 // inside the row - never re-aligns a line. Link mode (labelLinks)
 // labels anchors and bare URLs inside cells like the main walk - the
 // layout-table era wraps every link in a td.
-func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
+func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
 	var out []cellLine
 	var cur []word
 	align := ""
@@ -693,12 +683,12 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 		}
 	}
 	inRow := false
-	var walk func(n *html.Node, st *styleProps)
-	var walkRow func(n *html.Node, st *styleProps)
-	walk = func(n *html.Node, st *styleProps) {
+	var walk func(n *xhtml.Node, st *html.Style)
+	var walkRow func(n *xhtml.Node, st *html.Style)
+	walk = func(n *xhtml.Node, st *html.Style) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
 			switch c.Type {
-			case html.TextNode:
+			case xhtml.TextNode:
 				for _, f := range strings.Fields(c.Data) {
 					if labelLinks {
 						if ls := core.Links(f, true); len(ls) > 0 {
@@ -708,14 +698,14 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					}
 					cur = append(cur, word{text: sanitize(f), st: st})
 				}
-			case html.ElementNode:
-				cs := styleOf(c, st, rules)
+			case xhtml.ElementNode:
+				cs := html.StyleOf(c, st, rules)
 				tag := c.Data
-				if cs.display == "none" || skipTags[tag] {
+				if cs.Display == "none" || skipTags[tag] {
 					continue
 				}
 				switch {
-				case tag == "br" && !cs.pre:
+				case tag == "br" && !cs.Pre:
 					flush()
 				case tag == "img":
 					// a resolved block image becomes its own full-width
@@ -724,7 +714,7 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					// line's words - the placeholder run rides the
 					// word, the row keeps the mail's one-line layout
 					if img := resolveImage(c, nil, layoutCells); img != nil {
-						if cs.display != "block" {
+						if cs.Display != "block" {
 							cur = append(cur, word{text: img.Alt, st: cs, img: img})
 							break
 						}
@@ -732,14 +722,14 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 						// the block's clear fill: the cell's declared bg or
 						// the mail's page background - an image on a white
 						// page must clear to white, never to the theme
-						bg := cs.bg
+						bg := cs.Bg
 						if bg == "" {
 							bg = defaultBG
 						}
 						out = append(out, cellLine{img: img, bg: bg})
 						break
 					}
-					if a := attr(c, "alt"); a != "" {
+					if a := html.Attr(c, "alt"); a != "" {
 						cur = append(cur, word{text: sanitize(a), st: cs})
 					} else {
 						cur = append(cur, word{text: "[image]", st: cs})
@@ -760,7 +750,7 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					// only an explicit text-align at this node sets the
 					// line's alignment; inherited text-align must not
 					// re-align a line
-					if a := cs.align; (a == "center" || a == "right") && cs.alignSet {
+					if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
 						align = a
 						lineAlign = "" // an explicit block alignment wins over a pending cell split
 					}
@@ -770,7 +760,7 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					case "li":
 						if len(lists) > 0 {
 							lists[len(lists)-1]++
-							pendingMark = &word{text: listMark(lists[len(lists)-1]), st: cs}
+							pendingMark = &word{text: html.ListMark(lists[len(lists)-1]), st: cs}
 						}
 					}
 					walk(c, cs)
@@ -788,7 +778,7 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 					// main walk - the anchor's href gets its "[N]" label
 					// inline; an anchor without an href is plain text
 					if labelLinks {
-						if href := attr(c, "href"); href != "" {
+						if href := html.Attr(c, "href"); href != "" {
 							href = sanitize(href)
 							*links = append(*links, href)
 							cur = append(cur, word{text: fmt.Sprintf("[%d]", len(*links)), st: cs, label: true})
@@ -801,12 +791,12 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 			}
 		}
 	}
-	walkRow = func(n *html.Node, st *styleProps) {
+	walkRow = func(n *xhtml.Node, st *html.Style) {
 		prevRow := inRow
 		inRow = true
 		defer func() { inRow = prevRow }()
 		for r := n.FirstChild; r != nil; r = r.NextSibling {
-			if r.Type != html.ElementNode {
+			if r.Type != xhtml.ElementNode {
 				continue
 			}
 			if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
@@ -817,11 +807,11 @@ func collectCell(n *html.Node, st *styleProps, rules []cssRule, links *[]string,
 				continue
 			}
 			for c := r.FirstChild; c != nil; c = c.NextSibling {
-				if c.Type != html.ElementNode || (c.Data != "td" && c.Data != "th") {
+				if c.Type != xhtml.ElementNode || (c.Data != "td" && c.Data != "th") {
 					continue
 				}
-				tcs := styleOf(c, st, rules)
-				if tcs.align == "right" && tcs.alignSet {
+				tcs := html.StyleOf(c, st, rules)
+				if tcs.Align == "right" && tcs.AlignSet {
 					if lineAlign != "right" {
 						flush()
 					}
@@ -843,16 +833,16 @@ func wrapWords(words []word, cap int) [][]word {
 	var cur []word
 	cells := 0
 	for _, wd := range words {
-		tw := textWidth(wd.text)
+		tw := html.TextWidth(wd.text)
 		for tw > cap {
-			chunk := takeCells(wd.text, cap)
+			chunk := html.TakeCells(wd.text, cap)
 			out = append(out, cur)
 			cur = []word{{text: chunk, st: wd.st}}
-			cells = textWidth(chunk)
+			cells = html.TextWidth(chunk)
 			out = append(out, cur)
 			cur, cells = nil, 0
 			wd.text = wd.text[len(chunk):]
-			tw = textWidth(wd.text)
+			tw = html.TextWidth(wd.text)
 		}
 		if cells > 0 && cells+1+tw > cap {
 			out = append(out, cur)
@@ -871,53 +861,9 @@ func wrapWords(words []word, cap int) [][]word {
 	return out
 }
 
-// takeCells cuts the longest true byte prefix of s that fits in cap
-// cells. The cut runs on the SOURCE bytes (DecodeRuneInString reports
-// each rune's real size): a recoded replacement char would claim more
-// bytes than the source consumed, and the caller's s[len(chunk):]
-// slice would overrun (the fuzz catch).
-func takeCells(s string, cap int) string {
-	i := 0
-	cells := 0
-	for i < len(s) {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if cells+runewidth.RuneWidth(r) > cap {
-			break
-		}
-		i += size
-		cells += runewidth.RuneWidth(r)
-	}
-	return s[:i]
-}
-
-// textWidth is the string's width in terminal cells (wide runes count
-// double - the R11 wcwidth rule).
-func textWidth(s string) int {
-	n := 0
-	for _, r := range s {
-		n += runewidth.RuneWidth(r)
-	}
-	return n
-}
-
+// html.TakeCells cuts the longest true byte prefix of s that fits in cap
 func sanitize(s string) string {
 	return core.SanitizeControls(s)
-}
-
-// contrastFG picks a readable default foreground for a mail-declared
-// background: Rec.709 luma of the bg, dark text on light pages and
-// light text on dark pages. An unstyled mail inherits this instead of
-// the theme's light text on a dark terminal.
-func contrastFG(bg string) string {
-	n, err := strconv.ParseUint(strings.TrimPrefix(bg, "#"), 16, 32)
-	if err != nil {
-		return "#1a1a1a"
-	}
-	luma := (0.299*float64(n>>16&255) + 0.587*float64(n>>8&255) + 0.114*float64(n&255)) / 255
-	if luma > 0.5 {
-		return "#1a1a1a"
-	}
-	return "#f5f5f5"
 }
 
 // runWords merges a word-line into runs: adjacent words with identical
@@ -942,19 +888,19 @@ func runWords(words []word) []core.Run {
 
 // runFor maps a computed style to its run representation: "" fg/bg and
 // zero attrs for the unstyled base (run equality gates run merging).
-func runFor(st *styleProps) core.Run {
+func runFor(st *html.Style) core.Run {
 	var r core.Run
 	if st == nil {
 		return r
 	}
-	r.Fg, r.Bg = st.fg, st.bg
-	if st.bold {
+	r.Fg, r.Bg = st.Fg, st.Bg
+	if st.Bold {
 		r.Attrs |= core.AttrBold
 	}
-	if st.italic {
+	if st.Italic {
 		r.Attrs |= core.AttrItalic
 	}
-	if st.underline {
+	if st.Underline {
 		r.Attrs |= core.AttrUnderline
 	}
 	return r
@@ -981,7 +927,7 @@ func joinWordText(words []word) string {
 func cellWidth(lines []cellLine) int {
 	max := 0
 	for _, l := range lines {
-		if w := textWidth(joinWordText(l.words)); w > max {
+		if w := html.TextWidth(joinWordText(l.words)); w > max {
 			max = w
 		}
 	}
@@ -990,14 +936,14 @@ func cellWidth(lines []cellLine) int {
 
 // collectStyleBlocks gathers the <style> element texts of the document
 // into one cascade.
-func collectStyleBlocks(doc *html.Node) []cssRule {
-	var rules []cssRule
-	var walk func(n *html.Node)
-	walk = func(n *html.Node) {
+func collectStyleBlocks(doc *xhtml.Node) []html.CSSRule {
+	var rules []html.CSSRule
+	var walk func(n *xhtml.Node)
+	walk = func(n *xhtml.Node) {
 		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			if c.Type == html.ElementNode {
+			if c.Type == xhtml.ElementNode {
 				if c.Data == "style" && c.FirstChild != nil {
-					rules = append(rules, parseStyleSheet(c.FirstChild.Data)...)
+					rules = append(rules, html.ParseStyleSheet(c.FirstChild.Data)...)
 				}
 				walk(c)
 			}

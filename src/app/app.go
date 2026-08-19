@@ -25,6 +25,7 @@ import (
 	"notmutt/core"
 	"notmutt/filter"
 	"notmutt/i18n"
+	"notmutt/lib/xdg"
 	"notmutt/mail"
 	"notmutt/notmuch"
 	"notmutt/setup"
@@ -294,7 +295,7 @@ func Run() error {
 		<-ctx.Done()
 		close(quitCh)
 	}()
-	tui.SetFileDirState(filepath.Join(stateDir(), "state.toml"))
+	tui.SetFileDirState(statePath())
 	return tui.Run(tui.New(view, busCh, cfg.Bindings, cfg.TagActions, bus, st, cfg.UI), quitCh)
 }
 
@@ -744,34 +745,24 @@ func configDir() string {
 	if p := os.Getenv("NOTMUTT_CONFIG"); p != "" {
 		return p
 	}
-	base, err := os.UserConfigDir()
-	if err != nil {
+	base := xdg.ConfigHome()
+	if base == "" {
 		return "notmutt"
 	}
 	return filepath.Join(base, "notmutt")
 }
 
-// stateDir is the client-state home (XDG state): non-derived,
+// statePath is the client-state file (XDG state): non-derived,
 // survives cache clears - the file chooser's last directory.
-// os.UserStateDir is absent from this toolchain's stdlib, so the
-// spec is read directly.
-func stateDir() string {
-	if p := os.Getenv("XDG_STATE_HOME"); p != "" {
-		return filepath.Join(p, "notmutt")
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return configDir()
-	}
-	return filepath.Join(home, ".local", "state", "notmutt")
+func statePath() string {
+	return filepath.Join(xdg.StateHome(), "notmutt", "state.toml")
 }
 
 func cachePath() string {
-	base, err := os.UserCacheDir()
-	if err != nil {
+	if base := xdg.CacheHome(); base == "" {
 		return "mime-cache.db"
 	}
-	return filepath.Join(base, "notmutt", "mime-cache.db")
+	return filepath.Join(xdg.CacheHome(), "notmutt", "mime-cache.db")
 }
 
 // pollSpec is the poll command's run mode: a fixed (from, to] window

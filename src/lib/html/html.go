@@ -1,40 +1,39 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-package mail
-
-// CSS subset engine (docs/html-rendering-analysis.md): parses inline
-// style="" attributes and <style> blocks into computed styles, matching
-// selectors with cascadia (the mature, fuzzed piece - never
-// reimplemented). Only the mail-relevant property subset is understood;
-// everything else (position, float, flex, media queries, ...) is
-// dropped on the floor. The trust boundary: style values never reach
-// the render surface raw - they only produce hex colors and booleans
-// that the TUI converts to SGR.
+// Package html holds the HTML layout primitives for terminal
+// renderers: the CSS-subset cascade engine (x/net/html parses, the
+// selector matching is cascadia - the mature, fuzzed piece) and the
+// cell-width helpers. The flow walker that emits a client's line
+// model is NOT here - the mail renderer owns it (docs/html-rendering-
+// analysis.md describes the full pipeline).
+package html
 
 import (
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/andybalholm/cascadia"
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/net/html"
 )
 
-// styleProps is the computed style the renderer acts on. Zero values
-// mean "inherit from the parent" except display which is the tag
-// default when empty.
-type styleProps struct {
-	fg        string // #rrggbb, "" = inherit
-	bg        string
-	bold      bool
-	italic    bool
-	underline bool
-	align     string // left|center|right|justify, "" = inherit
-	alignSet  bool   // an explicit text-align source at this node, not inherited
-	display   string // block|inline|none|table|..., "" = tag default
-	pre       bool   // white-space: pre* -> no wrap, keep spaces
+// Style is the computed style the renderer acts on. Zero values mean
+// "inherit from the parent" except Display which is the tag default
+// when empty.
+type Style struct {
+	Fg        string // #rrggbb, "" = inherit
+	Bg        string
+	Bold      bool
+	Italic    bool
+	Underline bool
+	Align     string // left|center|right|justify, "" = inherit
+	AlignSet  bool   // an explicit text-align source at this node, not inherited
+	Display   string // block|inline|none|table|..., "" = tag default
+	Pre       bool   // white-space: pre* -> no wrap, keep spaces
 }
 
 // cssColor normalizes a CSS color value to #rrggbb, or "" when the
@@ -84,9 +83,9 @@ func mustInt(s string) int {
 	return n
 }
 
-// parseDecls parses one declaration block ("color: red; font-weight:
+// ParseDecls parses one declaration block ("color: red; font-weight:
 // bold"). Property names fold to lowercase; values keep their case.
-func parseDecls(s string) map[string]string {
+func ParseDecls(s string) map[string]string {
 	decls := map[string]string{}
 	for _, d := range strings.Split(s, ";") {
 		i := strings.IndexByte(d, ':')
@@ -104,78 +103,78 @@ func parseDecls(s string) map[string]string {
 }
 
 // apply folds one declaration map into the style.
-func (s *styleProps) apply(decls map[string]string) {
+func (s *Style) apply(decls map[string]string) {
 	if v, ok := decls["color"]; ok {
 		if c := cssColor(v); c != "" {
-			s.fg = c
+			s.Fg = c
 		}
 	}
 	if v, ok := decls["background-color"]; ok {
 		if c := cssColor(v); c != "" {
-			s.bg = c
+			s.Bg = c
 		}
 	}
 	if v, ok := decls["font-weight"]; ok {
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
-			s.bold = n >= 600
+			s.Bold = n >= 600
 		} else {
 			switch strings.ToLower(strings.TrimSpace(v)) {
 			case "bold", "bolder":
-				s.bold = true
+				s.Bold = true
 			case "normal", "lighter":
-				s.bold = false
+				s.Bold = false
 			}
 		}
 	}
 	if v, ok := decls["font-style"]; ok {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "italic", "oblique":
-			s.italic = true
+			s.Italic = true
 		case "normal":
-			s.italic = false
+			s.Italic = false
 		}
 	}
 	if v, ok := decls["text-decoration"]; ok {
-		s.underline = strings.Contains(strings.ToLower(v), "underline")
+		s.Underline = strings.Contains(strings.ToLower(v), "underline")
 		if strings.Contains(strings.ToLower(v), "none") {
-			s.underline = false
+			s.Underline = false
 		}
 	}
 	if v, ok := decls["text-align"]; ok {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "left", "center", "right", "justify":
-			s.align = strings.ToLower(strings.TrimSpace(v))
-			s.alignSet = true
+			s.Align = strings.ToLower(strings.TrimSpace(v))
+			s.AlignSet = true
 		}
 	}
 	if v, ok := decls["display"]; ok {
-		s.display = strings.ToLower(strings.TrimSpace(v))
+		s.Display = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v, ok := decls["white-space"]; ok {
 		switch strings.ToLower(strings.TrimSpace(v)) {
 		case "pre", "pre-wrap", "pre-line":
-			s.pre = true
+			s.Pre = true
 		default:
-			s.pre = false
+			s.Pre = false
 		}
 	}
 }
 
-// cssRule is one <style> block rule with its selector parsed and the
+// CSSRule is one <style> block rule with its selector parsed and the
 // declaration block folded.
-type cssRule struct {
+type CSSRule struct {
 	sel   cascadia.Sel
 	decls map[string]string
 }
 
-// parseStyleSheet parses the text of a <style> element into rules
+// ParseStyleSheet parses the text of a <style> element into rules
 // sorted by ascending specificity: later entries in the slice win on
 // ties, and higher specificity wins over lower - the cascade order.
 // Unparseable selectors and @-rules (media queries, imports) drop
 // their rules entirely; the renderer degrades to the inline styles.
-func parseStyleSheet(text string) []cssRule {
+func ParseStyleSheet(text string) []CSSRule {
 	text = stripCSSComments(text)
-	var rules []cssRule
+	var rules []CSSRule
 	for {
 		text = strings.TrimLeft(text, " \t\r\n")
 		if text == "" {
@@ -195,7 +194,7 @@ func parseStyleSheet(text string) []cssRule {
 		if err != nil {
 			continue
 		}
-		rules = append(rules, cssRule{sel: sel, decls: parseDecls(body)})
+		rules = append(rules, CSSRule{sel: sel, decls: ParseDecls(body)})
 	}
 	sort.SliceStable(rules, func(i, j int) bool {
 		a, b := rules[i].sel.Specificity(), rules[j].sel.Specificity()
@@ -224,32 +223,32 @@ func stripCSSComments(s string) string {
 	}
 }
 
-// styleOf computes the node's computed style: the parent's inherited
-// style, overridden by matching <style> rules in cascade order, then by
-// the inline style attribute (which always wins). UA defaults (bold
+// StyleOf computes the node's computed style: the parent's inherited
+// style, overridden by matching <style> rules in cascade order, then
+// by the inline style attribute (which always wins). UA defaults (bold
 // headings, italic em, underlined links) fill only what the author did
 // not set - the author cascade runs after them and wins.
-func styleOf(n *html.Node, parent *styleProps, rules []cssRule) *styleProps {
+func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s := *parent
-	s.alignSet = false // align inherits, its explicit-source flag never does
+	s.AlignSet = false // align inherits, its explicit-source flag never does
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {
 			s.apply(r.decls)
 		}
 	}
-	if a := attr(n, "style"); a != "" {
-		s.apply(parseDecls(a))
+	if a := Attr(n, "style"); a != "" {
+		s.apply(ParseDecls(a))
 	}
 	// the legacy bgcolor attribute (body/table/tr/td/th - the Outlook-era
 	// templates use it everywhere): same effect as background-color
-	if v := attr(n, "bgcolor"); v != "" {
-		s.apply(parseDecls("background-color:" + v))
+	if v := Attr(n, "bgcolor"); v != "" {
+		s.apply(ParseDecls("background-color:" + v))
 	}
 	// the legacy align attribute (Outlook-era tables): same effect as
 	// text-align
-	if v := attr(n, "align"); v != "" {
-		s.apply(parseDecls("text-align:" + v))
+	if v := Attr(n, "align"); v != "" {
+		s.apply(ParseDecls("text-align:" + v))
 	}
 	return &s
 }
@@ -257,32 +256,86 @@ func styleOf(n *html.Node, parent *styleProps, rules []cssRule) *styleProps {
 // uaDefaults fills the UA emphasis for unstyled elements; the cascade
 // runs afterwards, so author rules override. Each flag fills
 // independently - a bold <b> inside an italic context stays italic.
-func uaDefaults(tag string, s *styleProps) {
+func uaDefaults(tag string, s *Style) {
 	switch tag {
 	case "h1", "h2", "b", "strong":
-		s.bold = true
+		s.Bold = true
 	case "i", "em":
-		s.italic = true
+		s.Italic = true
 	case "u":
-		s.underline = true
+		s.Underline = true
 	case "a":
 		// the UA anchor: underline always, blue only when the whole
 		// chain set no color (an inherited author color wins per the
 		// cascade - author beats UA)
-		s.underline = true
-		if s.fg == "" {
-			s.fg = "#0000ee"
+		s.Underline = true
+		if s.Fg == "" {
+			s.Fg = "#0000ee"
 		}
 	}
 }
 
-func attr(n *html.Node, key string) string {
+// Attr returns the node's attribute value, "" when absent.
+func Attr(n *html.Node, key string) string {
 	for _, a := range n.Attr {
 		if a.Key == key {
 			return a.Val
 		}
 	}
 	return ""
+}
+
+// TakeCells cuts the longest true byte prefix of s that fits in cap
+// cells. The cut runs on the SOURCE bytes (DecodeRuneInString reports
+// each rune's real size): a recoded replacement char would claim more
+// bytes than the source consumed, and the caller's s[len(chunk):]
+// slice would overrun (the fuzz catch).
+func TakeCells(s string, cap int) string {
+	i := 0
+	cells := 0
+	for i < len(s) {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if cells+runewidth.RuneWidth(r) > cap {
+			break
+		}
+		i += size
+		cells += runewidth.RuneWidth(r)
+	}
+	return s[:i]
+}
+
+// TextWidth is the string's width in terminal cells (wide runes count
+// double - the wcwidth rule).
+func TextWidth(s string) int {
+	n := 0
+	for _, r := range s {
+		n += runewidth.RuneWidth(r)
+	}
+	return n
+}
+
+// ContrastFG picks a readable default foreground for a declared
+// background: Rec.709 luma of the bg, dark text on light pages and
+// light text on dark pages.
+func ContrastFG(bg string) string {
+	n, err := strconv.ParseUint(strings.TrimPrefix(bg, "#"), 16, 32)
+	if err != nil {
+		return "#1a1a1a"
+	}
+	luma := (0.299*float64(n>>16&255) + 0.587*float64(n>>8&255) + 0.114*float64(n&255)) / 255
+	if luma > 0.5 {
+		return "#1a1a1a"
+	}
+	return "#f5f5f5"
+}
+
+// ListMark is the ordered-list numbering (or the bullet for an
+// unordered list).
+func ListMark(n int) string {
+	if n > 0 {
+		return strconv.Itoa(n) + "."
+	}
+	return "*"
 }
 
 // namedColors is the CSS3 named color table (the 148 standard names),

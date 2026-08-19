@@ -26,15 +26,3 @@ func FuzzRenderHTML(f *testing.F) {
 		}
 	})
 }
-
-func FuzzCSSDeclarations(f *testing.F) {
-	f.Add("color: red; font-weight: bold")
-	f.Add("background-color: #fff; text-align: center")
-	f.Add("p { color: red } .x { font-style: italic }")
-	f.Add("/* c */ a { color: rgb(1,2,3) }")
-	f.Fuzz(func(t *testing.T, s string) {
-		cssColor(s)
-		parseDecls(s)
-		parseStyleSheet(s)
-	})
-}

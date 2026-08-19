@@ -15,17 +15,18 @@ import (
 	"testing"
 
 	"notmutt/core"
+	"notmutt/lib/html"
 )
 
 func TestRenderSemianalysisLayout(t *testing.T) {
-	html, err := os.ReadFile("../../testing/semianalysis.html")
+	body, err := os.ReadFile("../../testing/semianalysis.html")
 	if err != nil {
 		t.Skip(err)
 	}
-	lines := RenderHTML(string(html), nil, 0)
-	narrow := RenderHTML(string(html), nil, 40)
+	lines := RenderHTML(string(body), nil, 0)
+	narrow := RenderHTML(string(body), nil, 40)
 	for _, l := range narrow {
-		if cells := textWidth(l.Text); cells > 40 {
+		if cells := html.TextWidth(l.Text); cells > 40 {
 			t.Fatalf("a narrow render must wrap at the requested width, got %d cells", cells)
 		}
 	}

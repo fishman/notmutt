@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
-	"github.com/BurntSushi/toml"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
 
@@ -24,6 +23,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/i18n"
+	"notmutt/lib/state"
 )
 
 // chainTimeout expires an armed multi-key prefix: a stray first key
@@ -319,7 +319,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: loadFileDirState()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -3588,17 +3588,6 @@ func defaultChooser(cmds []AttachCommand) string {
 	return cmds[0].Name
 }
 
-// stateFile is the persisted client state (XDG state dir): the
-// chooser's last directory. TOML like config (same parser, vendored
-// for config), but load is LENIENT - state is machine-written, a
-// corrupt file degrades to defaults, never a startup error (config's
-// strict load exists for human typos, state has no user to correct).
-type stateFile struct {
-	Chooser struct {
-		LastDir string `toml:"last-dir"`
-	} `toml:"chooser"`
-}
-
 // fileDirState is the state file path: the app resolves it (empty in
 // tests disables persistence).
 var fileDirState string
@@ -3607,50 +3596,30 @@ func SetFileDirState(path string) {
 	fileDirState = path
 }
 
-// loadFileDirState seeds the chooser's directory from the state file;
-// a dead path is ignored so the picker never opens on an error box.
-func loadFileDirState() string {
+// lastChooserDir seeds the chooser's directory from the state file
+// (lib/state, lenient load); a dead path is ignored so the picker
+// never opens on an error box.
+func lastChooserDir() string {
 	if fileDirState == "" {
 		return ""
 	}
-	b, err := os.ReadFile(fileDirState)
-	if err != nil {
-		return ""
-	}
-	var sf stateFile
-	if err := toml.Unmarshal(b, &sf); err != nil {
-		return ""
-	}
-	p := sf.Chooser.LastDir
+	p := state.Load(fileDirState).Chooser.LastDir
 	if st, err := os.Stat(p); err != nil || !st.IsDir() {
 		return ""
 	}
 	return p
 }
 
-// saveFileDirState persists the chooser's directory on quit (the
+// saveChooserDir persists the chooser's directory on quit (the
 // runLoop defer sees the final model); a failed write just loses the
-// position. The write is atomic (same-dir temp + rename): a full
-// disk mid-write fails the temp and the old state survives, the
-// target is never truncated.
-func saveFileDirState(m Model) {
+// position - the write itself is atomic (lib/state).
+func saveChooserDir(m Model) {
 	if fileDirState == "" || m.fileDir == "" {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(fileDirState), 0700); err != nil {
-		return
-	}
-	var sf stateFile
-	sf.Chooser.LastDir = m.fileDir
-	b, err := toml.Marshal(sf)
-	if err != nil {
-		return
-	}
-	tmp := fileDirState + ".tmp"
-	if err := os.WriteFile(tmp, b, 0600); err != nil {
-		return
-	}
-	os.Rename(tmp, fileDirState)
+	f := state.Load(fileDirState)
+	f.Chooser.LastDir = m.fileDir
+	state.Save(fileDirState, f)
 }
 
 // filePicker builds the built-in fallback chooser: a fuzzy picker

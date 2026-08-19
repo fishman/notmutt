@@ -5097,3 +5097,65 @@ func TestPageDownFoldThread(t *testing.T) {
 		t.Fatalf("the overflow indicator must show the remaining tail:\n%s", out)
 	}
 }
+
+// TestScrollSnapsToThreadHead pins the j-scroll snap: a page change
+// while the cursor walks inside a windowed thread whose head scrolled
+// above the page advances the window to the next chunk boundary and
+// re-anchors the page at the thread head - the top of the page becomes
+// "beginning of thread -1" (the leading "+N more" ghost when the
+// window is cut). Page down keeps the plain flip: a counted move never
+// snaps.
+func TestScrollSnapsToThreadHead(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t0", threadChain(40)),
+	})
+	view.SetWindowBudget(10)
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	m.height = 8 // listHeight 5: the windowed thread overflows the page
+	cursorID := func() string {
+		r, ok := m.view.CursorRow()
+		if !ok {
+			t.Fatal("cursor lost")
+		}
+		return r.Msg.ID
+	}
+	// five steps scroll the page under the cursor: the thread head (m1)
+	// ends up above the page
+	for i := 0; i < 5; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m6" || m.indexOffset != 5 {
+		t.Fatalf("fixture wrong: mid-thread with the head above the page, got %s @ %d", cursorID(), m.indexOffset)
+	}
+	// five more walk the window tail: the crossing snaps to the next
+	// chunk's head
+	for i := 0; i < 5; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m11" || m.indexOffset != 0 {
+		t.Fatalf("the page must snap to the thread head, got %s @ %d", cursorID(), m.indexOffset)
+	}
+	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop != 10 {
+		t.Fatalf("the head ghost must start the page: %+v", rows[0])
+	}
+	// the snap repeats chunk by chunk until the tail
+	for i := 0; i < 9; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m21" || m.indexOffset != 0 {
+		t.Fatalf("the second snap must reach m21, got %s @ %d", cursorID(), m.indexOffset)
+	}
+	for i := 0; i < 9; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m31" || m.indexOffset != 0 {
+		t.Fatalf("the third snap must reach m31, got %s @ %d", cursorID(), m.indexOffset)
+	}
+	// page down from the head keeps the raw scroll: a counted move
+	// never snaps
+	m = press(t, m, "pgdown")
+	if cursorID() != "m36" || m.indexOffset != 5 {
+		t.Fatalf("page down must raw-scroll from the head, got %s @ %d", cursorID(), m.indexOffset)
+	}
+}

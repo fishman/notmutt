@@ -517,6 +517,19 @@ func (v *View) WindowRows() int {
 	return v.winRows
 }
 
+// WindowStart is the thread's window start (the scroll snap's
+// chunk-boundary arithmetic).
+func (v *View) WindowStart(threadID string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == threadID {
+			return t.WinStart
+		}
+	}
+	return 0
+}
+
 // reconcileMsg copies snapshot fields from the fresh message onto the
 // retained one. Atts are never copied (the cache job owns them and
 // snapshots carry empty lists) and Paths are never copied (the

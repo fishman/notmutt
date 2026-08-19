@@ -2148,6 +2148,10 @@ func (m *Model) moveCursor(delta int) {
 		n = -n
 		step = -1
 	}
+	// a single down step crossing the page bottom may snap the page to
+	// the cursor thread's head (the j/k scroll snap); counted moves
+	// (page down, search, goto) keep the plain flip
+	snap := n == 1 && delta > 0
 	for i := 0; i < n; i++ {
 		if m.windowSlideAt(rows, idx, step) {
 			// the window moved under the cursor: the emission re-flattens
@@ -2159,7 +2163,7 @@ func (m *Model) moveCursor(delta int) {
 		}
 		idx = cursorStepAt(rows, idx, step)
 		m.setCursorAt(rows, idx)
-		idx = m.pageAtEdgeAt(rows, idx)
+		idx = m.pageAtEdgeAt(rows, idx, snap)
 	}
 }
 
@@ -2320,14 +2324,23 @@ func cursorStepAt(rows []core.Row, idx, dir int) int {
 // pageAtEdgeAt jumps the window a full page when the cursor crossed a
 // page edge (the read-position model): crossing
 // the bottom lands the cursor on the new page's first line, crossing
-// the top on its last line. Returns the possibly re-anchored cursor
+// the top on its last line. A single down step crossing the bottom
+// inside a windowed thread whose head scrolled above the page snaps
+// instead (pageSnapAt): the window advances to the next chunk and the
+// page re-anchors at the thread head - the top of the page becomes
+// beginning of thread -1. Returns the possibly re-anchored cursor
 // index. A single step crosses exactly one edge.
-func (m *Model) pageAtEdgeAt(rows []core.Row, idx int) int {
+func (m *Model) pageAtEdgeAt(rows []core.Row, idx int, snap bool) int {
 	if len(rows) == 0 {
 		return idx
 	}
 	h := m.listHeight()
 	if idx > m.indexOffset+h-1 {
+		if snap {
+			if i := m.pageSnapAt(rows, idx); i >= 0 {
+				return i
+			}
+		}
 		m.indexOffset = min(m.indexOffset+h, len(rows)-h)
 		return cursorLandAt(rows, m.indexOffset, 1)
 	}
@@ -2336,6 +2349,67 @@ func (m *Model) pageAtEdgeAt(rows []core.Row, idx int) int {
 		return cursorLandAt(rows, m.indexOffset+h-1, -1)
 	}
 	return idx
+}
+
+// pageSnapAt snaps a bottom-edge crossing to the cursor thread's head:
+// the head scrolled above the page, so the page change advances the
+// thread window to the next chunk boundary and re-anchors the page at
+// the thread's head (its leading "+N more" ghost when the window is
+// cut - the top of the page becomes beginning of thread -1). The
+// boundary arithmetic absorbs the one-row window walk that preceded
+// the crossing, so the walk reveals the next message and the snap
+// jumps the page, never past it. Refuses when the head is still on
+// the page, the thread has no hidden tail (nothing to advance to -
+// the crossing walks into the next thread normally), or the window
+// cannot advance. Returns the re-anchored cursor index, -1 on refuse.
+func (m *Model) pageSnapAt(rows []core.Row, idx int) int {
+	r := rows[idx]
+	if r.Msg == nil || r.ThreadID == "" {
+		return -1
+	}
+	head := idx
+	for head > 0 && rows[head-1].ThreadID == r.ThreadID {
+		head--
+	}
+	if head >= m.indexOffset {
+		return -1 // the head is still on the page
+	}
+	j := idx
+	for j+1 < len(rows) && rows[j+1].Msg != nil && rows[j+1].ThreadID == r.ThreadID {
+		j++
+	}
+	if rows[j].More <= 0 {
+		return -1 // no hidden tail: the window cannot advance
+	}
+	win := m.view.WindowRows()
+	if win <= 0 {
+		return -1
+	}
+	// the next chunk boundary: the boundary walk before the crossing
+	// already advanced the window one row - the chunk jump absorbs it
+	// instead of adding it
+	start := m.view.WindowStart(r.ThreadID)
+	next := ((start + win) / win) * win
+	if !m.view.SlideWindow(r.ThreadID, next-start) {
+		return -1
+	}
+	rows = m.view.Rows()
+	m.rows = rows
+	for i := 0; i < len(rows); i++ {
+		if rows[i].Msg != nil && rows[i].ThreadID == r.ThreadID {
+			// a top ghost starts the page with the hidden-above count
+			// visible, mirroring the tail ghost under the window
+			first := i
+			if i > 0 && rows[i-1].MoreTop > 0 {
+				first = i - 1
+			}
+			m.indexOffset = first
+			m.clampIndexOffset()
+			m.setCursorAt(rows, i)
+			return i
+		}
+	}
+	return -1
 }
 
 // cursorLandAt anchors on the nearest real row from idx, walking dir

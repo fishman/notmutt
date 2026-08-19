@@ -60,7 +60,7 @@ func (j *filterJob) run() {
 	}
 	reportFilterDiag(rep, mr)
 	moved, skipped := moveCounts(mr)
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: priorityHeadlines(cfg, rep)})
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: notifyHeadlines(cfg, rep)})
 }
 
 // moveCounts splits a move report into executed moves and skips -
@@ -105,20 +105,23 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	return rep, mr, nil
 }
 
-// priorityHeadlines caps the [notify] priority payload: the headline
+// notifyHeadlines builds the [notify] summary payload: the headline
 // rows (sender, subject, timestamp) of entries carrying a priority
-// tag (F6: no ids, no bodies), at most max; max <= 0 disables the
+// tag first, the rest of the batch filling the cap - the count line
+// never ships alone (F6: no ids, no bodies). max <= 0 disables the
 // rows, the count stays.
-func priorityHeadlines(cfg config.Config, rep *filter.Report) []core.NotifyHeadline {
+func notifyHeadlines(cfg config.Config, rep *filter.Report) []core.NotifyHeadline {
 	if cfg.Notify.Max <= 0 {
 		return nil
 	}
-	var out []core.NotifyHeadline
-	for _, e := range rep.Entries {
-		if e.Priority && e.Subject != "" {
-			out = append(out, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
-			if len(out) >= cfg.Notify.Max {
-				break
+	out := make([]core.NotifyHeadline, 0, cfg.Notify.Max)
+	for _, pass := range []bool{true, false} {
+		for _, e := range rep.Entries {
+			if e.Priority == pass && e.Subject != "" {
+				out = append(out, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
+				if len(out) >= cfg.Notify.Max {
+					return out
+				}
 			}
 		}
 	}

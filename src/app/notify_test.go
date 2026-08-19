@@ -64,22 +64,27 @@ func TestExpandNotifyTokens(t *testing.T) {
 	}
 }
 
-func TestPriorityHeadlines(t *testing.T) {
+func TestNotifyHeadlines(t *testing.T) {
 	cfg := config.Default()
 	cfg.Notify.Max = 2
 	rep := &filter.Report{Entries: []filter.Entry{
-		{Subject: "a", Priority: false},
+		{Subject: "a", Sender: "Zed"},
 		{Subject: "b", Sender: "Ann", Timestamp: 1000, Priority: true},
 		{Subject: "", Priority: true},
 		{Subject: "c", Sender: "Bob", Timestamp: 2000, Priority: true},
-		{Subject: "d", Priority: true},
+		{Subject: "d", Sender: "Cid"},
 	}}
-	got := priorityHeadlines(cfg, rep)
+	got := notifyHeadlines(cfg, rep)
 	if len(got) != 2 || got[0].Sender != "Ann" || got[1].Subject != "c" {
 		t.Fatalf("headlines: %+v", got)
 	}
+	// no priority entries: the batch fills the cap, the count never ships alone
+	rep = &filter.Report{Entries: []filter.Entry{{Subject: "x", Sender: "Dana"}, {Subject: "y", Sender: "Eli"}}}
+	if got := notifyHeadlines(cfg, rep); len(got) != 2 || got[1].Sender != "Eli" {
+		t.Fatalf("fallback fill: %+v", got)
+	}
 	cfg.Notify.Max = 0
-	if got := priorityHeadlines(cfg, rep); len(got) != 0 {
+	if got := notifyHeadlines(cfg, rep); len(got) != 0 {
 		t.Fatalf("max=0: %v", got)
 	}
 }

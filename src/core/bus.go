@@ -323,7 +323,7 @@ type FilterDone struct {
 	Entries  int
 	Moves    int
 	Skips    int
-	Priority []NotifyHeadline // entries with a [notify] priority tag, capped (F6: no ids, no bodies)
+	Priority []NotifyHeadline // summary rows: priority entries first, the batch filling the cap (F6: no ids, no bodies)
 }
 
 // NotifyHeadline is one notification row: sender, subject, and

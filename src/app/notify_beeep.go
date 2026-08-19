@@ -19,7 +19,7 @@ import (
 // beeep.AppName is the notification daemon's source label: it defaults
 // to "DefaultAppName" and must be set explicitly.
 func notifyBeeep(entries int, head []core.NotifyHeadline) {
-	beeep.AppName = "notmutt"
+	beeep.AppName = AppName
 	body := strconv.Itoa(entries) + " new messages"
 	if rows := notifyRows(head); rows != "" {
 		body += "\n" + rows

@@ -109,6 +109,42 @@ The points that matter to notmutt:
   tag pipeline classifies (see the mail concept) must be mirrored;
   the Gmail special folders are the bracketed names above.
 
+### Index: notmuch
+
+notmuch is the single source of truth (R1): it owns the database,
+the client only reads and tags. Its config (`~/.notmuch-config`)
+tells it where the mail lives and how to treat new mail; the
+reference lives at `references/muttrc/toolconfig/notmuch-config`.
+The parts that matter to the chain:
+
+```ini
+[database]
+path=Mail
+
+[new]
+tags=unread;inbox;
+ignore=.mbsyncstate;.uidvalidity;.cache;
+
+[maildir]
+synchronize_flags=true
+```
+
+- `path` is the mail root, relative to `$HOME` - the directory that
+  holds every account's Maildir (`~/Mail` in this document's
+  example, matching the mbsync store paths above).
+- `[new] tags` is the initial set `notmuch new` stamps on delivery:
+  the `unread;inbox;` the client's inbox view and the unread flag
+  rely on. The client's views are tag queries - change the stamp
+  and the views move with it.
+- `ignore` is the mbsync glue: mbsync drops `.mbsyncstate`,
+  `.uidvalidity` and its cache files into every maildir, and
+  without the ignore list notmuch would index those dotfiles as
+  mail.
+- `synchronize_flags` keeps the maildir flags and the notmuch tags
+  in sync - the physical side of the tag model. The `[user]`
+  identity block feeds notmuch's own addressing (its reply tools);
+  the client's sender addresses come from `accounts.toml`.
+
 Index once, before the client ever runs:
 
 ```sh

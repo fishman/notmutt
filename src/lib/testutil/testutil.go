@@ -37,3 +37,20 @@ func DevMailbox(t testing.TB) string {
 	}
 	return db
 }
+
+// MaildirTree creates the fixture maildir tree the mover tests use: a
+// gmail-account tree under t.TempDir() with one file per folder
+// (folder -> file name), named by the caller because mover behavior
+// depends on the exact paths. Returns the mail root.
+func MaildirTree(t testing.TB, files map[string]string) string {
+	root := filepath.Join(t.TempDir(), "mail")
+	for folder, name := range files {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", folder, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "gmail", folder, "cur", name), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}

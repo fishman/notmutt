@@ -12,6 +12,7 @@ import (
 
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/lib/testutil"
 )
 
 var applyGroups = []core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}}
@@ -281,12 +282,7 @@ func TestApplyEvictsMessageKeepsThread(t *testing.T) {
 }
 
 func hasTag(tags []string, tag string) bool {
-	for _, t := range tags {
-		if t == tag {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tags, tag)
 }
 
 // TestApplyMovesToFolderTag: applying a folder tag moves the file the
@@ -294,17 +290,8 @@ func hasTag(tags []string, tag string) bool {
 // next poll's location-wins resolution would eat an applied tag whose
 // file still sits in another folder).
 func TestApplyMovesToFolderTag(t *testing.T) {
-	dir := t.TempDir()
-	root := filepath.Join(dir, "mail")
-	for _, d := range []string{"INBOX", "Archives"} {
-		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
+	root := testutil.MaildirTree(t, map[string]string{"INBOX": "1"})
 	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
-	if err := os.WriteFile(src, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}

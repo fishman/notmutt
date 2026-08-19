@@ -14,21 +14,18 @@ import (
 
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/lib/testutil"
 	"notmutt/notmuch"
 )
 
 // fjWorker serves the filter job's revision bracket and canned
-// snapshots, and records the writes. When hold is set, the first
-// ActNew signals on entered and blocks until the test closes hold
-// (the guard-overlap test pins the job mid-run).
+// snapshots, and records the writes.
 type fjWorker struct {
-	rev     atomic.Uint64
-	bump    atomic.Uint64 // ActNew adds this to rev (0 = nothing new)
-	delta   []core.Message
-	snaps   []core.Message
-	tagged  atomic.Int32
-	entered chan struct{}
-	hold    chan struct{}
+	rev    atomic.Uint64
+	bump   atomic.Uint64 // ActNew adds this to rev (0 = nothing new)
+	delta  []core.Message
+	snaps  []core.Message
+	tagged atomic.Int32
 }
 
 func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -44,12 +41,6 @@ func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	case notmuch.ActTag:
 		f.tagged.Add(1)
 	case notmuch.ActNew:
-		if f.hold != nil {
-			close(f.entered)
-			f.entered = nil
-			<-f.hold
-			f.hold = nil
-		}
 		pre := f.rev.Load()
 		if f.bump.Load() > 0 {
 			f.rev.Add(f.bump.Load())
@@ -121,30 +112,21 @@ func TestFilterJob(t *testing.T) {
 		t.Fatalf("no-delta poll published %v %v", done, jerr)
 	}
 
-	// guard: an overlapping run is a no-op. The first is pinned mid-run
-	// (entered signals it reached the worker, hold blocks it there); the
-	// second starts only after that signal, so it deterministically hits
-	// the guard.
+	// guard: a run with the flag set declines and publishes nothing.
+	// The check-and-set under the mutex IS the overlap guarantee, so
+	// pin the state, not goroutine timing - a second run that starts
+	// after the first completes is correct, not a guard failure.
 	w.rev.Store(5)
 	w.bump.Store(5)
-	entered := make(chan struct{})
-	hold := make(chan struct{})
-	w.entered = entered
-	w.hold = hold
 	ch3 := bus.Subscribe()
 	j := newFilterJob(bus, w, st, t.TempDir(), "inbox")
-	firstDone := make(chan struct{})
-	go func() {
-		j.run()
-		close(firstDone)
-	}()
-	<-entered
-	go j.run()
-	close(hold)
-	<-firstDone
+	j.mu.Lock()
+	j.running = true
+	j.mu.Unlock()
+	j.run()
 	done, _ = drain(ch3)
-	if len(done) != 1 {
-		t.Fatalf("overlapping runs published %d FilterDone, want 1", len(done))
+	if len(done) != 0 {
+		t.Fatalf("declined run published %d FilterDone, want 0", len(done))
 	}
 }
 
@@ -152,15 +134,7 @@ func TestFilterJob(t *testing.T) {
 // ActNew classifies the delta and moves (the manual trigger's effect);
 // a quiet mailbox (no bump) produces no classification pass.
 func TestRunFilterPipeline(t *testing.T) {
-	dir := t.TempDir()
-	root := filepath.Join(dir, "mail")
-	for _, d := range []string{"Archives", "INBOX"} {
-		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
-	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
@@ -212,15 +186,7 @@ func TestRunFilterPipeline(t *testing.T) {
 func TestRunPoll(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	dir := t.TempDir()
-	root := filepath.Join(dir, "mail")
-	for _, d := range []string{"Archives", "INBOX"} {
-		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
-	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
@@ -288,15 +254,7 @@ func TestRunPoll(t *testing.T) {
 func TestRunPollWindow(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
-	dir := t.TempDir()
-	root := filepath.Join(dir, "mail")
-	for _, d := range []string{"Archives", "INBOX"} {
-		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
-	os.WriteFile(filepath.Join(root, "gmail", "INBOX", "cur", "2"), []byte("x"), 0o600)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
@@ -481,10 +439,7 @@ func TestRunPollConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	dir := t.TempDir()
-	root := filepath.Join(dir, "mail")
-	os.MkdirAll(filepath.Join(root, "gmail", "Archives", "cur"), 0o700)
-	os.WriteFile(filepath.Join(root, "gmail", "Archives", "cur", "1"), []byte("x"), 0o600)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1"})
 	w := &fjWorker{
 		delta: []core.Message{{ID: "m1"}},
 		snaps: []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}}},

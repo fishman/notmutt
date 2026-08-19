@@ -31,6 +31,12 @@ jobs:
         with:
           go-version-file: src/go.mod
 
+      - name: Cache libnotmuch
+        uses: actions/cache@v6
+        with:
+          path: ~/notmuch-install
+          key: notmuch-0.40-${{ runner.os }}
+
       - name: Install libnotmuch
         run: .github/install-libnotmuch.sh
 

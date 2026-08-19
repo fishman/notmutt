@@ -264,22 +264,22 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	render := func(r core.Row) string {
 		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
 	}
-	if got := render(base()); strings.Contains(got, "+ ") {
+	if got := render(base()); strings.Contains(got, "▸ ") {
 		t.Fatalf("a single message renders no tree glyph: %q", got)
 	}
 	root := base()
 	root.Count = 3
-	if got := render(root); !strings.Contains(got, "+ ") {
+	if got := render(root); !strings.Contains(got, "▸ ") {
 		t.Fatalf("a thread root renders the root marker: %q", got)
 	}
 	branch := base()
 	branch.Depth, branch.Count, branch.Siblings = 1, 3, []bool{true}
-	if got := render(branch); !strings.Contains(got, "|-") {
+	if got := render(branch); !strings.Contains(got, "├─") {
 		t.Fatalf("a depth-1 branch renders the branch marker: %q", got)
 	}
 	leaf := base()
 	leaf.Depth, leaf.Count, leaf.Siblings = 1, 3, []bool{false}
-	if got := render(leaf); !strings.Contains(got, "`-") {
+	if got := render(leaf); !strings.Contains(got, "└─") {
 		t.Fatalf("a depth-1 leaf renders the leaf marker: %q", got)
 	}
 	top := core.Row{Ghost: true, ThreadID: "t1", MoreTop: 7}
@@ -292,12 +292,12 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	}
 	under := base()
 	under.Depth, under.Count, under.Siblings = 2, 3, []bool{false, true}
-	if got := render(under); !strings.Contains(got, "| `-") {
+	if got := render(under); !strings.Contains(got, "│ └─") {
 		t.Fatalf("a row under a sibling renders the vertical indent: %q", got)
 	}
 	last := base()
 	last.Depth, last.Count, last.Siblings = 2, 3, []bool{false, false}
-	if got := render(last); strings.Contains(got, "|") {
+	if got := render(last); strings.Contains(got, "│") {
 		t.Fatalf("a row under a last child drops the vertical indent: %q", got)
 	}
 	// neomutt's pfx order: the verticals fill from the nearest ancestor -
@@ -305,7 +305,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	// vertical at column 0 (the grandparent's level), not under the leaf
 	deep := base()
 	deep.Depth, deep.Count, deep.Siblings = 3, 4, []bool{false, false, true}
-	if got := render(deep); !strings.Contains(got, "|   `-hello") {
+	if got := render(deep); !strings.Contains(got, "│   └─hello") {
 		t.Fatalf("depth-3 ancestors must draw nearest-outward: %q", got)
 	}
 	// a depth-9 row must draw its verticals from the shallow ancestors -
@@ -315,18 +315,18 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	deep9 := base()
 	deep9.Depth, deep9.Count = 9, 10
 	deep9.Siblings = []bool{false, false, false, false, false, false, false, false, true}
-	if got := render(deep9); !strings.Contains(got, "|               `-hello") {
+	if got := render(deep9); !strings.Contains(got, "│               └─hello") {
 		t.Fatalf("deep rows must index the shallow ancestors: %q", got)
 	}
 	stub := base()
 	stub.Count = 1 // the summary stub carries the thread count but no tree
-	if got := render(stub); strings.Contains(got, "+ ") {
+	if got := render(stub); strings.Contains(got, "▸ ") {
 		t.Fatalf("a single-row thread renders no tree glyph: %q", got)
 	}
 	// the tree run is prepended in the subject slot: the prefix flows
 	// directly into the title, and the subject moves with the indent -
 	// no column alignment involved
-	if got := render(under); !strings.Contains(got, "| `-hello") {
+	if got := render(under); !strings.Contains(got, "│ └─hello") {
 		t.Fatalf("the tree run must sit inside the subject slot: %q", got)
 	}
 	cell := func(s string) int {

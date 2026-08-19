@@ -780,7 +780,7 @@ func TestThreadWindow(t *testing.T) {
 	if !v.SlideWindow("t1", 10) {
 		t.Fatal("the page slide must move one chunk")
 	}
-	if rows := v.Rows(); rows[0].MoreTop != 10 || rows[1].Msg.ID != "m11" || rows[9].More != 20 || !rows[10].Ghost {
+	if rows := v.Rows(); rows[0].MoreTop != 10 || rows[1].Msg.ID != "m11" || rows[10].More != 20 || !rows[11].Ghost {
 		t.Fatalf("the page-chunk window wrong: %+v", rows[0])
 	}
 	if !v.SlideWindow("t1", 10) {

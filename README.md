@@ -122,6 +122,27 @@ The full records with measurements live in
   revision-keyed, invalidated by notmuch's lastmod, rebuilt from query
   output only, never written independently.
 
+## Credits
+
+The design derives from reading these projects' source; the
+`references/` tree keeps the checkouts. Concepts were studied, not
+copied - with one code exception, the hyperlink scanner, ported from
+aerc with its MIT attribution in the source
+(`src/lib/html/links.go`).
+
+The client is the idea of merging mutt and notmuch. Mutt and
+neomutt are the source of correctness of mail content: what the
+client takes from them is the mail behavior, the style, the compose
+dialog - the mutt-family surface.
+
+| Project | What notmutt takes |
+| --- | --- |
+| [notmuch](https://notmuchmail.org) | the whole model: the client is a front-end, notmuch is the single source of truth (R1) |
+| [neomutt](https://neomutt.org) | the mail behavior, the style, the compose dialog - the mutt-family UX the client mirrors |
+| [afew](https://github.com/lazka/afew) | the filter engine shape: the per-message filter contract, per-account folder priorities, first-existing-folder-wins moves (R2) |
+| [aerc](https://aerc-mail.org) | the worker action loop behind an async channel (R3/R4), go-message as the mail library, the per-context keybinding model, the crypto CLI-backend pattern (R10) |
+| [matcha](https://github.com/floatpane/matcha) | the Lua plugin layer: one VM on the orchestrator, a lib-whitelist sandbox, deferred side effects (R8) |
+
 ## Documentation
 
 Requirements and architecture are normative in AGENTS.md; the security

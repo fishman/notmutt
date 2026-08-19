@@ -35,9 +35,33 @@ every key is described there and rebindable.
 | g i / u / a / p / s / S / d / D | jump to a view (inbox, unread, ...) |
 | ctrl+d / ctrl+u | half-page scroll |
 | pgdown / pgup | page scroll |
+| C | collapse the cursor thread to its summary row (cursor-scoped) |
+| ctrl+v | flatten every thread to one row, or expand the whole index back |
 | [ / ] | previous / next tab |
 | ? | help |
 | = | check for new mail now |
+
+### Threads
+
+The index renders each thread as a tree, windowed to
+`[index.thread] max-rows`: a thread bigger than the window shows its
+chunk with a leading "-N more" ghost (rows hidden above) and a trailing
+"+N more" ghost (rows hidden below). Walking to the window edge slides
+it to the next chunk, so the whole thread is reachable row by row.
+
+`C` collapses the cursor thread to its summary row. The collapse is
+cursor-scoped: moving the cursor off the thread expands it again, so a
+thread never stays hidden after the cursor moved past. `ctrl+v`
+flattens every thread to one row (or restores the full tree) and is
+persistent - it survives cursor movement until toggled back.
+
+At the bottom of the page, a single `j`/down step snaps the page to
+the cursor thread's head: the thread window advances to its next chunk
+and the page re-anchors at the beginning of the thread - 1, with the
+leading "+N more" ghost on top when the window is cut. `pgdown`/`pgup`
+flip the page plainly without re-anchoring - the cursor lands on the
+new page's first (or last) row, in whatever thread it finds there.
+Enter opens the cursor message only, never the whole thread.
 
 ### Pager
 

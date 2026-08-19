@@ -58,6 +58,13 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 			b.WriteByte(' ')
 		}
 		b.WriteString(sg.tree.render(treePrefix(row, ui.Glyphs)))
+		if row.MoreTop > 0 {
+			// the top-side overflow indicator: how many thread rows stay
+			// hidden above the tree window, rendered in the free space
+			// over the thread (the walk-up slides into them)
+			b.WriteString(sg.tree.render("+" + strconv.Itoa(row.MoreTop) + " more"))
+			return b.String()
+		}
 		if row.More > 0 {
 			// the overflow indicator: how many thread rows stay hidden
 			// below the tree window, rendered in the free space under

@@ -2240,7 +2240,13 @@ func (m *Model) pageMove(delta int) {
 		m.rows = rows
 		for i := 0; i < len(rows); i++ {
 			if rows[i].Msg != nil && rows[i].ThreadID == tid {
-				m.indexOffset = i
+				// a top ghost starts the page with the hidden-above
+				// count visible, mirroring the tail ghost under it
+				first := i
+				if i > 0 && rows[i-1].MoreTop > 0 {
+					first = i - 1
+				}
+				m.indexOffset = first
 				m.clampIndexOffset()
 				m.setCursorAt(rows, i)
 				return

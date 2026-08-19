@@ -760,8 +760,8 @@ func TestThreadWindow(t *testing.T) {
 	if v.SlideWindow("t1", 1) {
 		t.Fatal("the tail edge must refuse the slide")
 	}
-	if rows := v.Rows(); len(rows) != 10 || rows[0].Msg.ID != "m31" {
-		t.Fatalf("the tail window wrong: %+v", rows[0])
+	if rows := v.Rows(); len(rows) != 11 || rows[0].MoreTop != 30 || rows[1].Msg.ID != "m31" {
+		t.Fatalf("the tail window must lead with the hidden-above indicator: %+v", rows[0])
 	}
 	// slide back up to the root
 	for i := 0; i < 30; i++ {
@@ -780,7 +780,7 @@ func TestThreadWindow(t *testing.T) {
 	if !v.SlideWindow("t1", 10) {
 		t.Fatal("the page slide must move one chunk")
 	}
-	if rows := v.Rows(); rows[0].Msg.ID != "m11" || rows[9].More != 20 || !rows[10].Ghost {
+	if rows := v.Rows(); rows[0].MoreTop != 10 || rows[1].Msg.ID != "m11" || rows[9].More != 20 || !rows[10].Ghost {
 		t.Fatalf("the page-chunk window wrong: %+v", rows[0])
 	}
 	if !v.SlideWindow("t1", 10) {
@@ -791,8 +791,14 @@ func TestThreadWindow(t *testing.T) {
 	}
 	// the chunk near the tail clamps to the last window: the tail row
 	// count drops to zero and the indicator disappears
-	if rows := v.Rows(); rows[0].Msg.ID != "m31" || len(rows) != 10 {
+	if rows := v.Rows(); rows[0].MoreTop != 30 || rows[1].Msg.ID != "m31" || len(rows) != 11 {
 		t.Fatalf("the tail clamp wrong: %+v", rows[0])
+	}
+	// a mid-thread window cuts the front tree columns: the first visible
+	// row's marker lands at column 0 (Depth 1), and every other row
+	// shifts with it, so the subject lines stay visible
+	if rows := v.Rows(); rows[1].Depth != 1 || rows[10].Depth != 10 {
+		t.Fatalf("the mid-thread cut must shift depths to start at 1: %+v", rows[1])
 	}
 	if v.SlideWindow("t1", 10) {
 		t.Fatal("the tail edge must refuse the page slide")

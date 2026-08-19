@@ -146,6 +146,12 @@ func (v *View) rowsLocked() []Row {
 				out[len(out)-1].More = n
 				out = append(out, Row{Ghost: true, ThreadID: t.ID, More: n})
 			}
+			// the top-side mirror: a window that starts mid-thread emits
+			// a leading ghost with the hidden-above count, so the rows
+			// over the window stay visible (the walk-up slides into them)
+			if start > 0 {
+				out = append([]Row{{Ghost: true, ThreadID: t.ID, MoreTop: start}}, out...)
+			}
 		}
 		rows = append(rows, out...)
 	}
@@ -305,7 +311,13 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 // window bounds one thread's flattened rows to the tree window: the
 // rows [start, start+winRows). Zero winRows passes the thread through
 // untouched; start is clamped to the valid range (merges can shrink
-// the flatten between slides).
+// the flatten between slides). A window that starts mid-thread cuts
+// the leading tree columns: every row's Depth shifts by the first
+// row's depth (the marker of the first visible row lands at column 0),
+// so a deep thread's window still shows the subject lines. The shift
+// is display-only - the Siblings chains keep their true indexing, and
+// column c then shows the ancestor at true depth cut+c (the visible
+// row above), never a cut one.
 func window(full []Row, start, winRows int) []Row {
 	if winRows <= 0 {
 		return full
@@ -314,7 +326,13 @@ func window(full []Row, start, winRows int) []Row {
 		return full
 	}
 	start = max(0, min(start, len(full)-winRows))
-	return full[start : start+winRows]
+	out := full[start : start+winRows]
+	if cut := out[0].Depth; cut > 0 {
+		for i := range out {
+			out[i].Depth = max(1, out[i].Depth-cut+1)
+		}
+	}
+	return out
 }
 
 // MergeThreads diffs the incoming threads into the view: thread-level

@@ -47,6 +47,7 @@ type Row struct {
 	Count      int
 	Ghost      bool     // synthetic multi-root marker row; has no Msg
 	More       int      // thread rows hidden below the tree window: set on the window's last row and on the trailing "+N more" indicator row
+	MoreTop    int      // thread rows hidden above the tree window: set on the leading "+N more" indicator row
 	Staged     bool     // pending ops staged for this row (R14)
 	StagedTags []string // display tags with staged ops resolved
 }

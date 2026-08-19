@@ -4977,16 +4977,18 @@ func TestWindowSlidesWithCursor(t *testing.T) {
 	if r, _ := m.view.CursorRow(); r.Msg.ID != "m10" {
 		t.Fatalf("window must still show the root rows: %s", r.Msg.ID)
 	}
-	// the tenth step slides: the cursor keeps its row, m11 is revealed
+	// the tenth step slides: the window leaves the root, so the top
+	// indicator materializes above it and the cursor lands one row down
+	// with the revealed message under it
 	m = press(t, m, "j")
-	if cursorID() != "m11" || m.CursorIndex() != 9 {
+	if cursorID() != "m11" || m.CursorIndex() != 10 {
 		t.Fatalf("the step must land on the revealed row at the same position: %s @ %d", cursorID(), m.CursorIndex())
 	}
-	// the emission re-read: the window starts at m2 (plus the overflow
-	// indicator row and the second thread)
+	// the emission re-read: the top indicator leads the window at m2
+	// (plus the overflow indicator row and the second thread)
 	rows := view.Rows()
-	if rows[0].Msg.ID != "m2" || len(rows) != 12 {
-		t.Fatalf("the window must slide under the cursor: first=%s rows=%d", rows[0].Msg.ID, len(rows))
+	if !rows[0].Ghost || rows[0].MoreTop != 1 || rows[1].Msg.ID != "m2" || len(rows) != 13 {
+		t.Fatalf("the window must slide under the cursor: first=%+v rows=%d", rows[0], len(rows))
 	}
 	// 29 more steps reach the tail (m40); the window slides each time
 	for i := 0; i < 29; i++ {

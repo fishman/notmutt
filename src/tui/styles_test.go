@@ -282,6 +282,14 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	if got := render(leaf); !strings.Contains(got, "`-") {
 		t.Fatalf("a depth-1 leaf renders the leaf marker: %q", got)
 	}
+	top := core.Row{Ghost: true, ThreadID: "t1", MoreTop: 7}
+	if got := render(top); !strings.Contains(got, "+7 more") {
+		t.Fatalf("a top overflow ghost renders the hidden-above count: %q", got)
+	}
+	top.MoreTop, top.More = 0, 5
+	if got := render(top); !strings.Contains(got, "+5 more") {
+		t.Fatalf("a bottom overflow ghost still renders: %q", got)
+	}
 	under := base()
 	under.Depth, under.Count, under.Siblings = 2, 3, []bool{false, true}
 	if got := render(under); !strings.Contains(got, "| `-") {

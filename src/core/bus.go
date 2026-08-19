@@ -323,7 +323,16 @@ type FilterDone struct {
 	Entries  int
 	Moves    int
 	Skips    int
-	Priority []string // subjects of entries with a [notify] priority tag, capped (F6: subjects only)
+	Priority []NotifyHeadline // entries with a [notify] priority tag, capped (F6: no ids, no bodies)
+}
+
+// NotifyHeadline is one notification row: sender, subject, and
+// timestamp - the 3 display parts of an email, never ids or bodies
+// (F6). The notify side effect renders these.
+type NotifyHeadline struct {
+	Sender    string
+	Subject   string
+	Timestamp int64
 }
 
 // LuaResult reports a :lua command or a Lua plugin action run (R8):

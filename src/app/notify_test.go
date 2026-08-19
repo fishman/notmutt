@@ -6,9 +6,12 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"notmutt/config"
+	"notmutt/core"
 	"notmutt/filter"
 )
 
@@ -48,8 +51,11 @@ func TestResolveNotifyBackend(t *testing.T) {
 }
 
 func TestExpandNotifyTokens(t *testing.T) {
-	got := expandNotifyTokens([]string{"sh", "-c", "echo {count}: {subjects}"}, 2, []string{"one", "two"})
-	if got[2] != "echo 2: one\ntwo" {
+	got := expandNotifyTokens([]string{"sh", "-c", "echo {count}: {subjects}"}, 2, []core.NotifyHeadline{
+		{Sender: "Ann", Subject: "one", Timestamp: time.Now().Unix()},
+		{Sender: "Bob", Subject: "two", Timestamp: time.Now().Unix()},
+	})
+	if !strings.Contains(got[2], "2:") || !strings.Contains(got[2], "Ann") || !strings.Contains(got[2], "one") || !strings.Contains(got[2], "two") {
 		t.Fatalf("tokens: %q", got[2])
 	}
 	got = expandNotifyTokens([]string{"touch", "x{other}"}, 1, nil)
@@ -58,22 +64,49 @@ func TestExpandNotifyTokens(t *testing.T) {
 	}
 }
 
-func TestPrioritySubjects(t *testing.T) {
+func TestPriorityHeadlines(t *testing.T) {
 	cfg := config.Default()
 	cfg.Notify.Max = 2
 	rep := &filter.Report{Entries: []filter.Entry{
 		{Subject: "a", Priority: false},
-		{Subject: "b", Priority: true},
+		{Subject: "b", Sender: "Ann", Timestamp: 1000, Priority: true},
 		{Subject: "", Priority: true},
-		{Subject: "c", Priority: true},
+		{Subject: "c", Sender: "Bob", Timestamp: 2000, Priority: true},
 		{Subject: "d", Priority: true},
 	}}
-	got := prioritySubjects(cfg, rep)
-	if len(got) != 2 || got[0] != "b" || got[1] != "c" {
-		t.Fatalf("subjects: %v", got)
+	got := priorityHeadlines(cfg, rep)
+	if len(got) != 2 || got[0].Sender != "Ann" || got[1].Subject != "c" {
+		t.Fatalf("headlines: %+v", got)
 	}
 	cfg.Notify.Max = 0
-	if got := prioritySubjects(cfg, rep); len(got) != 0 {
+	if got := priorityHeadlines(cfg, rep); len(got) != 0 {
 		t.Fatalf("max=0: %v", got)
+	}
+}
+
+// TestNotifyTitleAndRows pins the notification formatting: the title
+// is the deduped sender list ellipsized (never a static app name),
+// the rows the aligned sender/subject/time 3-part table.
+func TestNotifyTitleAndRows(t *testing.T) {
+	head := []core.NotifyHeadline{
+		{Sender: "Ann", Subject: "hello"},
+		{Sender: "Ann", Subject: "re: hello"}, // deduped in the title
+		{Sender: "Bob", Subject: "plans"},
+		{Sender: "Carol", Subject: "cfp"},
+		{Sender: "Dana", Subject: "receipt"},
+	}
+	if got := notifyTitle(head); got != "Ann, Bob, Carol ..." {
+		t.Fatalf("title = %q", got)
+	}
+	if got := notifyTitle([]core.NotifyHeadline{{Subject: "x"}}); got != "new mail" {
+		t.Fatalf("empty-sender title = %q", got)
+	}
+	rows := notifyRows(head[:2])
+	if !strings.Contains(rows, "Ann") || !strings.Contains(rows, "re: hello") {
+		t.Fatalf("rows must carry sender and subject:\n%s", rows)
+	}
+	long := notifyRows([]core.NotifyHeadline{{Sender: strings.Repeat("a", 40), Subject: strings.Repeat("b", 60)}})
+	if strings.Contains(long, strings.Repeat("a", 20)) || strings.Contains(long, strings.Repeat("b", 40)) {
+		t.Fatalf("rows must truncate to the columns:\n%s", long)
 	}
 }

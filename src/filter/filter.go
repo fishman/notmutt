@@ -116,13 +116,15 @@ func Candidates(a config.Account, tag string) []string {
 
 // Entry is one message's classification outcome.
 type Entry struct {
-	ID       string
-	Subject  string
-	Priority bool // carries a [notify] priority tag after classification
-	Account  string
-	Folder   string       // the resolved folder-group winner with move candidates; empty = no move
-	Paths    []string     // the message's files, as notmuch reported them
-	Ops      []core.TagOp // the fully resolved op set (adds + exclusive-group removals)
+	ID        string
+	Sender    string // the From display name (the notify headline)
+	Subject   string
+	Timestamp int64
+	Priority  bool // carries a [notify] priority tag after classification
+	Account   string
+	Folder    string       // the resolved folder-group winner with move candidates; empty = no move
+	Paths     []string     // the message's files, as notmuch reported them
+	Ops       []core.TagOp // the fully resolved op set (adds + exclusive-group removals)
 }
 
 // Report is the run's outcome: dry-run writes nothing and the entries
@@ -362,7 +364,7 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	if len(ops) == 0 && folder == "" {
 		return Entry{}
 	}
-	return Entry{ID: m.ID, Subject: m.Subject, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
+	return Entry{ID: m.ID, Sender: m.Author, Subject: m.Subject, Timestamp: m.Timestamp, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
 // RelPath strips the mail root prefix: the path rules match relative

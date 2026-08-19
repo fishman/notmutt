@@ -14,6 +14,7 @@ import (
 	"github.com/godbus/dbus/v5"
 
 	"notmutt/config"
+	"notmutt/core"
 )
 
 // resolveNotifyBackend picks the effective backend: explicit config
@@ -56,18 +57,18 @@ func notifyDaemonReachable() bool {
 // notifyNewMail runs the [notify] side effect for one processed batch
 // (the filter job's completion event, R2): the argv command backend
 // or the platform backend ("beeep"), the backend resolved once at
-// startup. The payload is the count plus the priority subjects,
-// never bodies or ids (F6). The caller spawns the goroutine; no
-// entries is a no-op.
-func notifyNewMail(cfg config.Config, backend string, entries int, subjects []string) {
+// startup. The payload is the count plus the priority headlines -
+// sender, subject, timestamp - never bodies or ids (F6). The caller
+// spawns the goroutine; no entries is a no-op.
+func notifyNewMail(cfg config.Config, backend string, entries int, head []core.NotifyHeadline) {
 	if entries <= 0 {
 		return
 	}
 	switch backend {
 	case "beeep":
-		notifyBeeep(entries, subjects)
+		notifyBeeep(entries, head)
 	default:
-		argv := expandNotifyTokens(cfg.Notify.Command, entries, subjects)
+		argv := expandNotifyTokens(cfg.Notify.Command, entries, head)
 		if len(argv) == 0 {
 			return
 		}
@@ -78,14 +79,76 @@ func notifyNewMail(cfg config.Config, backend string, entries int, subjects []st
 }
 
 // expandNotifyTokens replaces {count} (the entry count) and {subjects}
-// (the priority subjects, one per line) in the argv; absent tokens are
-// left alone - a command that does not want them keeps working.
-func expandNotifyTokens(argv []string, entries int, subjects []string) []string {
+// (the priority headlines as aligned sender/subject/time rows) in the
+// argv; absent tokens are left alone - a command that does not want
+// them keeps working.
+func expandNotifyTokens(argv []string, entries int, head []core.NotifyHeadline) []string {
 	out := make([]string, len(argv))
 	n := strconv.Itoa(entries)
-	s := strings.Join(subjects, "\n")
+	s := notifyRows(head)
 	for i, a := range argv {
 		out[i] = strings.ReplaceAll(strings.ReplaceAll(a, "{count}", n), "{subjects}", s)
 	}
 	return out
+}
+
+// notifyTitle is the notification title: the deduped sender list,
+// ellipsized - the senders, never a static app name (the reference
+// script's fixed title was the first thing to go).
+func notifyTitle(head []core.NotifyHeadline) string {
+	var names []string
+	seen := map[string]bool{}
+	for _, h := range head {
+		s := strings.TrimSpace(h.Sender)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		names = append(names, s)
+	}
+	switch {
+	case len(names) == 0:
+		return "new mail"
+	case len(names) > 3:
+		return strings.Join(names[:3], ", ") + " ..."
+	default:
+		return strings.Join(names, ", ")
+	}
+}
+
+// notifyRows renders the headline list as aligned 3-part rows: sender,
+// subject, time - the reference script's bare subject list with the
+// parts it dropped restored. The columns truncate by rune: the body
+// renders in a system popup, not a terminal, so cell widths do not
+// apply; a long line cannot break the alignment either way.
+func notifyRows(head []core.NotifyHeadline) string {
+	if len(head) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, h := range head {
+		b.WriteString(truncRunes(h.Sender, 16) + "  ")
+		b.WriteString(truncRunes(h.Subject, 30) + "  ")
+		b.WriteString(notifyTime(h.Timestamp) + "\n")
+	}
+	return strings.TrimSuffix(b.String(), "\n")
+}
+
+// notifyTime formats the headline timestamp: clock time for today,
+// date and clock for anything older.
+func notifyTime(ts int64) string {
+	t := time.Unix(ts, 0)
+	if t.Year() == time.Now().Year() && t.YearDay() == time.Now().YearDay() {
+		return t.Format("15:04")
+	}
+	return t.Format("Jan 2 15:04")
+}
+
+// truncRunes truncates s to n runes; truncation never mangles UTF-8.
+func truncRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }

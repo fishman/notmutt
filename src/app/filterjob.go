@@ -60,7 +60,7 @@ func (j *filterJob) run() {
 	}
 	reportFilterDiag(rep, mr)
 	moved, skipped := moveCounts(mr)
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: prioritySubjects(cfg, rep)})
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: priorityHeadlines(cfg, rep)})
 }
 
 // moveCounts splits a move report into executed moves and skips -
@@ -105,18 +105,18 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	return rep, mr, nil
 }
 
-// prioritySubjects caps the [notify] priority payload: the subjects of
-// entries carrying a priority tag (F6: subjects only, never ids or
-// bodies), at most max; max <= 0 disables the subjects, the count
-// stays.
-func prioritySubjects(cfg config.Config, rep *filter.Report) []string {
+// priorityHeadlines caps the [notify] priority payload: the headline
+// rows (sender, subject, timestamp) of entries carrying a priority
+// tag (F6: no ids, no bodies), at most max; max <= 0 disables the
+// rows, the count stays.
+func priorityHeadlines(cfg config.Config, rep *filter.Report) []core.NotifyHeadline {
 	if cfg.Notify.Max <= 0 {
 		return nil
 	}
-	var out []string
+	var out []core.NotifyHeadline
 	for _, e := range rep.Entries {
 		if e.Priority && e.Subject != "" {
-			out = append(out, e.Subject)
+			out = append(out, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
 			if len(out) >= cfg.Notify.Max {
 				break
 			}

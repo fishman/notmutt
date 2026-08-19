@@ -221,10 +221,10 @@ type Filter struct {
 // is auto-detected when empty (the default): the platform backend
 // when the session can show notifications, the command otherwise -
 // explicit config always wins. {count} in the argv is the processed
-// entry count, {subjects} the subjects of entries carrying any
-// priority tag (capped at max, one per line). No command = disabled;
-// the beeep body is built the same way. The payload never carries
-// bodies or ids (F6).
+// entry count, {subjects} the priority headlines as aligned
+// sender/subject/time rows (capped at max). No command = disabled;
+// the beeep title is the deduped sender list, its body the count plus
+// the same rows. The payload never carries bodies or ids (F6).
 type Notify struct {
 	Backend  string   `toml:"backend" enum:"command,beeep"` // empty = auto-detect
 	Command  []string `toml:"command"`

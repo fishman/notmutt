@@ -229,6 +229,80 @@ func (w *recWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return w.fjWorker.Call(a)
 }
 
+// TestCategorizeThread pins the hotkey pass: the cursor thread's
+// messages (thread:<tid>), the save/skip lines and tallies published
+// as CategorizeResult, and the error path publishing instead of
+// wedging.
+func TestCategorizeThread(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		return map[int]string{1: "receipt"}, nil
+	})
+	dir := t.TempDir()
+	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	p := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	w := &recWorker{fjWorker: fjWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{
+			{ID: "m1", Author: "delta@example.com", Subject: "hotel invoice", Timestamp: ts.Unix(), Paths: []string{p}},
+		},
+	}}
+	cfg := config.Default()
+	cfg.Attachments.Folder = filepath.Join(dir, "dl")
+
+	go categorizeThread(w, bus, "t1", &cfg)
+	select {
+	case e := <-ch:
+		res, ok := e.(core.CategorizeResult)
+		if !ok {
+			t.Fatalf("expected CategorizeResult, got %T", e)
+		}
+		if res.Err != nil || res.Saved != 1 || res.Skipped != 0 || len(res.Lines) != 1 {
+			t.Fatalf("result = %+v, want one save line", res)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "dl", "2026-08", "receipt", "invoice.pdf")); err != nil {
+			t.Fatalf("the hotkey pass must save: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no CategorizeResult")
+	}
+
+	// a second pass skips the existing target (idempotency)
+	go categorizeThread(w, bus, "t1", &cfg)
+	select {
+	case e := <-ch:
+		res := e.(core.CategorizeResult)
+		if res.Err != nil || res.Saved != 0 || res.Skipped != 1 {
+			t.Fatalf("re-run = %+v, want the exists skip", res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no CategorizeResult")
+	}
+
+	// a failing query publishes the error, never a hang
+	go categorizeThread(failWorker{}, bus, "t1", &cfg)
+	select {
+	case e := <-ch:
+		res := e.(core.CategorizeResult)
+		if res.Err == nil {
+			t.Fatalf("a failing query must surface: %+v", res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no CategorizeResult")
+	}
+}
+
+// failWorker answers every call with an error - the error path of
+// worker-driven passes.
+type failWorker struct{}
+
+func (failWorker) Call(notmuch.Action) (notmuch.Reply, error) {
+	return notmuch.Reply{}, errors.New("boom")
+}
+
 // TestRunAttachmentBackfill pins the command body: the query's ids
 // (ActQueryMsgs), the snapshots (paths), and the per-message save pass -
 // the filter engine's two-step. The dry run writes nothing, and re-runs

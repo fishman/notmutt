@@ -150,6 +150,16 @@ func SetAttachCommandSource(fn func() []AttachCommand) {
 	}
 }
 
+// onCategorize is the categorize seam (the index c key): the app runs
+// the attachment-category pass over the cursor thread's messages and
+// publishes CategorizeResult; the default is a no-op so the model
+// works in tests.
+var onCategorize = func(threadID string) {}
+
+func SetCategorizeHandler(fn func(string)) {
+	onCategorize = fn
+}
+
 // onLuaCommand is the :lua seam (R8): the app runs the chunk in a
 // Lua VM (the current thread id as msg() context, empty when none)
 // and publishes LuaResult; the default is a no-op so the model works

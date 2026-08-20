@@ -60,7 +60,7 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"scroll-left": true, "scroll-right": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
-		"filter": true, "search": true, "search-next": true,
+		"filter": true, "search": true, "search-next": true, "categorize": true,
 		"collapse-thread": true, "collapse-all": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
@@ -792,6 +792,17 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			} else {
 				m.logEntry(e.Output, false)
 			}
+		case core.CategorizeResult:
+			// the categorize pass (the index c key): the save/skip
+			// lines into the session log, the tallies as the summary
+			if e.Err != nil {
+				m.logEntry("categorize: "+e.Err.Error(), true)
+				break
+			}
+			for _, l := range e.Lines {
+				m.logEntry(l, false)
+			}
+			m.logEntry(fmt.Sprintf("categorize: %d saved, %d skipped", e.Saved, e.Skipped), false)
 		case core.FilterDone:
 			// the filter run's summary on the status line (R2); the
 			// per-file detail lives in diag
@@ -1374,6 +1385,17 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.searchNext()
 			deferPaint()
 			deferred = true
+		}
+	case "categorize":
+		// the c key: the app runs the attachment-category pass over the
+		// cursor thread's messages; the save/skip lines arrive on
+		// CategorizeResult and go into the session log
+		if m.mode == "index" {
+			if tid, _, _ := m.cursorThread(); tid != "" {
+				onCategorize(tid)
+				deferPaint()
+				deferred = true
+			}
 		}
 	default:
 		// a plugin-registered action (R8): the app runs it in the

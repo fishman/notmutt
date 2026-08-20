@@ -290,11 +290,13 @@ func absMailPath(root, p string) string {
 	return filepath.Join(root, p)
 }
 
-// runAttachmentBackfill is the command body (shared with the tests):
-// the query's message ids (ActQueryMsgs), their snapshots (paths), and
-// saveMessageAttachments per message - the filter engine's two-step.
-// Prints one save/skip line per attachment.
-func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun bool) (saved, skipped int, err error) {
+// attachmentPass is the shared pass body (the headless command and the
+// hotkey action): the query's message ids (ActQueryMsgs), their
+// snapshots (paths), and saveMessageAttachments per message - the
+// filter engine's two-step. Returns one save/skip line per attachment
+// plus the tallies; the callers decide the sink (stdout for the
+// command, the session log for the hotkey).
+func attachmentPass(worker workerAPI, root, folder, query string, dryRun bool) (lines []string, saved, skipped int, err error) {
 	var ids []string
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQueryMsgs, Query: query,
 		Emit: func(chunk []core.Message) bool {
@@ -303,11 +305,11 @@ func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun 
 			}
 			return true
 		}}); err != nil || rpl.Err != nil {
-		return 0, 0, fmt.Errorf("attachments: query: %v %v", err, rpl.Err)
+		return nil, 0, 0, fmt.Errorf("attachments: query: %v %v", err, rpl.Err)
 	}
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: ids})
 	if err != nil || rpl.Err != nil {
-		return 0, 0, fmt.Errorf("attachments: snapshots: %v %v", err, rpl.Err)
+		return nil, 0, 0, fmt.Errorf("attachments: snapshots: %v %v", err, rpl.Err)
 	}
 	for i := range rpl.Msgs {
 		m := rpl.Msgs[i]
@@ -315,17 +317,42 @@ func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun 
 		for _, p := range m.Paths {
 			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, dryRun) {
 				if s.Err != nil {
-					return 0, 0, fmt.Errorf("attachments: %v", s.Err)
+					return nil, 0, 0, fmt.Errorf("attachments: %v", s.Err)
 				}
 				if s.Exists {
 					skipped++
-					fmt.Printf("skip %s (exists)\n", s.Target)
+					lines = append(lines, fmt.Sprintf("skip %s (exists)", s.Target))
 				} else {
 					saved++
-					fmt.Printf("save %s\n", s.Target)
+					lines = append(lines, fmt.Sprintf("save %s", s.Target))
 				}
 			}
 		}
 	}
-	return saved, skipped, nil
+	return lines, saved, skipped, nil
+}
+
+// runAttachmentBackfill is the headless command body: attachmentPass
+// with the lines printed (the command's review surface).
+func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun bool) (saved, skipped int, err error) {
+	lines, saved, skipped, err := attachmentPass(worker, root, folder, query, dryRun)
+	for _, l := range lines {
+		fmt.Println(l)
+	}
+	return saved, skipped, err
+}
+
+// categorizeThread is the hotkey pass (the index categorize action):
+// the cursor thread's messages, attachmentPass over thread:<tid>, the
+// lines and tallies published as CategorizeResult for the session log.
+func categorizeThread(worker workerAPI, bus *core.Bus, threadID string, cfg *config.Config) {
+	res := core.CategorizeResult{ThreadID: threadID}
+	lines, saved, skipped, err := attachmentPass(worker, "", attachmentFolder(*cfg), "thread:"+threadID, false)
+	if err != nil {
+		res.Err = err
+		bus.Publish(res)
+		return
+	}
+	res.Lines, res.Saved, res.Skipped = lines, saved, skipped
+	bus.Publish(res)
 }

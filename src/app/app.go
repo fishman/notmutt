@@ -167,6 +167,13 @@ func Run() error {
 		go saveAttachment(worker, bus, threadID, msgID, ordinal, path)
 	})
 
+	// the categorize hotkey (the index c key): the app runs the
+	// attachment-category pass over the cursor thread's messages and
+	// publishes CategorizeResult (the save/skip lines for the log)
+	tui.SetCategorizeHandler(func(threadID string) {
+		go categorizeThread(worker, bus, threadID, &cfg)
+	})
+
 	// the remote image fetch (the load-remote-images mode): http(s)
 	// srcs fetch ONLY on the key, capped and off the render path
 	// (imgfetch.go); the TUI publishes the url through this seam. The

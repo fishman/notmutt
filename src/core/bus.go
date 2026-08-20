@@ -349,6 +349,18 @@ type LuaResult struct {
 	Err    error
 }
 
+// CategorizeResult reports the categorize hotkey pass (the index
+// categorize action): the save/skip lines plus the tallies, or the
+// error. Lines are the review surface - per-attachment targets,
+// never message content.
+type CategorizeResult struct {
+	ThreadID string
+	Lines    []string
+	Saved    int
+	Skipped  int
+	Err      error
+}
+
 // AiStarted opens the AI summary view (R8): the app publishes it when
 // an ai_chat plugin call begins streaming; the TUI saves the pager's
 // current lines and swaps in a placeholder. MsgID is the message the

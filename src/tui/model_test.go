@@ -199,7 +199,7 @@ func TestHelpListsBindings(t *testing.T) {
 	// stays): the widest row aligns exactly, descriptions are
 	// padding-robust by position
 	if !strings.Contains(clean, "ctrl+d  half-page-down   Scroll down half a page") ||
-		!strings.Contains(clean, "Move the cursor down") ||
+		!strings.Contains(clean, "Categorize the thread's attachments") ||
 		!strings.Contains(clean, "Reply to all recipients") {
 		t.Fatalf("the help must list the bindings with descriptions:\n%s", clean)
 	}

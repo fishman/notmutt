@@ -757,7 +757,6 @@ func TestDefaultBindings(t *testing.T) {
 	wantCompose := map[string]string{
 		"j": "form-down", "k": "form-up", "down": "form-down", "up": "form-up",
 		"ctrl+d": "half-page-down", "ctrl+u": "half-page-up",
-		"ctrl+f": "page-down", "ctrl+b": "page-up",
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"c": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
 		"e": "edit", "a": "attach", "tab": "attach", "d": "detach",

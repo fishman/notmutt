@@ -198,7 +198,23 @@ cursor could never reach). Keeping the walk's row contract (headers +
 paths + chain) also keeps the open-while-loading seam (rows-first,
 async-mechanics.md section 2) intact.
 
-Stopgap if the libnotmuch change never lands: drop refs from the pack
-(walk 1.745s) and let the pager tree fall back to flat date order,
-fetching the chain on open - a visible tree-fidelity regression,
-documented here as the fallback, not the plan.
+## Stopgap: implemented (2026-08-21)
+
+The fallback is LIVE until the libnotmuch change lands: the walk packs
+an empty refs slot (vendor summary.go full_pack_msg) and runs ~1.75s.
+Consumers degrade:
+
+- The index tree renders structure-less threads as a flat forest:
+  buildTree marks the synthetic root Forest when every message is a
+  root (no chains shipped), and the flatten renders those rows at
+  depth 0 without the [...] marker. Genuine multi-root threads (at
+  least one attached child) keep the marker.
+- Reply prefill builds one-hop References chains (the reply still
+  threads to the original via In-Reply-To); the fetch fallback for
+  pathless rows keeps the full chain.
+- The per-thread fetch is unchanged and still carries the chain; the
+  pager never needed it (RenderThread renders sequential blocks).
+
+When the getter fix lands, the binding re-adds the two reads and the
+trees and chains come back - no client-side changes needed (refsSplit
+trims brackets the term getters never emit).

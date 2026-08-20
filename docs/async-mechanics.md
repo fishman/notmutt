@@ -31,11 +31,17 @@ that lost mail: two threads went missing from the index until a tag
 op reconciled them - a stub whose hydration the row-position scan
 cursor could never reach. One pass eliminates the whole class: no
 stubs, no cursors, no queue, no chain - a row is either emitted or
-the thread is not in the result. The measured tradeoff: the full walk
-is 5.7s warm / 10.5s cold (33,256 threads / 38,508 messages, seven
-chunks) against 1.65s for the summary-only walk - first paint still
+the thread is not in the result. The full walk measured
+5.7s warm until the refs fallback (docs/refs-from-terms.md) dropped
+the per-message references/in-reply-to reads - get_header on those two
+headers file-parses every message (they have no value slots); the walk
+now ships empty chains and runs ~1.75s (33,256 threads / 38,508
+messages). The index tree renders structure-less threads flat (the
+[...] marker stays for genuine multi-root threads); the per-thread
+fetch still carries the chain, and the libnotmuch getter fix
+(records in refs-from-terms.md) re-adds the reads. First paint still
 lands in ~20ms (the 100-thread first-chunk cadence), full cover in
-seconds. The binding addition (FullWalk) lives in the fishman
+under two seconds. The binding addition (FullWalk) lives in the fishman
 go.notmuch fork (v0.40.1); the summary-only walk stays intact for the
 consumers that need it.
 

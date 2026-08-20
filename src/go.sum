@@ -37,6 +37,8 @@ github.com/fishman/go.notmuch v0.40.1 h1:jlDwB1OAAN837yJ9sla68d9NiTM+YbF58QU/o2s
 github.com/fishman/go.notmuch v0.40.1/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
 github.com/fishman/go.notmuch v0.40.2 h1:e/G4mFo9kiORtqleyu/929eNirmDUGK646GBJOHubvU=
 github.com/fishman/go.notmuch v0.40.2/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
+github.com/fishman/go.notmuch v0.40.3 h1:S0fAfIOAu1M4oNW4tOc8L/1a3X3jz1MC98IK1I7Hjis=
+github.com/fishman/go.notmuch v0.40.3/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/gdamore/encoding v1.0.1 h1:YzKZckdBL6jVt2Gc+5p82qhrGiqMdG/eNs6Wy0u3Uhw=

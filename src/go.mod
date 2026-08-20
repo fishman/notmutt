@@ -7,7 +7,7 @@ require (
 	github.com/BurntSushi/toml v1.6.0
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
-	github.com/fishman/go.notmuch v0.40.1
+	github.com/fishman/go.notmuch v0.40.2
 	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/gen2brain/beeep v0.11.2
 	github.com/godbus/dbus/v5 v5.1.0

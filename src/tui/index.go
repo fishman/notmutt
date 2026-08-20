@@ -104,7 +104,15 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	// alignment to keep - the fixed columns never move, the title
 	// eats the depth and padRow clamps the row at the frame width
 	subject := core.SanitizeControls(row.Msg.Subject)
-	b.WriteString(sg.tree.render(treePrefix(row, ui.Glyphs)))
+	if row.Collapsed && row.Count > 1 {
+		// the collapsed marker: the tree glyph plus the hidden-row count
+		// in the [index.collapsed] style - without it a collapsed thread
+		// is indistinguishable from a plain thread root
+		b.WriteString(sg.collapsed.render(ui.Glyphs.Tree + strconv.Itoa(row.Count-1)))
+		b.WriteByte(' ')
+	} else {
+		b.WriteString(sg.tree.render(treePrefix(row, ui.Glyphs)))
+	}
 	b.WriteString(renderHighlighted(subject, query, sg.subject, sg.search))
 	return b.String()
 }

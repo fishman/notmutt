@@ -49,6 +49,35 @@ func TestPadRow(t *testing.T) {
 	}
 }
 
+// TestRowCollapsedMarker pins the collapsed-thread indicator: the
+// C-collapsed row renders the tree glyph plus the hidden-row count in
+// the [index.collapsed] style (bold yellow), so a collapsed thread is
+// never mistaken for a plain thread root - the pre-fix row was
+// indistinguishable from an expanded root.
+func TestRowCollapsedMarker(t *testing.T) {
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"replied", "inbox"},
+	}, Count: 5, Collapsed: true}
+	st := DefaultStyles()
+	ui := config.Default().UI
+	out := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "")
+	want := ui.Glyphs.Tree + "4"
+	if !strings.Contains(stripANSI(out), want) {
+		t.Fatalf("the collapsed row must show the tree glyph plus the hidden count %q: %q", want, out)
+	}
+	if !strings.Contains(out, "229;192;123") { // base0A yellow: the collapsed style
+		t.Fatalf("the collapse marker must render in the collapsed style: %q", out)
+	}
+	// an expanded thread root carries no marker: same row shape without
+	// the collapsed flag stays a plain root
+	row.Collapsed = false
+	plain := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "")
+	if strings.Contains(stripANSI(plain), want) {
+		t.Fatalf("an expanded root must not show the collapse marker: %q", plain)
+	}
+}
+
 func styledRow() string {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,

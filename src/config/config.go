@@ -392,16 +392,17 @@ type ComposeStyleTable struct {
 }
 
 type IndexStyleTable struct {
-	Number  Style
-	Date    Style
-	Author  Style
-	Subject Style
-	Flags   Style
-	Staged  Style
-	Ghost   Style
-	Search  Style
-	Tree    Style
-	Tag     TagStyleTable
+	Number    Style
+	Date      Style
+	Author    Style
+	Subject   Style
+	Flags     Style
+	Staged    Style
+	Ghost     Style
+	Search    Style
+	Tree      Style
+	Collapsed Style // the C-collapsed thread's marker row (R11)
+	Tag       TagStyleTable
 }
 
 // TagStyleTable: the spec shape is mixed - fg/bg/attrs at the tag
@@ -750,6 +751,7 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
 		"index.flags": table.Index.Flags, "index.staged": table.Index.Staged,
 		"index.ghost": table.Index.Ghost, "index.tree": table.Index.Tree,
+		"index.collapsed": table.Index.Collapsed,
 	} {
 		out[id] = apply(id, s)
 	}
@@ -1160,7 +1162,7 @@ func defaultTheme() Theme {
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},
 					Flags: Style{Fg: "base08"}, Staged: Style{Fg: "base04", Attrs: []string{"bold"}},
 					Ghost: Style{Fg: "base03"}, Search: Style{Fg: "base0A", Attrs: []string{"bold"}},
-					Tree: Style{Fg: "base03"},
+					Tree: Style{Fg: "base03"}, Collapsed: Style{Fg: "base0A", Attrs: []string{"bold"}},
 					Tag: TagStyleTable{
 						// the base.colors tag markers (muttrc/base.colors):
 						// a color per hard tag; inbox stays plain green -

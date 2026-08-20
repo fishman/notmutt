@@ -321,7 +321,7 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 	}
 	count := t.Count()
 	if collapsed {
-		rows = append(rows, Row{Msg: collapseMsg(t.Root), ThreadID: t.ID, Count: count})
+		rows = append(rows, Row{Msg: collapseMsg(t.Root), ThreadID: t.ID, Count: count, Collapsed: true})
 		return rows
 	}
 	child := func(siblings []bool, last bool) []bool {

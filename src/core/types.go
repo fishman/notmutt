@@ -50,6 +50,7 @@ type Row struct {
 	MoreTop    int      // thread rows hidden above the tree window: set on the leading "+N more" indicator row
 	Staged     bool     // pending ops staged for this row (R14)
 	StagedTags []string // display tags with staged ops resolved
+	Collapsed  bool     // the C-collapsed thread's summary row: renders the collapse marker
 }
 
 // TagOp is a pending tag change: add or remove Tag. The same shape the

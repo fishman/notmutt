@@ -35,16 +35,17 @@ type Styles struct {
 }
 
 type IndexStyles struct {
-	Number  lipgloss.Style
-	Date    lipgloss.Style
-	Author  lipgloss.Style
-	Subject lipgloss.Style
-	Flags   lipgloss.Style
-	Staged  lipgloss.Style
-	Ghost   lipgloss.Style
-	Search  lipgloss.Style
-	Tree    lipgloss.Style                   // the thread tree glyphs (R3)
-	Tag     func(name string) lipgloss.Style // per-tag styles (R11)
+	Number    lipgloss.Style
+	Date      lipgloss.Style
+	Author    lipgloss.Style
+	Subject   lipgloss.Style
+	Flags     lipgloss.Style
+	Staged    lipgloss.Style
+	Ghost     lipgloss.Style
+	Search    lipgloss.Style
+	Tree      lipgloss.Style                   // the thread tree glyphs (R3)
+	Collapsed lipgloss.Style                   // the C-collapsed thread's marker (R11)
+	Tag       func(name string) lipgloss.Style // per-tag styles (R11)
 }
 
 type PagerStyles struct {
@@ -126,7 +127,7 @@ type sgrSet struct {
 	stagedNormal, stagedGhost                    sgr
 	border                                       sgr // the popup border: the indicator's fg over the normal bg (no fill)
 	number, flags, date, author, subject, staged sgr
-	search, tree                                 sgr
+	search, tree, collapsed                      sgr
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
 	pagerDef                                     sgr
@@ -165,6 +166,7 @@ func sgrSetOf(st Styles) sgrSet {
 		subject:      sgrOf(st.Index.Subject),
 		search:       sgrOf(st.Index.Search),
 		tree:         sgrOf(st.Index.Tree),
+		collapsed:    sgrOf(st.Index.Collapsed.Inherit(st.Index.Tree)),
 		staged:       sgrOf(st.Index.Staged),
 		tag: func(name string) sgr {
 			if g, ok := cache[name]; ok {
@@ -216,15 +218,16 @@ func DefaultStyles() Styles {
 		ComposeLabel:   lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
 		ComposeDivider: lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#5c6370")),
 		Index: IndexStyles{
-			Number:  lipgloss.NewStyle().Foreground(c("#5c6370")),
-			Date:    lipgloss.NewStyle().Foreground(c("#e5c07b")),
-			Author:  lipgloss.NewStyle().Foreground(c("#61afef")),
-			Subject: lipgloss.NewStyle().Foreground(c("#abb2bf")),
-			Flags:   lipgloss.NewStyle().Foreground(c("#e06c75")),
-			Staged:  lipgloss.NewStyle().Foreground(c("#565c64")).Bold(true),
-			Ghost:   lipgloss.NewStyle().Foreground(c("#5c6370")),
-			Search:  lipgloss.NewStyle().Foreground(c("#e5c07b")).Bold(true),
-			Tree:    lipgloss.NewStyle().Foreground(c("#5c6370")),
+			Number:    lipgloss.NewStyle().Foreground(c("#5c6370")),
+			Date:      lipgloss.NewStyle().Foreground(c("#e5c07b")),
+			Author:    lipgloss.NewStyle().Foreground(c("#61afef")),
+			Subject:   lipgloss.NewStyle().Foreground(c("#abb2bf")),
+			Flags:     lipgloss.NewStyle().Foreground(c("#e06c75")),
+			Staged:    lipgloss.NewStyle().Foreground(c("#565c64")).Bold(true),
+			Ghost:     lipgloss.NewStyle().Foreground(c("#5c6370")),
+			Search:    lipgloss.NewStyle().Foreground(c("#e5c07b")).Bold(true),
+			Tree:      lipgloss.NewStyle().Foreground(c("#5c6370")),
+			Collapsed: lipgloss.NewStyle().Foreground(c("#e5c07b")).Bold(true),
 			Tag: func(string) lipgloss.Style {
 				return lipgloss.NewStyle().Foreground(c("#c678dd"))
 			},
@@ -283,6 +286,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 			Author: to("index.author", normal), Subject: to("index.subject", normal),
 			Flags: to("index.flags", normal), Staged: to("index.staged", normal),
 			Ghost: to("index.ghost", normal), Tree: to("index.tree", normal),
+			Collapsed: to("index.collapsed", normal),
 			Tag: func(name string) lipgloss.Style {
 				if _, ok := ids["index.tag."+name]; ok {
 					return to("index.tag."+name, normal)

@@ -32,8 +32,6 @@ const (
 	mcpDeadline           = 60 * time.Second // per-call VM budget; the SetContext kill
 	mcpSearchDefaultLimit = 50
 	mcpSearchMaxLimit     = 500
-	mcpJSONMaxDepth       = 8 // a cyclic Lua table hits the depth cap, not a stack overflow
-	mcpJSONMaxNodes       = 10000
 )
 
 // The chunks are one function expression each; the leading return makes
@@ -291,108 +289,6 @@ func projectMessage(L *lua.LState, m core.Message) *lua.LTable {
 	}
 	t.RawSetString("references", refs)
 	return t
-}
-
-// luaValue converts a JSON-decoded arg value to a Lua value
-// (recursive, depth-capped); the result is the args table for the
-// chunk.
-func luaValue(vm *lua.LState, v any, depth int) lua.LValue {
-	switch x := v.(type) {
-	case nil:
-		return lua.LNil
-	case string:
-		return lua.LString(x)
-	case bool:
-		return lua.LBool(x)
-	case float64:
-		return lua.LNumber(x)
-	case []any:
-		if depth >= mcpJSONMaxDepth {
-			return lua.LNil
-		}
-		t := vm.NewTable()
-		for _, e := range x {
-			t.Append(luaValue(vm, e, depth+1))
-		}
-		return t
-	case map[string]any:
-		if depth >= mcpJSONMaxDepth {
-			return lua.LNil
-		}
-		t := vm.NewTable()
-		for k, val := range x {
-			t.RawSetString(k, luaValue(vm, val, depth+1))
-		}
-		return t
-	}
-	return lua.LNil
-}
-
-// luaToJSON converts a Lua value to a JSON-able Go value: array
-// tables -> []any, map tables -> map[string]any, scalars pass
-// through, nil -> nil. Depth- and fan-out-capped (the node counter is
-// per call, so concurrent tool calls never share state) - a runaway
-// chunk cannot build a JSON bomb; an overrun fails the call.
-func luaToJSON(vm *lua.LState, v lua.LValue, depth int, nodes *int) (any, error) {
-	if depth >= mcpJSONMaxDepth {
-		return nil, fmt.Errorf("lua result too deep (depth %d)", depth)
-	}
-	switch x := v.(type) {
-	case *lua.LTable:
-		if x.Len() > 0 && pureArray(x) {
-			out := make([]any, 0, x.Len())
-			for i := 1; i <= x.Len(); i++ {
-				if *nodes++; *nodes > mcpJSONMaxNodes {
-					return nil, fmt.Errorf("lua result too large")
-				}
-				e, err := luaToJSON(vm, x.RawGetInt(i), depth+1, nodes)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, e)
-			}
-			return out, nil
-		}
-		out := map[string]any{}
-		var convErr error
-		x.ForEach(func(k, val lua.LValue) {
-			if convErr != nil {
-				return
-			}
-			if *nodes++; *nodes > mcpJSONMaxNodes {
-				convErr = fmt.Errorf("lua result too large")
-				return
-			}
-			e, err := luaToJSON(vm, val, depth+1, nodes)
-			if err != nil {
-				convErr = err
-				return
-			}
-			out[k.String()] = e
-		})
-		return out, convErr
-	case lua.LString:
-		return string(x), nil
-	case lua.LNumber:
-		return float64(x), nil
-	case lua.LBool:
-		return bool(x), nil
-	}
-	return nil, nil
-}
-
-// pureArray reports whether the table's keys are exactly 1..n (a pure
-// array); an empty table is a map by default.
-func pureArray(t *lua.LTable) bool {
-	n := t.Len()
-	valid := true
-	t.ForEach(func(k, _ lua.LValue) {
-		ki, ok := k.(lua.LNumber)
-		if !ok || float64(ki) < 1 || float64(ki) > float64(n) {
-			valid = false
-		}
-	})
-	return valid
 }
 
 // serveMCP runs the MCP stdio server: the read-only worker (ActOpen

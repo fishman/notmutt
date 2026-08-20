@@ -37,7 +37,7 @@ func TestLuaRegisterAttachCommand(t *testing.T) {
 	dir := pluginDir(t, map[string]string{"attach.lua": `
 register_attach_command("yazi", {"yazi", "--chooser-file"})
 `})
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	snap := attachCommandSnapshot()
 	if len(snap) != 1 || snap[0].Name != "yazi" || len(snap[0].Argv) != 2 ||
@@ -62,7 +62,7 @@ function body_render(lines)
   return lines
 end
 `})
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
@@ -99,7 +99,7 @@ function body_render(lines)
   while true do end
 end
 `})
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
@@ -139,7 +139,7 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 		"ok.lua":     "function body_render(lines) return lines end",
 	})
 
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 	select {
@@ -168,7 +168,7 @@ function body_render(lines)
   return { { text = translate("save attachment to: "), kind = 2, quoted = 0 } }
 end
 `})
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 	select {
@@ -194,7 +194,7 @@ func TestLuaSandboxNoOS(t *testing.T) {
 	saved := renderHooks
 	defer restoreRenderHooks(saved, renderHookBudget)
 
-	loadLuaPlugins(dir)
+	loadLuaPlugins(dir, nil)
 
 	if len(renderHooks) != 0 {
 		t.Fatalf("a plugin using os must not register, hooks=%d", len(renderHooks))

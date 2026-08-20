@@ -25,6 +25,7 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
+	"notmutt/config"
 	"notmutt/core"
 	"notmutt/i18n"
 )
@@ -50,10 +51,12 @@ type luaPlugin struct {
 
 // loadLuaPlugins loads every *.lua file in dir (sorted, so the render
 // chain order is deterministic) and registers each plugin's body_render
-// as a BodyRenderHook. A file that fails to load is logged and skipped
-// (decision record 20: load errors degrade, they never kill the
-// client). A missing dir is a no-op - no plugins configured.
-func loadLuaPlugins(dir string) {
+// as a BodyRenderHook. Network gates the sandbox http module per
+// plugin ([lua.network.<name>], lua_http.go - deny by default). A file
+// that fails to load is logged and skipped (decision record 20: load
+// errors degrade, they never kill the client). A missing dir is a
+// no-op - no plugins configured.
+func loadLuaPlugins(dir string, network map[string]config.LuaNetwork) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
@@ -66,17 +69,20 @@ func loadLuaPlugins(dir string) {
 	}
 	sort.Strings(files)
 	for _, name := range files {
-		loadLuaPlugin(filepath.Join(dir, name))
+		loadLuaPlugin(filepath.Join(dir, name), network)
 	}
 }
 
-func loadLuaPlugin(path string) {
+func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
 	if err := openSandboxLibs(vm, path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)
 		vm.Close()
 		return
 	}
+	// the sandbox json/http modules: http only when the plugin has a
+	// network section (the deny-by-default gate)
+	setPluginNet(vm, networkFor(network, path))
 	// register_attach_command runs DURING DoFile (the reverse of the
 	// body_render read-after pattern): a plugin file calls it to add a
 	// command to the attach-command registry (R8).

@@ -233,6 +233,35 @@ func TestLoadUnknownKeyNamesFile(t *testing.T) {
 	}
 }
 
+func TestLoadLuaNetworkStrictUnknownKey(t *testing.T) {
+	// a typo inside [lua.network.<plugin>] must be a load error, not a
+	// silently dead allowlist (a dead allowlist would DENY everything -
+	// safe, but the typo would be invisible; a dead empty section would
+	// be the opposite regression)
+	_, err := Load(write(t, `
+[lua.network.hubspot]
+targts = ["api.hubspot.com"]
+`))
+	if err == nil || !strings.Contains(err.Error(), "targts") {
+		t.Fatalf("unknown [lua.network] key must be a load error naming it, got: %v", err)
+	}
+}
+
+func TestLoadLuaNetworkSection(t *testing.T) {
+	cfg, err := Load(write(t, `
+[lua.network.hubspot]
+targets = ["api.hubspot.com", "*.hubspot.com"]
+methods = ["GET", "POST"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, ok := cfg.Lua.Network["hubspot"]
+	if !ok || len(r.Targets) != 2 || len(r.Methods) != 2 {
+		t.Fatalf("lua.network = %+v", cfg.Lua.Network)
+	}
+}
+
 func TestLoadAttachCommands(t *testing.T) {
 	cfg, err := Load(write(t, `
 [attach-commands]

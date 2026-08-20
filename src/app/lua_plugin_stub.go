@@ -16,7 +16,7 @@ import (
 // gopher-lua dependency exist only under the lua build tag (the R12
 // build-gating pattern), so default binaries carry no Lua runtime and
 // the render boundary runs Go hooks only.
-func loadLuaPlugins(dir string) {}
+func loadLuaPlugins(dir string, network map[string]config.LuaNetwork) {}
 
 // pluginActionNames is empty in default builds: no plugin registry, so
 // a binding naming a plugin action is rejected by validateBindings and

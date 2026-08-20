@@ -189,6 +189,9 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 	}
 	defer cancel()
 	defer vm.Close()
+	// the plugin's sandbox json/http modules: http only when the file
+	// has a [lua.network] section (the deny-by-default gate)
+	setPluginNet(vm, networkFor(ac.cfg.Lua.Network, path))
 	if err := vm.DoFile(path); err != nil {
 		return "", err
 	}

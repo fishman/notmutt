@@ -163,7 +163,19 @@ type Pager struct {
 // tag list the plugins reference (cfg.tags) - the ai-tags example
 // restricts its proposals to these names.
 type Lua struct {
-	Tags []string `toml:"tags"`
+	Tags    []string              `toml:"tags"`
+	Network map[string]LuaNetwork `toml:"network"`
+}
+
+// LuaNetwork is one plugin's network gate ([lua.network.<plugin>], key
+// = plugin file base name). Network is deny-by-default: the sandbox
+// http module exists for a plugin only when this section does, and
+// every request (redirect hops included) must match Targets - exact
+// hosts or "*.suffix". Methods restricts the HTTP verbs (upper- or
+// lowercase); empty = any verb.
+type LuaNetwork struct {
+	Targets []string `toml:"targets"`
+	Methods []string `toml:"methods"`
 }
 
 // AIProvider is one named AI backend ([ai.<name>], R8): Type selects

@@ -181,7 +181,7 @@ func Run() error {
 	// registering its body_render as a render transform. The adapter
 	// compiles only under the lua build tag (the R12 pattern); default
 	// builds run the no-op stub. Loaded before any open can fire.
-	loadLuaPlugins(filepath.Join(configDir(), "lua"))
+	loadLuaPlugins(filepath.Join(configDir(), "lua"), cfg.Lua.Network)
 
 	// binding validation AFTER the plugin load: a binding may name a
 	// plugin-registered action (the lua build only - the stub registry

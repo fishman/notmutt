@@ -26,7 +26,7 @@ func TestThreadJobHydratesOnce(t *testing.T) {
 		stubs = append(stubs, core.NewThread(id, []*core.Message{{ThreadID: id}}))
 	}
 	view.MergeThreads(stubs)
-	tj := newThreadJob(bus, fw, view, func() bool { return true })
+	tj := newThreadJob(bus, fw, view, func() bool { return true }, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go tj.Run(ctx)
@@ -73,7 +73,7 @@ func TestThreadJobViewSwitchIsolation(t *testing.T) {
 	view.MergeThreads(stubs)
 	gate := make(chan struct{})
 	fw.setBlock("t0", gate)
-	tj := newThreadJob(bus, fw, view, func() bool { return true })
+	tj := newThreadJob(bus, fw, view, func() bool { return true }, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go tj.Run(ctx)

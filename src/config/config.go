@@ -211,6 +211,11 @@ type UI struct {
 	// the preset.
 	GlyphSet string `toml:"glyph-set"`
 	Glyphs   Glyphs `toml:"glyphs"`
+	// SearchOpen is how the ctrl+f search tab activates: "active" (the
+	// default) attaches the new tab and shows its results, "background"
+	// runs the query while the current surface stays (the tab bar shows
+	// it, the [ / ] keys cycle to it).
+	SearchOpen string `toml:"search-open"`
 }
 
 // Refresh is the [refresh] section: the periodic new-mail poll (R2/R3).
@@ -1098,9 +1103,10 @@ func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[st
 func Default() Config {
 	cfg := Config{
 		UI: UI{
-			Keymap:   "vim",
-			Language: "auto",
-			GlyphSet: "ascii",
+			Keymap:     "vim",
+			Language:   "auto",
+			GlyphSet:   "ascii",
+			SearchOpen: "active",
 			Tags: UITags{
 				Max:       2,
 				Attach:    "attachment",
@@ -1441,6 +1447,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.UI.GlyphSet != "ascii" && cfg.UI.GlyphSet != "utf-8" {
 		return fmt.Errorf("ui.glyph-set: must be ascii or utf-8, got %q", cfg.UI.GlyphSet)
+	}
+	if cfg.UI.SearchOpen != "active" && cfg.UI.SearchOpen != "background" {
+		return fmt.Errorf("ui.search-open: must be active or background, got %q", cfg.UI.SearchOpen)
 	}
 	if cfg.Refresh.Interval < 0 {
 		return fmt.Errorf("refresh.interval: must be >= 0 minutes (0 disables the poll), got %d", cfg.Refresh.Interval)

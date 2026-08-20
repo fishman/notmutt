@@ -84,6 +84,16 @@ func SetImageFetchHandler(fn func(string)) {
 	onImageFetch = fn
 }
 
+// onSearch is the search-tab seam (the ctrl+f key): the app configures
+// the fresh view (window budget, identity), registers it for hydration,
+// and loads the raw notmuch query into it; the default is a no-op so
+// the model works in tests.
+var onSearch = func(v *core.View) {}
+
+func SetSearchHandler(fn func(*core.View)) {
+	onSearch = fn
+}
+
 // onReply is the reply seam: the app builds the prefill (account
 // detection, parsing) and publishes ComposeOpened; msg is nil for a
 // blank compose.

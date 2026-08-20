@@ -189,6 +189,27 @@ func TestLoadGlyphSet(t *testing.T) {
 	}
 }
 
+// TestSearchOpenValidation pins the [ui] search-open enum: "active"
+// (the default) and "background" load, anything else is a load error
+// (the strict-load pattern).
+func TestSearchOpenValidation(t *testing.T) {
+	if Default().UI.SearchOpen != "active" {
+		t.Fatalf("default search-open must be active, got %q", Default().UI.SearchOpen)
+	}
+	for _, v := range []string{"active", "background"} {
+		cfg, err := Load(write(t, "[ui]\nsearch-open = \""+v+"\"\n"))
+		if err != nil {
+			t.Fatalf("search-open %q must load: %v", v, err)
+		}
+		if cfg.UI.SearchOpen != v {
+			t.Fatalf("search-open must round-trip %q, got %q", v, cfg.UI.SearchOpen)
+		}
+	}
+	if _, err := Load(write(t, "[ui]\nsearch-open = \"auto\"\n")); err == nil {
+		t.Fatal("an unknown search-open must be a load error")
+	}
+}
+
 func TestLoadMultipleFiles(t *testing.T) {
 	dir := t.TempDir()
 	write := func(name, body string) {

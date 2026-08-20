@@ -293,7 +293,6 @@ func (r *refresher) fullReload() {
 		total = rpl.Count
 	}
 	var snapshot []*core.Thread
-	done := 0
 	// phase 1: the fast pre-query paints the first rows immediately.
 	// Failure degrades to the walk alone - the first paint just stays
 	// empty for another second.
@@ -310,20 +309,42 @@ func (r *refresher) fullReload() {
 	}
 	// phase 2: the full walk, from an empty snapshot - the pre-query's
 	// threads are re-emitted at the head of the walk and replace it.
-	snapshot = nil
-	done = 0
-	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Emit: func(msgs []core.Message) bool {
+	// mergeWalk publishes the fill progress per chunk; the hook merges
+	// and reports the diff. An emptying reload publishes only the diff
+	// (no progress - the old contract, the refresh tests pin the event
+	// sequence).
+	mergeWalk(r.worker, r.bus, r.view, total, "refresh", func(snapshot []*core.Thread, done int) {
+		r.snapshot = snapshot
+		mergeInto(r.bus, r.view, snapshot)
+	})
+}
+
+// mergeWalk merges a query's emitted chunks into the view: each chunk
+// groups and sorts, merges into the accumulated snapshot, publishes
+// the fill progress, then runs onChunk with the snapshot (the merge
+// and the diff) - the chunk is reported as soon as it lands. An empty
+// chunk publishes nothing: a count/catalog race that empties the
+// result must not leave a stuck bar at Done 0. An empty result still
+// merges once (empty query = empty view - removals reconcile via the
+// full snapshot replacement). The emit closure runs on the worker
+// goroutine inside the Call, so the view state it touches is
+// race-free. fullReload's phase 2 and the search tab (runSearchQuery)
+// share this shape.
+func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job string, onChunk func(snapshot []*core.Thread, done int)) {
+	var snapshot []*core.Thread
+	done := 0
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: view.Query, Emit: func(msgs []core.Message) bool {
 		page := groupThreads(msgs)
 		sortThreads(page)
 		snapshot = mergeSorted(snapshot, page)
-		r.snapshot = snapshot
 		done += len(page)
-		// progress first, then the diff: the chunk is reported as soon as
-		// it lands. An empty chunk publishes nothing: a count/catalog
-		// race that empties the result must not leave a stuck bar at
-		// Done 0.
 		if len(page) > 0 {
-			r.paint(total, done)
+			if total <= 0 {
+				bus.Publish(core.Progress{Job: job, View: view.ViewName(), Done: done, Total: done})
+			} else {
+				bus.Publish(core.Progress{Job: job, View: view.ViewName(), Done: done, Total: total})
+			}
+			onChunk(snapshot, done)
 		}
 		return true
 	}})
@@ -331,28 +352,45 @@ func (r *refresher) fullReload() {
 		return
 	}
 	if len(snapshot) == 0 {
-		r.snapshot = nil
-		r.view.MergeThreads(nil)
-		r.bus.Publish(core.ViewDiff{View: r.view.Name})
+		onChunk(nil, 0)
 	}
+}
+
+// runSearchQuery loads one raw notmuch query into a fresh view (the
+// ctrl+f search tab): the count + walk merge fill the tab in batches
+// with progress and per-batch diffs - the fullReload shape without the
+// phase-1 pre-query (the tab opens empty, the walk fills it). The view
+// name is the query, so the events key per tab.
+func runSearchQuery(worker workerAPI, bus *core.Bus, view *core.View) {
+	total := 0
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: view.Query}); err == nil && rpl.Err == nil {
+		total = rpl.Count
+	}
+	mergeWalk(worker, bus, view, total, "search", func(snapshot []*core.Thread, done int) {
+		mergeInto(bus, view, snapshot)
+	})
 }
 
 // paint publishes the fill progress and the diff after a merge; the
 // bar's total comes from the count query (or the batch when it failed).
-// The merge runs inside a BeginMerge/EndMerge batch, so the view's
-// dirty-mark lands once per emitted chunk: the flatten rebuilds once
-// per batch end, never per intermediate keypress (the refresh window
-// of the held-key lag round).
 func (r *refresher) paint(total, done int) {
 	if total <= 0 {
 		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: done})
 	} else {
 		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
 	}
-	r.view.BeginMerge()
-	r.view.MergeThreads(r.snapshot)
-	r.view.EndMerge()
-	r.bus.Publish(core.ViewDiff{View: r.view.Name})
+	mergeInto(r.bus, r.view, r.snapshot)
+}
+
+// mergeInto merges the snapshot into the view in one Begin/End batch
+// and reports the diff: the dirty-mark lands once per merge, so the
+// flatten rebuilds once per batch end, never per intermediate keypress
+// (the refresh window of the held-key lag round).
+func mergeInto(bus *core.Bus, view *core.View, snapshot []*core.Thread) {
+	view.BeginMerge()
+	view.MergeThreads(snapshot)
+	view.EndMerge()
+	bus.Publish(core.ViewDiff{View: view.ViewName()})
 }
 
 // groupThreads groups a page into one thread per thread id: the search

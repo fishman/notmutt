@@ -60,7 +60,7 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"scroll-left": true, "scroll-right": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
-		"filter": true, "search": true, "search-next": true, "categorize": true,
+		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true,
 		"collapse-thread": true, "collapse-all": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
@@ -284,8 +284,17 @@ type Model struct {
 	// the compose dialogue. Stepping off a dialogue parks it - state
 	// intact - while the mail surface keeps working; stepping back
 	// re-attaches it (spec section 5: the dialogue IS the tab).
-	tabs   []compose.State
-	tabIdx int
+	tabs []compose.State
+	// searchTabs is the search-tab stack (the ctrl+f key): each entry is
+	// a view named by its raw notmuch query. The combined tab stack
+	// spans the mail surface (index 0), the compose tabs, then the
+	// search tabs; tabIdx beyond len(tabs) attaches a search tab, which
+	// reuses the index surface (activeView routes rows and cursor).
+	searchTabs []*core.View
+	// searchTabQuery is the last committed ctrl+f query (the prompt
+	// preloads it for a repeat).
+	searchTabQuery string
+	tabIdx         int
 	// formIdx is the compose form cursor slot: 8 the message-text row,
 	// 9+i attachment i. The
 	// settings rows are never focused - every field edits by hotkey.
@@ -748,15 +757,15 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			// never written from Lua. The op applies to the cursor
 			// message of the thread the script named; a moved cursor
 			// drops with a status entry.
-			if row, ok := m.view.CursorRow(); ok && row.Msg != nil && row.ThreadID == e.ThreadID {
+			if row, ok := m.activeView().CursorRow(); ok && row.Msg != nil && row.ThreadID == e.ThreadID {
 				identity := row.Msg.ID
 				if identity == "" {
 					identity = "t:" + row.ThreadID
 				}
 				for _, op := range e.Ops {
-					m.view.Stage(identity, op)
+					m.activeView().Stage(identity, op)
 				}
-				m.rows = m.view.Rows()
+				m.rows = m.activeView().Rows()
 				m.paint = true
 			} else {
 				m.logEntry("lua: staged tags dropped: no cursor message for thread "+e.ThreadID, true)
@@ -818,7 +827,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.logEntry("lock timeout: "+e.Kind, true)
 		}
 		m.refreshProgress()
-		m.rows = m.view.Rows()
+		m.rows = m.activeView().Rows()
 		if m.legendPending && !m.legendTickOn && !m.keyReleases {
 			m.legendTickOn = true
 			return m, batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
@@ -915,18 +924,18 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// collapse arms the escape: the thread expands again when the
 		// cursor moves off it.
 		if m.mode == "index" {
-			rows := m.view.Rows()
+			rows := m.activeView().Rows()
 			m.rows = rows
 			idx := m.CursorIndex()
 			if idx >= 0 && idx < len(rows) && rows[idx].Msg != nil {
 				threadID := rows[idx].ThreadID
-				m.view.ToggleCollapsed(threadID)
-				if m.view.Collapsed(threadID) {
+				m.activeView().ToggleCollapsed(threadID)
+				if m.activeView().Collapsed(threadID) {
 					m.pendingCollapse = threadID
 				} else if m.pendingCollapse == threadID {
 					m.pendingCollapse = ""
 				}
-				m.rows = m.view.Rows()
+				m.rows = m.activeView().Rows()
 				m.clampIndexOffset()
 				deferPaint()
 				deferred = true
@@ -936,8 +945,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the ctrl+v key: the whole index flattens to one row per
 		// thread or expands back to the full tree
 		if m.mode == "index" {
-			m.view.ToggleCollapseAll()
-			m.rows = m.view.Rows()
+			m.activeView().ToggleCollapseAll()
+			m.rows = m.activeView().Rows()
 			m.clampIndexOffset()
 			deferPaint()
 			deferred = true
@@ -975,16 +984,30 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.previewCursorThread()
 		}
 	case "quit":
+		if m.tabIdx > len(m.tabs) {
+			// q on a search tab closes the tab, not the app (the mail
+			// surface quits); staged ops on the tab die with it, the
+			// same discard-with-confirm shape as the app quit
+			if m.activeView().HasStaged() {
+				m.dialogue = &confirmDialogue{label: i18n.T("Discard staged changes and close the search tab?"), action: "close-search"}
+				return m, nil
+			}
+			m.closeTab(m.activeSearchIdx(), true)
+			return m, nil
+		}
 		// staged ops are session-local: quitting discards them, so a
 		// pending buffer asks first - the confirm re-dispatches
 		// quit-confirmed, which bypasses this gate
-		if m.mode == "index" && m.view.HasStaged() {
+		if m.mode == "index" && m.activeView().HasStaged() {
 			m.dialogue = &confirmDialogue{label: i18n.T("Discard staged changes and quit?"), action: "quit-confirmed"}
 			return m, nil
 		}
 		return m, quitCmd()
 	case "quit-confirmed":
 		return m, quitCmd()
+	case "close-search":
+		m.closeTab(m.activeSearchIdx(), true)
+		return m, nil
 	case "undo":
 		if m.undo() {
 			m.moveCursor(1)
@@ -1332,7 +1355,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			// never cancel an in-flight delivery; the tab closes when
 			// the send result lands
 		case compose.PhaseAborting:
-			m.closeComposeTab(m.tabIdx - 1)
+			m.closeTab(m.tabIdx-1, false)
 		default:
 			st.Phase = compose.PhaseAborting
 			m.dialogue = &confirmDialogue{label: i18n.T("Abort composition?"), action: "abort", draft: true}
@@ -1365,7 +1388,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// filter on every key, esc restores the pre-open text
 		if m.mode == "index" {
 			d := &textDialogue{field: "filter",
-				label: i18n.T("filter: "), input: m.view.Filter(), saved: m.view.Filter()}
+				label: i18n.T("filter: "), input: m.activeView().Filter(), saved: m.activeView().Filter()}
 			d.cur = len(d.input)
 			m.dialogue = d
 		}
@@ -1385,6 +1408,16 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.searchNext()
 			deferPaint()
 			deferred = true
+		}
+	case "search-tab":
+		// the ctrl+f prompt: a raw notmuch query opens in a new tab
+		// (the whole database, unlike / which searches the current
+		// rows); the last query preloads for a repeat
+		if m.mode == "index" {
+			d := &textDialogue{field: "searchtab", label: "search: ",
+				input: m.searchTabQuery, saved: m.searchTabQuery}
+			d.cur = len(d.input)
+			m.dialogue = d
 		}
 	case "categorize":
 		// the c key: the app runs the attachment-category pass over the
@@ -1796,7 +1829,7 @@ func (m *Model) onSendResult(e core.SendResult) {
 					msg += " (" + e.Output + ")"
 				}
 				m.logEntry(core.SanitizeControls(msg), false)
-				m.closeComposeTab(i)
+				m.closeTab(i, false)
 			} else {
 				m.tabs[i].Phase = compose.PhaseFailed
 				m.tabs[i].Output = e.Output
@@ -1955,7 +1988,7 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 // the message fallback covers rows built before the thread id landed
 // on them.
 func (m *Model) cursorThread() (tid, msgID, subject string) {
-	row, ok := m.view.CursorRow()
+	row, ok := m.activeView().CursorRow()
 	if !ok {
 		return "", "", ""
 	}
@@ -2119,7 +2152,7 @@ func (m *Model) refreshProgress() {
 	if m.bus == nil {
 		return
 	}
-	if p, ok := m.bus.LatestProgress(m.job, m.view.ViewName()); ok {
+	if p, ok := m.bus.LatestProgress(m.job, m.activeView().ViewName()); ok {
 		m.progress = p
 		m.progressOn = p.Done < p.Total
 	}
@@ -2219,7 +2252,7 @@ func (m Model) cursorTags() []string {
 		return nil
 	}
 	var tags []string
-	if idx := m.view.CursorRowIndex(); idx >= 0 && idx < len(rows) {
+	if idx := m.activeView().CursorRowIndex(); idx >= 0 && idx < len(rows) {
 		if msg := rows[idx].Msg; msg != nil {
 			tags = msg.Tags
 		}
@@ -2242,7 +2275,7 @@ func (m Model) cursorTags() []string {
 // list; the view records the cursor index on every move (O(1) paint
 // reads, no flatten, no scan).
 func (m *Model) moveCursor(delta int) {
-	rows := m.view.Rows()
+	rows := m.activeView().Rows()
 	m.rows = rows
 	if len(rows) == 0 {
 		return
@@ -2264,7 +2297,7 @@ func (m *Model) moveCursor(delta int) {
 			// the window moved under the cursor: the emission re-flattens
 			// (the view re-anchored the cursor by id) and the step lands
 			// on the revealed row at the cursor's old screen position
-			rows = m.view.Rows()
+			rows = m.activeView().Rows()
 			m.rows = rows
 			idx = m.CursorIndex()
 		}
@@ -2274,7 +2307,7 @@ func (m *Model) moveCursor(delta int) {
 			// the step left the C-collapsed thread: the expansion
 			// re-flattens, the cursor stays on the destination (the view
 			// re-anchored it by id)
-			rows = m.view.Rows()
+			rows = m.activeView().Rows()
 			m.rows = rows
 			idx = m.CursorIndex()
 		}
@@ -2299,7 +2332,7 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 	for {
 		next += step
 		if next < 0 || next >= len(rows) {
-			return m.view.SlideWindow(r.ThreadID, step)
+			return m.activeView().SlideWindow(r.ThreadID, step)
 		}
 		if rows[next].Msg != nil {
 			break
@@ -2308,7 +2341,7 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 	if rows[next].ThreadID == r.ThreadID {
 		return false
 	}
-	return m.view.SlideWindow(r.ThreadID, step)
+	return m.activeView().SlideWindow(r.ThreadID, step)
 }
 
 // collapseEscapeAt expands the pending C-collapsed thread when the
@@ -2339,7 +2372,7 @@ func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
 	if rows[prev].ThreadID != m.pendingCollapse {
 		return false
 	}
-	m.view.SetCollapsed(m.pendingCollapse, false)
+	m.activeView().SetCollapsed(m.pendingCollapse, false)
 	m.pendingCollapse = ""
 	return true
 }
@@ -2350,7 +2383,7 @@ func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
 // the cursor. The cursor move goes through moveCursor so the window
 // pages like any counted move.
 func (m *Model) searchNext() {
-	rows := m.view.Rows()
+	rows := m.activeView().Rows()
 	m.rows = rows
 	if len(rows) == 0 {
 		return
@@ -2462,19 +2495,19 @@ func (m *Model) pageSnapAt(rows []core.Row, idx int) int {
 	if rows[j].More <= 0 {
 		return -1 // no hidden tail: the window cannot advance
 	}
-	win := m.view.WindowRows()
+	win := m.activeView().WindowRows()
 	if win <= 0 {
 		return -1
 	}
 	// the next chunk boundary: the boundary walk before the crossing
 	// already advanced the window one row - the chunk jump absorbs it
 	// instead of adding it
-	start := m.view.WindowStart(r.ThreadID)
+	start := m.activeView().WindowStart(r.ThreadID)
 	next := ((start + win) / win) * win
-	if !m.view.SlideWindow(r.ThreadID, next-start) {
+	if !m.activeView().SlideWindow(r.ThreadID, next-start) {
 		return -1
 	}
-	rows = m.view.Rows()
+	rows = m.activeView().Rows()
 	m.rows = rows
 	for i := 0; i < len(rows); i++ {
 		if rows[i].Msg != nil && rows[i].ThreadID == r.ThreadID {
@@ -2525,8 +2558,8 @@ func (m *Model) setCursorAt(rows []core.Row, idx int) {
 	if rows[idx].Msg == nil {
 		return
 	}
-	m.view.SetCursor(rows[idx].Msg.ID)
-	m.view.SetCursorIndex(idx)
+	m.activeView().SetCursor(rows[idx].Msg.ID)
+	m.activeView().SetCursorIndex(idx)
 }
 
 // listHeight is the index window's row count: the top row is the tab
@@ -2580,7 +2613,7 @@ func (m *Model) gotoRow(n int) {
 }
 
 func (m *Model) cursorEdge(dir int) {
-	rows := m.view.Rows()
+	rows := m.activeView().Rows()
 	m.rows = rows
 	if len(rows) == 0 {
 		return
@@ -2594,7 +2627,7 @@ func (m *Model) cursorEdge(dir int) {
 			// an edge jump off the C-collapsed thread expands it (the
 			// escape is scoped to the cursor's row, not the walk)
 			if m.pendingCollapse != "" && rows[i].ThreadID != m.pendingCollapse {
-				m.view.SetCollapsed(m.pendingCollapse, false)
+				m.activeView().SetCollapsed(m.pendingCollapse, false)
 				m.pendingCollapse = ""
 			}
 			m.setCursorAt(rows, i)
@@ -2618,7 +2651,7 @@ func (m *Model) stage(action string) bool {
 	if !ok {
 		return false
 	}
-	row, ok := m.view.CursorRow()
+	row, ok := m.activeView().CursorRow()
 	if !ok || row.Msg == nil {
 		return false
 	}
@@ -2627,11 +2660,11 @@ func (m *Model) stage(action string) bool {
 		identity = "t:" + row.ThreadID
 	}
 	add := true
-	if !inGroup(tag, m.view.Groups()) {
-		add = !slices.Contains(m.view.Tags(identity), tag)
+	if !inGroup(tag, m.activeView().Groups()) {
+		add = !slices.Contains(m.activeView().Tags(identity), tag)
 	}
-	m.view.Stage(identity, core.TagOp{Tag: tag, Add: add})
-	m.rows = m.view.Rows()
+	m.activeView().Stage(identity, core.TagOp{Tag: tag, Add: add})
+	m.rows = m.activeView().Rows()
 	return true
 }
 
@@ -2649,21 +2682,21 @@ func inGroup(tag string, groups []core.TagGroup) bool {
 // no-op undo does not advance the cursor. Ghost rows are guarded like
 // the M1 cursor keys.
 func (m *Model) undo() bool {
-	row, ok := m.view.CursorRow()
+	row, ok := m.activeView().CursorRow()
 	if !ok || row.Msg == nil {
 		return false
 	}
 	identity := row.Msg.ID
 	if identity == "" {
 		identity = "t:" + row.ThreadID
-	} else if !m.view.IsStaged(identity) && row.ThreadID != "" {
+	} else if !m.activeView().IsStaged(identity) && row.ThreadID != "" {
 		identity = "t:" + row.ThreadID // the stub-staged thread op survives hydration
 	}
-	if !m.view.IsStaged(identity) {
+	if !m.activeView().IsStaged(identity) {
 		return false
 	}
-	m.view.Undo(identity)
-	m.rows = m.view.Rows()
+	m.activeView().Undo(identity)
+	m.rows = m.activeView().Rows()
 	return true
 }
 
@@ -2682,7 +2715,7 @@ func (m Model) CursorIndex() int {
 	if len(m.rows) == 0 {
 		return 0
 	}
-	idx := m.view.CursorRowIndex()
+	idx := m.activeView().CursorRowIndex()
 	if idx < 0 || idx >= len(m.rows) {
 		idx = len(m.rows) - 1
 	}
@@ -2763,7 +2796,7 @@ func (m Model) renderBase() string {
 		return b.String()
 	}
 	if m.rows == nil {
-		m.rows = m.view.Rows()
+		m.rows = m.activeView().Rows()
 	}
 	st := m.styles
 	rows := m.rows
@@ -3115,7 +3148,7 @@ func (m Model) statusData() statusData {
 		return statusData{view: "compose", visible: len(m.tabs), account: st.Account,
 			msg: m.statusMsg, msgErr: m.statusMsgErr}
 	}
-	d := statusData{view: m.view.Name, visible: len(m.rows), on: m.progressOn}
+	d := statusData{view: m.activeView().Name, visible: len(m.rows), on: m.progressOn}
 	if m.progressOn {
 		p := m.progress
 		d.prog = &p
@@ -3231,6 +3264,15 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 				m.searchNext()
 			}
 			return nil, nil
+		case "searchtab":
+			// the ctrl+f prompt: enter opens the raw notmuch query in a
+			// new tab (the query is the tab's name); the activation
+			// follows [ui] search-open
+			if input != "" {
+				m.searchTabQuery = input
+				m.openSearchTab(core.SanitizeControls(input))
+			}
+			return nil, nil
 		case "saveatt":
 			// the s key in an attachment view: the app writes the
 			// viewed attachment to the path (0600) and the result
@@ -3259,8 +3301,8 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	case "esc", "ctrl+g":
 		// ctrl+g cancels like esc (the readline convention)
 		if d.field == "filter" {
-			m.view.SetFilter(d.saved)
-			m.rows = m.view.Rows()
+			m.activeView().SetFilter(d.saved)
+			m.rows = m.activeView().Rows()
 		}
 		if d.field == "luaprompt" {
 			// the Lua prompt() waiter resolves on the cancel
@@ -3349,8 +3391,8 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 // narrows the view per key.
 func (d *textDialogue) changed(m *Model) {
 	if d.field == "filter" {
-		m.view.SetFilter(d.input)
-		m.rows = m.view.Rows()
+		m.activeView().SetFilter(d.input)
+		m.rows = m.activeView().Rows()
 	}
 }
 
@@ -3657,7 +3699,7 @@ func (d *confirmDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return &errorDialogue{label: i18n.T("draft failed"), output: err.Error()}, nil
 		}
 		m.dialogue = nil
-		m.closeComposeTab(m.tabIdx - 1)
+		m.closeTab(m.tabIdx-1, false)
 		return nil, nil
 	}
 	return d, nil
@@ -3988,7 +4030,7 @@ func (m *Model) openPicker(kind string) {
 func (m *Model) openReply(mode string) {
 	var msg *core.Message
 	if m.mode == "index" {
-		if row, ok := m.view.CursorRow(); ok {
+		if row, ok := m.activeView().CursorRow(); ok {
 			msg = row.Msg
 			// ghost rows (multi-root threads) carry the thread id only -
 			// the app's thread-fetch fallback rehydrates the original
@@ -4015,30 +4057,75 @@ func (m *Model) openReply(mode string) {
 	onReply(msg, mode)
 }
 
-// tabNext/tabPrev cycle the tab list: the mail surface (index 0) and
-// every open dialogue. Stepping off a dialogue parks it; stepping
-// back re-attaches it. The pager state survives in m.pager - the mail
-// surface restores to "pager" when a thread was open.
+// tabNext/tabPrev cycle the combined tab stack: the mail surface
+// (index 0), every open dialogue, every search tab. Stepping off a
+// dialogue parks it; stepping back re-attaches it. The pager state
+// survives in m.pager - the mail surface restores to "pager" when a
+// thread was open.
 func (m *Model) tabNext() {
-	if len(m.tabs) == 0 {
+	if m.tabCount() <= 1 {
 		return
 	}
 	m.tabIdx++
-	if m.tabIdx > len(m.tabs) {
+	if m.tabIdx >= m.tabCount() {
 		m.tabIdx = 0
 	}
 	m.attachTab()
 }
 
 func (m *Model) tabPrev() {
-	if len(m.tabs) == 0 {
+	if m.tabCount() <= 1 {
 		return
 	}
 	m.tabIdx--
 	if m.tabIdx < 0 {
-		m.tabIdx = len(m.tabs)
+		m.tabIdx = m.tabCount() - 1
 	}
 	m.attachTab()
+}
+
+// tabCount is the combined stack size: the mail surface, every compose
+// tab, every search tab.
+func (m *Model) tabCount() int {
+	return 1 + len(m.tabs) + len(m.searchTabs)
+}
+
+// openSearchTab opens a raw notmuch query in a new search tab (the
+// ctrl+f key): the view is named by the query (the tab label, the
+// event scope), the app loads it through the onSearch seam, and the
+// activation follows [ui] search-open - "active" attaches the tab,
+// "background" runs the query while the current surface stays.
+func (m *Model) openSearchTab(query string) {
+	v := core.NewView(query, query)
+	m.searchTabs = append(m.searchTabs, v)
+	onSearch(v)
+	if m.ui.SearchOpen == "active" {
+		m.tabIdx = len(m.tabs) + len(m.searchTabs)
+		m.attachTab()
+	}
+	m.rows = m.activeView().Rows()
+}
+
+// activeSearchIdx is the attached search tab's index in the searchTabs
+// stack, or -1 when the tab stack sits on the mail surface or a
+// compose tab.
+func (m *Model) activeSearchIdx() int {
+	i := m.tabIdx - len(m.tabs) - 1
+	if i >= 0 && i < len(m.searchTabs) {
+		return i
+	}
+	return -1
+}
+
+// activeView is the view the cursor and rows act on: the attached
+// search tab's view when the tab stack sits on one, the mail
+// surface's view otherwise (the pager over a search tab keeps the tab
+// attached - its prev/next walk the search rows).
+func (m *Model) activeView() *core.View {
+	if i := m.activeSearchIdx(); i >= 0 {
+		return m.searchTabs[i]
+	}
+	return m.view
 }
 
 // composeTab is the attached dialogue the compose context acts on
@@ -4050,6 +4137,13 @@ func (m *Model) composeTab() *compose.State {
 
 func (m *Model) attachTab() {
 	m.dialogue = nil
+	if m.activeSearchIdx() >= 0 {
+		// the search tabs reuse the index surface: the activeView
+		// routing renders the query's rows under the index bindings
+		// (q on them closes the tab, / and F filter the results)
+		m.mode = "index"
+		return
+	}
 	if m.tabIdx > 0 {
 		m.mode = "compose"
 		return
@@ -4061,17 +4155,24 @@ func (m *Model) attachTab() {
 	m.mode = "index"
 }
 
-// closeComposeTab removes the dialogue and lands on the previous
-// tab (or the mail surface when none remain). The tab's buffer file
-// dies with it.
-func (m *Model) closeComposeTab(i int) {
-	os.Remove(m.tabs[i].BodyPath)
-	m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+// closeTab removes the tab at stack position i: search=true splices
+// the search stack (i offset to the combined stack inside), search=
+// false the compose stack (the tab's buffer file dies with it). The
+// landing follows attachTab - closing the active tab leaves the one
+// that slides into its place, any other keeps the surface.
+func (m *Model) closeTab(i int, search bool) {
+	if search {
+		m.searchTabs = append(m.searchTabs[:i], m.searchTabs[i+1:]...)
+		i += len(m.tabs)
+	} else {
+		os.Remove(m.tabs[i].BodyPath)
+		m.tabs = append(m.tabs[:i], m.tabs[i+1:]...)
+	}
 	if m.tabIdx > i {
 		m.tabIdx--
 	}
-	if m.tabIdx > len(m.tabs) {
-		m.tabIdx = len(m.tabs)
+	if m.tabIdx > m.tabCount()-1 {
+		m.tabIdx = m.tabCount() - 1
 	}
 	m.attachTab()
 }

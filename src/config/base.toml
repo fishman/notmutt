@@ -71,6 +71,7 @@ opener = ["xdg-open"]
 "F" = { fun = "filter", desc = "Live-filter the index rows", show = true }
 "/" = { fun = "search", desc = "Search the index", show = true }
 "n" = { fun = "search-next", desc = "Jump to the next search match", show = true }
+"ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "c" = { fun = "categorize", desc = "Categorize the thread's attachments", show = true }
 "C" = { fun = "collapse-thread", desc = "Collapse or expand the thread under the cursor", show = true }
 "ctrl+v" = { fun = "collapse-all", desc = "Flatten or expand every thread", show = true }
@@ -205,6 +206,7 @@ opener = ["xdg-open"]
 "~" = { fun = "log", show = true }
 "ctrl+r" = { fun = "refresh", desc = "Check for new mail now", show = true }
 "ctrl+s" = { fun = "search", desc = "Search the index", show = true }
+"ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }

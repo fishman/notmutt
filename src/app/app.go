@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -95,15 +96,22 @@ func Run() error {
 	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
 	refresher := newRefresher(bus, worker, view, 0)
 
+	// views is the view registry for the hydrator: name -> view. The
+	// search tabs (the ctrl+f seam) register under their query; a closed
+	// tab's entry lingers until exit (bounded by the search-tab count,
+	// harmless).
+	views := map[string]*core.View{view.ViewName(): view}
+
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)
 
 	// the hydrator fills stub rows into real thread trees (R3); the
 	// threaded closure reads the store, so a view-config change picks up
-	// on the next scan
+	// on the next scan. The registry resolves the triggering event's
+	// view - a search tab hydrates like the main one.
 	tjob := newThreadJob(bus, worker, view, func() bool {
 		return st.Config().Views[st.Config().ActiveView].Threads
-	})
+	}, func(name string) *core.View { return views[name] })
 	go tjob.Run(ctx)
 
 	groups := st.Config().TagGroupList()
@@ -113,6 +121,22 @@ func Run() error {
 	// the thread-tail marks derive from the view rows (never an open);
 	// the identity set is startup-captured like the seam closures above
 	view.SetMe(me)
+
+	// the search tab (the ctrl+f key): the app configures the fresh
+	// view like the main one (window budget, identity) and loads the
+	// raw notmuch query into it; the query is the view's name, so its
+	// events key per tab. A repeated query renames the new tab (a #N
+	// suffix) so its events route to it, not the earlier tab.
+	tui.SetSearchHandler(func(v *core.View) {
+		if views[v.ViewName()] != nil {
+			v.SetIdentity(v.ViewName()+" #"+strconv.Itoa(len(views)), v.ViewQuery())
+		}
+		v.SetGroups(groups)
+		v.SetWindowBudget(b.MaxRows)
+		v.SetMe(me)
+		views[v.ViewName()] = v
+		go runSearchQuery(worker, bus, v)
+	})
 
 	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
 	// ONE resolution for the filter job, the fcc derivation, and the

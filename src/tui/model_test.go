@@ -1989,6 +1989,95 @@ func TestTabSwitchParksDialogue(t *testing.T) {
 	}
 }
 
+// TestSearchTabOpen pins the ctrl+f search tab: the prompt commits a
+// raw notmuch query into a fresh view through the onSearch seam, the
+// "active" config attaches the tab and renders the query's rows, q
+// closes the tab instead of the app. The test fills the fresh view
+// and reports the diff the way the app-side load does.
+func TestSearchTabOpen(t *testing.T) {
+	var got *core.View
+	SetSearchHandler(func(v *core.View) { got = v })
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	if d := textD(m); d == nil || d.field != "searchtab" || d.label != "search: " {
+		t.Fatalf("ctrl+f must open the search prompt: %+v", m.dialogue)
+	}
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	if got == nil || got.ViewName() != "tag:acme" || got.ViewQuery() != "tag:acme" {
+		t.Fatalf("commit must create the query view: %+v", got)
+	}
+	if len(m.searchTabs) != 1 || m.tabIdx != 1 || m.mode != "index" {
+		t.Fatalf("active search-open must attach the tab: tabs %d idx %d mode %q", len(m.searchTabs), m.tabIdx, m.mode)
+	}
+	got.MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", Timestamp: 9, Author: "Acme", Subject: "alpha"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+	if len(m.rows) != 1 || m.rows[0].Msg.Subject != "alpha" {
+		t.Fatalf("the diff must surface the search rows: %d rows", len(m.rows))
+	}
+	if s := m.tabBar(); !strings.Contains(s, "tag:acme") {
+		t.Fatalf("the tab strip must show the query: %s", s)
+	}
+	m = press(t, m, "q")
+	if len(m.searchTabs) != 0 || m.tabIdx != 0 || m.mode != "index" {
+		t.Fatalf("q must close the search tab: tabs %d idx %d mode %q", len(m.searchTabs), m.tabIdx, m.mode)
+	}
+	_, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
+	if cmd == nil {
+		t.Fatal("q on the mail surface must still quit")
+	}
+}
+
+// TestSearchTabBackground pins the "background" search-open: the tab
+// opens without attaching (the current surface stays), the tab strip
+// shows the query, and ] cycles to it past the compose tabs; q on it
+// returns to the compose tab.
+func TestSearchTabBackground(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+
+	cfg := config.Default()
+	cfg.UI.SearchOpen = "background"
+	m := model()
+	m.ui = cfg.UI
+	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	if len(m.searchTabs) != 1 || m.tabIdx != 0 || m.mode != "index" {
+		t.Fatalf("background search-open must keep the surface: tabs %d idx %d mode %q", len(m.searchTabs), m.tabIdx, m.mode)
+	}
+	if s := m.tabBar(); !strings.Contains(s, "tag:acme") {
+		t.Fatalf("the tab strip must show the background query: %s", s)
+	}
+	m = openDialogue(t, m, "t1")
+	m = press(t, m, "]")
+	if m.tabIdx != 2 || m.mode != "index" || m.activeView().ViewName() != "tag:acme" {
+		t.Fatalf("] must cycle to the search tab: idx %d mode %q", m.tabIdx, m.mode)
+	}
+	m = press(t, m, "]")
+	if m.tabIdx != 0 {
+		t.Fatalf("] must wrap to the mail surface: idx %d", m.tabIdx)
+	}
+	m = press(t, m, "]")
+	if m.mode != "compose" || m.tabIdx != 1 {
+		t.Fatalf("] must re-attach the compose tab: idx %d mode %q", m.tabIdx, m.mode)
+	}
+	m = press(t, m, "]")
+	if m.tabIdx != 2 {
+		t.Fatalf("] must reach the search tab again: idx %d", m.tabIdx)
+	}
+	m = press(t, m, "q")
+	if len(m.searchTabs) != 0 || m.tabIdx != 1 || m.mode != "compose" {
+		t.Fatalf("q must close the search tab and land on compose: tabs %d idx %d mode %q", len(m.searchTabs), m.tabIdx, m.mode)
+	}
+}
+
 func TestReplyKeyOpensDialogue(t *testing.T) {
 	got := ""
 	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })

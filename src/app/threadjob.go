@@ -22,27 +22,30 @@ import (
 // hydrate too - their root row is visible, C-expand becomes instant
 // (MergeThread keeps the collapse state on the thread object).
 type threadJob struct {
-	bus      *core.Bus
-	worker   workerAPI
-	view     *core.View
+	bus    *core.Bus
+	worker workerAPI
+	view   *core.View
+	// viewFor resolves the triggering event's view by its name (the
+	// search tabs hydrate like the main view); nil = the main view only.
+	viewFor  func(string) *core.View
 	threaded func() bool // live config truth: Views[ActiveView].Threads
-	gen      uint64      // the view generation the cursor and dedupe belong to
+	gen      uint64      // the view generation the cursor belongs to
 	next     int         // the scan cursor: each scan takes the next scanPage rows
 	mu       sync.Mutex
-	// pending dedupes in-flight fetches PER VIEW GENERATION: thread ids
-	// span folders (one thread can hold messages in both inbox and
-	// deleted), so a wave started for one view must never suppress or
-	// block another view's hydration of the same id.
-	pending map[uint64]map[string]bool
+	// pending dedupes in-flight fetches PER VIEW: thread ids span
+	// views (one thread can hold messages in both inbox and a search
+	// tab), so a wave started for one view must never suppress or block
+	// another view's hydration of the same id.
+	pending map[*core.View]map[string]bool
 }
 
-func newThreadJob(bus *core.Bus, w workerAPI, view *core.View, threaded func() bool) *threadJob {
-	return &threadJob{bus: bus, worker: w, view: view, threaded: threaded, pending: map[uint64]map[string]bool{}}
+func newThreadJob(bus *core.Bus, w workerAPI, view *core.View, threaded func() bool, viewFor func(string) *core.View) *threadJob {
+	return &threadJob{bus: bus, worker: w, view: view, viewFor: viewFor, threaded: threaded, pending: map[*core.View]map[string]bool{}}
 }
 
 func (t *threadJob) Run(ctx context.Context) {
 	ch := t.bus.Subscribe()
-	t.scanVisible() // startup scan covers whatever rows already exist; ViewDiff drives steady state
+	t.scanVisible(t.view) // startup scan covers whatever rows already exist; ViewDiff drives steady state
 	for {
 		select {
 		case <-ctx.Done():
@@ -59,9 +62,29 @@ func (t *threadJob) Run(ctx context.Context) {
 			// collapses the wave; events published during the scan
 			// trigger the next one.
 			drainEvents(ch)
-			t.scanVisible()
+			t.scanVisible(t.viewForEvent(e))
 		}
 	}
+}
+
+// viewForEvent resolves the triggering event's view: the events carry
+// the view name (ViewDiff/QueryBatch), which maps through the registry
+// to the search tabs' views. A name with no registry entry falls back
+// to the main view.
+func (t *threadJob) viewForEvent(e core.Event) *core.View {
+	name := ""
+	switch ev := e.(type) {
+	case core.ViewDiff:
+		name = ev.View
+	case core.QueryBatch:
+		name = ev.View
+	}
+	if name != "" && t.viewFor != nil {
+		if v := t.viewFor(name); v != nil {
+			return v
+		}
+	}
+	return t.view
 }
 
 // scanTrigger reports the events that mean rows may need hydration.
@@ -94,21 +117,21 @@ func threadWorthy(r core.Row) bool {
 	return m != nil && m.ID == "" && r.ThreadID != ""
 }
 
-func (t *threadJob) scanVisible() {
+func (t *threadJob) scanVisible(view *core.View) {
 	if !t.threaded() {
 		return
 	}
-	name := t.view.ViewName() // one locked read; the fetches publish it
-	gen := t.view.Gen()
+	name := view.ViewName() // one locked read; the fetches publish it
+	gen := view.Gen()
 	if gen != t.gen {
 		// a view switch: the scan starts at the top of the new view's
-		// rows, and its dedupe is a fresh set - ids in flight for the
-		// old view are refetched here (their results are gated out of
-		// the merge below, so no double work lands)
+		// rows - ids in flight for the old view are refetched here
+		// (their results are gated out of the merge below, so no double
+		// work lands)
 		t.gen = gen
 		t.next = 0
 	}
-	rows := t.view.Rows()
+	rows := view.Rows()
 	if len(rows) == 0 {
 		return
 	}
@@ -126,21 +149,21 @@ func (t *threadJob) scanVisible() {
 		}
 	}
 	done := 0
-	t.view.BeginMerge()
+	view.BeginMerge()
 	for _, r := range page {
 		if !threadWorthy(r) {
 			continue
 		}
 		tid := r.ThreadID
 		t.mu.Lock()
-		if t.pending[gen][tid] {
+		if t.pending[view][tid] {
 			t.mu.Unlock()
 			continue
 		}
-		if t.pending[gen] == nil {
-			t.pending[gen] = map[string]bool{}
+		if t.pending[view] == nil {
+			t.pending[view] = map[string]bool{}
 		}
-		t.pending[gen][tid] = true
+		t.pending[view][tid] = true
 		t.mu.Unlock()
 		wg.Add(1)
 		go func() {
@@ -148,10 +171,10 @@ func (t *threadJob) scanVisible() {
 			rpl, err := t.worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: tid})
 			t.mu.Lock()
 			// a failed fetch clears the gate: the next scan retries
-			if set := t.pending[gen]; set != nil {
+			if set := t.pending[view]; set != nil {
 				delete(set, tid)
 				if len(set) == 0 {
-					delete(t.pending, gen)
+					delete(t.pending, view)
 				}
 			}
 			done++
@@ -163,7 +186,7 @@ func (t *threadJob) scanVisible() {
 			if err != nil || rpl.Err != nil {
 				return
 			}
-			if t.view.Gen() != gen {
+			if view.Gen() != gen {
 				// the view switched while the fetch was in flight: the
 				// result belongs to the old view's rows - dropping it
 				// lets the new view's own scan refetch the id
@@ -173,12 +196,12 @@ func (t *threadJob) scanVisible() {
 			for i := range rpl.Msgs {
 				msgs[i] = &rpl.Msgs[i]
 			}
-			t.view.MergeThread(core.NewThread(tid, msgs))
+			view.MergeThread(core.NewThread(tid, msgs))
 			t.bus.Publish(core.ViewDiff{View: name})
 		}()
 	}
 	wg.Wait()
-	t.view.EndMerge()
+	view.EndMerge()
 	if total > 0 && done == total {
 		// scan end: the bar clears (R15 batch boundary) even when a fetch
 		// failed - the failed thread retries on the next scan

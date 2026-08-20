@@ -256,7 +256,7 @@ func (m Model) tabNames() []string {
 		}
 		return n
 	}
-	names := make([]string, 0, len(m.tabs)+1)
+	names := make([]string, 0, len(m.tabs)+len(m.searchTabs)+1)
 	names = append(names, capName(m.view.Name))
 	for _, st := range m.tabs {
 		n := st.Subject
@@ -264,6 +264,9 @@ func (m Model) tabNames() []string {
 			n = "compose"
 		}
 		names = append(names, capName(core.SanitizeControls(n)))
+	}
+	for _, v := range m.searchTabs {
+		names = append(names, capName(core.SanitizeControls(v.ViewName())))
 	}
 	return names
 }

@@ -732,3 +732,49 @@ func TestFullReloadEmpty(t *testing.T) {
 		t.Fatalf("empty reload left %d threads", len(view.Threads))
 	}
 }
+
+// TestRunSearchQuery pins the search-tab loader (the ctrl+f seam's
+// app side): the count + walk fill the fresh view in one merged batch,
+// publishing progress first and the diff keyed by the query name - the
+// event order the search tab renders against.
+func TestRunSearchQuery(t *testing.T) {
+	bus := core.NewBus()
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{
+		{ID: "m1", ThreadID: "t1", Timestamp: 3, Author: "Ann", Subject: "alpha"},
+		{ID: "m2", ThreadID: "t2", Timestamp: 2, Author: "Bob", Subject: "beta"},
+		{ID: "m3", ThreadID: "t2", Timestamp: 1, Author: "Bob", Subject: "re: beta"},
+	})
+	view := core.NewView("tag:acme", "tag:acme")
+	ch := bus.Subscribe()
+	runSearchQuery(fw, bus, view)
+	if len(view.Threads) != 2 {
+		t.Fatalf("the walk must merge 2 threads, got %d", len(view.Threads))
+	}
+	if !view.Hydrated("t1") {
+		t.Fatal("the merged rows must carry real message ids")
+	}
+	var progress, diff bool
+	for {
+		select {
+		case e := <-ch:
+			switch ev := e.(type) {
+			case core.Progress:
+				progress = true
+			case core.ViewDiff:
+				if ev.View != "tag:acme" {
+					t.Fatalf("the diff must key the query name, got %q", ev.View)
+				}
+				diff = true
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no diff from the search load")
+		}
+		if diff {
+			break
+		}
+	}
+	if !progress {
+		t.Fatal("the fill must publish progress before the diff")
+	}
+}

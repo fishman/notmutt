@@ -82,14 +82,15 @@ Every pager opens with the header block - Date, From, To, Subject,
 labels aligned - in the plain and html views alike; `h` replaces it
 with the full raw header block.
 
-The opened message marks by its position in the thread: the five most
-recent messages render in one color, the most recent message from the
-other side (not you) in a more prominent one - a long thread reads by
-its tail. The mark tints the message's subject line and its thread
-indicator in the index (it shows when you return to the list); the
-rest of the row and the pager text keep their own colors - the
-quoted levels, signature, and subject always render in their styles.
-Your identity is the message's
+The thread's tail marks by its position: the five most recent
+messages render in one color, the most recent message from the other
+side (not you) in a more prominent one - a long thread reads by its
+tail. The marks tint the subject lines and thread indicators of the
+marked messages in the index (they show when you return to the list,
+wherever the marked messages sit - the opened message itself is never
+tinted); the rest of the row and the pager text keep their own colors
+- the quoted levels, signature, and subject always render in their
+styles. Your identity is the message's
 `sent` tag or a From matching an account `from` field.
 
 ### Compose

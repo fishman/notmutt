@@ -135,25 +135,25 @@ func (t *threadJob) scanVisible(view *core.View) {
 	if len(rows) == 0 {
 		return
 	}
+	// the cursor walks row positions, but hydration grows the flattened
+	// blocks (1 stub row -> N message rows), so a fixed slice parks on
+	// an already-hydrated block and the chain dies after wave 1. The
+	// page is the next scanPage WORTHY rows; the cursor always advances.
+	page := make([]core.Row, 0, scanPage)
+	for t.next < len(rows) && len(page) < scanPage {
+		if threadWorthy(rows[t.next]) {
+			page = append(page, rows[t.next])
+		}
+		t.next++
+	}
 	if t.next >= len(rows) {
 		t.next = 0
 	}
-	end := min(t.next+scanPage, len(rows))
-	page := rows[t.next:end]
-	t.next = end
 	var wg sync.WaitGroup
-	total := 0
-	for _, r := range page {
-		if threadWorthy(r) {
-			total++
-		}
-	}
+	total := len(page)
 	done := 0
 	view.BeginMerge()
 	for _, r := range page {
-		if !threadWorthy(r) {
-			continue
-		}
 		tid := r.ThreadID
 		t.mu.Lock()
 		if t.pending[view][tid] {
@@ -197,11 +197,18 @@ func (t *threadJob) scanVisible(view *core.View) {
 				msgs[i] = &rpl.Msgs[i]
 			}
 			view.MergeThread(core.NewThread(tid, msgs))
-			t.bus.Publish(core.ViewDiff{View: name})
 		}()
 	}
 	wg.Wait()
 	view.EndMerge()
+	// the wave deferred the dirty mark to EndMerge: a refresh merge
+	// that landed inside the window needs this diff to repaint, or the
+	// rows stay stale until the next event (the reported $-apply
+	// reconcile). No-op waves publish nothing - a diff would re-trigger
+	// the scan forever.
+	if view.Dirty() {
+		t.bus.Publish(core.ViewDiff{View: name})
+	}
 	if total > 0 && done == total {
 		// scan end: the bar clears (R15 batch boundary) even when a fetch
 		// failed - the failed thread retries on the next scan

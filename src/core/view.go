@@ -471,6 +471,16 @@ func (v *View) MergeThreads(threads []*Thread) {
 // merges (tests, tag ops) keep their immediate dirty-mark. The depth
 // counter makes nested windows safe; an EndMerge without a matching
 // BeginMerge is a no-op.
+// Dirty reports whether the memoized rows need rebuilding: the batch
+// discipline defers the mark to EndMerge, so the batch owner publishes
+// its completion diff only when a merge actually landed inside - a
+// no-op wave must not self-trigger.
+func (v *View) Dirty() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.dirty
+}
+
 func (v *View) BeginMerge() {
 	v.mu.Lock()
 	defer v.mu.Unlock()

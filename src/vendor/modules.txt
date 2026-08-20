@@ -72,12 +72,26 @@ github.com/go-ole/go-ole
 # github.com/godbus/dbus/v5 v5.1.0
 ## explicit; go 1.12
 github.com/godbus/dbus/v5
+# github.com/google/jsonschema-go v0.4.2
+## explicit; go 1.23.0
+github.com/google/jsonschema-go/jsonschema
+# github.com/google/uuid v1.6.0
+## explicit
+github.com/google/uuid
 # github.com/jackmordaunt/icns/v3 v3.0.1
 ## explicit; go 1.21.5
 github.com/jackmordaunt/icns/v3
 # github.com/lucasb-eyer/go-colorful v1.4.0
 ## explicit; go 1.12
 github.com/lucasb-eyer/go-colorful
+# github.com/mark3labs/mcp-go v0.58.0
+## explicit; go 1.25.5
+github.com/mark3labs/mcp-go/client
+github.com/mark3labs/mcp-go/client/transport
+github.com/mark3labs/mcp-go/mcp
+github.com/mark3labs/mcp-go/mcptest
+github.com/mark3labs/mcp-go/server
+github.com/mark3labs/mcp-go/tracing
 # github.com/mattn/go-runewidth v0.0.27
 ## explicit; go 1.23
 github.com/mattn/go-runewidth
@@ -102,6 +116,10 @@ github.com/rivo/uniseg
 # github.com/sahilm/fuzzy v0.1.3
 ## explicit; go 1.24.5
 github.com/sahilm/fuzzy
+# github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
+## explicit; go 1.21
+github.com/santhosh-tekuri/jsonschema/v6
+github.com/santhosh-tekuri/jsonschema/v6/kind
 # github.com/sergeymakinen/go-bmp v1.0.0
 ## explicit; go 1.13
 github.com/sergeymakinen/go-bmp
@@ -114,12 +132,18 @@ github.com/sergeymakinen/go-ico/internal/icondir
 github.com/soniakeys/quant
 github.com/soniakeys/quant/internal
 github.com/soniakeys/quant/median
+# github.com/spf13/cast v1.7.1
+## explicit; go 1.19
+github.com/spf13/cast
 # github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af
 ## explicit
 github.com/tadvi/systray
 # github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e
 ## explicit; go 1.19
 github.com/xo/terminfo
+# github.com/yosida95/uritemplate/v3 v3.0.2
+## explicit; go 1.14
+github.com/yosida95/uritemplate/v3
 # github.com/yuin/gopher-lua v1.1.2
 ## explicit; go 1.23
 github.com/yuin/gopher-lua
@@ -166,10 +190,18 @@ golang.org/x/text/encoding/korean
 golang.org/x/text/encoding/simplifiedchinese
 golang.org/x/text/encoding/traditionalchinese
 golang.org/x/text/encoding/unicode
+golang.org/x/text/feature/plural
+golang.org/x/text/internal
+golang.org/x/text/internal/catmsg
+golang.org/x/text/internal/format
 golang.org/x/text/internal/language
 golang.org/x/text/internal/language/compact
+golang.org/x/text/internal/number
+golang.org/x/text/internal/stringset
 golang.org/x/text/internal/tag
 golang.org/x/text/internal/utf8internal
 golang.org/x/text/language
+golang.org/x/text/message
+golang.org/x/text/message/catalog
 golang.org/x/text/runes
 golang.org/x/text/transform

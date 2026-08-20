@@ -726,3 +726,37 @@ re-adds the two reads (fork commit, tag, revendor); no client changes
 - refsSplit trims brackets the term getters never emit, and the flat
 forest/one-hop-chain degradation of the record 29 fallback reverses
 on its own.
+
+## 31. Thread-level indicators derive from the rendered tree, never the walk (2026-08-21)
+
+Decision: the thread walk emits summaries and message rows only - no
+thread-level indicator aggregates (per-thread unread counts, tree
+shapes, collapsed markers). The index derives everything it draws from
+the tree it renders: Thread.Count() sums the rendered tree, treePrefix
+renders the glyphs, collapse is a view flag. The walk carries the raw
+material (every message row with its tags); the indicator is a
+render-time derivation, O(visible rows), after the render's filters
+and staged ops have applied.
+
+Why the walker must not compute them: an aggregate computed at walk
+time is a snapshot of a state the view never displays. Every render
+context changes what the number must mean - the deleted-leaf rule
+drops visible rows (a walker counting full membership over-counts);
+the staged-op buffer (R14) replays pending tags on top of the snapshot
+(a walked count is stale before first paint); group membership and the
+flat forest change what a thread contains. Each of these makes a
+walked indicator wrong-by-construction the moment the render differs
+from the walk, which is the common case in this client. Keeping the
+walk structural (rows in, rows out) keeps one truth: the tree that is
+drawn. The 2026-08-19 indicator regression report traced to data
+errors in the walk (the tag-blob truncation, fixed in 3d00e6a), not to
+the derivation model - the indicator data was always present in the
+rows.
+
+The alternative - mutt-style per-thread indicator queries (per-thread
+unread counts from tag scans) - reintroduces the per-thread work the
+full walk exists to eliminate (record 29 measured the two-phase
+hydration class at ~4.5 minutes on the 33k-thread inbox), and still
+lands stale: a count fetched at walk time cannot see the staged ops
+that replay at render time. The headache is not the indicator; it is
+computing it away from the tree that is actually shown.

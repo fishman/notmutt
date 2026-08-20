@@ -175,6 +175,25 @@ dry-run = false
 dry-run config for that run only and leaving the file untouched -
 the review flow: read a dry-run report, then apply.
 
+### Lua plugins
+
+Plugins are files in `<configdir>/lua`, loaded into a sandboxed VM
+with a deadline: no os/io/debug, no filesystem. Every plugin gets a
+`json` global (encode/decode, depth- and size-capped); the `http`
+global exists only when the plugin has a network section - network
+is deny-by-default:
+
+```toml
+[lua.network.hubspot]
+targets = ["*.hubspot.com"]   # exact host or *.suffix, hostname-matched
+methods = ["get", "post"]     # verbs; omitted = any verb
+```
+
+`http.request(method, url, opts)` returns `{status, headers, body}`
+or `nil, err`; `opts` may carry `headers` and `body`. Every request
+(redirect hops included) must match the targets, the body is capped
+at 1 MiB, and the VM deadline aborts in-flight requests.
+
 ## MCP server
 
 An optional Model Context Protocol server lets LLM clients query the

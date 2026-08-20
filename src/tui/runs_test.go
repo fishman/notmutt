@@ -41,6 +41,35 @@ func TestStyleRunsTrailingBgResetsForPad(t *testing.T) {
 	}
 }
 
+// TestSkipStyled pins the horizontal-pan cut: the first x visible
+// cells drop (a rune starting exactly at the cut renders), the last
+// completed SGR open re-emits when the cut lands inside its run, a
+// reset in the skipped region closes the tracked open, and past the
+// cut the sequences pass through whole - the tail keeps its own
+// transitions. A wide char straddling the cut drops (a partial wide
+// char cannot render).
+func TestSkipStyled(t *testing.T) {
+	red := "\x1b[31m"
+	reset := "\x1b[0m"
+	cases := []struct {
+		in   string
+		x    int
+		want string
+	}{
+		{"0123456789", 4, "456789"},
+		{"0123456789", 0, "0123456789"},
+		{red + "abc" + reset + "def", 2, red + "c" + reset + "def"},
+		{red + "ab" + reset + "cdef", 3, "def"}, // the reset closes the tracked open
+		{"ab界d", 4, "d"},                        // wide char fully skipped
+		{"a界b", 2, "b"},                         // the straddling wide char drops
+	}
+	for _, c := range cases {
+		if got := skipStyled(c.in, c.x); got != c.want {
+			t.Errorf("skipStyled(%q, %d) = %q, want %q", c.in, c.x, got, c.want)
+		}
+	}
+}
+
 func TestHexRGB(t *testing.T) {
 	cases := map[string]string{
 		"#ff0000": "255;0;0",

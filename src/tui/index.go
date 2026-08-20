@@ -391,6 +391,73 @@ func truncateStyled(s string, w int) string {
 	return b.String()
 }
 
+// skipStyled drops the first x visible cells of a styled string; the
+// last completed SGR open re-emits when the cut lands inside its run,
+// so the tail keeps the style it would otherwise lose. A reset inside
+// the skipped region closes the tracked open. The mirror of
+// truncateStyled for the horizontal scroll.
+func skipStyled(s string, x int) string {
+	if x <= 0 || runewidth.StringWidth(stripANSI(s)) <= x {
+		return s
+	}
+	var b strings.Builder
+	cells := 0
+	open := ""
+	cur := ""
+	inSeq := false
+	skipping := true
+	for _, r := range s {
+		if inSeq {
+			cur += string(r)
+			if r == 'm' {
+				if skipping {
+					// track the last open while skipping: a reset closes
+					// it, so the cut re-emits only what is still in effect
+					if cur == "\x1b[0m" || cur == "\x1b[m" {
+						open = ""
+					} else {
+						open = cur
+					}
+				} else {
+					// past the cut the sequences pass through whole: the
+					// tail keeps its own style transitions
+					b.WriteString(cur)
+				}
+				cur, inSeq = "", false
+			}
+			continue
+		}
+		if r == '\x1b' {
+			inSeq = true
+			cur = "\x1b"
+			continue
+		}
+		if skipping {
+			cw := runewidth.RuneWidth(r)
+			if cells >= x {
+				skipping = false
+				if open != "" {
+					b.WriteString(open)
+				}
+				b.WriteRune(r)
+				cells += cw
+				continue
+			}
+			if cells+cw > x {
+				skipping = false // the straddling wide char drops: a partial wide char cannot render
+				if open != "" {
+					b.WriteString(open)
+				}
+				continue
+			}
+			cells += cw
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // padRow wraps line in outer so the row style covers the full width
 // (R11: rows never exceed width, alignment never shifts). The slot
 // styles reset it mid-line, so the row style's opening sequence is

@@ -53,7 +53,7 @@ opener = ["xdg-open"]
 "up" = { fun = "cursor-up" }
 ":" = { fun = "command", desc = "Command line", show = true }
 "enter" = { fun = "open", desc = "Open the message under the cursor" }
-"h" = { fun = "open-headers", desc = "Open the message with the full headers", show = true }
+"H" = { fun = "open-headers", desc = "Open the message with the full headers", show = true }
 "q" = { fun = "quit", desc = "Quit notmutt", show = true }
 "r" = { fun = "reply", desc = "Reply to the sender", show = true }
 "R" = { fun = "reply-all", desc = "Reply to all recipients", show = true }
@@ -88,6 +88,10 @@ opener = ["xdg-open"]
 "ctrl+u" = { fun = "half-page-up", desc = "Scroll up half a page" }
 "pgdown" = { fun = "page-down", desc = "Scroll down one page" }
 "pgup" = { fun = "page-up", desc = "Scroll up one page" }
+"h" = { fun = "scroll-left", desc = "Scroll left" }
+"l" = { fun = "scroll-right", desc = "Scroll right" }
+"left" = { fun = "scroll-left" }
+"right" = { fun = "scroll-right" }
 "[" = { fun = "tab-prev", desc = "Switch to the previous tab", show = true }
 "]" = { fun = "tab-next", desc = "Switch to the next tab", show = true }
 "?" = { fun = "help", desc = "Show this help", show = true }
@@ -99,6 +103,10 @@ opener = ["xdg-open"]
 "k" = { fun = "scroll-up", desc = "Scroll up one line" }
 "down" = { fun = "scroll-down" }
 "up" = { fun = "scroll-up" }
+"h" = { fun = "scroll-left", desc = "Scroll left" }
+"l" = { fun = "scroll-right", desc = "Scroll right" }
+"left" = { fun = "scroll-left" }
+"right" = { fun = "scroll-right" }
 ":" = { fun = "command", desc = "Command line", show = true }
 "space" = { fun = "page-down" }
 "ctrl+d" = { fun = "half-page-down" }
@@ -113,7 +121,7 @@ opener = ["xdg-open"]
 "s" = { fun = "save-attachment", desc = "Save the viewed attachment", show = true }
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
-"h" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
+"H" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
 "enter" = { fun = "open", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
@@ -168,6 +176,10 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "cursor-up" }
 "down" = { fun = "cursor-down" }
 "up" = { fun = "cursor-up" }
+"h" = { fun = "scroll-left", desc = "Scroll left" }
+"l" = { fun = "scroll-right", desc = "Scroll right" }
+"left" = { fun = "scroll-left" }
+"right" = { fun = "scroll-right" }
 ":" = { fun = "command", desc = "Command line", show = true }
 "enter" = { fun = "open" }
 "q" = { fun = "quit", show = true }
@@ -200,6 +212,10 @@ opener = ["xdg-open"]
 "ctrl+p" = { fun = "scroll-up" }
 "down" = { fun = "scroll-down" }
 "up" = { fun = "scroll-up" }
+"h" = { fun = "scroll-left", desc = "Scroll left" }
+"l" = { fun = "scroll-right", desc = "Scroll right" }
+"left" = { fun = "scroll-left" }
+"right" = { fun = "scroll-right" }
 ":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
@@ -212,7 +228,7 @@ opener = ["xdg-open"]
 "v" = { fun = "attachments", desc = "List the message's attachments" }
 "s" = { fun = "save-attachment", desc = "Save the viewed attachment" }
 "F" = { fun = "open-links", desc = "Open a link by number" }
-"h" = { fun = "open-headers", desc = "Toggle the full header block" }
+"H" = { fun = "open-headers", desc = "Toggle the full header block" }
 "enter" = { fun = "open" }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }

@@ -39,6 +39,14 @@ var chainTimeout = time.Second
 // comfortably under the render budget.
 var frameInterval = 8 * time.Millisecond
 
+// scrollStep is the horizontal pan step in cells (the h/l keys);
+// indexMaxScroll caps the index offset - the subject tail is bounded,
+// only a pathological title hides more than 4096 cells behind the frame.
+const (
+	scrollStep     = 8
+	indexMaxScroll = 4096
+)
+
 // Actions is the BUILTIN action vocabulary per context (R9): the index
 // context carries navigation (including the gg/G edge jumps), open, the
 // buffer/apply ops, the compose/reply/forward entry points, and the tab
@@ -53,6 +61,7 @@ var Actions = map[string]map[string]bool{
 		"cursor-top": true, "cursor-bottom": true,
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
+		"scroll-left": true, "scroll-right": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
 		"filter": true, "search": true, "search-next": true,
 		"collapse-thread": true, "collapse-all": true,
@@ -65,6 +74,7 @@ var Actions = map[string]map[string]bool{
 		"page-down": true, "page-up": true,
 		"half-page-down": true, "half-page-up": true,
 		"scroll-top": true, "scroll-bottom": true,
+		"scroll-left": true, "scroll-right": true,
 		"back": true, "quit": true, "load-remote-images": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
@@ -106,8 +116,12 @@ type Model struct {
 	rows       []core.Row
 	width      int
 	height     int
-	mode       string // "index" default; "pager" while a thread is open
-	pager      *pager
+	// indexX is the index's horizontal pan offset in cells (the h/l
+	// keys). The row cache stores the unclipped line; the clip lands at
+	// the write site, so panning never churns the cache.
+	indexX int
+	mode   string // "index" default; "pager" while a thread is open
+	pager  *pager
 	// renderMode is the pager's requested view (the toggle-render and
 	// source keys): the plain parts, the rendered html part, or the raw
 	// html source. renderMime is the last reply's mime label for the
@@ -977,6 +991,28 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.pager.scrollUp(n)
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.scrollUp(n)
+		} else {
+			break
+		}
+		deferPaint()
+		deferred = true
+	case "scroll-left":
+		// the h key: pan the view left by a step; the index offset is
+		// session state like the window, the pager owns its own
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollLeft()
+		} else if m.mode == "index" {
+			m.indexX = max(0, m.indexX-scrollStep)
+		} else {
+			break
+		}
+		deferPaint()
+		deferred = true
+	case "scroll-right":
+		if m.mode == "pager" && m.pager != nil {
+			m.pager.scrollRight()
+		} else if m.mode == "index" {
+			m.indexX = min(m.indexX+scrollStep, indexMaxScroll)
 		} else {
 			break
 		}
@@ -2767,26 +2803,29 @@ func (m Model) renderBase() string {
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
+		// the outer row style is a function of the row's own fields and
+		// selected; it lives outside the cache so the pan clip at the
+		// write site can re-pad with it
+		outer := sg.normal
+		if rows[i].Ghost {
+			outer = sg.ghost
+		}
+		if rows[i].Staged {
+			// staged rows keep the row style and gain the staged look
+			// ([index.staged] default: bold + muted fg); the slot
+			// styles only override fg, so bold carries through
+			if rows[i].Ghost {
+				outer = sg.stagedGhost
+			} else {
+				outer = sg.stagedNormal
+			}
+		}
 		line, ok := m.rowCache[key]
 		if !ok {
 			if len(m.rowCache) > rowCacheMax {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
 			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
-			outer := sg.normal
-			if rows[i].Ghost {
-				outer = sg.ghost
-			}
-			if rows[i].Staged {
-				// staged rows keep the row style and gain the staged look
-				// ([index.staged] default: bold + muted fg); the slot
-				// styles only override fg, so bold carries through
-				if rows[i].Ghost {
-					outer = sg.stagedGhost
-				} else {
-					outer = sg.stagedNormal
-				}
-			}
 			if m.width > 0 {
 				// the loop's first View() runs before the resize lands:
 				// width 0 must not blank the rows (padRow would truncate
@@ -2794,6 +2833,12 @@ func (m Model) renderBase() string {
 				line = padRowSGR(line, m.width, outer)
 			}
 			m.rowCache[key] = line
+		}
+		if m.indexX > 0 && m.width > 0 {
+			// the horizontal pan: the cache holds the unclipped line, the
+			// offset clips at the write site - scrolling never churns the
+			// row cache (the pager styleKey lesson)
+			line = padRowSGR(skipStyled(line, m.indexX), m.width, outer)
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')

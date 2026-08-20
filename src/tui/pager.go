@@ -28,7 +28,8 @@ import (
 // window owns the scroll state (the index stays windowed - 129k rows
 // must never flatten). Long lines are truncated to the window width,
 // never wrapped (R11 alignment; the truncation is a pinned limitation,
-// wrapping is future work).
+// wrapping is future work) - the h/l keys pan the window horizontally
+// past the truncation instead.
 type pager struct {
 	threadID string
 	// msgID is the opened message: the pager shows that message's
@@ -48,12 +49,19 @@ type pager struct {
 	styleKey   string   // the style set the cache was built with (sgr opens)
 	width      int
 	styleWidth int // the width the cache was styled at (0 = none)
-	st         Styles
-	vp         viewport
+	// x is the horizontal pan offset in cells (the h/l keys); maxX the
+	// widest content line. The clip lands at render time on the styled
+	// window, so panning never invalidates the styled cache.
+	x    int
+	maxX int
+	st   Styles
+	vp   viewport
 }
 
 func newPager(threadID, msgID string, lines []core.Line) *pager {
-	return &pager{threadID: threadID, msgID: msgID, lines: lines}
+	p := &pager{threadID: threadID, msgID: msgID}
+	p.setLines(lines)
+	return p
 }
 
 // setLines replaces the pager content (the compose preview after a
@@ -65,18 +73,30 @@ func (p *pager) setLines(lines []core.Line) {
 	p.doc = nil
 	p.styled = nil
 	p.vp.offset = 0
+	p.x = 0
+	p.maxX = 0
+	for _, l := range lines {
+		if w := runewidth.StringWidth(l.Text); w > p.maxX {
+			p.maxX = w
+		}
+	}
 }
+
+// pad is the style-time truncation boundary: the window width plus the
+// pan offset, so a panned line still carries the cells the clip will
+// show.
+func (p *pager) pad() int { return p.width + p.x }
 
 func (p *pager) setSize(w, h int, st Styles) {
 	p.width = w
 	p.st = st
 	p.vp.setSize(w, h)
-	// the styled cache is width- and style-dependent: a resize or a
-	// theme switch invalidates it; ensureStyled re-styles only the
-	// visible window (same-width resizes and height changes keep the
-	// cached range untouched)
-	if key := st.sgr.pagerKey; w != p.styleWidth || key != p.styleKey {
-		p.styleWidth, p.styleKey = w, key
+	// the styled cache is pad- and style-dependent: a resize, a theme
+	// switch, or a pan that moved the boundary invalidates it;
+	// ensureStyled re-styles only the visible window (same-width
+	// resizes and height changes keep the cached range untouched)
+	if key := st.sgr.pagerKey; p.pad() != p.styleWidth || key != p.styleKey {
+		p.styleWidth, p.styleKey = p.pad(), key
 		clear(p.styled)
 		clear(p.doc)
 	}
@@ -291,10 +311,11 @@ func (p *pager) visibleImages() []imgBlock {
 // styleLine maps one structured line to styled text: subject ->
 // header, from/date -> hdrdefault, body -> quotedN by depth,
 // signature -> signature, attachment -> attachment, error -> error.
-// Every line pads to the window width with its own style (the R11
-// slot-reservation rule - alignment never shifts per line). The
-// styles' SGR fragments are precomputed (p.st.sgr), so a line is
-// plain string joins, never a Style.Render.
+// Every line pads to the style boundary (the window width plus the
+// pan offset) with its own style (the R11 slot-reservation rule -
+// alignment never shifts per line). The styles' SGR fragments are
+// precomputed (p.st.sgr), so a line is plain string joins, never a
+// Style.Render.
 //
 // quoteColor maps the line's quote depth to the style table: depth 0
 // (plain body text) is the normal text color - a plain mail must not
@@ -351,7 +372,7 @@ func (p *pager) styleLine(li int) string {
 		text = outer.render(l.Text)
 	}
 	if p.width > 0 {
-		text = padRowSGR(text, p.width, outer)
+		text = padRowSGR(text, p.pad(), outer)
 	}
 	return text
 }
@@ -458,6 +479,30 @@ func (p *pager) scrollUp(n int) {
 	p.vp.clamp()
 }
 
+// scrollLeft/scrollRight pan the window horizontally (the h/l keys):
+// the offset moves in scrollStep cells, clamped to the content width
+// minus the window (a right pan at the end is a no-op). The pan moves
+// the style boundary - the styled cache is truncated to pad(), so a
+// moved boundary invalidates it (the next render re-styles the window
+// at the new pad).
+func (p *pager) scrollLeft() {
+	p.x = max(0, p.x-scrollStep)
+	if p.pad() != p.styleWidth {
+		p.styleWidth, p.styleKey = p.pad(), p.st.sgr.pagerKey
+		clear(p.styled)
+		clear(p.doc)
+	}
+}
+
+func (p *pager) scrollRight() {
+	p.x = min(p.x+scrollStep, max(0, p.maxX-p.width))
+	if p.pad() != p.styleWidth {
+		p.styleWidth, p.styleKey = p.pad(), p.st.sgr.pagerKey
+		clear(p.styled)
+		clear(p.doc)
+	}
+}
+
 // pageDown/pageUp move a full window (pgdown/pgup); halfPageDown/Up
 // half a window (ctrl+d/ctrl+u, vim's default). The clamp pins the
 // last page to the tail, so repeated page-down ends on the bottom.
@@ -487,6 +532,16 @@ func (p *pager) render() string {
 	win := p.vp.window()
 	if p.width == 0 {
 		win = nil
+	}
+	if p.x > 0 && p.width > 0 {
+		// the horizontal pan: skip the offset, re-pad to the window.
+		// The styled lines carry their own per-line base style inside
+		// (styleLine's pad), so the re-wrap uses the plain normal - the
+		// line's SGR runs survive the skip (skipStyled re-emits the last
+		// open at the cut) and the outer wrap covers the blank tail.
+		for i, l := range win {
+			win[i] = padRowSGR(skipStyled(l, p.x), p.width, p.st.sgr.normal)
+		}
 	}
 	for len(win) < p.vp.height {
 		win = append(win, padRow("", p.width, p.st.Normal))

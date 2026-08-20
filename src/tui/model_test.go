@@ -4293,20 +4293,87 @@ func TestModelOpenHeaders(t *testing.T) {
 	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 		gotTID, gotPreview, gotHeaders = threadID, preview, headers
 	})
-	m = press(t, m, "h")
+	m = press(t, m, "H")
 	if gotTID != "t1" || gotPreview || !gotHeaders {
-		t.Fatalf("h must open with the headers, got %q preview=%v headers=%v", gotTID, gotPreview, gotHeaders)
+		t.Fatalf("H must open with the headers, got %q preview=%v headers=%v", gotTID, gotPreview, gotHeaders)
 	}
 	if !m.showHeaders {
-		t.Fatalf("h must arm the header toggle")
+		t.Fatalf("H must arm the header toggle")
 	}
 	m = press(t, m, "enter") // a normal open keeps the toggled state
 	if gotTID != "t1" || gotPreview || !gotHeaders {
 		t.Fatalf("enter must open with the armed headers, got %q preview=%v headers=%v", gotTID, gotPreview, gotHeaders)
 	}
-	m = press(t, m, "h") // h again flips back
+	m = press(t, m, "H") // H again flips back
 	if gotHeaders {
-		t.Fatalf("the second h must open without headers")
+		t.Fatalf("the second H must open without headers")
+	}
+}
+
+// TestHorizontalScroll pins the h/l pan (the arrows bind the same
+// actions): the index offset moves in scrollStep cells and clips the
+// rows at the write site - the rendered row loses its head as the pan
+// grows (open-headers moved to H, so h/l are free).
+func TestHorizontalScroll(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}, Subject: "012345678901234567890123456789"},
+	})})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
+	for i := 0; i < 4; i++ {
+		m = press(t, m, "l")
+	}
+	if m.indexX != 4*scrollStep {
+		t.Fatalf("index pan offset = %d, want %d", m.indexX, 4*scrollStep)
+	}
+	plain := stripANSI(m.View())
+	if !strings.Contains(plain, "67890123456789") {
+		t.Fatalf("the pan must reveal the subject tail:\n%s", plain)
+	}
+	for i := 0; i < 600; i++ {
+		m = press(t, m, "l")
+	}
+	if m.indexX != indexMaxScroll {
+		t.Fatalf("index pan must clamp at %d: %d", indexMaxScroll, m.indexX)
+	}
+	for i := 0; i < 600; i++ {
+		m = press(t, m, "h")
+	}
+	if m.indexX != 0 {
+		t.Fatalf("left pan must clamp at 0: %d", m.indexX)
+	}
+	if row := strings.SplitN(stripANSI(m.View()), "\n", 3)[1]; !strings.Contains(row, "01") {
+		t.Fatalf("the un-panned row must show its head:\n%s", row)
+	}
+}
+
+// TestPagerHorizontalPan pins the pager pan: the offset moves in
+// scrollStep cells and clamps at the content width minus the window,
+// and the style boundary follows the offset - the clipped render shows
+// the content tail (the styled cache is truncated to pad(), a moved
+// boundary invalidates it).
+func TestPagerHorizontalPan(t *testing.T) {
+	p := newPager("t1", "a", []core.Line{{Text: "HEAD" + strings.Repeat("x", 196)}})
+	p.setSize(40, 5, Styles{})
+	for i := 0; i < 21; i++ {
+		p.scrollRight() // 168 -> clamped at 160
+	}
+	if p.x != 160 {
+		t.Fatalf("pan must clamp at content minus window: %d", p.x)
+	}
+	if first := strings.SplitN(stripANSI(p.render()), "\n", 2)[0]; len(first) != 40 || strings.Trim(first, "x") != "" {
+		t.Fatalf("the panned line must show the tail at 40 cells: %q", first)
+	}
+	for i := 0; i < 100; i++ {
+		p.scrollLeft()
+	}
+	if p.x != 0 {
+		t.Fatalf("left pan must clamp at 0: %d", p.x)
+	}
+	if first := strings.SplitN(stripANSI(p.render()), "\n", 2)[0]; !strings.HasPrefix(first, "HEAD") {
+		t.Fatalf("the un-panned line must show its head: %q", first)
 	}
 }
 
@@ -4499,18 +4566,18 @@ func TestHeadersTogglePager(t *testing.T) {
 	if out := stripANSI(m.View()); strings.Contains(out, "Content-Type:") {
 		t.Fatalf("the open render must show the summary, not the block:\n%s", out)
 	}
-	m = press(t, m, "h") // toggle the headers on
+	m = press(t, m, "H") // toggle the headers on
 	if len(headersSeen) != 1 || !headersSeen[0] {
-		t.Fatalf("h must re-render with headers=true, seen=%v", headersSeen)
+		t.Fatalf("H must re-render with headers=true, seen=%v", headersSeen)
 	}
 	inject(true) // the reply lands: the full block replaces the summary
 	if out := stripANSI(m.View()); !strings.Contains(out, "Subject: hello") || !strings.Contains(out, "Content-Type:") {
 		t.Fatalf("the header reply must show the full block:\n%s", out)
 	}
-	m = press(t, m, "h") // and back off
+	m = press(t, m, "H") // and back off
 	inject(false)
 	if out := stripANSI(m.View()); strings.Contains(out, "Content-Type:") {
-		t.Fatalf("h must drop the block again:\n%s", out)
+		t.Fatalf("H must drop the block again:\n%s", out)
 	}
 }
 

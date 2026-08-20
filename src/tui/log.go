@@ -6,6 +6,9 @@ package tui
 import (
 	"strconv"
 	"strings"
+	"time"
+
+	"charm.land/lipgloss/v2"
 )
 
 // log.go: the session log. Every surfaced event (send results, lua
@@ -13,10 +16,12 @@ import (
 // single write path - and the status line always shows the last entry.
 // The ~ overlay scrolls the ring like the help dialog.
 
-// logLine is one session log entry: the text and whether it is an
-// error (the error style renders it on the status line).
+// logLine is one session log entry: the text, its wall-clock stamp,
+// and whether it is an error (the error style renders it on the
+// status line).
 type logLine struct {
 	text string
+	at   string
 	err  bool
 }
 
@@ -28,7 +33,7 @@ func (m *Model) logEntry(text string, err bool) {
 	if text == "" {
 		return
 	}
-	m.log = append(m.log, logLine{text: text, err: err})
+	m.log = append(m.log, logLine{text: text, at: time.Now().Format("15:04:05"), err: err})
 	if n := len(m.log) - logCap; n > 0 {
 		m.log = m.log[n:]
 	}
@@ -42,7 +47,8 @@ func (m *Model) logEntry(text string, err bool) {
 // dispatch, so the closing key never fires). The frame is exactly
 // m.height lines, assembled like renderHelp.
 func (m Model) renderLog() string {
-	sig := strconv.Itoa(m.width) + "|" + strconv.Itoa(m.logView.height) + "|" + strconv.Itoa(m.logView.offset) + "|" + strconv.Itoa(m.styleVer)
+	sig := strconv.Itoa(m.width) + "|" + strconv.Itoa(m.logView.height) + "|" + strconv.Itoa(m.logView.offset) + "|" + strconv.Itoa(m.styleVer) +
+		"|" + strconv.Itoa(len(m.log)) + "|" + m.statusMsg
 	return m.logLayer.get(sig, m.logBuild)
 }
 
@@ -59,12 +65,14 @@ func (m Model) logBuild() string {
 	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
 }
 
-// logRows renders the ring as viewport lines, oldest first, each
-// truncated to the terminal width (R11 slot reservation).
+// logRows renders the ring as viewport lines, oldest first: the entry's
+// wall-clock stamp in the log.stamp style, the text truncated to the
+// leftover width (R11 slot reservation - the stamp never shifts the row).
 func (m Model) logRows() []string {
 	rows := make([]string, 0, len(m.log))
 	for _, l := range m.log {
-		rows = append(rows, truncCells(l.text, m.width))
+		stamp := m.styles.LogStamp.Render(l.at + " ")
+		rows = append(rows, stamp+truncCells(l.text, m.width-lipgloss.Width(stamp)))
 	}
 	return rows
 }

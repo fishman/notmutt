@@ -25,6 +25,7 @@ type Styles struct {
 	Account        lipgloss.Style // statusline account pill (R2)
 	Progress       lipgloss.Style
 	Error          lipgloss.Style
+	LogStamp       lipgloss.Style // the session log's wall-clock stamps
 	Tabbar         lipgloss.Style // tab strip bar (inactive tabs, padding)
 	TabActive      lipgloss.Style // tab strip active-tab pill
 	ComposeLabel   lipgloss.Style // compose settings label (the two-column form + the dialogue box)
@@ -219,6 +220,7 @@ func DefaultStyles() Styles {
 		Account:   lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Progress:  lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		Error:     lipgloss.NewStyle().Foreground(c("#e06c75")),
+		LogStamp:  lipgloss.NewStyle().Foreground(c("#e5c07b")),
 		Tabbar:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
 		TabActive: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		// the background must be set - the label cell's width padding
@@ -288,6 +290,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		Account:        to("status.account", normal),
 		Progress:       to("progress", normal),
 		Error:          to("error", normal),
+		LogStamp:       to("log.stamp", normal),
 		Tabbar:         to("tabbar", normal),
 		TabActive:      to("tabbar.active", normal),
 		ComposeLabel:   to("compose.label", normal),

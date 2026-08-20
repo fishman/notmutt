@@ -29,6 +29,12 @@ fuzz`, `make vet`); its default build carries the Lua runtime
 (R8), override with `make build TAGS="cli"` for a Lua-free build or
 the CLI backend.
 
+An optional MCP server (`make build TAGS="lua mcp"`, then `./notmutt
+mcp`) exposes read-only thread metadata to LLM clients - subject,
+author, timestamp, tags, message count, references, never mail
+content. See [docs/usage.md](docs/usage.md) for registration and the
+metadata-only privacy rule.
+
 If notmuch sees your mail, notmutt reads it. Your tags, views, and
 queries stay yours and stay queryable by every other notmuch tool. The
 built-in defaults live in `src/config/base.toml` (search it first);

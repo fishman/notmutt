@@ -174,3 +174,36 @@ dry-run = false
 `notmutt poll --apply` runs one live pass on demand, overriding the
 dry-run config for that run only and leaving the file untouched -
 the review flow: read a dry-run report, then apply.
+
+## MCP server
+
+An optional Model Context Protocol server lets LLM clients query the
+mail index. It is disabled by default: the `mcp` subcommand exists in
+every build, but only the `mcp` + `lua` build tag combination carries
+the server; any other build answers with a not-built-in error.
+
+```sh
+make build TAGS="lua mcp"
+./notmutt mcp
+```
+
+Register it with Claude Code (`claude mcp add`) or any MCP stdio
+client; the server speaks JSON-RPC on stdin/stdout, so nothing else
+may write to stdout while it runs. `tools/list` exposes three read-only
+tools:
+
+- `thread_info(thread_id)` - per-message metadata of one thread
+  (subject, author, timestamp, tags, references, message count)
+- `search(query, limit)` - thread summaries for a notmuch query, one
+  row per thread (subject, author, timestamp, tags); `limit` 1-500,
+  default 50
+- `count(query)` - the thread count of a query
+
+Every tool runs as a fixed Lua chunk in a fresh sandboxed VM with a
+60s per-call deadline; the tool set is an allowlist, so a client can
+never reach anything beyond it.
+
+The privacy rule (never submit mail content to an LLM) is a hard
+boundary of the server: results carry thread metadata only. Bodies,
+attachments, maildir paths, and raw headers are never projected, and
+there is no tool that reads them.

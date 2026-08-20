@@ -400,7 +400,11 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	mark := core.MarkNone
+	// the marks classify the FULL fetch: the thread's tail - the
+	// recent-5 and the last other-side message - carries the tint, not
+	// the opened message (the pager shows one message, the marks keep
+	// their place in the conversation)
+	marks := core.ClassifyMsgs(rpl.Msgs, me)
 	idx := 0
 	if msgID != "" {
 		for i, m := range rpl.Msgs {
@@ -411,7 +415,6 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		}
 	}
 	if len(rpl.Msgs) > 0 {
-		mark = core.ClassifyMsg(rpl.Msgs, idx, me)
 		rpl.Msgs = []core.Message{rpl.Msgs[idx]}
 	}
 	msgID = ""
@@ -436,7 +439,7 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, Mark: mark})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, Marks: marks})
 	// the read mark names the opened message, never the whole thread:
 	// the other messages in the thread keep their unread state
 	if !preview && msgID != "" {

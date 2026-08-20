@@ -270,12 +270,12 @@ type ThreadLoaded struct {
 	// against the message's actual parts, never the requested view.
 	Mime  string
 	Lines []Line
-	// Mark is the opened message's thread-position marker, computed
-	// against the full thread fetch (the pager shows one message, the
-	// mark keeps its place in the conversation - the recent-5 tint or
-	// the prominent other-side one).
-	Mark MsgMark
-	Err  error
+	// Marks is the fetched thread's per-message thread-position marks
+	// (ClassifyMsgs, keyed by message id): the recent-5 tint and the
+	// prominent other-side one - the index tints the marked rows,
+	// wherever they sit in the thread. Never the opened message only.
+	Marks map[string]MsgMark
+	Err   error
 }
 
 // AttachmentLoaded carries the attachment view (the v dialog's

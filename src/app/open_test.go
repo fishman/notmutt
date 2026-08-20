@@ -167,10 +167,11 @@ func TestOpenViewMode(t *testing.T) {
 }
 
 // TestOpenThreadMarkRides pins the mark ride: openThread classifies the
-// opened message against the full thread fetch and ThreadLoaded carries
-// the mark - the recent-5 window, the other-side winner, the sent-tag
-// identity (a mine-sent latest shifts the other-side mark to the
-// previous message), and a message outside the window stays unmarked.
+// full thread fetch - the recent-5 window and the other-side winner -
+// and ThreadLoaded carries the per-message marks keyed by id. The
+// classification is the thread's tail, independent of which message
+// opened. The sent-tag identity shifts the other-side mark to the
+// previous message when the latest is mine.
 func TestOpenThreadMarkRides(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -198,34 +199,44 @@ func TestOpenThreadMarkRides(t *testing.T) {
 			return core.ThreadLoaded{}
 		}
 	}
-	// a: the oldest message, outside the recent-5 and not the latest
-	// other-side -> unmarked
+	check := func(name string, want map[string]core.MsgMark) {
+		t.Helper()
+		tl := loaded()
+		if len(tl.Marks) != len(want) {
+			t.Fatalf("%s: marks = %v, want %v", name, tl.Marks, want)
+		}
+		for id, mark := range want {
+			if tl.Marks[id] != mark {
+				t.Fatalf("%s: marks[%q] = %v, want %v (all: %v)", name, id, tl.Marks[id], mark, tl.Marks)
+			}
+		}
+	}
+	// the marks describe the thread's tail - the top-5 by timestamp
+	// (d..h, the oldest a..c unmarked) and h, the latest other-side -
+	// and never depend on which message opened: the oldest, a recent,
+	// and the latest open all ride the same map
+	tail := map[string]core.MsgMark{
+		"d": core.MarkRecent, "e": core.MarkRecent, "f": core.MarkRecent,
+		"g": core.MarkRecent, "h": core.MarkOther,
+	}
 	openThread(fw, bus, "t1", "a", false, core.RenderPlain, false, 0, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkNone {
-		t.Fatalf("the oldest message must be unmarked, got %v", tl.Mark)
-	}
-	// e: inside the recent-5 window -> recent
+	check("oldest open", tail)
 	openThread(fw, bus, "t1", "e", false, core.RenderPlain, false, 0, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkRecent {
-		t.Fatalf("a recent-window message must be recent, got %v", tl.Mark)
-	}
-	// h: the latest message from the other side -> other
+	check("recent open", tail)
 	openThread(fw, bus, "t1", "h", false, core.RenderPlain, false, 0, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkOther {
-		t.Fatalf("the latest other-side message must be other, got %v", tl.Mark)
-	}
+	check("latest open", tail)
 	// the latest message is mine (sent tag): the other-side mark shifts
-	// to the previous message, mine itself is recent
+	// to the previous message, mine itself stays recent
 	msgs[7].Tags = []string{"sent"}
 	fw.setMsgs(msgs)
+	mine := map[string]core.MsgMark{
+		"d": core.MarkRecent, "e": core.MarkRecent, "f": core.MarkRecent,
+		"g": core.MarkOther, "h": core.MarkRecent,
+	}
 	openThread(fw, bus, "t1", "g", false, core.RenderPlain, false, 0, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkOther {
-		t.Fatalf("the latest non-me message must be other, got %v", tl.Mark)
-	}
+	check("mine latest", mine)
 	openThread(fw, bus, "t1", "h", false, core.RenderPlain, false, 0, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkRecent {
-		t.Fatalf("a sent-tagged latest message must be recent, got %v", tl.Mark)
-	}
+	check("mine latest other open", mine)
 }
 
 // TestOpenThreadTagFailureKeepsOpen pins the failure surface: a failed

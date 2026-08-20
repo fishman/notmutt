@@ -15,11 +15,11 @@ import (
 )
 
 // TestRealThreadClassifies pins the production fetch -> classify path:
-// the real cgo thread fetch fills the fields the pager highlight needs
-// (id, timestamp, author, tags) and ClassifyMsg marks the opened
-// message against the full thread - the recent-5 window, the other
-// side, the sent-tag identity, and an old message staying unmarked.
-// notmuch reports message ids bare (no angle brackets).
+// the real cgo thread fetch fills the fields the index highlight needs
+// (id, timestamp, author, tags) and ClassifyMsgs marks the thread's
+// tail - the recent-5 window, the other side, the sent-tag identity,
+// and the old messages staying unmarked. notmuch reports message ids
+// bare (no angle brackets).
 func TestRealThreadClassifies(t *testing.T) {
 	db, maildir := testutil.ScratchMailbox(t)
 	// one thread of 8 fabricated messages; mine are alpha (the scratch
@@ -69,24 +69,22 @@ func TestRealThreadClassifies(t *testing.T) {
 	if len(msgs) != 8 {
 		t.Fatalf("the thread must fetch 8 messages, got %d", len(msgs))
 	}
-	byID := map[string]int{}
-	for i, m := range msgs {
+	for _, m := range msgs {
 		if m.ID == "" || m.Timestamp == 0 || m.Author == "" {
 			t.Fatalf("the fetch must fill id/timestamp/author: %+v", m)
 		}
-		byID[m.ID] = i
 	}
+	marks := core.ClassifyMsgs(msgs, me)
 	// c0: oldest, outside the recent-5 and not the latest other-side
-	if got := core.ClassifyMsg(msgs, byID["c0@test.invalid"], me); got != core.MarkNone {
-		t.Fatalf("the oldest message must be unmarked, got %v", got)
+	if got := marks["c0@test.invalid"]; got != core.MarkNone {
+		t.Fatalf("the oldest message must be unmarked, got %v (all: %v)", got, marks)
 	}
-	// c4: inside the recent-5 window
-	if got := core.ClassifyMsg(msgs, byID["c4@test.invalid"], me); got != core.MarkRecent {
-		t.Fatalf("a recent-window message must be recent, got %v", got)
+	// c4: inside the recent-5 window; c7: the latest other-side winner
+	if got := marks["c4@test.invalid"]; got != core.MarkRecent {
+		t.Fatalf("a recent-window message must be recent, got %v (all: %v)", got, marks)
 	}
-	// c7: the latest message from the other side
-	if got := core.ClassifyMsg(msgs, byID["c7@test.invalid"], me); got != core.MarkOther {
-		t.Fatalf("the latest other-side message must be other, got %v", got)
+	if got := marks["c7@test.invalid"]; got != core.MarkOther {
+		t.Fatalf("the latest other-side message must be other, got %v (all: %v)", got, marks)
 	}
 	// tag c7 sent: it becomes mine, the other-side mark shifts to c6
 	for i := range msgs {
@@ -94,10 +92,11 @@ func TestRealThreadClassifies(t *testing.T) {
 			msgs[i].Tags = append(msgs[i].Tags, "sent")
 		}
 	}
-	if got := core.ClassifyMsg(msgs, byID["c6@test.invalid"], me); got != core.MarkOther {
-		t.Fatalf("with the latest mine, the previous message must be other, got %v", got)
+	marks = core.ClassifyMsgs(msgs, me)
+	if got := marks["c6@test.invalid"]; got != core.MarkOther {
+		t.Fatalf("with the latest mine, the previous message must be other, got %v (all: %v)", got, marks)
 	}
-	if got := core.ClassifyMsg(msgs, byID["c7@test.invalid"], me); got != core.MarkRecent {
-		t.Fatalf("a sent-tagged latest message must be recent, got %v", got)
+	if got := marks["c7@test.invalid"]; got != core.MarkRecent {
+		t.Fatalf("a sent-tagged latest message must be recent, got %v (all: %v)", got, marks)
 	}
 }

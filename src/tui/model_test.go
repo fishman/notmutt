@@ -1266,13 +1266,13 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 }
 
 // TestPagerMarkThreadLoaded pins the mark contract: the ThreadLoaded
-// reply carries the opened message's thread-position mark, and the
-// highlight lands on the message's SUBJECT run and tree indicator in
-// the index (the recent-5 and last-other-side tints) - never the
-// pager text and never the whole row. The body keeps its own style in
-// the pager (the plaintext highlighting regression), and q-return
-// shows the tinted subject in the list; an unmarked reply (MarkNone)
-// tints nothing.
+// reply carries the fetched thread's per-message marks (keyed by id),
+// and the highlight lands on the MARKED message's subject run and tree
+// indicator in the index - the recent-5 and last-other-side tints,
+// wherever the marked message sits, never the opened one and never the
+// pager text. The body keeps its own style in the pager (the
+// plaintext highlighting regression), and q-return shows the tinted
+// subject in the list; an unmarked reply tints nothing.
 func TestPagerMarkThreadLoaded(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1286,8 +1286,12 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 		cfg := config.Default()
 		styles := ResolveStyles(cfg.Theme, cfg.Palette)
 		view := core.NewView("inbox", "tag:inbox")
+		// the opened message (a, the thread root) is the OLD one; the
+		// mark rides on the thread's most recent message (b) - the tint
+		// must follow the mark, not the open
 		view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 			{ID: "a", Subject: "hello", Timestamp: 100, Tags: []string{"inbox"}},
+			{ID: "b", Subject: "latest", Timestamp: 200, Tags: []string{"inbox"}},
 		})})
 		st := config.NewStore(cfg)
 		m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
@@ -1296,7 +1300,7 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 			next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 				ThreadID: threadID,
 				MsgID:    msgID,
-				Mark:     tc.mark,
+				Marks:    map[string]core.MsgMark{"b": tc.mark},
 				Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 			}})
 			m = next
@@ -1309,13 +1313,26 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 			t.Fatalf("%s: the pager must keep the body's own style:\n%s", tc.name, out)
 		}
 		m = press(t, m, "q")
-		out := m.View()
-		if tc.want == "" {
-			if strings.Contains(out, "198;120;221") || strings.Contains(out, "86;182;194") {
-				t.Fatalf("%s: an unmarked message must not tint the index:\n%s", tc.name, out)
+		var opened, tail string
+		for _, l := range strings.Split(m.View(), "\n") {
+			if strings.Contains(stripANSI(l), "latest") {
+				tail = l
 			}
-		} else if !strings.Contains(out, tc.want) {
-			t.Fatalf("%s: the marked message must carry the %v tint:\n%s", tc.name, tc.mark, out)
+			if strings.Contains(stripANSI(l), "hello") {
+				opened = l
+			}
+		}
+		if tc.want == "" {
+			if strings.Contains(m.View(), "198;120;221") || strings.Contains(m.View(), "86;182;194") {
+				t.Fatalf("%s: an unmarked thread must not tint the index:\n%s", tc.name, m.View())
+			}
+		} else {
+			if !strings.Contains(tail, tc.want) {
+				t.Fatalf("%s: the thread's most recent message must carry the %v tint:\n%s", tc.name, tc.mark, tail)
+			}
+			if strings.Contains(opened, tc.want) {
+				t.Fatalf("%s: the opened message's row must not tint (the mark owns the row):\n%s", tc.name, opened)
+			}
 		}
 	}
 }

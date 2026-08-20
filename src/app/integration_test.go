@@ -78,14 +78,15 @@ func TestRealOpenThreadMarks(t *testing.T) {
 			}
 		}
 	}
-	// the latest message from the other side -> MarkOther
+	// the marks classify the thread's tail, keyed by message id: the
+	// latest other-side message carries MarkOther, the oldest stays
+	// unmarked - the same map whichever message opened
 	openThread(worker, bus, found[0].ThreadID, "c7@test.invalid", false, core.RenderPlain, false, 80, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkOther {
-		t.Fatalf("the latest other-side message must carry MarkOther, got %v", tl.Mark)
+	if tl := loaded(); tl.Marks["c7@test.invalid"] != core.MarkOther {
+		t.Fatalf("the latest other-side message must carry MarkOther, got %v", tl.Marks)
 	}
-	// the oldest message -> unmarked
 	openThread(worker, bus, found[0].ThreadID, "c0@test.invalid", false, core.RenderPlain, false, 80, false, nil, me)
-	if tl := loaded(); tl.Mark != core.MarkNone {
-		t.Fatalf("the oldest message must stay unmarked, got %v", tl.Mark)
+	if tl := loaded(); tl.Marks["c0@test.invalid"] != core.MarkNone {
+		t.Fatalf("the oldest message must stay unmarked, got %v", tl.Marks)
 	}
 }

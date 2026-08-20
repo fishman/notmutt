@@ -94,6 +94,7 @@ func Run() error {
 	}
 
 	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
+	view.SetThreaded(cfg.Views[cfg.ActiveView].Threads)
 	refresher := newRefresher(bus, worker, view, 0)
 
 	// views is the view registry: name -> view. The search tabs (the
@@ -124,6 +125,9 @@ func Run() error {
 		v.SetGroups(groups)
 		v.SetWindowBudget(b.MaxRows)
 		v.SetMe(me)
+		// search results are flat: a raw query lists messages, never a
+		// conversation tree
+		v.SetThreaded(false)
 		views[v.ViewName()] = v
 		go runSearchQuery(worker, bus, v)
 	})

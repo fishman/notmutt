@@ -54,7 +54,7 @@ func TestDebugTreeCheck(t *testing.T) {
 	}
 	defer b.Close(context.Background())
 	var tid string
-	if err := b.Query(context.Background(), "tag:inbox", 1, func(chunk []core.Message) bool {
+	if err := b.Query(context.Background(), "tag:inbox", 1, false, func(chunk []core.Message) bool {
 		if len(chunk) > 0 {
 			tid = chunk[0].ThreadID
 		}

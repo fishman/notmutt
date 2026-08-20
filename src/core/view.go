@@ -59,6 +59,12 @@ type View struct {
 	// account from fields): the sent-tag or address "me" detection in
 	// ClassifyRows. Zero = sent-tag identity only.
 	me []string
+	// threaded is the view's thread mode (the [view] threads config):
+	// threaded views (inbox, archive) render thread trees and hide
+	// deleted leaves; flat views (unread, deleted, search) are plain
+	// chronological message lists - one row per matched message, no
+	// tree. NewView defaults to threaded.
+	threaded bool
 }
 
 // SetMe sets the identity set for the thread-tail marks (the account
@@ -81,7 +87,26 @@ func (v *View) SetWindowBudget(winRows int) {
 }
 
 func NewView(name, query string) *View {
-	return &View{Name: name, Query: query, staged: map[string][]TagOp{}}
+	return &View{Name: name, Query: query, staged: map[string][]TagOp{}, threaded: true}
+}
+
+// SetThreaded sets the view's thread mode (the [view] threads config):
+// threaded views render trees and hide deleted leaves, flat views
+// (unread, deleted, search) are plain message lists.
+func (v *View) SetThreaded(on bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.threaded = on
+	v.dirty = true
+}
+
+// ViewFlat reports the flat mode: the refresher picks the
+// message-level walk, the per-message prune, and the per-message
+// refresh merge on it.
+func (v *View) ViewFlat() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return !v.threaded
 }
 
 // ViewName and ViewQuery are the locked identity reads: the refresher's
@@ -187,7 +212,7 @@ func (v *View) Rows() []Row {
 func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
-		full := flattenThread(t, t.Collapsed)
+		full := flattenThread(t, t.Collapsed, v.threaded)
 		// the thread-tail marks: only a windowed thread marks - one with
 		// rows hidden above or below (the "+N more" ghosts). The marks
 		// classify the FULL tree and ride the rows through the window,
@@ -318,12 +343,13 @@ func (v *View) Filter() string {
 // unread message in the thread, or the newest message when nothing is
 // unread (the row keeps the root's tree position; the subject tells
 // what still needs reading). Nil for a thread without messages - the
-// ghost root renders the stub.
-func collapseMsg(root *Node) *Message {
+// ghost root renders the stub. skipDeleted excludes deleted messages
+// (the threaded views' rule - the flat views never collapse).
+func collapseMsg(root *Node, skipDeleted bool) *Message {
 	var last, unread *Message
 	var walk func(*Node)
 	walk = func(n *Node) {
-		if n.Msg != nil {
+		if n.Msg != nil && (!skipDeleted || !slices.Contains(n.Msg.Tags, "deleted")) {
 			if last == nil || n.Msg.Timestamp > last.Timestamp {
 				last = n.Msg
 			}
@@ -342,14 +368,20 @@ func collapseMsg(root *Node) *Message {
 	return last
 }
 
-func flattenThread(t *Thread, collapsed bool) []Row {
+// flattenThread flattens one thread's tree into index rows. The
+// skipDeleted rule applies AFTER the tree is built over the thread's
+// full message set (the user's rule: fetch everything first, filter
+// after): a deleted message with children keeps its row - the
+// subtree hangs under it and removing it would break the hierarchy -
+// only a deleted LEAF vanishes from the threaded view.
+func flattenThread(t *Thread, collapsed, skipDeleted bool) []Row {
 	var rows []Row
 	if t.Root == nil {
 		return rows
 	}
 	count := t.Count()
 	if collapsed {
-		rows = append(rows, Row{Msg: collapseMsg(t.Root), ThreadID: t.ID, Count: count, Collapsed: true})
+		rows = append(rows, Row{Msg: collapseMsg(t.Root, skipDeleted), ThreadID: t.ID, Count: count, Collapsed: true})
 		return rows
 	}
 	child := func(siblings []bool, last bool) []bool {
@@ -370,6 +402,9 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 			for i, c := range node.Children {
 				walk(c, depth+1, child(siblings, i == len(node.Children)-1))
 			}
+			return
+		}
+		if skipDeleted && slices.Contains(node.Msg.Tags, "deleted") && len(node.Children) == 0 {
 			return
 		}
 		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
@@ -591,7 +626,7 @@ func (v *View) SlideWindow(threadID string, step int) bool {
 		if t.ID != threadID {
 			continue
 		}
-		full := flattenThread(t, t.Collapsed)
+		full := flattenThread(t, t.Collapsed, v.threaded)
 		if len(full) <= v.winRows {
 			return false
 		}
@@ -770,7 +805,7 @@ func (v *View) ToggleCollapsed(id string) error {
 			if t.Collapsed {
 				// the anchor must name the row that survives the collapse:
 				// the summary shows collapseMsg, not the root
-				if m := collapseMsg(t.Root); m != nil {
+				if m := collapseMsg(t.Root, v.threaded); m != nil {
 					v.cursorID = m.ID
 				}
 			} else {

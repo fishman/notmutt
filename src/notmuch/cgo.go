@@ -69,9 +69,51 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 // (ThreadsWalk) intact; this path consumes the full walk. Chunk
 // cadence: firstChunk then steadyChunk. limit counts threads, like
 // `notmuch search --limit`.
-func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
+//
+// flat switches to the message-level walk (the flat views: unread,
+// deleted, search): the msg_walk keeps its messages iterator alive in
+// C, so the boundary crossings stay per-chunk - the flat fill walks a
+// 10k-message list without the per-message iterator overhead.
+func (b *CGOBackend) Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch search: database not open")
+	}
+	if flat {
+		w, err := b.db.NewMsgWalk(query, limit)
+		if err != nil {
+			return fmt.Errorf("notmuch search: %w", err)
+		}
+		defer w.Close()
+		size := firstChunk
+		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			msgs, done, err := w.Next(size)
+			if err != nil {
+				return fmt.Errorf("notmuch search: %w", err)
+			}
+			if done {
+				return nil
+			}
+			rows := make([]core.Message, 0, len(msgs))
+			for _, m := range msgs {
+				rows = append(rows, core.Message{
+					ID:         m.ID,
+					ThreadID:   m.ThreadID,
+					Timestamp:  m.Timestamp,
+					Author:     m.Author,
+					Subject:    core.DecodeSubject(m.Subject),
+					Tags:       m.Tags,
+					Paths:      m.Paths,
+					References: refsSplit(m.References),
+				})
+			}
+			if emit != nil && !emit(rows) {
+				return nil
+			}
+			size = steadyChunk
+		}
 	}
 	w, err := b.db.NewFullWalk(query, limit)
 	if err != nil {
@@ -132,6 +174,21 @@ func refsSplit(raw string) []string {
 		refs = append(refs, strings.Trim(f, "<>"))
 	}
 	return refs
+}
+
+// CountMsgs returns the message count for the query - the flat fill's
+// progress total (the threaded fill counts threads).
+func (b *CGOBackend) CountMsgs(ctx context.Context, query string) (int, error) {
+	if b.db == nil {
+		return 0, fmt.Errorf("notmuch count: database not open")
+	}
+	q := b.db.NewQuery(query)
+	defer q.Close()
+	n, err := q.CountMessages()
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: %w", err)
+	}
+	return int(n), nil
 }
 
 func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {

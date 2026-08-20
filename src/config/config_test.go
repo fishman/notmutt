@@ -123,6 +123,12 @@ threads = true
 	if cfg.Views["inbox"].Query != "tag:inbox" || !cfg.Views["inbox"].Threads {
 		t.Fatalf("view parse wrong: %+v", cfg.Views["inbox"])
 	}
+	// only inbox/archive thread by default; the rest are flat lists
+	for name, flat := range map[string]bool{"inbox": false, "archive": false, "unread": true, "deleted": true, "pending": true, "sent": true, "spam": true, "draft": true} {
+		if cfg.Views[name].Threads == flat {
+			t.Fatalf("view %s threads = %v (want %v)", name, cfg.Views[name].Threads, !flat)
+		}
+	}
 }
 
 // TestLoadPagerThreadMarkStyles pins the pager thread-position styles:

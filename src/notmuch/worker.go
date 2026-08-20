@@ -41,10 +41,14 @@ type Action struct {
 	Query    string
 	ThreadID string
 	Limit    int
-	Emit     func([]core.Message) bool // ActQuery/ActQueryMsgs only: the consumer collects chunks as the backend walks
-	TagOps   []TagOp
-	Paths    []string // ActSnapshots: the message ids; ActAddPaths/ActRemovePaths: the files
-	replyCh  chan Reply
+	// Flat marks the message-level walk (the flat views: unread,
+	// deleted, search): one row per matched message for ActQuery, the
+	// message count for ActCount.
+	Flat    bool
+	Emit    func([]core.Message) bool // ActQuery/ActQueryMsgs only: the consumer collects chunks as the backend walks
+	TagOps  []TagOp
+	Paths   []string // ActSnapshots: the message ids; ActAddPaths/ActRemovePaths: the files
+	replyCh chan Reply
 }
 
 type Reply struct {
@@ -126,11 +130,15 @@ func (w *Worker) handle(a Action) {
 	case ActOpen:
 		err = w.backend.Open(ctx, a.Query)
 	case ActQuery:
-		err = w.backend.Query(ctx, a.Query, a.Limit, a.Emit)
+		err = w.backend.Query(ctx, a.Query, a.Limit, a.Flat, a.Emit)
 	case ActQueryMsgs:
 		err = w.backend.QueryMsgs(ctx, a.Query, a.Emit)
 	case ActCount:
-		r.Count, err = w.backend.Count(ctx, a.Query)
+		if a.Flat {
+			r.Count, err = w.backend.CountMsgs(ctx, a.Query)
+		} else {
+			r.Count, err = w.backend.Count(ctx, a.Query)
+		}
 	case ActThread:
 		r.Msgs, err = w.backend.Thread(ctx, a.ThreadID)
 	case ActSnapshots:

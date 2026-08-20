@@ -52,7 +52,45 @@ type searchItem struct {
 // emit returning false stops the walk early; nil emit collects
 // nothing. The refresh cycle groups by ThreadID, so the stub's ID
 // stays empty - per-message data comes from Thread, on open only.
-func (b *CLIBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
+func (b *CLIBackend) Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error {
+	// The flat views' shape under the escape hatch: one bare id per
+	// matched message (--output=messages). The summary data needs show
+	// (file opens) - degraded by design; the cgo backend serves full
+	// rows.
+	if flat {
+		args := []string{"search", "--format=json", "--output=messages"}
+		if limit > 0 {
+			args = append(args, "--limit="+strconv.Itoa(limit))
+		}
+		args = append(args, query)
+		out, err := b.run(ctx, "notmuch", args)
+		if err != nil {
+			return fmt.Errorf("notmuch search: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		var ids []string
+		if err := json.Unmarshal(out, &ids); err != nil {
+			return fmt.Errorf("notmuch search: parse: %w", err)
+		}
+		if emit == nil {
+			return nil
+		}
+		i := 0
+		size := firstChunk
+		for i < len(ids) {
+			hi := min(i+size, len(ids))
+			msgs := make([]core.Message, 0, hi-i)
+			for _, id := range ids[i:hi] {
+				id = strings.TrimPrefix(id, "id:")
+				msgs = append(msgs, core.Message{ID: id, ThreadID: id})
+			}
+			if !emit(msgs) {
+				return nil
+			}
+			i = hi
+			size = steadyChunk
+		}
+		return nil
+	}
 	args := []string{"search", "--format=json", "--sort=newest-first"}
 	if limit > 0 {
 		args = append(args, "--limit="+strconv.Itoa(limit))
@@ -84,6 +122,21 @@ func (b *CLIBackend) Query(ctx context.Context, query string, limit int, emit fu
 		size = steadyChunk
 	}
 	return nil
+}
+
+// CountMsgs returns the message count for the query - the flat fill's
+// progress total.
+func (b *CLIBackend) CountMsgs(ctx context.Context, query string) (int, error) {
+	args := []string{"count", "--output=messages", query}
+	out, err := b.run(ctx, "notmuch", args)
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: %w: %s", err, strings.TrimSpace(string(out)))
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("notmuch count: parse: %w", err)
+	}
+	return n, nil
 }
 
 // QueryMsgs walks a message-level query (the filter engine's delta

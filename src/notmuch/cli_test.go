@@ -35,7 +35,7 @@ func TestCLIQuery(t *testing.T) {
 		return []byte(searchJSON), nil
 	})
 	var msgs []core.Message
-	if err := b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
+	if err := b.Query(context.Background(), "tag:inbox", 10, false, func(chunk []core.Message) bool {
 		msgs = append(msgs, chunk...)
 		return true
 	}); err != nil {
@@ -63,7 +63,7 @@ func TestCLIQueryNoLimit(t *testing.T) {
 		got = args
 		return []byte(searchJSON), nil
 	})
-	if err := b.Query(context.Background(), "tag:inbox", 0, nil); err != nil {
+	if err := b.Query(context.Background(), "tag:inbox", 0, false, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"search", "--format=json", "--sort=newest-first", "tag:inbox"}
@@ -96,7 +96,7 @@ func TestCLIQueryChunks(t *testing.T) {
 		return []byte(searchItemsJSON(5150)), nil
 	})
 	var sizes []int
-	if err := b.Query(context.Background(), "tag:inbox", 0, func(chunk []core.Message) bool {
+	if err := b.Query(context.Background(), "tag:inbox", 0, false, func(chunk []core.Message) bool {
 		sizes = append(sizes, len(chunk))
 		return true
 	}); err != nil {
@@ -119,7 +119,7 @@ func TestCLIQueryStopEarly(t *testing.T) {
 		return []byte(searchItemsJSON(500)), nil
 	})
 	emits := 0
-	if err := b.Query(context.Background(), "tag:inbox", 0, func(chunk []core.Message) bool {
+	if err := b.Query(context.Background(), "tag:inbox", 0, false, func(chunk []core.Message) bool {
 		emits++
 		return false
 	}); err != nil {
@@ -236,7 +236,7 @@ func TestCLIQueryError(t *testing.T) {
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
 		return []byte("notmuch error: something"), errors.New("exit status 1")
 	})
-	if err := b.Query(context.Background(), "tag:inbox", 10, nil); err == nil {
+	if err := b.Query(context.Background(), "tag:inbox", 10, false, nil); err == nil {
 		t.Fatal("expected error")
 	}
 }

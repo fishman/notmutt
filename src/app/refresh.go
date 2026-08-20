@@ -71,7 +71,7 @@ func (r *refresher) cycle() {
 	// index data), the same shape from both backends. No show in the
 	// refresh path - content loads only on open (R13); a hydrated
 	// thread re-fetches below (R3 supersedes R13 there).
-	page := groupThreads(msgs)
+	page := groupThreads(msgs, r.view.ViewFlat())
 	sortThreads(page)
 	if len(page) > 0 {
 		kept, err := r.prune(page)
@@ -88,9 +88,12 @@ func (r *refresher) cycle() {
 		// (R3 diff-and-insert - the stub guard in MergeThreads kept the
 		// old tree until here). A fetch failure keeps rPrev stale like
 		// the prune failure: the consumed lastmod would lose the new
-		// messages, and the next cycle retries the same range.
+		// messages, and the next cycle retries the same range. Flat
+		// views skip the re-fetch entirely: a synthetic thread IS its
+		// message, and re-fetching `thread:<msgid>` would merge the
+		// whole conversation back into the flat list.
 		for i, t := range kept {
-			if !r.view.Hydrated(t.ID) {
+			if r.view.ViewFlat() || !r.view.Hydrated(t.ID) {
 				continue
 			}
 			ft, err := r.fetchThread(t.ID)
@@ -134,6 +137,11 @@ func (r *refresher) prune(changed []*core.Thread) ([]*core.Thread, error) {
 	if len(changed) == 0 {
 		return changed, nil
 	}
+	// the flat prune is a message-level intersect: membership is decided
+	// per MESSAGE id (the flat changed set names messages, and a read
+	// sibling must not drag its conversation back in), the threaded
+	// prune per thread id.
+	flat := r.view.ViewFlat()
 	alive := make(map[string]bool, len(changed))
 	for lo := 0; lo < len(changed); lo += pruneChunk {
 		hi := min(lo+pruneChunk, len(changed))
@@ -145,16 +153,25 @@ func (r *refresher) prune(changed []*core.Thread) ([]*core.Thread, error) {
 			if i > lo {
 				q.WriteString(" or ")
 			}
-			q.WriteString("thread:")
+			if flat {
+				q.WriteString("id:")
+			} else {
+				q.WriteString("thread:")
+			}
 			q.WriteString(changed[i].ID)
 		}
 		q.WriteByte(')')
 		rpl, err := r.worker.Call(notmuch.Action{
 			Kind:  notmuch.ActQuery,
 			Query: q.String(),
+			Flat:  flat,
 			Emit: func(chunk []core.Message) bool {
 				for i := range chunk {
-					alive[chunk[i].ThreadID] = true
+					if flat {
+						alive[chunk[i].ID] = true
+					} else {
+						alive[chunk[i].ThreadID] = true
+					}
 				}
 				return true
 			},
@@ -211,6 +228,7 @@ func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
 		return
 	}
 	r.view.SetIdentity(name, v.Query)
+	r.view.SetThreaded(v.Threads)
 	r.view.Reset()
 	r.fullReload()
 }
@@ -245,6 +263,7 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 	rpl, err := r.worker.Call(notmuch.Action{
 		Kind:  notmuch.ActQuery,
 		Query: fmt.Sprintf("lastmod:%d..%d", prev, cur),
+		Flat:  r.view.ViewFlat(),
 		Emit: func(chunk []core.Message) bool {
 			msgs = append(msgs, chunk...)
 			return true
@@ -288,16 +307,17 @@ const firstLoadRows = 100
 // so the refresher state it touches is race-free. The cursor survives
 // via the merge walk.
 func (r *refresher) fullReload() {
+	flat := r.view.ViewFlat()
 	total := 0
-	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query}); err == nil && rpl.Err == nil {
+	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: r.view.Query, Flat: flat}); err == nil && rpl.Err == nil {
 		total = rpl.Count
 	}
 	var snapshot []*core.Thread
 	// phase 1: the fast pre-query paints the first rows immediately.
 	// Failure degrades to the walk alone - the first paint just stays
 	// empty for another second.
-	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: firstLoadRows, Emit: func(msgs []core.Message) bool {
-		snapshot = groupThreads(msgs)
+	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: firstLoadRows, Flat: flat, Emit: func(msgs []core.Message) bool {
+		snapshot = groupThreads(msgs, flat)
 		sortThreads(snapshot)
 		if len(snapshot) > 0 {
 			r.snapshot = snapshot
@@ -332,9 +352,10 @@ func (r *refresher) fullReload() {
 // share this shape.
 func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job string, onChunk func(snapshot []*core.Thread, done int)) {
 	var snapshot []*core.Thread
+	flat := view.ViewFlat()
 	done := 0
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: view.Query, Emit: func(msgs []core.Message) bool {
-		page := groupThreads(msgs)
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: view.Query, Flat: flat, Emit: func(msgs []core.Message) bool {
+		page := groupThreads(msgs, flat)
 		sortThreads(page)
 		snapshot = mergeSorted(snapshot, page)
 		done += len(page)
@@ -363,7 +384,7 @@ func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job 
 // name is the query, so the events key per tab.
 func runSearchQuery(worker workerAPI, bus *core.Bus, view *core.View) {
 	total := 0
-	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: view.Query}); err == nil && rpl.Err == nil {
+	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: view.Query, Flat: view.ViewFlat()}); err == nil && rpl.Err == nil {
 		total = rpl.Count
 	}
 	mergeWalk(worker, bus, view, total, "search", func(snapshot []*core.Thread, done int) {
@@ -395,7 +416,20 @@ func mergeInto(bus *core.Bus, view *core.View, snapshot []*core.Thread) {
 
 // groupThreads groups a page into one thread per thread id: the full
 // walk emits per-message rows, so each group becomes a thread tree.
-func groupThreads(msgs []core.Message) []*core.Thread {
+// The flat views (unread, deleted, search) get one SYNTHETIC thread
+// per message - keyed by the message id - so the list stays a plain
+// chronological message list: every row is its own thread, merges
+// reconcile per message, and the tree machinery never builds a
+// hierarchy (the message keeps its real thread id in Msg.ThreadID, so
+// open still finds the conversation).
+func groupThreads(msgs []core.Message, flat bool) []*core.Thread {
+	if flat {
+		threads := make([]*core.Thread, 0, len(msgs))
+		for i := range msgs {
+			threads = append(threads, core.NewThread(msgs[i].ID, []*core.Message{&msgs[i]}))
+		}
+		return threads
+	}
 	byID := map[string][]*core.Message{}
 	for i := range msgs {
 		id := msgs[i].ThreadID

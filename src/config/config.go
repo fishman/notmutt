@@ -1042,7 +1042,8 @@ func deriveAccountViews(cfg *Config) {
 		i++
 		tag := cfg.Accounts[name].Tag(name)
 		if _, ok := cfg.Views[tag]; !ok {
-			cfg.Views[tag] = View{Query: "tag:" + tag, Threads: true}
+			// per-account views are flat: only inbox/archive thread
+			cfg.Views[tag] = View{Query: "tag:" + tag}
 		}
 		key := fmt.Sprintf("g %d", i)
 		if _, ok := index[key]; !ok {
@@ -1129,14 +1130,16 @@ func Default() Config {
 				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-",
 			},
 		},
+		// only inbox/archive are threaded (the rest are flat
+		// chronological lists: unread, deleted, search)
 		Views: map[string]View{
 			"inbox":   {Query: "tag:inbox", Threads: true},
-			"unread":  {Query: "tag:unread", Threads: true},
-			"pending": {Query: "tag:pending", Threads: true},
-			"sent":    {Query: "tag:sent", Threads: true},
-			"spam":    {Query: "tag:spam", Threads: true},
-			"deleted": {Query: "tag:deleted", Threads: true},
-			"draft":   {Query: "tag:draft", Threads: true},
+			"unread":  {Query: "tag:unread"},
+			"pending": {Query: "tag:pending"},
+			"sent":    {Query: "tag:sent"},
+			"spam":    {Query: "tag:spam"},
+			"deleted": {Query: "tag:deleted"},
+			"draft":   {Query: "tag:draft"},
 			"archive": {Query: "tag:archive", Threads: true},
 		},
 		Index: IndexSection{

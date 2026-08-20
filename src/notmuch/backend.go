@@ -60,7 +60,15 @@ const (
 type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error
-	Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error
+	// Query walks the query result: flat=false walks the matched
+	// THREADS (threaded views - inbox, archive), flat=true walks the
+	// matched MESSAGES (the flat views: unread, deleted, search - one
+	// row per match, no thread drag). The rows carry ThreadID either
+	// way. limit stops the walk after N threads / N messages.
+	Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error
+	// CountMsgs returns the number of MESSAGES matching the query -
+	// the flat fill's progress total (Count counts threads).
+	CountMsgs(ctx context.Context, query string) (int, error)
 	// QueryMsgs walks a message-level query (the filter engine's delta
 	// scans - lastmod ranges): bare message ids (no "id:" prefix; the
 	// engine prefixes when it builds query terms), chunked like Query.

@@ -50,7 +50,7 @@ func TestRealThreadClassifies(t *testing.T) {
 	}
 	defer b.Close(context.Background())
 	threadID := ""
-	err := b.Query(context.Background(), "subject:classify thread", 10, func(chunk []core.Message) bool {
+	err := b.Query(context.Background(), "subject:classify thread", 10, false, func(chunk []core.Message) bool {
 		if len(chunk) > 0 {
 			threadID = chunk[0].ThreadID
 		}

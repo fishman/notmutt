@@ -46,7 +46,7 @@ func TestBench(t *testing.T) {
 
 	collect := func(b Backend, q string, limit int) (int, error) {
 		n := 0
-		err := b.Query(ctx, q, limit, func(chunk []core.Message) bool {
+		err := b.Query(ctx, q, limit, false, func(chunk []core.Message) bool {
 			n += len(chunk)
 			return true
 		})
@@ -77,7 +77,7 @@ func TestBench(t *testing.T) {
 func firstThreadID(t *testing.T, ctx context.Context, b Backend) string {
 	t.Helper()
 	var msgs []core.Message
-	if err := b.Query(ctx, "tag:inbox", 1, func(chunk []core.Message) bool {
+	if err := b.Query(ctx, "tag:inbox", 1, false, func(chunk []core.Message) bool {
 		msgs = append(msgs, chunk...)
 		return true
 	}); err != nil || len(msgs) == 0 {

@@ -97,7 +97,7 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		// (thread:... or ...)"). They match on the tag: terms,
 		// mirroring notmuch for the tag-only subset. Plain refresh
 		// queries pass through unfiltered.
-		if strings.Contains(a.Query, " and id:\"") || strings.Contains(a.Query, " and thread:") || strings.Contains(a.Query, " and (thread:") {
+		if strings.Contains(a.Query, " and id:") || strings.Contains(a.Query, " and (id:") || strings.Contains(a.Query, " and thread:") || strings.Contains(a.Query, " and (thread:") {
 			msgs = matchTagQuery(msgs, a.Query)
 		}
 		if a.Limit > 0 && len(msgs) > a.Limit {
@@ -147,8 +147,8 @@ func matchTagQuery(msgs []core.Message, q string) []core.Message {
 		switch {
 		case strings.HasPrefix(tok, "tag:"):
 			terms = append(terms, strings.TrimPrefix(tok, "tag:"))
-		case strings.HasPrefix(tok, "id:\""):
-			want[strings.TrimSuffix(strings.TrimPrefix(tok, "id:\""), "\"")] = true
+		case strings.HasPrefix(tok, "id:"):
+			want[strings.Trim(tok[3:], "\"")] = true
 		case strings.HasPrefix(tok, "thread:"):
 			want["t:"+strings.TrimPrefix(tok, "thread:")] = true
 		}
@@ -762,4 +762,57 @@ func TestRunSearchQuery(t *testing.T) {
 	if !progress {
 		t.Fatal("the fill must publish progress before the diff")
 	}
+}
+
+// TestFlatRefresh pins the flat-view refresh: unread is a
+// chronological message list - one row per matched message, no thread
+// drag. A cycle whose changed set names ONE message of a conversation
+// must keep the other's synthetic thread: the prune decides
+// membership per message id, so a read sibling never drags its
+// conversation back in.
+func TestFlatRefresh(t *testing.T) {
+	bus := core.NewBus()
+	w := &fakeWorker{}
+	view := core.NewView("unread", "tag:unread")
+	view.SetThreaded(false)
+	r := newRefresher(bus, w, view, 0)
+	// two messages of the same conversation, both unread
+	w.set("uuid", 10)
+	w.setMsgs([]core.Message{
+		{ID: "a@example.com", ThreadID: "conv1", Timestamp: 1, Tags: []string{"unread"}},
+		{ID: "b@example.com", ThreadID: "conv1", Timestamp: 2, Tags: []string{"unread"}},
+	})
+	r.cycle()
+	rows := view.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("flat view rows = %d (want 2, one per message)", len(rows))
+	}
+	for _, row := range rows {
+		if row.Msg == nil || !slices.Contains(row.Msg.Tags, "unread") {
+			t.Fatalf("flat row must be its own message: %+v", row)
+		}
+	}
+	// b read: the toggle bumps BOTH messages' lastmod, so the changed
+	// set names both; the prune answers membership per message and
+	// drops b - a read sibling never drags its conversation back in
+	w.set("uuid", 20)
+	w.setMsgs([]core.Message{
+		{ID: "a@example.com", ThreadID: "conv1", Timestamp: 1, Tags: []string{"unread"}},
+		{ID: "b@example.com", ThreadID: "conv1", Timestamp: 2, Tags: []string{"read"}},
+	})
+	r.cycle()
+	rows = view.Rows()
+	if len(rows) != 1 || rows[0].Msg == nil || rows[0].Msg.ID != "a@example.com" {
+		t.Fatalf("after read: rows = %v (want just a)", rowIDs(rows))
+	}
+}
+
+func rowIDs(rows []core.Row) []string {
+	var ids []string
+	for _, r := range rows {
+		if r.Msg != nil {
+			ids = append(ids, r.Msg.ID)
+		}
+	}
+	return ids
 }

@@ -14,6 +14,43 @@ func msg(id string, ts int64, refs ...string) *Message {
 	return &Message{ID: id, Timestamp: ts, References: refs}
 }
 
+// TestFlattenSkipsDeletedLeaves pins the threaded-view rule: a
+// deleted message vanishes only when it has no response (a deleted
+// leaf); a deleted message with children keeps its row so the
+// subtree stays attached. The flat mode skips nothing.
+func TestFlattenSkipsDeletedLeaves(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	root := msg("a", 1)
+	delLeaf := msg("b", 2)
+	delLeaf.Tags = []string{"deleted"}
+	delParent := msg("c", 3, "a")
+	delParent.Tags = []string{"deleted"}
+	reply := msg("d", 4, "c")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{root, delLeaf, delParent, reply})})
+	rowIDs := func() []string {
+		var ids []string
+		for _, r := range v.Rows() {
+			if r.Msg != nil {
+				ids = append(ids, r.Msg.ID)
+			}
+		}
+		return ids
+	}
+	if got := rowIDs(); !slices.Equal(got, []string{"a", "c", "d"}) {
+		t.Fatalf("threaded rows = %v (want a c d: del leaf hidden, del parent with reply kept)", got)
+	}
+	v.SetThreaded(false)
+	if got := rowIDs(); !slices.Equal(sorted(got), []string{"a", "b", "c", "d"}) {
+		t.Fatalf("flat rows = %v (want all four)", got)
+	}
+}
+
+func sorted(ids []string) []string {
+	out := append([]string(nil), ids...)
+	slices.Sort(out)
+	return out
+}
+
 func TestRowsFlattenThreadTree(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	t1 := NewThread("t1", []*Message{msg("root", 100), msg("kid", 200, "root")})

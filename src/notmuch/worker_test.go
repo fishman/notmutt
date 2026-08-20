@@ -19,12 +19,13 @@ type fakeBackend struct {
 
 func (f *fakeBackend) Open(ctx context.Context, p string) error { return f.err }
 func (f *fakeBackend) Close(ctx context.Context) error          { return f.err }
-func (f *fakeBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+func (f *fakeBackend) Query(ctx context.Context, q string, limit int, flat bool, emit func([]core.Message) bool) error {
 	if emit != nil {
 		emit([]core.Message{{ID: "m1", ThreadID: "t1"}})
 	}
 	return f.err
 }
+func (f *fakeBackend) CountMsgs(ctx context.Context, q string) (int, error) { return 1, f.err }
 func (f *fakeBackend) QueryMsgs(ctx context.Context, q string, emit func([]core.Message) bool) error {
 	if emit != nil {
 		emit([]core.Message{{ID: "m1"}})
@@ -103,9 +104,12 @@ func (b *blockingBackend) Close(ctx context.Context) error          { return b.i
 func (b *blockingBackend) Count(ctx context.Context, q string) (int, error) {
 	return b.inner.Count(ctx, q)
 }
-func (b *blockingBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+func (b *blockingBackend) Query(ctx context.Context, q string, limit int, flat bool, emit func([]core.Message) bool) error {
 	time.Sleep(200 * time.Millisecond) // 4x the 50ms test budget
-	return b.inner.Query(ctx, q, limit, emit)
+	return b.inner.Query(ctx, q, limit, flat, emit)
+}
+func (b *blockingBackend) CountMsgs(ctx context.Context, q string) (int, error) {
+	return b.inner.CountMsgs(ctx, q)
 }
 func (b *blockingBackend) QueryMsgs(ctx context.Context, q string, emit func([]core.Message) bool) error {
 	return b.inner.QueryMsgs(ctx, q, emit)
@@ -184,8 +188,11 @@ type killBackend struct {
 
 func (b *killBackend) Open(ctx context.Context, p string) error { return b.inner.Open(ctx, p) }
 func (b *killBackend) Close(ctx context.Context) error          { return b.inner.Close(ctx) }
-func (b *killBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
-	return b.inner.Query(ctx, q, limit, emit)
+func (b *killBackend) Query(ctx context.Context, q string, limit int, flat bool, emit func([]core.Message) bool) error {
+	return b.inner.Query(ctx, q, limit, flat, emit)
+}
+func (b *killBackend) CountMsgs(ctx context.Context, q string) (int, error) {
+	return b.inner.CountMsgs(ctx, q)
 }
 func (b *killBackend) QueryMsgs(ctx context.Context, q string, emit func([]core.Message) bool) error {
 	return b.inner.QueryMsgs(ctx, q, emit)

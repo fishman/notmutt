@@ -23,7 +23,7 @@ type threadBackend struct {
 
 func (t *threadBackend) Open(ctx context.Context, p string) error { return nil }
 func (t *threadBackend) Close(ctx context.Context) error          { return nil }
-func (t *threadBackend) Query(ctx context.Context, q string, limit int, emit func([]core.Message) bool) error {
+func (t *threadBackend) Query(ctx context.Context, q string, limit int, flat bool, emit func([]core.Message) bool) error {
 	return nil
 }
 func (t *threadBackend) QueryMsgs(ctx context.Context, q string, emit func([]core.Message) bool) error {
@@ -33,6 +33,9 @@ func (t *threadBackend) Snapshots(ctx context.Context, ids []string) ([]notmuch.
 	return nil, nil
 }
 func (t *threadBackend) Count(ctx context.Context, q string) (int, error) { return len(t.msgs), nil }
+func (t *threadBackend) CountMsgs(ctx context.Context, q string) (int, error) {
+	return len(t.msgs), nil
+}
 func (t *threadBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
 	return nil, nil
 }

@@ -39,7 +39,7 @@ func TestCGOSmoke(t *testing.T) {
 	}
 	n := 0
 	threads := map[string]bool{}
-	err = b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
+	err = b.Query(context.Background(), "tag:inbox", 10, false, func(chunk []core.Message) bool {
 		for _, m := range chunk {
 			// full-walk rows are real messages: ids, paths, and
 			// references arrive with the thread in one pass
@@ -58,6 +58,46 @@ func TestCGOSmoke(t *testing.T) {
 		t.Fatalf("limit must bound the walk to 10 threads, got %d", len(threads))
 	}
 	t.Logf("got %d message rows in %d threads, rev %d (counts only, no content)", n, len(threads), rev)
+}
+
+// TestCGOMsgWalk pins the flat (message-level) walk: one row per
+// matched message - the flat views' shape (unread, deleted, search).
+// The message row carries its real thread id, so open still finds the
+// conversation.
+func TestCGOMsgWalk(t *testing.T) {
+	db, maildir := testutil.ScratchMailbox(t)
+	for i := 0; i < 5; i++ {
+		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
+			"Subject: flat %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
+			"Message-ID: <flat%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
+		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("flat%d.eml", i)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.NotmuchNew(t)
+	b := NewCGO()
+	if err := b.Open(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close(context.Background())
+	if n, err := b.CountMsgs(context.Background(), "tag:inbox"); err != nil || n != 5 {
+		t.Fatalf("count msgs = %d, %v (want 5)", n, err)
+	}
+	got := 0
+	if err := b.Query(context.Background(), "tag:inbox", 0, true, func(chunk []core.Message) bool {
+		for _, m := range chunk {
+			if m.ID == "" || m.ThreadID == "" || m.Timestamp == 0 {
+				t.Fatalf("flat row is not a real message row: %+v", m)
+			}
+			got++
+		}
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got != 5 {
+		t.Fatalf("flat walk = %d rows (want 5)", got)
+	}
 }
 
 // TestCGOTagRoundTrip exercises the write path on a scratch database:

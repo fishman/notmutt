@@ -10,62 +10,58 @@ Decision records for the client's read-path mechanics: how threads get
 from notmuch into the visible tree, how the tree fills in, and how mail
 HTML is rendered. AGENTS.md is normative (R1-R15); design-decisions.md
 carries the core WHY (language, backend, cache). This page is the WHY
-behind the mechanics added since: hydration, coalescing, batching, and
-the HTML renderer.
+behind the mechanics added since: the full-walk hydration, the open
+path, and the HTML renderer.
 
-## 1. Thread hydration: stub rows, waves, no job-side state (2026-08-19)
+## 1. Full-walk hydration: one C pass, real rows, no hydrator (2026-08-21)
 
-Decision: the view holds stub rows (search summaries with no message
-ids) and a threadJob fills them into real trees. Hydration state IS the
-view - a thread is hydrated when its rows carry real message ids, so
-the job keeps no hydration table and a view reset (reload, view switch)
-re-fetches by construction. Scans advance in `scanPage` waves over the
-whole view; the budget bounds in-flight fetches, never coverage.
-Collapsed threads hydrate too: their root row is visible, so C-expand
-becomes instant (MergeThread keeps the collapse state on the thread
-object). A `pending` set dedupes fetches by thread id, never row
-position; a failed fetch clears the gate so the next scan retries.
+Decision: the index fills from one full-walk pass over the result -
+the binding emits each thread's summary AND every message row from a
+single C iterator (header-cache reads only, zero file opens), so the
+view holds real rows from the first chunk: no stub rows, no per-thread
+hydration job, no row-position scan cursors. The full walk replaces
+the two-phase design (summary walk -> stub rows -> threadjob
+per-thread fetches through the bounded worker queue).
 
-Why: the index must paint in seconds on the 33k-thread inbox, but a
-real thread tree costs 40 serialized fetches per page. Stub rows make
-first paint cheap; content arrives as the wave progresses. The TUI
-repaints on the per-fetch Progress event, so the trees fill in under
-the cursor while the user keeps navigating (R3, R15). Keeping hydration
-state in the view instead of the job removes an entire class of
-stale-state bugs: there is no view/job copy to drift.
+Why: the two-phase design failed twice. The threadjob flood measured
+~4.5 minutes on the 33k-thread inbox (the "hydration storm": one scan
+per wave, every fetch its own event, the chain terminates only when a
+scan page holds no stubs). And the stub machinery had a failure mode
+that lost mail: two threads went missing from the index until a tag
+op reconciled them - a stub whose hydration the row-position scan
+cursor could never reach. One pass eliminates the whole class: no
+stubs, no cursors, no queue, no chain - a row is either emitted or
+the thread is not in the result. The measured tradeoff: the full walk
+is 5.7s warm / 10.5s cold (33,256 threads / 38,508 messages, seven
+chunks) against 1.65s for the summary-only walk - first paint still
+lands in ~20ms (the 100-thread first-chunk cadence), full cover in
+seconds. The binding addition (FullWalk) lives in the fishman
+go.notmuch fork (v0.40.1); the summary-only walk stays intact for the
+consumers that need it.
 
-## 2. The hydration storm: one scan per wave, one flatten per wave (2026-08-20)
+## 2. Open while the walk runs: rows-first, worker fetch as fallback (2026-08-21)
 
-Measured failure: the naive loop was `1 ViewDiff -> scan (up to 40
-fetches) -> 40 MergeThreads -> 40 ViewDiffs -> 40 fresh scans` - a
-self-sustaining chain. Each fetched thread published its own ViewDiff,
-each event spawned a fresh scan, each scan re-seeded the progress bar
-with a different total (the "jumping" bar), and every scan queued up to
-40 serialized ActThread calls on the worker. The chain terminates only
-when a scan page holds no stubs (whole view hydrated) - minutes of
-churn on the 33k-thread inbox, worker queue saturated throughout.
+Decision: the walk owns the worker for seconds, so the read seams
+resolve the opened message's set rows-first from the registered views
+before any worker round trip: open, render toggle, attachment view
+and save read the thread's messages straight off the view (the walk
+already loaded headers and paths - the same header-cache data an
+ActThread fetch returns). The worker fetch is the fallback when the
+thread is in no view (a closed tab's pager, a view reset race). The
+read-mark ActTag still queues behind the walk - it is a write, and
+the refresh cycle's reconcile-then-replay lands it in the view.
 
-Fix (coalescing): a scan trigger drains the bus channel before
-scanning - `drainEvents` collapses the whole wave into one scan;
-events published during the scan trigger the next one. The bar now
-advances once per thread under one total and clears at the scan end
-(the R15 batch boundary), failed fetches included.
-
-Fix (batching): the scan wraps its wave in `BeginMerge`/`EndMerge`,
-and `MergeThread` honors the merge depth like `MergeThreads` already
-did - the dirty flag batches under a depth, so the view flatten
-rebuilds once per wave instead of once per thread. Same discipline,
-both merge paths.
-
-Verification: TestThreadJobHydratesOnce (80 stubs, a ViewDiff burst
-pumped until all hydrate) pins both properties - every stub hydrates,
-and the fetch count never exceeds the stub count (the amplification
-regression: 1 event -> 40 fetches -> 40 events -> 40 scans).
+Why: the walk is the worker's only occupant for ~6s after every view
+switch. An open that queued an ActThread behind it would feel dead
+for seconds exactly when the list has visible rows to open; the walk
+emits every message with its paths, so the open's content needs (the
+file parse and the render) need nothing from notmuch that the view
+does not already hold.
 
 Open finding, not fixed: reads have no lock budget - the worker's
 budget applies to writes only, so a hung ActThread wedges the serial
-worker with no recovery path. Coalescing reduces how often that path is
-entered; it does not remove it.
+worker with no recovery path. Rows-first removes the read path's
+exposure to the queue; it does not remove the wedge itself.
 
 ## 3. HTML rendering: the in-client flow renderer (2026-08-19)
 

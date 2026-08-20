@@ -626,3 +626,41 @@ bytes - and its ctx binding is registered in the per-call MCP VM,
 never in the shared metadataCtxTable that network-enabled plugin VMs
 see: a plugin VM structurally cannot reach attachment data, only the
 stdio server's own tool chunks can, and only when whitelisted.
+## 29. Full-walk hydration: one C pass replaces stub rows and the threadjob (2026-08-21)
+
+Decision: the index fills from one full-walk pass over the query
+result - the go.notmuch binding emits each thread's summary AND every
+message row from a single C iterator (header-cache reads only, zero
+file opens), and the client consumes it chunk by chunk with the
+progressive-fill machinery (R3). The view holds real rows from the
+first chunk: no stub rows, no per-thread hydration job, no row-cursor
+scans. The full walk replaces the two-phase design (summary walk ->
+stub rows -> threadjob per-thread fetches through the bounded worker
+queue); the summary-only walk (ThreadsWalk) stays in the binding for
+the consumers that need it.
+
+The trigger was a regression (6c4042b9) that lost mail from the
+index: two threads went missing until a tag op reconciled them - a
+stub whose hydration the row-position scan cursor could never reach
+(the cursor parked inside hydrated blocks). The stub machinery also
+measured ~4.5 minutes to hydrate the 33k-thread inbox (the "hydration
+storm": one scan per wave, every fetch its own event, the chain
+terminates only when a scan page holds no stubs). One pass eliminates
+the whole class by construction: no stubs, no cursors, no queue, no
+chain - a row is either emitted or the thread is not in the result.
+The walk's stall root cause is moot with it: the row-position cursor
+that parked inside hydrated blocks is gone.
+
+Measured tradeoff (33,256 threads / 38,508 messages, seven chunks):
+the full walk is 5.7s warm / 10.5s cold against 1.65s for the
+summary-only walk. First paint stays fast - the 100-thread
+first-chunk cadence lands in ~20ms - so the cost lands on full cover,
+not on the first rows. The client pays it with an open path that does
+not queue behind the walk (record: rows-first resolution from the
+registered views with the worker fetch as fallback, the walk data
+already carries headers and paths - the open, the render toggle, and
+the attachment handlers never touch the worker for a view-resident
+thread; only the read-mark write queues, and the refresh cycle
+reconciles it). The FullWalk addition (405 lines) lives in the fishman
+go.notmuch fork, tagged v0.40.1 by the author of record; the client
+pins and vendors it like any dependency (R7).

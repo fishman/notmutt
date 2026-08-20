@@ -20,7 +20,7 @@ every key is described there and rebindable.
 | --- | --- |
 | j / k | move the cursor |
 | enter | open the thread under the cursor (marks it read) |
-| h | open with the full raw headers (Received, DKIM-Signature, SPF) |
+| H | open with the full raw headers (Received, DKIM-Signature, SPF) |
 | P | preview in a popup without marking read |
 | t / a / d / y / p | stage read/archive/delete/spam/pending |
 | I | stage inbox (move back) |
@@ -35,6 +35,7 @@ every key is described there and rebindable.
 | g i / u / a / p / s / S / d / D | jump to a view (inbox, unread, ...) |
 | ctrl+d / ctrl+u | half-page scroll |
 | pgdown / pgup | page scroll |
+| h / l, left / right | scroll horizontally (rows longer than the window pan, never wrap) |
 | C | collapse the cursor thread to its summary row (cursor-scoped) |
 | ctrl+v | flatten every thread to one row, or expand the whole index back |
 | [ / ] | previous / next tab |
@@ -72,7 +73,8 @@ Enter opens the cursor message only, never the whole thread.
 | v | toggle the plain/html view |
 | ctrl+u | show the html part's raw source |
 | F | easyjump link mode (type the [N] number to open) |
-| h | toggle the full header block |
+| H | toggle the full header block |
+| h / l, left / right | scroll horizontally (long lines pan, never wrap) |
 | enter | advance to the next thread |
 | q | back to the list |
 

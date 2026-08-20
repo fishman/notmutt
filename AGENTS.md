@@ -88,7 +88,16 @@ CLI 1.58s - the gap is closed, the cgo peek (50) is 11ms and the
 thread fetch 8ms. cgo IS the runtime backend (decision record 3:
 re-benchmarked 1.645s vs the CLI's 1.534s on the flip day); the CLI
 backend survives behind `-tags cli` as the F10 escape hatch - the
-same binary code, the same interface, one build tag away. The cgo
+same binary code, the same interface, one build tag away. The index
+fill runs the FULL walk (binding FullWalk, decision record 29): one C
+pass emitting thread summaries AND every message row (id, date, from,
+subject, tags, paths) in progressive chunks (100 first, 5000 steady) -
+no stub rows, no per-thread hydration job. The references/in-reply-to
+reads are dropped by the refs fallback (docs/refs-from-terms.md,
+decision record 30): get_header on those headers file-parses every
+message, so the walk ships empty chains and runs 1.77s; the chain
+rides the per-thread fetch, and the queued libnotmuch getter fix
+re-adds the reads with no client changes. The cgo
 handle stays read-only; Tag reopens read-write for the op only (the
 CLI's lock footprint - a persistent write handle would block every
 other notmuch process for the client's lifetime). The

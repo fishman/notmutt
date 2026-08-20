@@ -688,3 +688,41 @@ write queues, and the refresh cycle reconciles it). The FullWalk
 addition (405 lines) lives in the fishman go.notmuch fork, tagged
 v0.40.1 by the author of record; the client pins and vendors it like
 any dependency (R7).
+
+## 30. References from the DB term list: public getters, queued (2026-08-21)
+
+Decision: the references/in-reply-to reads move from the message file
+to the DB term list via two new public libnotmuch getters -
+notmuch_message_get_in_reply_to (a one-line wrapper over the private
+accessor) and notmuch_message_get_references (a lazily cached
+space-joined chain) - which wrap the private accessors internally and
+export automatically under the version script's `notmuch_*` glob (no
+notmuch.sym edit). The full spec - signatures, join shape, the
+invalidate_metadata extension, the binding change, verification - is
+docs/refs-from-terms.md. QUEUED, not done: the client must not depend
+on a custom-built libnotmuch, so the record 29 fallback stays live
+until the user rebuilds their notmuch with the getters.
+
+Why: get_header("references") and get_header("in-reply-to")
+file-parse every message - those headers have no value slots (only
+from/subject/message-id, and only under
+NOTMUCH_FEATURE_FROM_SUBJECT_ID_VALUES) - ~4s of the 5.74s full walk.
+The data is already in the DB term list at index time (the replyto
+term = the strict-parsed parent id; the reference prefix terms = the
+chain minus the message's own id), decompressed once per message by
+the walk's own message-id read; the private accessors
+(_notmuch_message_get_in_reply_to / _notmuch_message_get_references)
+return them at zero file cost. The version script (lib/notmuch.sym:
+`notmuch_*` glob + `local: *`) hides _notmuch_* symbols - nm -D on the
+system lib shows zero exports - so the binding cannot link the private
+symbols across the DSO; the public wrappers are the minimal export
+surface that serves the consumer.
+
+Expected effect: the walk returns to ~1.75-1.9s WITH chains (the
+both-skipped probe measured 1.745s as the floor of what the refs
+reads cost; the getters add ~0 - the term list is already decompressed
+by the message-id read, the join is O(chain length)). The binding
+re-adds the two reads (fork commit, tag, revendor); no client changes
+- refsSplit trims brackets the term getters never emit, and the flat
+forest/one-hop-chain degradation of the record 29 fallback reverses
+on its own.

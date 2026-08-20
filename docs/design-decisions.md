@@ -595,3 +595,34 @@ nothing decided. Filenames and categories pass one sanitizer
 rejected) so a name is always a single path segment - traversal is
 structurally impossible. The month folder comes from the message
 date in local time; files are 0600, dirs 0700.
+## 28. Mail handles and the MCP whitelist (2026-08-20)
+
+Decision: the categorize contract passes an opaque mail handle plus a
+metadata projection; the plugin fetches the attachment list from the
+handle with the library command `get_attachments(handle)`. The MCP
+server keeps a metadata-only default surface (thread_info, search,
+count) and serves content-adjacent tools (attachments) only when
+`[mcp] allow` names them.
+
+The handle closes the sandbox gap: a plugin that cannot open files
+still needs the message's attachment list, and passing the parsed
+list per attachment would lose the ordinal model (categories are
+keyed to positions, not names - two attachments may share a name).
+The client registers the parsed list under an opaque per-message
+handle for the duration of the save pass; the Lua binding reads that
+registry. The plugin never opens a file - the list is exactly what
+the client parsed, and the handle dies with the message pass.
+
+The return shape is ordinal-keyed for the same reason: an attachment
+is identified by its position in the message, so the mapping is
+unambiguous even for duplicate names, and the client range-checks the
+ordinal against the parse before extracting.
+
+The MCP surface keeps the record 27 boundary in server form: default
+tools are metadata-only, and anything content-adjacent is gated
+behind the config's `[mcp] allow` list (unknown names are startup
+errors). The gated attachments tool projects name/mime/size - never
+bytes - and its ctx binding is registered in the per-call MCP VM,
+never in the shared metadataCtxTable that network-enabled plugin VMs
+see: a plugin VM structurally cannot reach attachment data, only the
+stdio server's own tool chunks can, and only when whitelisted.

@@ -227,27 +227,51 @@ network section keeps the full ctx.
 ### Attachment categorization
 
 Attachment downloading is manual and local: a Lua plugin declares a
-`categorize(msg, att)` function, and the headless command saves the
+`categorize(handle, msg)` function, and the headless command saves the
 categorized attachments. Nothing runs on new mail - you invoke it.
 
-The plugin contract is metadata-only, the same privacy boundary as the
-rest of the Lua layer: `msg` carries `from`, `subject`, and `date`
-(unix seconds) - never paths, ids, or content. `att` carries `name`,
-`mime`, and `size`. Return a category string ("travel", "receipt",
-...) or `nil` to skip that attachment:
+The plugin receives an opaque mail `handle` plus the metadata-only
+projection: `msg` carries `from`, `subject`, and `date` (unix seconds)
+- never paths, ids, or content. The attachment list is fetched from
+the handle with the library command `get_attachments(handle)`, which
+returns the message's attachments as `{name, mime, size, ordinal}`
+tables (the ordinal is the 1-based position in the message). The
+plugin never opens files - the client parsed the list.
+
+Return a table of attachment ordinal to category string ("travel",
+"receipt", ...); attachments without an entry are skipped, and `nil`
+skips the whole message:
 
 ```lua
-function categorize(msg, att)
-  if att.mime ~= "application/pdf" then return nil end
-  local ok, err = re_match("airline|hotel", msg.from .. " " .. msg.subject)
-  if not ok or err then return nil end
-  return "travel"
+local rules = {
+  { from = "Trip%.com", subject = "^Flight Booking Confirmed:", category = "travel" },
+  { from = "delta%.com", subject = "boarding pass", category = "travel" },
+  { from = "acme%.com", subject = "invoice", category = "receipt" },
+}
+
+function categorize(handle, msg)
+  local category
+  for _, r in ipairs(rules) do
+    local okFrom = re_match(r.from, msg.from)
+    local okSubject, err = re_match(r.subject, msg.subject)
+    if not okSubject and err then return nil end
+    if okFrom and okSubject then category = r.category break end
+  end
+  if not category then return nil end
+
+  local out = {}
+  for i, att in ipairs(get_attachments(handle)) do
+    if att.mime == "application/pdf" then out[i] = category end
+  end
+  return out
 end
 ```
 
 `re_match(pattern, str)` is the regex helper: Go's RE2 syntax (Lua
 string patterns have no alternation), returning `match, err` - a bad
-pattern is `false` plus the error text, never a raise.
+pattern is `false` plus the error text, never a raise. The file above
+ships as `config/examples/lua/categorize.lua` - copy it to
+`<configdir>/lua`.
 
 The command:
 
@@ -298,7 +322,21 @@ Every tool runs as a fixed Lua chunk in a fresh sandboxed VM with a
 60s per-call deadline; the tool set is an allowlist, so a client can
 never reach anything beyond it.
 
+Beyond the metadata-only defaults, content-adjacent tools are gated:
+they are served only when `[mcp] allow` names them. The one such tool
+is `attachments(id)` - the attachment list of one message (name, mime,
+size per attachment; bytes never cross). Whitelist it explicitly:
+
+```toml
+[mcp]
+allow = ["attachments"]
+```
+
+An unknown name in `allow` is a startup error - a typo fails loudly
+instead of silently serving fewer tools.
+
 The privacy rule (never submit mail content to an LLM) is a hard
 boundary of the server: results carry thread metadata only. Bodies,
-attachments, maildir paths, and raw headers are never projected, and
-there is no tool that reads them.
+raw maildir paths, and headers are never projected, and no tool reads
+them; the gated `attachments` tool projects attachment metadata only,
+never bytes.

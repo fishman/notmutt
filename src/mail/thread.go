@@ -218,6 +218,9 @@ func ParseMessage(path string) (*Message, error) {
 					return nil, fmt.Errorf("%s: %w", path, err)
 				}
 				m.Parts = append(m.Parts, Part{Body: string(data), HTML: true, Truncated: len(data) > maxPartBytes})
+				// and as a download entry: the raw markup is the
+				// debugging artifact (the v dialog / s save path)
+				m.Attachments = append(m.Attachments, Attachment{Name: "html", Size: int64(len(data)), Truncated: len(data) > maxPartBytes})
 			}
 		case *mail.AttachmentHeader:
 			name, _ := h.Filename()
@@ -256,8 +259,10 @@ func ParseMessage(path string) (*Message, error) {
 // ExtractAttachment re-opens one mail file and reads the ordinal-th
 // attachment's bytes and content type (the attachment view/save demand
 // path) - ParseMessage size-counts non-image parts and never keeps
-// them, so the demand path reads one part, capped like the parse. A
-// structural part error ends the scan with "not found".
+// them, so the demand path reads one part, capped like the parse. The
+// html part of an alternative pair counts as an entry, matching the
+// parse walk's attachment list. A structural part error ends the scan
+// with "not found".
 func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -278,19 +283,29 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break
 		}
-		h, ok := p.Header.(*mail.AttachmentHeader)
-		if !ok {
+		// the entry walk matches the parse walk (ParseMessage): the
+		// html part of an alternative pair lists as an attachment
+		// too, so the v dialog's ordinals index the same stream
+		switch h := p.Header.(type) {
+		case *mail.AttachmentHeader:
+			name, _ = h.Filename()
+			if name == "" {
+				name = "attachment"
+			}
+			typ, _, _ = h.ContentType()
+		case *mail.InlineHeader:
+			typ, _, _ = h.ContentType()
+			if typ != "text/html" {
+				continue
+			}
+			name = "html"
+		default:
 			continue
 		}
 		if n != ordinal {
 			n++
 			continue
 		}
-		name, _ = h.Filename()
-		if name == "" {
-			name = "attachment"
-		}
-		typ, _, _ = h.ContentType()
 		data, err = io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 		if err != nil {
 			return "", "", nil, fmt.Errorf("%s: %w", path, err)

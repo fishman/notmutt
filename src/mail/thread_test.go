@@ -578,3 +578,36 @@ func TestRenderThreadHeaders(t *testing.T) {
 		t.Fatalf("the envelope must not carry the header rows:\n%s", out)
 	}
 }
+
+// TestHTMLPartListsAsAttachment pins the html part as a download entry:
+// the parse walk lists it, and the demand walk (ExtractAttachment) counts
+// it with the same ordinal - the v dialog's "N. html" entry and the
+// extract/save seams index the same part stream.
+func TestHTMLPartListsAsAttachment(t *testing.T) {
+	msg := "From: a@example.com\nTo: b@example.com\nSubject: html\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/alternative; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nplain\n" +
+		"--x\nContent-Type: text/html; charset=utf-8\n\n<h1>hi</h1>\n" +
+		"--x--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// the boundary terminator consumes the part's trailing \n, so the
+	// parsed body is "<h1>hi</h1>" without it
+	m, err := ParseMessage(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].Name != "html" || m.Attachments[0].Size != int64(len("<h1>hi</h1>")) {
+		t.Fatalf("attachments = %+v, want the html part", m.Attachments)
+	}
+	name, typ, data, err := ExtractAttachment(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "html" || typ != "text/html" || string(data) != "<h1>hi</h1>" {
+		t.Fatalf("extract = %q %q %q, want the raw html part", name, typ, data)
+	}
+}

@@ -97,6 +97,7 @@ func TestScanVisibleGhost(t *testing.T) {
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "m1", Paths: []string{file}},
 		{ID: "m2"},
+		{ID: "m3", References: []string{"m1"}},
 	})})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -108,7 +109,7 @@ func TestScanVisibleGhost(t *testing.T) {
 		t.Fatalf("ghost-row scan result wrong: %+v", r)
 	}
 	rows := view.Rows()
-	if len(rows) != 3 || !rows[0].Ghost || len(rows[1].Msg.Atts) != 1 {
+	if len(rows) != 4 || !rows[0].Ghost || len(rows[1].Msg.Atts) != 1 {
 		t.Fatalf("view must keep ghost + scanned atts: %+v", rows)
 	}
 }

@@ -290,8 +290,11 @@ package notmuch
 // }
 //
 // // full_pack_msg packs one message's row: id (id: prefix stripped),
-// // date, from, subject, tags, paths, and the raw references + in-reply-to
-// // headers space-joined (the client's reference-chain parse).
+// // date, from, subject, tags, paths, and an empty refs slot. The
+// // references/in-reply-to reads are a deliberate drop (the refs
+// // fallback, docs/refs-from-terms.md): get_header on those headers
+// // file-parses every message (~4s of the walk); the chain rides the
+// // per-thread fetch, and the libnotmuch getter fix re-adds the reads.
 // // full_pack_paths is full_pack_blob over the filenames iterator (the
 // // same string-iterator shape, distinct type).
 // static int full_pack_paths(void **arena, size_t *cap, size_t *fill, notmuch_filenames_t *paths) {
@@ -346,28 +349,13 @@ package notmuch
 // 	}
 // 	notmuch_tags_t *mtags = notmuch_message_get_tags(m);
 // 	notmuch_filenames_t *mfiles = notmuch_message_get_filenames(m);
-// 	const char *refs = notmuch_message_get_header(m, "references");
-// 	const char *irt = notmuch_message_get_header(m, "in-reply-to");
-// 	if (!refs) {
-// 		refs = "";
-// 	}
-// 	if (!irt) {
-// 		irt = "";
-// 	}
-// 	size_t rl = strlen(refs) + strlen(irt) + 2;
-// 	char *rbuf = malloc(rl);
-// 	if (!rbuf) {
-// 		return 0;
-// 	}
-// 	snprintf(rbuf, rl, "%s %s", refs, irt);
 // 	int ok = full_pack_str(arena, cap, fill, id) && full_pack_i64(arena, cap, fill, ts) &&
 // 		full_pack_str(arena, cap, fill, from) && full_pack_str(arena, cap, fill, subj) &&
 // 		full_pack_blob(arena, cap, fill, mtags) && full_pack_paths(arena, cap, fill, mfiles) &&
-// 		full_pack_str(arena, cap, fill, rbuf);
+// 		full_pack_str(arena, cap, fill, "");
 // 	if (mfiles) {
 // 		notmuch_filenames_destroy(mfiles);
 // 	}
-// 	free(rbuf);
 // 	return ok;
 // }
 //

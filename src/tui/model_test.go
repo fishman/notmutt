@@ -473,13 +473,15 @@ func TestOpenReplyGhostRow(t *testing.T) {
 	}
 }
 
-// ghostModel builds a thread whose messages share no reference chain:
-// core emits a synthetic ghost root row (Msg == nil) at the thread start.
+// ghostModel builds a genuine multi-root thread (b attaches nothing,
+// c attaches a): core emits a synthetic ghost root row (Msg == nil)
+// at the thread start - a structure-less thread renders flat instead.
 func ghostModel() Model {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 200, Author: "Ann", Subject: "hello"},
 		{ID: "b", Timestamp: 100, Author: "Bob", Subject: "re: hello"},
+		{ID: "c", Timestamp: 300, Author: "Cal", Subject: "re: hello", References: []string{"a"}},
 	})})
 	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }

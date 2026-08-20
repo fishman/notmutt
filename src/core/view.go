@@ -360,6 +360,12 @@ func flattenThread(t *Thread, collapsed bool) []Row {
 	var walk func(*Node, int, []bool)
 	walk = func(node *Node, depth int, siblings []bool) {
 		if node.Msg == nil {
+			if node.Forest {
+				for _, c := range node.Children {
+					walk(c, depth, nil)
+				}
+				return
+			}
 			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count})
 			for i, c := range node.Children {
 				walk(c, depth+1, child(siblings, i == len(node.Children)-1))
@@ -947,7 +953,11 @@ func buildTree(msgs []*Message) *Node {
 	if len(roots) == 1 {
 		return roots[0]
 	}
-	return &Node{Children: roots}
+	// every message a root: the walk's refs fallback ships no chains
+	// (docs/refs-from-terms.md), so a structure-less thread renders as
+	// a flat forest without the [...] marker - a genuine multi-root
+	// has at least one attached child and keeps the marker
+	return &Node{Children: roots, Forest: len(roots) == len(msgs)}
 }
 
 // parentOf scans references in reverse so the nearest present ancestor

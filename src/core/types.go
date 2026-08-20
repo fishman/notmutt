@@ -36,6 +36,7 @@ type Thread struct {
 type Node struct {
 	Msg      *Message
 	Children []*Node
+	Forest   bool // flat-thread synthetic root: no message attaches another, renders without the [...] marker
 }
 
 type Row struct {

@@ -61,17 +61,14 @@ func TestMergeThreadMoves(t *testing.T) {
 	old2 := NewThread("old", []*Message{msg("a", 100), msg("c", 500)})
 	v.MergeThreads([]*Thread{old2, newer})
 	rows := v.Rows()
-	if len(rows) != 4 {
-		t.Fatalf("want ghost + 3 rows, got %d", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("want 3 rows, got %d", len(rows))
 	}
-	if !rows[0].Ghost {
-		t.Fatalf("moved thread has two roots, must render ghost first: %+v", rows[0])
+	if rows[0].Msg.ID != "a" || rows[0].Ghost {
+		t.Fatalf("flat moved thread first without ghost: %+v", rows[0])
 	}
-	if rows[1].Msg.ID != "a" {
-		t.Fatalf("moved thread should be first, got %+v", rows[1])
-	}
-	if rows[2].Msg.ID != "c" {
-		t.Fatalf("sibling order must be chronological, got %+v", rows[2])
+	if rows[1].Msg.ID != "c" {
+		t.Fatalf("sibling order must be chronological, got %+v", rows[1])
 	}
 }
 
@@ -83,11 +80,11 @@ func TestMergeThreadMerge(t *testing.T) {
 	merged := NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})
 	v.MergeThreads([]*Thread{merged})
 	rows := v.Rows()
-	if len(rows) != 3 {
+	if len(rows) != 2 {
 		t.Fatalf("thread merge lost rows: %d", len(rows))
 	}
-	if !rows[0].Ghost {
-		t.Fatalf("merged thread must render ghost row: %+v", rows[0])
+	if rows[0].Ghost {
+		t.Fatalf("merged structure-less thread must render flat: %+v", rows[0])
 	}
 }
 
@@ -262,21 +259,41 @@ func TestCursorClamps(t *testing.T) {
 
 func TestGhostRootRow(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
-	t1 := NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})
+	// genuine multi-root: a and b attach nothing, c attaches a - the
+	// [...] marker stays; a structure-less thread renders flat instead
+	t1 := NewThread("t1", []*Message{msg("a", 100), msg("b", 200), msg("c", 300, "a")})
 	v.MergeThreads([]*Thread{t1})
 	rows := v.Rows()
-	if len(rows) != 3 {
-		t.Fatalf("want ghost + 2 rows, got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("want ghost + 3 rows, got %d", len(rows))
 	}
-	if !rows[0].Ghost || rows[0].Msg != nil || rows[0].Depth != 0 || rows[0].Count != 2 {
+	if !rows[0].Ghost || rows[0].Msg != nil || rows[0].Depth != 0 || rows[0].Count != 3 {
 		t.Fatalf("first row must be the ghost marker: %+v", rows[0])
 	}
-	// siblings render in the thread's own order (oldest first)
 	if rows[1].Msg.ID != "a" || rows[1].Depth != 1 || rows[1].Root {
 		t.Fatalf("second row wrong: %+v", rows[1])
 	}
-	if rows[2].Msg.ID != "b" || rows[2].Depth != 1 || rows[2].Root {
-		t.Fatalf("third row wrong: %+v", rows[2])
+	if rows[2].Msg.ID != "c" || rows[2].Depth != 2 {
+		t.Fatalf("attached row wrong: %+v", rows[2])
+	}
+	if rows[3].Msg.ID != "b" || rows[3].Depth != 1 || rows[3].Root {
+		t.Fatalf("fourth row wrong: %+v", rows[3])
+	}
+}
+
+func TestFlatThreadNoGhostRows(t *testing.T) {
+	// the refs-fallback walk ships no chains: a structure-less thread
+	// renders as a flat forest - depth-0 rows, no [...] marker
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100), msg("b", 200)})})
+	rows := v.Rows()
+	if len(rows) != 2 {
+		t.Fatalf("want 2 flat rows, got %d", len(rows))
+	}
+	for i, r := range rows {
+		if r.Ghost || r.Depth != 0 || !r.Root || len(r.Siblings) != 0 {
+			t.Fatalf("flat row %d wrong: %+v", i, r)
+		}
 	}
 }
 
@@ -446,10 +463,11 @@ func TestStagedRowShowsResolved(t *testing.T) {
 func TestStagedGhostRowsNeverStaged(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.SetGroups([]TagGroup{folderGroup})
-	// no references: ghost root + two rows
+	// genuine multi-root (c attaches a): ghost root + three rows
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{
 		{ID: "a", Timestamp: 200},
 		{ID: "b", Timestamp: 100},
+		{ID: "c", Timestamp: 300, References: []string{"a"}},
 	})})
 	v.Stage("a", TagOp{Tag: "archive", Add: true})
 	rows := v.Rows()
@@ -619,7 +637,7 @@ func TestMergeBatchNestedAndUnbalanced(t *testing.T) {
 	if &r1[0] == &r3[0] {
 		t.Fatal("outer EndMerge must mark dirty")
 	}
-	if len(r3) != 3 { // ghost root + a + b (no references)
+	if len(r3) != 2 { // flat forest, a + b (no references)
 		t.Fatalf("rows must show the merged content, got %d", len(r3))
 	}
 	// an unbalanced extra EndMerge after the close is a no-op

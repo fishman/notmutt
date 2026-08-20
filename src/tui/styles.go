@@ -58,8 +58,8 @@ type PagerStyles struct {
 	Signature    lipgloss.Style
 	Attachment   lipgloss.Style
 	// Recent and OtherSide are the thread-position tints: the recent-5
-	// messages and the last other-side message of the thread (the pager
-	// highlight, whole message block).
+	// messages and the last other-side message of the thread (the
+	// index row highlight of the opened message).
 	Recent    lipgloss.Style
 	OtherSide lipgloss.Style
 }
@@ -195,7 +195,7 @@ func sgrSetOf(st Styles) sgrSet {
 	for _, c := range st.Pager.HeaderColors {
 		sg.pagerHdrColors = append(sg.pagerHdrColors, sgrOf(styleOf(c)))
 	}
-	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr, sg.pagerRecent, sg.pagerOther}
+	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr}
 	opens = append(opens, sg.pagerHdrColors...)
 	opens = append(opens, sg.pagerQuoted[:]...)
 	key := make([]string, len(opens))

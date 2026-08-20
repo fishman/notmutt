@@ -1269,7 +1269,7 @@ func defaultTheme() Theme {
 					Signature: Style{Fg: "base03"}, Attachment: Style{Fg: "base0E"},
 					// the thread-position highlight: the recent-5 tint
 					// (cyan) and the last other-side message (purple
-					// bold) - the pager's message landmarks
+					// bold) - the index row landmark of the open message
 					Recent: Style{Fg: "base0C"}, OtherSide: Style{Fg: "base0E", Attrs: []string{"bold"}},
 				},
 			},

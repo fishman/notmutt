@@ -46,5 +46,6 @@ type rowKey struct {
 	styles   int
 	selected bool
 	atts     bool
-	query    string // the search pattern: a change re-renders every row
+	query    string       // the search pattern: a change re-renders every row
+	mark     core.MsgMark // the opened message's thread-position tint; only that row's key churns on open
 }

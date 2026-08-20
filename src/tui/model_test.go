@@ -1265,21 +1265,25 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	}
 }
 
-// TestPagerMarkThreadLoaded pins the model half of the highlight: the
-// ThreadLoaded reply carries the message's mark and the pager renders
-// the whole block with the mark's open; an unmarked reply (MarkNone)
-// renders the default dispatch, no tint.
+// TestPagerMarkThreadLoaded pins the mark contract: the ThreadLoaded
+// reply carries the opened message's thread-position mark, and the
+// highlight lands on the message's ROW in the index (the recent-5 and
+// last-other-side tints) - never the pager text. The body keeps its
+// own style in the pager (the plaintext highlighting regression), and
+// q-return shows the marked row in the list; an unmarked reply
+// (MarkNone) tints nothing.
 func TestPagerMarkThreadLoaded(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		mark core.MsgMark
-		want string // distinctive part of the expected open, "" = no tint
+		want string // distinctive part of the expected tint open, "" = no tint
 	}{
 		{"other side", core.MarkOther, "1;38;2;198;120;221"},
 		{"recent", core.MarkRecent, "38;2;86;182;194"},
 		{"none", core.MarkNone, ""},
 	} {
 		cfg := config.Default()
+		styles := ResolveStyles(cfg.Theme, cfg.Palette)
 		view := core.NewView("inbox", "tag:inbox")
 		view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 			{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
@@ -1290,6 +1294,7 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 		SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
 			next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 				ThreadID: threadID,
+				MsgID:    msgID,
 				Mark:     tc.mark,
 				Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
 			}})
@@ -1299,13 +1304,17 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 		if m.mode != "pager" {
 			t.Fatalf("%s: open must switch to pager, mode=%q", tc.name, m.mode)
 		}
+		if out := m.View(); !strings.Contains(out, styles.sgr.normal.open+"body line") {
+			t.Fatalf("%s: the pager must keep the body's own style:\n%s", tc.name, out)
+		}
+		m = press(t, m, "q")
 		out := m.View()
 		if tc.want == "" {
 			if strings.Contains(out, "198;120;221") || strings.Contains(out, "86;182;194") {
-				t.Fatalf("%s: an unmarked message must not tint:\n%s", tc.name, out)
+				t.Fatalf("%s: an unmarked message must not tint the index:\n%s", tc.name, out)
 			}
 		} else if !strings.Contains(out, tc.want) {
-			t.Fatalf("%s: the marked message must render the %v tint:\n%s", tc.name, tc.mark, out)
+			t.Fatalf("%s: the marked row must carry the %v tint:\n%s", tc.name, tc.mark, out)
 		}
 	}
 }

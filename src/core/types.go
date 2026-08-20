@@ -51,6 +51,7 @@ type Row struct {
 	Staged     bool     // pending ops staged for this row (R14)
 	StagedTags []string // display tags with staged ops resolved
 	Collapsed  bool     // the C-collapsed thread's summary row: renders the collapse marker
+	Mark       MsgMark  // the thread-position mark (ClassifyRows, set by the flatten): the tail tints derive from the rows, never an open
 }
 
 // TagOp is a pending tag change: add or remove Tag. The same shape the

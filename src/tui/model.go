@@ -132,14 +132,6 @@ type Model struct {
 	pan   *panState
 	mode  string // "index" default; "pager" while a thread is open
 	pager *pager
-	// markThread/marks are the fetched thread's per-message
-	// thread-position marks (computed app-side against the full thread
-	// fetch, keyed by message id): the highlight lives on the marked
-	// rows in the index - the thread's tail, never the opened message
-	// and never the pager text. Empty marks = no highlight; the next
-	// open overwrites.
-	markThread string
-	marks      map[string]core.MsgMark
 	// renderMode is the pager's requested view (the toggle-render and
 	// source keys): the plain parts, the rendered html part, or the raw
 	// html source. renderMime is the last reply's mime label for the
@@ -1628,7 +1620,6 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 			}
 			if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) {
 				m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
-				m.markThread, m.marks = e.ThreadID, e.Marks
 				w, h := m.pagerSize()
 				m.pager.setSize(w, h, m.styles)
 			}
@@ -1646,7 +1637,6 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
 		m.attView = nil // the attachment view ends with the restore
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
-		m.markThread, m.marks = e.ThreadID, e.Marks
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
@@ -2852,13 +2842,10 @@ func (m Model) renderBase() string {
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
-		// the thread-position mark key: the marked rows of the loaded
-		// thread (its tail - the recent-5 and the last other-side
-		// message) tint, so only those keys churn when the marks
-		// arrive - the cache holds the rest
-		if rows[i].ThreadID == m.markThread && rows[i].Msg != nil {
-			key.mark = m.marks[rows[i].Msg.ID]
-		}
+		// the thread-position mark key: the row carries its own mark
+		// (the flatten derived it - the thread's tail, no open needed),
+		// so the key follows the rows and the cache holds the rest
+		key.mark = rows[i].Mark
 		// the outer row style is a function of the row's own fields and
 		// selected; it lives outside the cache so the pan clip at the
 		// write site can re-pad with it

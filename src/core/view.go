@@ -55,6 +55,20 @@ type View struct {
 	// the tree window budget ([index.thread]): winRows rows per thread.
 	// Zero winRows = no window.
 	winRows int
+	// me is the identity set for the thread-tail marks (SetMe, the
+	// account from fields): the sent-tag or address "me" detection in
+	// ClassifyRows. Zero = sent-tag identity only.
+	me []string
+}
+
+// SetMe sets the identity set for the thread-tail marks (the account
+// from fields; MyAddrs). The app applies it at startup like the other
+// view configuration.
+func (v *View) SetMe(me []string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.me = me
+	v.dirty = true
 }
 
 // SetWindowBudget bounds the tree window (the [index.thread] config):
@@ -174,6 +188,20 @@ func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
 		full := flattenThread(t, t.Collapsed)
+		// the thread-tail marks: only a windowed thread marks - one with
+		// rows hidden above or below (the "+N more" ghosts). The marks
+		// classify the FULL tree and ride the rows through the window,
+		// so the recent-5 of a long thread tints wherever it sits in the
+		// window and a thread that fits renders unmarked. Computed in
+		// the flatten so the marks are memoized with the rows - the
+		// index tints without any open, and a rebuild re-derives them at
+		// the same cost.
+		if v.winRows > 0 && len(full) > v.winRows {
+			marks := ClassifyRows(full, v.me)
+			for j := range full {
+				full[j].Mark = marks[j]
+			}
+		}
 		out := window(full, t.WinStart, v.winRows)
 		// the tree-window overflow: a thread with rows hidden below the
 		// window marks its last emitted row with the count (the page

@@ -16,17 +16,17 @@ import (
 
 // TestRealThreadClassifies pins the production fetch -> classify path:
 // the real cgo thread fetch fills the fields the index highlight needs
-// (id, timestamp, author, tags) and ClassifyMsgs marks the thread's
-// tail - the recent-5 window, the other side, the sent-tag identity,
-// and the old messages staying unmarked. notmuch reports message ids
-// bare (no angle brackets).
+// (id, timestamp, author, tags) and the rows built from it classify the
+// thread's tail - the recent-5 window, the other side, the sent-tag
+// identity, and the old messages staying unmarked. notmuch reports
+// message ids bare (no angle brackets).
 func TestRealThreadClassifies(t *testing.T) {
 	db, maildir := testutil.ScratchMailbox(t)
-	// one thread of 8 fabricated messages; mine are alpha (the scratch
+	// one thread of 9 fabricated messages; mine are alpha (the scratch
 	// user), the rest sender@example.com; timestamps ascend by hour
 	me := []string{"alpha@example.com"}
 	var prev string
-	for i := range 8 {
+	for i := range 9 {
 		author := "Sender <sender@example.com>"
 		if i <= 3 {
 			author = "Alpha <alpha@example.com>"
@@ -66,37 +66,45 @@ func TestRealThreadClassifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(msgs) != 8 {
-		t.Fatalf("the thread must fetch 8 messages, got %d", len(msgs))
+	if len(msgs) != 9 {
+		t.Fatalf("the thread must fetch 9 messages, got %d", len(msgs))
 	}
 	for _, m := range msgs {
 		if m.ID == "" || m.Timestamp == 0 || m.Author == "" {
 			t.Fatalf("the fetch must fill id/timestamp/author: %+v", m)
 		}
 	}
-	marks := core.ClassifyMsgs(msgs, me)
+	// the index builds one row per message; the marks classify the rows
+	// positionally - the row's message identity only selects assertions
+	rows := make([]core.Row, len(msgs))
+	byID := make(map[string]int, len(msgs))
+	for i := range msgs {
+		rows[i] = core.Row{Msg: &msgs[i]}
+		byID[msgs[i].ID] = i
+	}
+	marks := core.ClassifyRows(rows, me)
 	// c0: oldest, outside the recent-5 and not the latest other-side
-	if got := marks["c0@test.invalid"]; got != core.MarkNone {
+	if got := marks[byID["c0@test.invalid"]]; got != core.MarkNone {
 		t.Fatalf("the oldest message must be unmarked, got %v (all: %v)", got, marks)
 	}
-	// c4: inside the recent-5 window; c7: the latest other-side winner
-	if got := marks["c4@test.invalid"]; got != core.MarkRecent {
+	// c4: inside the recent-5 window; c8: the latest other-side winner
+	if got := marks[byID["c4@test.invalid"]]; got != core.MarkRecent {
 		t.Fatalf("a recent-window message must be recent, got %v (all: %v)", got, marks)
 	}
-	if got := marks["c7@test.invalid"]; got != core.MarkOther {
+	if got := marks[byID["c8@test.invalid"]]; got != core.MarkOther {
 		t.Fatalf("the latest other-side message must be other, got %v (all: %v)", got, marks)
 	}
-	// tag c7 sent: it becomes mine, the other-side mark shifts to c6
+	// tag c8 sent: it becomes mine, the other-side mark shifts to c7
 	for i := range msgs {
-		if msgs[i].ID == "c7@test.invalid" {
+		if msgs[i].ID == "c8@test.invalid" {
 			msgs[i].Tags = append(msgs[i].Tags, "sent")
 		}
 	}
-	marks = core.ClassifyMsgs(msgs, me)
-	if got := marks["c6@test.invalid"]; got != core.MarkOther {
+	marks = core.ClassifyRows(rows, me)
+	if got := marks[byID["c7@test.invalid"]]; got != core.MarkOther {
 		t.Fatalf("with the latest mine, the previous message must be other, got %v (all: %v)", got, marks)
 	}
-	if got := marks["c7@test.invalid"]; got != core.MarkRecent {
+	if got := marks[byID["c8@test.invalid"]]; got != core.MarkRecent {
 		t.Fatalf("a sent-tagged latest message must be recent, got %v (all: %v)", got, marks)
 	}
 }

@@ -1265,75 +1265,65 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	}
 }
 
-// TestPagerMarkThreadLoaded pins the mark contract: the ThreadLoaded
-// reply carries the fetched thread's per-message marks (keyed by id),
-// and the highlight lands on the MARKED message's subject run and tree
-// indicator in the index - the recent-5 and last-other-side tints,
-// wherever the marked message sits, never the opened one and never the
-// pager text. The body keeps its own style in the pager (the
-// plaintext highlighting regression), and q-return shows the tinted
-// subject in the list; an unmarked reply tints nothing.
-func TestPagerMarkThreadLoaded(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		mark core.MsgMark
-		want string // distinctive part of the expected tint open, "" = no tint
-	}{
-		{"other side", core.MarkOther, "1;38;2;198;120;221"},
-		{"recent", core.MarkRecent, "38;2;86;182;194"},
-		{"none", core.MarkNone, ""},
-	} {
-		cfg := config.Default()
-		styles := ResolveStyles(cfg.Theme, cfg.Palette)
+// TestIndexTailTintsWithoutOpen pins the no-open mark contract: the
+// thread-tail marks derive from the view's own rows (the flatten
+// classifies a WINDOWED thread - one with rows hidden above or below,
+// the "+N more" ghosts), so the index tints without opening anything.
+// A nine-message thread under a five-row window renders its visible
+// recent-5 boundary (m4) with the cyan tint and the "+4 more" ghost
+// unmarked; the same thread with a window that fits has nothing hidden
+// and renders entirely unmarked. Nothing loaded, no pager: a
+// row-materializing event alone renders the tint.
+func TestIndexTailTintsWithoutOpen(t *testing.T) {
+	cfg := config.Default()
+	chain := func() []*core.Message {
+		msgs := make([]*core.Message, 9)
+		for i := range 9 {
+			msgs[i] = &core.Message{
+				ID: fmt.Sprintf("m%d", i), Subject: fmt.Sprintf("m%d", i),
+				Timestamp: int64(100 + i*100), Tags: []string{"inbox"},
+			}
+			if i > 0 {
+				msgs[i].References = []string{fmt.Sprintf("m%d", i-1)}
+			}
+		}
+		return msgs
+	}
+	windowed := func(winRows int) Model {
 		view := core.NewView("inbox", "tag:inbox")
-		// the opened message (a, the thread root) is the OLD one; the
-		// mark rides on the thread's most recent message (b) - the tint
-		// must follow the mark, not the open
-		view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-			{ID: "a", Subject: "hello", Timestamp: 100, Tags: []string{"inbox"}},
-			{ID: "b", Subject: "latest", Timestamp: 200, Tags: []string{"inbox"}},
-		})})
+		view.SetWindowBudget(winRows)
+		view.MergeThreads([]*core.Thread{core.NewThread("t1", chain())})
 		st := config.NewStore(cfg)
-		m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
-		path := fixtureMsg(t, "body line\n")
-		SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
-			next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-				ThreadID: threadID,
-				MsgID:    msgID,
-				Marks:    map[string]core.MsgMark{"b": tc.mark},
-				Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
-			}})
-			m = next
-		})
-		press(t, m, "enter")
-		if m.mode != "pager" {
-			t.Fatalf("%s: open must switch to pager, mode=%q", tc.name, m.mode)
+		return sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
+	}
+	// windowed: five of nine rows visible, a "+4 more" ghost below -
+	// the recent-5 classify the full tree and the boundary m4 tints
+	m := pressEvent(t, windowed(5), core.ViewDiff{View: "inbox"})
+	var head, recent, ghost string
+	for _, l := range strings.Split(m.View(), "\n") {
+		switch {
+		case strings.Contains(stripANSI(l), "+4 more"):
+			ghost = l
+		case strings.Contains(stripANSI(l), "m4"):
+			recent = l
+		case strings.Contains(stripANSI(l), "m0"):
+			head = l
 		}
-		if out := m.View(); !strings.Contains(out, styles.sgr.normal.open+"body line") {
-			t.Fatalf("%s: the pager must keep the body's own style:\n%s", tc.name, out)
-		}
-		m = press(t, m, "q")
-		var opened, tail string
-		for _, l := range strings.Split(m.View(), "\n") {
-			if strings.Contains(stripANSI(l), "latest") {
-				tail = l
-			}
-			if strings.Contains(stripANSI(l), "hello") {
-				opened = l
-			}
-		}
-		if tc.want == "" {
-			if strings.Contains(m.View(), "198;120;221") || strings.Contains(m.View(), "86;182;194") {
-				t.Fatalf("%s: an unmarked thread must not tint the index:\n%s", tc.name, m.View())
-			}
-		} else {
-			if !strings.Contains(tail, tc.want) {
-				t.Fatalf("%s: the thread's most recent message must carry the %v tint:\n%s", tc.name, tc.mark, tail)
-			}
-			if strings.Contains(opened, tc.want) {
-				t.Fatalf("%s: the opened message's row must not tint (the mark owns the row):\n%s", tc.name, opened)
-			}
-		}
+	}
+	if !strings.Contains(recent, "38;2;86;182;194") {
+		t.Fatalf("the visible recent-5 boundary must carry the recent tint:\n%s", recent)
+	}
+	if strings.Contains(head, "198;120;221") || strings.Contains(head, "86;182;194") {
+		t.Fatalf("the old head of the windowed thread must stay plain:\n%s", head)
+	}
+	if strings.Contains(ghost, "198;120;221") || strings.Contains(ghost, "86;182;194") {
+		t.Fatalf("the ghost row must stay unmarked:\n%s", ghost)
+	}
+	// a thread that fits its window has nothing hidden: the flatten
+	// marks nothing and the whole list renders plain
+	m = pressEvent(t, windowed(10), core.ViewDiff{View: "inbox"})
+	if out := m.View(); strings.Contains(out, "198;120;221") || strings.Contains(out, "86;182;194") {
+		t.Fatalf("an unwindowed thread must not tint the index:\n%s", out)
 	}
 }
 

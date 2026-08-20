@@ -10,11 +10,14 @@ import (
 	"strings"
 )
 
-// MsgMark is a message's thread-position marker: the five most recent
-// messages of a thread render in one color, the most recent message
-// from the other side in the prominent one - a long thread reads by
-// its tail. The marks ride ThreadLoaded (keyed by message id) and the
-// index tints the marked subject runs and tree indicators.
+// MsgMark is a message row's thread-position marker: the five most
+// recent messages of a thread render in one color, the most recent
+// message from the other side in the prominent one - a long thread
+// reads by its tail. The view's flatten classifies a thread's rows
+// only when the thread's tree is windowed (rows hidden above or
+// below): a thread that fits its window renders unmarked. The index
+// derives the marks from its own rows (the view flatten), so the tint
+// shows without opening anything.
 type MsgMark uint8
 
 const (
@@ -23,26 +26,28 @@ const (
 	MarkOther
 )
 
-// ClassifyMsgs marks every message by its position in the thread:
-// among the five messages with the latest Timestamp -> MarkRecent; the
-// most recent message not authored by me -> MarkOther (wins over
-// recent). The classification is timestamp-based, so the fetch order
-// never matters. "me" is the sent tag or the From address matching an
-// address in me (the account from fields); an author that does not
-// parse is never me.
-func ClassifyMsgs(msgs []Message, me []string) map[string]MsgMark {
-	marks := make(map[string]MsgMark, len(msgs))
-	order := make([]int, len(msgs))
-	for j := range msgs {
-		order[j] = j
+// ClassifyRows marks every message row by its position in the thread:
+// among the five rows with the latest Timestamp -> MarkRecent; the
+// most recent row not authored by me -> MarkOther (wins over recent).
+// The classification is timestamp-based, so the fetch order never
+// matters; rows without a message (ghosts) stay unmarked. "me" is the
+// sent tag or the From address matching an address in me (the account
+// from fields); an author that does not parse is never me.
+func ClassifyRows(rows []Row, me []string) []MsgMark {
+	marks := make([]MsgMark, len(rows))
+	idx := make([]int, 0, len(rows))
+	for i, r := range rows {
+		if r.Msg != nil {
+			idx = append(idx, i)
+		}
 	}
-	sort.SliceStable(order, func(a, b int) bool { return msgs[order[a]].Timestamp > msgs[order[b]].Timestamp })
-	for _, j := range order[:min(5, len(order))] {
-		marks[msgs[j].ID] = MarkRecent
+	sort.SliceStable(idx, func(a, b int) bool { return rows[idx[a]].Msg.Timestamp > rows[idx[b]].Msg.Timestamp })
+	for _, i := range idx[:min(5, len(idx))] {
+		marks[i] = MarkRecent
 	}
-	for _, j := range order {
-		if !isMe(msgs[j], me) {
-			marks[msgs[j].ID] = MarkOther
+	for _, i := range idx {
+		if !isMe(*rows[i].Msg, me) {
+			marks[i] = MarkOther
 			break
 		}
 	}

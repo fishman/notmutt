@@ -110,6 +110,9 @@ func Run() error {
 	view.SetGroups(groups)
 	b := st.Config().Index.Thread
 	view.SetWindowBudget(b.MaxRows)
+	// the thread-tail marks derive from the view rows (never an open);
+	// the identity set is startup-captured like the seam closures above
+	view.SetMe(me)
 
 	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
 	// ONE resolution for the filter job, the fcc derivation, and the
@@ -400,11 +403,6 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	// the marks classify the FULL fetch: the thread's tail - the
-	// recent-5 and the last other-side message - carries the tint, not
-	// the opened message (the pager shows one message, the marks keep
-	// their place in the conversation)
-	marks := core.ClassifyMsgs(rpl.Msgs, me)
 	idx := 0
 	if msgID != "" {
 		for i, m := range rpl.Msgs {
@@ -439,7 +437,7 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, Marks: marks})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
 	// the read mark names the opened message, never the whole thread:
 	// the other messages in the thread keep their unread state
 	if !preview && msgID != "" {

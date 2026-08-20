@@ -270,11 +270,6 @@ type ThreadLoaded struct {
 	// against the message's actual parts, never the requested view.
 	Mime  string
 	Lines []Line
-	// Marks is the fetched thread's per-message thread-position marks
-	// (ClassifyMsgs, keyed by message id): the recent-5 tint and the
-	// prominent other-side one - the index tints the marked rows,
-	// wherever they sit in the thread. Never the opened message only.
-	Marks map[string]MsgMark
 	Err   error
 }
 

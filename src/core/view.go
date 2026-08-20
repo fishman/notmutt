@@ -70,6 +70,31 @@ func NewView(name, query string) *View {
 	return &View{Name: name, Query: query, staged: map[string][]TagOp{}}
 }
 
+// ViewName and ViewQuery are the locked identity reads: the refresher's
+// config switch rewrites the fields in place on its own goroutine
+// (SetIdentity), while the jobs read them for event labels and the
+// apply path builds identity queries - cross-goroutine by design.
+func (v *View) ViewName() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.Name
+}
+
+func (v *View) ViewQuery() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.Query
+}
+
+// SetIdentity is the single write path for the view's name and query
+// (the refresher's onConfig switch).
+func (v *View) SetIdentity(name, query string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.Name = name
+	v.Query = query
+}
+
 // Reset drops the view's rows for a full re-load: a view switch renders
 // empty until the new query's first chunk lands, never the previous
 // view's rows. Staged ops survive - the buffer is keyed by message

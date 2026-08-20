@@ -210,12 +210,7 @@ func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
 	if !ok {
 		return
 	}
-	if r.view.Name != name {
-		r.view.Name = name
-	}
-	if v.Query != r.view.Query {
-		r.view.Query = v.Query
-	}
+	r.view.SetIdentity(name, v.Query)
 	r.view.Reset()
 	r.fullReload()
 }

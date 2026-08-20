@@ -86,7 +86,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 		})
 	}
 	bus.Publish(core.SendResult{TabID: st.ID, OK: true, Output: note})
-	bus.Publish(core.ViewDiff{View: view.Name})
+	bus.Publish(core.ViewDiff{View: view.ViewName()})
 }
 
 // writeFcc lands the sent copy in the maildir new/ slot (maildir
@@ -142,7 +142,7 @@ func saveDraft(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Conf
 		return err
 	}
 	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
-	bus.Publish(core.ViewDiff{View: view.Name})
+	bus.Publish(core.ViewDiff{View: view.ViewName()})
 	return nil
 }
 

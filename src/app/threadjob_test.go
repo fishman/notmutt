@@ -88,8 +88,7 @@ func TestThreadJobViewSwitchIsolation(t *testing.T) {
 	// the switch: the same view object, reset and reloaded with the
 	// index query's stubs (the refresher's onConfig shape); t0's fetch
 	// is still in flight under the old generation
-	view.Name = "index"
-	view.Query = "tag:inbox"
+	view.SetIdentity("index", "tag:inbox")
 	view.Reset()
 	index := []*core.Thread{
 		core.NewThread("t0", []*core.Message{{ThreadID: "t0"}}),

@@ -117,7 +117,7 @@ func Run() error {
 			}
 			// the view changed either way (applied drops and baselines);
 			// a partial failure still renders the succeeded entries
-			bus.Publish(core.ViewDiff{View: view.Name})
+			bus.Publish(core.ViewDiff{View: view.ViewName()})
 		}()
 	})
 

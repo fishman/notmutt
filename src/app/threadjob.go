@@ -98,6 +98,7 @@ func (t *threadJob) scanVisible() {
 	if !t.threaded() {
 		return
 	}
+	name := t.view.ViewName() // one locked read; the fetches publish it
 	gen := t.view.Gen()
 	if gen != t.gen {
 		// a view switch: the scan starts at the top of the new view's
@@ -157,7 +158,7 @@ func (t *threadJob) scanVisible() {
 			// the per-fetch progress is the paint trigger (the TUI re-reads
 			// rows on Progress, not ViewDiff); the bar advances once per
 			// thread (R15)
-			t.bus.Publish(core.Progress{Job: "threads", View: t.view.Name, Done: done, Total: total})
+			t.bus.Publish(core.Progress{Job: "threads", View: name, Done: done, Total: total})
 			t.mu.Unlock()
 			if err != nil || rpl.Err != nil {
 				return
@@ -173,7 +174,7 @@ func (t *threadJob) scanVisible() {
 				msgs[i] = &rpl.Msgs[i]
 			}
 			t.view.MergeThread(core.NewThread(tid, msgs))
-			t.bus.Publish(core.ViewDiff{View: t.view.Name})
+			t.bus.Publish(core.ViewDiff{View: name})
 		}()
 	}
 	wg.Wait()
@@ -181,6 +182,6 @@ func (t *threadJob) scanVisible() {
 	if total > 0 && done == total {
 		// scan end: the bar clears (R15 batch boundary) even when a fetch
 		// failed - the failed thread retries on the next scan
-		t.bus.Publish(core.Progress{Job: "threads", View: t.view.Name, Done: total, Total: total})
+		t.bus.Publish(core.Progress{Job: "threads", View: name, Done: total, Total: total})
 	}
 }

@@ -2048,7 +2048,7 @@ func (m *Model) refreshProgress() {
 	if m.bus == nil {
 		return
 	}
-	if p, ok := m.bus.LatestProgress(m.job, m.view.Name); ok {
+	if p, ok := m.bus.LatestProgress(m.job, m.view.ViewName()); ok {
 		m.progress = p
 		m.progressOn = p.Done < p.Total
 	}

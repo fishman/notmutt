@@ -94,13 +94,14 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI, cfg 
 // query: one limit-1 search, the truth path (R1). The identity query
 // is the apply's own (idQuery) - DRY with the op that just landed.
 func keptBy(view *core.View, worker workerAPI, identity string) bool {
-	if view.Query == "" {
+	q := view.ViewQuery() // the refresher may switch the view on its goroutine
+	if q == "" {
 		return true
 	}
 	keep := false
 	_, err := worker.Call(notmuch.Action{
 		Kind:  notmuch.ActQuery,
-		Query: view.Query + " and " + idQuery(identity),
+		Query: q + " and " + idQuery(identity),
 		Limit: 1,
 		Emit:  func(msgs []core.Message) bool { keep = len(msgs) > 0; return false },
 	})

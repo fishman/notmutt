@@ -6,9 +6,14 @@ package tui
 // fakeScreen is the v3 stand-in for the removed SimulationScreen: a
 // minimal Screen backed by a cell buffer, events injected by writing
 // to the EventQ channel (v3's injection path). Only the surface the
-// tests use is real; the rest are no-ops.
+// tests use is real; the rest are no-ops. The cell buffer is mutexed:
+// the loop tests run runLoop on a goroutine (pushFrame -> SetContent)
+// while the test goroutine polls the same buffer - the race detector
+// caught the unlocked buffer.
 
 import (
+	"sync"
+
 	"github.com/gdamore/tcell/v3"
 	"github.com/gdamore/tcell/v3/color"
 )
@@ -19,6 +24,7 @@ type fakeCell struct {
 }
 
 type fakeScreen struct {
+	mu    sync.Mutex
 	w, h  int
 	cells [][]fakeCell
 	evQ   chan tcell.Event
@@ -31,6 +37,8 @@ func newFakeScreen() *fakeScreen {
 }
 
 func (s *fakeScreen) resize(w, h int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.w, s.h = w, h
 	s.cells = make([][]fakeCell, h)
 	for y := range s.cells {
@@ -42,9 +50,15 @@ func (s *fakeScreen) Init() error { return nil }
 func (s *fakeScreen) Fini()       {}
 
 func (s *fakeScreen) SetSize(w, h int) { s.resize(w, h) }
-func (s *fakeScreen) Size() (int, int) { return s.w, s.h }
+func (s *fakeScreen) Size() (int, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w, s.h
+}
 
 func (s *fakeScreen) SetContent(x, y int, primary rune, combining []rune, style tcell.Style) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if x < 0 || y < 0 || x >= s.w || y >= s.h {
 		return
 	}
@@ -52,6 +66,8 @@ func (s *fakeScreen) SetContent(x, y int, primary rune, combining []rune, style 
 }
 
 func (s *fakeScreen) Get(x, y int) (string, tcell.Style, int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if x < 0 || y < 0 || x >= s.w || y >= s.h {
 		return "", tcell.StyleDefault, 0
 	}
@@ -67,6 +83,8 @@ func (s *fakeScreen) Sync()  {}
 func (s *fakeScreen) Clear() { s.resize(s.w, s.h) }
 
 func (s *fakeScreen) Fill(r rune, st tcell.Style) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for y := range s.cells {
 		for x := range s.cells[y] {
 			s.cells[y][x] = fakeCell{Runes: []rune{r}, Style: st}

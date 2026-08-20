@@ -480,7 +480,7 @@ func TestOnConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.onConfig(st, core.ConfigChanged{Section: "view"})
-	if r.view.Query != "tag:changed" {
+	if r.view.ViewQuery() != "tag:changed" {
 		t.Fatalf("view query not taken from the store: %q", r.view.Query)
 	}
 	if q, _ := fw.lastQuery.Load().(string); q != "tag:changed" {
@@ -496,7 +496,7 @@ func TestOnConfig(t *testing.T) {
 		t.Fatal("no ViewDiff after view-section config change")
 	}
 	r.onConfig(st, core.ConfigChanged{Section: "ui"})
-	if r.view.Query != "tag:changed" {
+	if r.view.ViewQuery() != "tag:changed" {
 		t.Fatalf("ui section must not change the query: %q", r.view.Query)
 	}
 	readProgress(t, ch)
@@ -528,7 +528,7 @@ func TestOnConfigSwitchesView(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.onConfig(st, core.ConfigChanged{Section: "view"})
-	if r.view.Name != "archive" || r.view.Query != "tag:archive" {
+	if r.view.ViewName() != "archive" || r.view.ViewQuery() != "tag:archive" {
 		t.Fatalf("view not switched: name %q query %q", r.view.Name, r.view.Query)
 	}
 	if q, _ := fw.lastQuery.Load().(string); q != "tag:archive" {

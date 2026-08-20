@@ -251,14 +251,30 @@ func TestLoadLuaNetworkSection(t *testing.T) {
 	cfg, err := Load(write(t, `
 [lua.network.hubspot]
 targets = ["api.hubspot.com", "*.hubspot.com"]
-methods = ["GET", "POST"]
+paths = ["GET /crm/v3/objects/contacts*", "post /crm/v3/objects/contacts"]
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	r, ok := cfg.Lua.Network["hubspot"]
-	if !ok || len(r.Targets) != 2 || len(r.Methods) != 2 {
+	if !ok || len(r.Targets) != 2 || len(r.Paths) != 2 {
 		t.Fatalf("lua.network = %+v", cfg.Lua.Network)
+	}
+}
+
+func TestLoadLuaNetworkPathRuleMalformed(t *testing.T) {
+	// a paths entry is "METHOD /path" - anything else is a config error,
+	// not a silently dead rule (a dead rule denies safely, but the typo
+	// would be invisible)
+	for _, entry := range []string{"GET", " /crm", "GETcrm", "GET ", "GET  /x"} {
+		_, err := Load(write(t, `
+[lua.network.hubspot]
+targets = ["api.hubspot.com"]
+paths = ["`+entry+`"]
+`))
+		if err == nil || !strings.Contains(err.Error(), "lua.network.hubspot.paths") {
+			t.Fatalf("paths = %q must be a load error naming the section, got: %v", entry, err)
+		}
 	}
 }
 

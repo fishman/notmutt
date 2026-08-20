@@ -22,16 +22,15 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/yuin/gopher-lua"
 
 	"notmutt/core"
 	"notmutt/notmuch"
 )
 
 const (
-	mcpDeadline           = 60 * time.Second // per-call VM budget; the SetContext kill
-	mcpSearchDefaultLimit = 50
-	mcpSearchMaxLimit     = 500
+	mcpDeadline = 60 * time.Second // per-call VM budget; the SetContext kill
+	// mcpSearchDefaultLimit/mcpSearchMaxLimit live in lua_http.go with
+	// metadataCtxTable, which both the MCP tools and network plugins use
 )
 
 // The chunks are one function expression each; the leading return makes
@@ -175,7 +174,7 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI) (any, erro
 	}
 	defer cancel()
 	defer vm.Close()
-	ctx := mcpCtxTable(vm, worker)
+	ctx := metadataCtxTable(vm, worker)
 	vm.SetGlobal("ctx", ctx)
 	vm.SetGlobal("args", luaValue(vm, args, 0))
 	fn, err := vm.LoadString(chunk)
@@ -198,97 +197,6 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI) (any, erro
 	out, err := luaToJSON(vm, vm.Get(-1), 0, &nodes)
 	vm.Pop(1)
 	return out, err
-}
-
-// mcpCtxTable builds the MCP ctx table: ONLY the three read bindings
-// over the worker. No tag_add/tag_remove, attach_add, ai_chat,
-// picker, prompt, translate, or mail_lines - the projection below is
-// the privacy boundary, so a chunk can never widen the surface.
-func mcpCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
-	ctx := vm.NewTable()
-	ctx.RawSetString("thread_info", vm.NewFunction(func(L *lua.LState) int {
-		tid := L.CheckString(1)
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: tid})
-		if err != nil || rpl.Err != nil {
-			L.RaiseError("thread_info: %v %v", err, rpl.Err)
-		}
-		tbl := L.NewTable()
-		tbl.RawSetString("thread_id", lua.LString(tid))
-		tbl.RawSetString("count", lua.LNumber(len(rpl.Msgs)))
-		msgs := L.NewTable()
-		for _, m := range rpl.Msgs {
-			msgs.Append(projectMessage(L, m))
-		}
-		tbl.RawSetString("messages", msgs)
-		L.Push(tbl)
-		return 1
-	}))
-	ctx.RawSetString("search", vm.NewFunction(func(L *lua.LState) int {
-		q := L.CheckString(1)
-		limit := int(L.OptNumber(2, mcpSearchDefaultLimit))
-		if limit < 1 {
-			limit = 1
-		}
-		if limit > mcpSearchMaxLimit {
-			limit = mcpSearchMaxLimit
-		}
-		var rows []core.Message
-		rpl, err := worker.Call(notmuch.Action{
-			Kind:  notmuch.ActQuery,
-			Query: q,
-			Limit: limit,
-			// the Emit closure only appends to an invocation-local slice
-			// (the refresher.changed pattern); it runs on the worker
-			// goroutine and never touches the Lua state
-			Emit: func(chunk []core.Message) bool {
-				rows = append(rows, chunk...)
-				return true
-			},
-		})
-		if err != nil || rpl.Err != nil {
-			L.RaiseError("search: %v %v", err, rpl.Err)
-		}
-		tbl := L.NewTable()
-		for _, m := range rows {
-			tbl.Append(projectMessage(L, m))
-		}
-		L.Push(tbl)
-		return 1
-	}))
-	ctx.RawSetString("count", vm.NewFunction(func(L *lua.LState) int {
-		q := L.CheckString(1)
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: q})
-		if err != nil || rpl.Err != nil {
-			L.RaiseError("count: %v %v", err, rpl.Err)
-		}
-		L.Push(lua.LNumber(rpl.Count))
-		return 1
-	}))
-	return ctx
-}
-
-// projectMessage converts one message to its metadata-only Lua table:
-// subject, author, timestamp, tags, references, id, thread_id. NEVER
-// Paths or Atts - mail content and filesystem paths stay out of the
-// LLM surface (the privacy rule).
-func projectMessage(L *lua.LState, m core.Message) *lua.LTable {
-	t := L.NewTable()
-	t.RawSetString("id", lua.LString(m.ID))
-	t.RawSetString("thread_id", lua.LString(m.ThreadID))
-	t.RawSetString("timestamp", lua.LNumber(m.Timestamp))
-	t.RawSetString("author", lua.LString(m.Author))
-	t.RawSetString("subject", lua.LString(m.Subject))
-	tags := L.NewTable()
-	for _, tag := range m.Tags {
-		tags.Append(lua.LString(tag))
-	}
-	t.RawSetString("tags", tags)
-	refs := L.NewTable()
-	for _, r := range m.References {
-		refs.Append(lua.LString(r))
-	}
-	t.RawSetString("references", refs)
-	return t
 }
 
 // serveMCP runs the MCP stdio server: the read-only worker (ActOpen

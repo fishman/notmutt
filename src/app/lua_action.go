@@ -190,8 +190,12 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 	defer cancel()
 	defer vm.Close()
 	// the plugin's sandbox json/http modules: http only when the file
-	// has a [lua.network] section (the deny-by-default gate)
-	setPluginNet(vm, networkFor(ac.cfg.Lua.Network, path))
+	// has a [lua.network] section (the deny-by-default gate). The same
+	// section downgrades the ctx to the metadata surface (no
+	// mail_lines): the data policy - content never enters a VM that can
+	// reach the network
+	rules := networkFor(ac.cfg.Lua.Network, path)
+	setPluginNet(vm, rules)
 	if err := vm.DoFile(path); err != nil {
 		return "", err
 	}
@@ -200,7 +204,7 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 		return "", fmt.Errorf("lua: %s: no such function registered", path)
 	}
 	vm.Push(fn)
-	vm.Push(ac.ctxTable(vm))
+	vm.Push(ac.ctxTable(vm, rules != nil))
 	if err := vm.PCall(1, 0, nil); err != nil {
 		return "", err
 	}
@@ -230,8 +234,10 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 		runErr = err
 	} else {
 		// the chunk is a bare statement list, not function(ctx): the ctx
-		// table is a global it reads by name (and its first arg too)
-		ctx := ac.ctxTable(vm)
+		// table is a global it reads by name (and its first arg too).
+		// :lua chunks are user-typed, never plugin files - no network
+		// section exists for them, so they keep the full ctx
+		ctx := ac.ctxTable(vm, false)
 		vm.SetGlobal("ctx", ctx)
 		vm.Push(fn)
 		vm.Push(ctx)
@@ -341,10 +347,18 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 }
 
 // ctxTable is the invocation context the chunk or action receives: the
-// thread id and the lazy full-thread plain text (mail_lines).
-func (ac *actionCtx) ctxTable(vm *lua.LState) *lua.LTable {
+// thread id and the lazy full-thread plain text (mail_lines). For a
+// network-enabled plugin (net) the data policy kicks in: mail_lines
+// is absent and only the metadata surface (metadataCtxTable) is
+// registered, so bodies cannot cross the network allowlist.
+func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_id", lua.LString(ac.tid))
+	if net {
+		meta := metadataCtxTable(vm, ac.worker)
+		meta.ForEach(func(k, v lua.LValue) { ctx.RawSet(k, v) })
+		return ctx
+	}
 	ctx.RawSetString("mail_lines", vm.NewFunction(func(L *lua.LState) int {
 		lines, err := ac.mailLines()
 		if err != nil {

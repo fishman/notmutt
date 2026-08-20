@@ -149,7 +149,7 @@ func TestMCPRestrictedSurface(t *testing.T) {
 	defer cancel()
 	defer vm.Close()
 	keys := map[string]bool{}
-	mcpCtxTable(vm, fw).ForEach(func(k, _ lua.LValue) { keys[k.String()] = true })
+	metadataCtxTable(vm, fw).ForEach(func(k, _ lua.LValue) { keys[k.String()] = true })
 	for _, want := range []string{"thread_info", "search", "count"} {
 		if !keys[want] {
 			t.Errorf("ctx table missing binding %s", want)

@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"notmutt/config"
+	"notmutt/core"
 )
 
 // loadPluginsCaptured runs the plugin loader with the logger captured:
@@ -98,7 +99,7 @@ if resp.status ~= 200 then error("status " .. resp.status) end
 if resp.body ~= "pong" then error("body " .. resp.body) end
 if resp.headers["Content-Type"] ~= "text/plain" then error("missing header") end
 `, srv.URL))
-	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}}}
+	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}, Paths: []string{"GET /*"}}}
 	if out := loadPluginsCaptured(t, dir, rules); out != "" {
 		t.Fatalf("allowlisted request must succeed: %s", out)
 	}
@@ -127,25 +128,102 @@ if resp ~= nil or err == nil then error("non-allowlisted host reached the server
 	}
 }
 
-func TestPluginHTTPMethodGate(t *testing.T) {
+func TestPluginHTTPEndpointGate(t *testing.T) {
 	dir := t.TempDir()
-	var hits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
+	var hitsProbe, hitsOther int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/probe") {
+			hitsProbe++
+		}
+		if r.URL.Path == "/other" {
+			hitsOther++
+		}
+	}))
 	defer srv.Close()
-	// GET is allowlisted, POST is not: the POST fails before the dial,
-	// the GET succeeds
+	// the endpoint rule is verb + path as one unit: "get /probe*"
+	// allows the GET on /probe and below, denies the POST on the same
+	// path and the GET on a different one - the verb alone means
+	// nothing without its path
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
-local resp, err = http.request("POST", %q, {})
-if resp ~= nil or err == nil then error("POST must be denied") end
-local resp, err = http.request("get", %q, {})
-if resp == nil or resp.status ~= 200 then error("GET must be allowed: " .. tostring(err)) end
-`, srv.URL, srv.URL))
-	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}, Methods: []string{"get"}}}
+local resp, err = http.request("POST", %q .. "/probe", {})
+if resp ~= nil or err == nil then error("POST /probe must be denied") end
+local resp, err = http.request("GET", %q .. "/other", {})
+if resp ~= nil or err == nil then error("GET /other must be denied") end
+local resp, err = http.request("get", %q .. "/probe/sub?q=1", {})
+if resp == nil or resp.status ~= 200 then error("GET /probe must be allowed: " .. tostring(err)) end
+`, srv.URL, srv.URL, srv.URL))
+	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}, Paths: []string{"get /probe*"}}}
 	if out := loadPluginsCaptured(t, dir, rules); out != "" {
-		t.Fatalf("method gate failed: %s", out)
+		t.Fatalf("endpoint gate failed: %s", out)
 	}
-	if hits != 1 {
-		t.Fatalf("expected exactly 1 hit (GET), got %d", hits)
+	if hitsProbe != 1 {
+		t.Fatalf("expected exactly 1 hit on /probe, got %d", hitsProbe)
+	}
+	if hitsOther != 0 {
+		t.Fatalf("denied endpoint dialed the server (%d hits on /other)", hitsOther)
+	}
+}
+
+func TestPluginHTTPRedirectPathChecked(t *testing.T) {
+	dir := t.TempDir()
+	var hitsNo int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/no" {
+			hitsNo++
+			return
+		}
+		http.Redirect(w, r, "/no", http.StatusFound)
+	}))
+	defer srv.Close()
+	// /ok is allowlisted, the hop to /no is not: the hop must be
+	// refused before the dial
+	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
+local resp, err = http.request("GET", %q .. "/ok", {})
+if resp ~= nil or err == nil then error("redirect to a disallowed path must be denied") end
+`, srv.URL))
+	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}, Paths: []string{"GET /ok*"}}}
+	if out := loadPluginsCaptured(t, dir, rules); out != "" {
+		t.Fatalf("redirect path check failed: %s", out)
+	}
+	if hitsNo != 0 {
+		t.Fatalf("redirect hop dialed the disallowed path (%d hits)", hitsNo)
+	}
+}
+
+func TestPluginNetworkDataSurface(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "net.lua", `
+register_action("net", function(ctx)
+    if ctx.mail_lines ~= nil then error("network plugin must not see mail content") end
+    if ctx.thread_info == nil or ctx.search == nil or ctx.count == nil then
+        error("network plugin must get the metadata surface")
+    end
+    local rows = ctx.search("tag:inbox", 10)
+    if rows == nil or #rows == 0 then error("search must work") end
+    if rows[1].subject ~= "alpha" then error("wrong subject: " .. tostring(rows[1].subject)) end
+end)
+`)
+	writePlugin(t, dir, "plain.lua", `
+register_action("plain", function(ctx)
+    if ctx.mail_lines == nil then error("plain plugin must keep mail_lines") end
+end)
+`)
+	// plain has NO section: the positive control keeps the full ctx
+	network := map[string]config.LuaNetwork{
+		"net": {Targets: []string{"127.0.0.1"}, Paths: []string{"GET /x"}},
+	}
+	loadLuaPlugins(dir, network)
+	fw := &fakeWorker{}
+	fw.setStubs([]core.Message{{ID: "m1", ThreadID: "t1", Subject: "alpha", Author: "sender@example.com", Tags: []string{"inbox"}}})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	runLuaAction("net", "t1", bus, &config.Config{Lua: config.Lua{Network: network}}, fw)
+	runLuaAction("plain", "t1", bus, &config.Config{Lua: config.Lua{Network: network}}, fw)
+	for i := 0; i < 2; i++ {
+		lr := (<-ch).(core.LuaResult)
+		if lr.Err != nil {
+			t.Fatalf("plugin %d: %v", i, lr.Err)
+		}
 	}
 }
 
@@ -193,7 +271,7 @@ local resp, err = http.request("GET", %q, {})
 if resp ~= nil then error("oversized body must fail") end
 if err == nil or not string.find(err, "too large") then error("wrong error: " .. tostring(err)) end
 `, srv.URL))
-	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}}}
+	rules := map[string]config.LuaNetwork{"plug": {Targets: []string{"127.0.0.1"}, Paths: []string{"GET /*"}}}
 	if out := loadPluginsCaptured(t, dir, rules); out != "" {
 		t.Fatalf("body cap failed: %s", out)
 	}
@@ -221,20 +299,26 @@ func TestLuaNetworkHostAllowed(t *testing.T) {
 	}
 }
 
-func TestLuaNetworkMethodAllowed(t *testing.T) {
+func TestLuaNetworkEndpointAllowed(t *testing.T) {
 	for _, c := range []struct {
-		method  string
-		methods []string
-		want    bool
+		method, path string
+		paths        []string
+		want         bool
 	}{
-		{"GET", nil, true}, // empty list = any verb
-		{"DELETE", nil, true},
-		{"GET", []string{"get"}, true},
-		{"post", []string{"POST"}, true},
-		{"DELETE", []string{"GET", "POST"}, false},
+		{"GET", "/a", []string{"get /a*"}, true},     // verb case-insensitive
+		{"GET", "/a/b/c", []string{"GET /a*"}, true}, // trailing * = prefix across slashes
+		{"GET", "/ab", []string{"GET /a*"}, true},    // prefix, not segment-bound
+		{"GET", "/a", []string{"GET /a"}, true},      // exact
+		{"GET", "/a/b", []string{"GET /a"}, false},   // exact does not prefix-match
+		{"GET", "/b", []string{"GET /a"}, false},     // different path
+		{"POST", "/a", []string{"GET /a"}, false},    // verb mismatch
+		{"POST", "/a", []string{"GET /a", "post /a"}, true},
+		{"GET", "/a", []string{"/a"}, false},         // malformed rule (no verb) never matches
+		{"GET", "/a", nil, false},                    // empty paths = no endpoint at all
+		{"GET", "/a?x=1", []string{"GET /a"}, false}, // query never takes part (u.Path input)
 	} {
-		if got := luaNetworkMethodAllowed(c.method, c.methods); got != c.want {
-			t.Errorf("luaNetworkMethodAllowed(%q, %v) = %v, want %v", c.method, c.methods, got, c.want)
+		if got := luaNetworkEndpointAllowed(c.method, c.path, c.paths); got != c.want {
+			t.Errorf("luaNetworkEndpointAllowed(%q, %q, %v) = %v, want %v", c.method, c.path, c.paths, got, c.want)
 		}
 	}
 }

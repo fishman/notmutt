@@ -171,11 +171,14 @@ type Lua struct {
 // = plugin file base name). Network is deny-by-default: the sandbox
 // http module exists for a plugin only when this section does, and
 // every request (redirect hops included) must match Targets - exact
-// hosts or "*.suffix". Methods restricts the HTTP verbs (upper- or
-// lowercase); empty = any verb.
+// hosts or "*.suffix" - AND one Paths rule. A Paths entry is a verb
+// plus a path glob ("METHOD /path", case-insensitive verb): "GET
+// /crm/v3/objects/contacts*" allows that GET (prefix match), nothing
+// else. A verb without its path is meaningless, so the two are one
+// rule unit; empty Paths = no request ever matches.
 type LuaNetwork struct {
 	Targets []string `toml:"targets"`
-	Methods []string `toml:"methods"`
+	Paths   []string `toml:"paths"`
 }
 
 // AIProvider is one named AI backend ([ai.<name>], R8): Type selects
@@ -1385,6 +1388,14 @@ func validate(cfg Config) error {
 		}
 		if len(argv) == 0 || strings.TrimSpace(argv[0]) == "" {
 			return fmt.Errorf("attach-commands.%s: argv must not be empty", name)
+		}
+	}
+	for name, r := range cfg.Lua.Network {
+		for _, p := range r.Paths {
+			method, glob, ok := strings.Cut(p, " ")
+			if !ok || method == "" || !strings.HasPrefix(glob, "/") {
+				return fmt.Errorf("lua.network.%s.paths: %q must be \"METHOD /path\" (\"GET /crm/v3/objects/contacts*\")", name, p)
+			}
 		}
 	}
 	if len(cfg.Opener) > 0 && strings.TrimSpace(cfg.Opener[0]) == "" {

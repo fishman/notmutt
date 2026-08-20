@@ -453,7 +453,14 @@ func (v *View) MergeThread(in *Thread) {
 	cur.LastDate = in.LastDate
 	cur.Root = buildTree(cur.msgs)
 	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
-	v.dirty = true
+	// the batch discipline of MergeThreads: the hydrator merges a
+	// whole wave under one BeginMerge, so the flatten rebuilds once
+	// per wave, not once per thread.
+	if v.mergeDepth > 0 {
+		v.mergeDirty = true
+	} else {
+		v.dirty = true
+	}
 }
 
 // Hydrated reports whether the thread holds real messages (the stub

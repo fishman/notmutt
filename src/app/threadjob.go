@@ -43,10 +43,40 @@ func (t *threadJob) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case e := <-ch:
-			switch e.(type) {
-			case core.ViewDiff, core.QueryBatch:
-				t.scanVisible()
+			if !scanTrigger(e) {
+				continue
 			}
+			// one scan per wave, never one per merge: every fetched
+			// thread publishes its own ViewDiff, and each event used to
+			// spawn a fresh scan - 1 event -> 40 fetches -> 40 events ->
+			// 40 scans, a self-sustaining storm that saturates the
+			// worker and re-seeds the progress bar per scan. Draining
+			// collapses the wave; events published during the scan
+			// trigger the next one.
+			drainEvents(ch)
+			t.scanVisible()
+		}
+	}
+}
+
+// scanTrigger reports the events that mean rows may need hydration.
+func scanTrigger(e core.Event) bool {
+	switch e.(type) {
+	case core.ViewDiff, core.QueryBatch:
+		return true
+	}
+	return false
+}
+
+// drainEvents consumes every queued event without handling it: the
+// job reacts only to scan triggers, and this is a private subscriber
+// channel, so the dropped events cost nothing outside this job.
+func drainEvents(ch <-chan core.Event) {
+	for {
+		select {
+		case <-ch:
+		default:
+			return
 		}
 	}
 }
@@ -81,6 +111,7 @@ func (t *threadJob) scanVisible() {
 		}
 	}
 	done := 0
+	t.view.BeginMerge()
 	for _, r := range page {
 		if !threadWorthy(r) {
 			continue
@@ -117,6 +148,7 @@ func (t *threadJob) scanVisible() {
 		}()
 	}
 	wg.Wait()
+	t.view.EndMerge()
 	if total > 0 && done == total {
 		// scan end: the bar clears (R15 batch boundary) even when a fetch
 		// failed - the failed thread retries on the next scan

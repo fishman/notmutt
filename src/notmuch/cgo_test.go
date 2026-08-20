@@ -38,13 +38,15 @@ func TestCGOSmoke(t *testing.T) {
 		t.Fatalf("revision: %q %d", uuid, rev)
 	}
 	n := 0
+	threads := map[string]bool{}
 	err = b.Query(context.Background(), "tag:inbox", 10, func(chunk []core.Message) bool {
 		for _, m := range chunk {
-			// batched summaries are CLI-shaped stubs: thread-level
-			// fields only, no message ids, paths, or references
-			if m.ID != "" || m.Paths != nil || m.References != nil || m.ThreadID == "" || m.Timestamp == 0 {
-				t.Fatalf("row is not a summary stub: %+v", m)
+			// full-walk rows are real messages: ids, paths, and
+			// references arrive with the thread in one pass
+			if m.ID == "" || m.ThreadID == "" || m.Timestamp == 0 {
+				t.Fatalf("row is not a real message row: %+v", m)
 			}
+			threads[m.ThreadID] = true
 			n++
 		}
 		return true
@@ -52,10 +54,10 @@ func TestCGOSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n != 10 {
-		t.Fatalf("limit must bound the walk to 10 threads, got %d", n)
+	if len(threads) != 10 {
+		t.Fatalf("limit must bound the walk to 10 threads, got %d", len(threads))
 	}
-	t.Logf("got %d thread summaries, rev %d (counts only, no content)", n, rev)
+	t.Logf("got %d message rows in %d threads, rev %d (counts only, no content)", n, len(threads), rev)
 }
 
 // TestCGOTagRoundTrip exercises the write path on a scratch database:

@@ -393,9 +393,8 @@ func mergeInto(bus *core.Bus, view *core.View, snapshot []*core.Thread) {
 	bus.Publish(core.ViewDiff{View: view.ViewName()})
 }
 
-// groupThreads groups a page into one thread per thread id: the search
-// summaries become stub threads (one summary row each - the index
-// row), from both backends.
+// groupThreads groups a page into one thread per thread id: the full
+// walk emits per-message rows, so each group becomes a thread tree.
 func groupThreads(msgs []core.Message) []*core.Thread {
 	byID := map[string][]*core.Message{}
 	for i := range msgs {

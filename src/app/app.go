@@ -96,23 +96,13 @@ func Run() error {
 	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
 	refresher := newRefresher(bus, worker, view, 0)
 
-	// views is the view registry for the hydrator: name -> view. The
-	// search tabs (the ctrl+f seam) register under their query; a closed
-	// tab's entry lingers until exit (bounded by the search-tab count,
-	// harmless).
+	// views is the view registry: name -> view. The search tabs (the
+	// ctrl+f seam) register under their query; a closed tab's entry
+	// lingers until exit (bounded by the search-tab count, harmless).
 	views := map[string]*core.View{view.ViewName(): view}
 
 	cjob := newCacheJob(bus, worker, view, cachePath())
 	go cjob.Run(ctx)
-
-	// the hydrator fills stub rows into real thread trees (R3); the
-	// threaded closure reads the store, so a view-config change picks up
-	// on the next scan. The registry resolves the triggering event's
-	// view - a search tab hydrates like the main one.
-	tjob := newThreadJob(bus, worker, view, func() bool {
-		return st.Config().Views[st.Config().ActiveView].Threads
-	}, func(name string) *core.View { return views[name] })
-	go tjob.Run(ctx)
 
 	groups := st.Config().TagGroupList()
 	view.SetGroups(groups)

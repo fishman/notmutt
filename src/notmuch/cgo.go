@@ -61,19 +61,19 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return b.db.Revision()
 }
 
-// Query walks the result as one native batch per chunk: the walk's C
-// iterator stays alive across chunks, each pack crossing the boundary
-// once (the CLI's bulk-JSON emit, in-process: the per-thread
-// header-cache reads amortize C-side, zero file opens). The rows are
-// the same stub data the CLI emits - thread id, newest date, authors,
-// subject, tags - so the merge path is shared; per-message data comes
-// from Thread, on open only. Chunk cadence: firstChunk then
-// steadyChunk. limit counts threads, like `notmuch search --limit`.
+// Query walks the result as one native batch per chunk: the full walk
+// emits each thread's summary and every message row in one pass (the
+// per-thread header-cache reads amortize C-side, zero file opens), so
+// the view fills with real rows from the first chunk - no stubs, no
+// per-thread hydration. The binding keeps the summary-only walk
+// (ThreadsWalk) intact; this path consumes the full walk. Chunk
+// cadence: firstChunk then steadyChunk. limit counts threads, like
+// `notmuch search --limit`.
 func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit func([]core.Message) bool) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch search: database not open")
 	}
-	w, err := b.db.NewThreadsWalk(query, limit)
+	w, err := b.db.NewFullWalk(query, limit)
 	if err != nil {
 		return fmt.Errorf("notmuch search: %w", err)
 	}
@@ -83,22 +83,27 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit fu
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		summaries, done, err := w.Next(size)
+		threads, done, err := w.Next(size)
 		if err != nil {
 			return fmt.Errorf("notmuch search: %w", err)
 		}
 		if done {
 			return nil
 		}
-		rows := make([]core.Message, 0, len(summaries))
-		for _, s := range summaries {
-			rows = append(rows, core.Message{
-				ThreadID:  s.ThreadID,
-				Timestamp: s.Timestamp,
-				Author:    s.Authors,
-				Subject:   core.DecodeSubject(s.Subject),
-				Tags:      s.Tags,
-			})
+		rows := make([]core.Message, 0, len(threads))
+		for _, t := range threads {
+			for _, m := range t.Msgs {
+				rows = append(rows, core.Message{
+					ID:         m.ID,
+					ThreadID:   t.ThreadID,
+					Timestamp:  m.Timestamp,
+					Author:     m.Author,
+					Subject:    core.DecodeSubject(m.Subject),
+					Tags:       m.Tags,
+					Paths:      m.Paths,
+					References: refsSplit(m.References),
+				})
+			}
 		}
 		if emit != nil && !emit(rows) {
 			return nil
@@ -109,15 +114,22 @@ func (b *CGOBackend) Query(ctx context.Context, query string, limit int, emit fu
 
 // refsOf parses the message's reference chain out of the DB header
 // cache (content-free: references and in-reply-to are Xapian header
-// values, no file opens). Both headers are folded per RFC 5322, so the
-// raw value is split on whitespace and each token trimmed of its angle
-// brackets.
+// values, no file opens).
 func refsOf(m *nm.Message) []string {
 	var refs []string
 	for _, h := range []string{"references", "in-reply-to"} {
-		for _, f := range strings.Fields(m.Header(h)) {
-			refs = append(refs, strings.Trim(f, "<>"))
-		}
+		refs = append(refs, m.Header(h))
+	}
+	return refsSplit(strings.Join(refs, " "))
+}
+
+// refsSplit splits a folded reference header on whitespace and trims
+// each token's angle brackets (RFC 5322 folding, the full walk's
+// space-joined raw value, and the fetch path all land here).
+func refsSplit(raw string) []string {
+	var refs []string
+	for _, f := range strings.Fields(raw) {
+		refs = append(refs, strings.Trim(f, "<>"))
 	}
 	return refs
 }

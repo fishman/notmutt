@@ -10,10 +10,12 @@
 
 -- Lookup table: sender regex, subject regex, category. First match
 -- wins; patterns are RE2 (Lua string patterns have no alternation).
+-- RE2 escapes with backslash: a literal dot is \., so the Lua literal
+-- needs \\ (a single backslash is swallowed by the Lua parser).
 local rules = {
-  { from = "Trip%.com", subject = "^Flight Booking Confirmed:", category = "travel" },
-  { from = "delta%.com", subject = "boarding pass", category = "travel" },
-  { from = "acme%.com", subject = "invoice", category = "receipt" },
+  { from = "trip\\.com", subject = "^Flight Booking Confirmed:", category = "travel" },
+  { from = "delta\\.com", subject = "boarding pass", category = "travel" },
+  { from = "acme\\.com", subject = "invoice", category = "receipt" },
 }
 
 function categorize(handle, msg)

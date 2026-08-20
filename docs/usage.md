@@ -260,11 +260,15 @@ Return a table of attachment ordinal to category string ("travel",
 "receipt", ...); attachments without an entry are skipped, and `nil`
 skips the whole message:
 
+Patterns are RE2 (Lua string patterns have no alternation). RE2
+escapes with backslash, so a literal dot is `\.` and the Lua literal
+needs `\\` - a single backslash is swallowed by the Lua parser:
+
 ```lua
 local rules = {
-  { from = "Trip%.com", subject = "^Flight Booking Confirmed:", category = "travel" },
-  { from = "delta%.com", subject = "boarding pass", category = "travel" },
-  { from = "acme%.com", subject = "invoice", category = "receipt" },
+  { from = "trip\\.com", subject = "^Flight Booking Confirmed:", category = "travel" },
+  { from = "delta\\.com", subject = "boarding pass", category = "travel" },
+  { from = "acme\\.com", subject = "invoice", category = "receipt" },
 }
 
 function categorize(handle, msg)

@@ -143,15 +143,22 @@ func reportFilterDiag(rep *filter.Report, mr *filter.MoveReport) {
 		return
 	}
 	diag.Info("filter", "dry-run", rep.DryRun, "entries", len(rep.Entries), "moves", len(mr.Moves))
-	n := 0
-	for _, m := range mr.Moves {
+	reportMoveDiag("filter", mr, filterReportLines)
+}
+
+// reportMoveDiag logs a MoveReport's per-file outcomes (paths only,
+// never ids or headers, F6): the poll caps a backfill replay (cap > 0),
+// the apply path logs every file. Shared by the filter run and the
+// staged apply - a skipped move is an issue the user must see.
+func reportMoveDiag(prefix string, mr *filter.MoveReport, cap int) {
+	for i, m := range mr.Moves {
 		if m.Skip != "" {
-			diag.Info("filter: skip", "reason", m.Skip, "from", m.From)
+			diag.Info(prefix+": skip", "reason", m.Skip, "from", m.From)
 		} else {
-			diag.Info("filter: move", "from", m.From, "to", m.To)
+			diag.Info(prefix+": move", "from", m.From, "to", m.To)
 		}
-		if n++; n >= filterReportLines {
-			diag.Info("filter: more", "skipped", len(mr.Moves)-n)
+		if cap > 0 && i+1 >= cap {
+			diag.Info(prefix+": more", "skipped", len(mr.Moves)-i-1)
 			return
 		}
 	}

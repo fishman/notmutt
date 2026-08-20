@@ -1,0 +1,13 @@
+[Unit]
+Description=Run all mbsync account syncs in parallel
+After=network.target network-online.target
+Wants=network-online.target
+StartLimitBurst=2
+
+[Service]
+ExecStart=/bin/sh -c '/usr/bin/mbsync jelveh -a & wait'
+RuntimeMaxSec=5m
+Restart=on-failure
+
+[Install]
+WantedBy=timers.target

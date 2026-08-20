@@ -1,0 +1,16 @@
+[Unit]
+Description=Mail sync: mbsync + vdirsyncer in parallel, then notmuch pipeline
+After=network.target network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/bin/sh -c 'nmcli net connectivity 2>/dev/null | grep -q full || exit 1; export XDG_RUNTIME_DIR=/run/user/$(id -u); export MANGO_INSTANCE_SIGNATURE="$(set -- $XDG_RUNTIME_DIR/mango-*.sock; echo $1)"; playerctl -a -f "{{playerName}} {{status}}" status 2>/dev/null | grep -q "^mpv Playing$" && exit 1; pw-dump 2>/dev/null | grep -q "Stream/Input/Video" && exit 1; mmsg get all-clients 2>/dev/null | jq -e "[.clients[] | select(.is_fullscreen == true)] | any" 2>/dev/null && exit 1; exit 0'
+# vdirsyncer runs in parallel; its result is ignored. Wait only on mbsync.
+# Sync marker: files delivered by this run are newer than it; the post-new
+# hook uses it to untag mail an external client moved into an INBOX.
+ExecStart=/bin/sh -c 'systemctl --user start vdirsyncer.service & systemctl --user start --wait mbsync-all.service'
+Restart=on-failure
+
+[Install]
+WantedBy=timers.target

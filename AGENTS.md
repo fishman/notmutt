@@ -510,7 +510,14 @@ instead of a reversible stage.
 - APPLY (default `$`, mutt's sync semantics) flushes the buffer: one ActTag
   batch per message carrying the fully resolved op set (pending ops plus
   exclusive-group removals), on the worker's lock-budgeted action path. A
-  failed message's ops stay staged - retry or undo.
+  failed message's ops stay staged - retry or undo. A folder-tag op must
+  resolve its physical move BEFORE the tag lands - the account folder
+  space must cover the message's paths, the winner tag must have move
+  candidates, and the account must not be readonly; any failure refuses
+  the apply with an error naming the config fix (a tag without a
+  resolvable move is the state the next poll's location-wins resolution
+  eats). Mover-level skips (dest exists, not managed, ...) are logged on
+  diag, never silent.
 - UNDO (`u`) discards the cursor message's staged ops and re-renders its
   last-applied state. Before apply it is a pure buffer drop, free of DB
   traffic.

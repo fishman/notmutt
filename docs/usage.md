@@ -156,6 +156,12 @@ buffer (one batch per message); `u` discards the cursor message's
 staged ops. Staged state is session-local and lost on exit - apply
 before you quit.
 
+A folder tag whose physical move cannot resolve is refused before the
+tag lands - the error names the fix (the account folder space must
+cover the message, the tag needs move candidates, readonly accounts
+never move) and the entry stays staged. Move skips land in the `~`
+log, never silently.
+
 ### Filters
 
 The classification pipeline (folder tags, header rules, physical

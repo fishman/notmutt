@@ -167,7 +167,7 @@ func (p *pager) ensureStyled() {
 		}
 		li := p.imgFrom[i]
 		if p.styled[li] == "" {
-			p.styled[li] = p.styleLine(p.lines[li])
+			p.styled[li] = p.styleLine(li)
 		}
 		p.doc[i] = p.styled[li]
 	}
@@ -307,14 +307,22 @@ func quoteColor(sg sgrSet, quoted int) sgr {
 	return sg.pagerQuoted[quoted-1]
 }
 
-func (p *pager) styleLine(l core.Line) string {
+func (p *pager) styleLine(li int) string {
 	sg := p.st.sgr
+	l := p.lines[li]
 	var g sgr
 	switch l.Kind {
 	case core.LineSubject:
 		g = sg.pagerHdr
 	case core.LineHeader:
-		g = sg.pagerHdrStyle(l.Text)
+		// the rotation position: how far this line sits into its
+		// contiguous header run (a run resets after a non-header
+		// line, so each message's block restarts the cycle)
+		n := 0
+		for j := li; j >= 0 && p.lines[j].Kind == core.LineHeader; j-- {
+			n++
+		}
+		g = sg.pagerHdrColor(n - 1)
 	case core.LineBody:
 		g = quoteColor(sg, l.Quoted)
 	case core.LineSignature:

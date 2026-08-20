@@ -299,31 +299,56 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	}
 }
 
-// TestPagerHeaderRules pins the per-header regex colors (the mutt
-// `color header` surface): a matching rule wins over hdrdefault, the
-// last matching rule wins, and the default theme carries the onedark
-// port (references/muttrc/theme/onedark.muttrc:37-43).
-func TestPagerHeaderRules(t *testing.T) {
+// TestPagerHeaderRotation pins the header block colors: the block
+// cycles the theme's header-colors list (wrapping), a non-header line
+// resets the run, and an empty list falls back to hdrdefault. The
+// default theme carries the four onedark header colors.
+func TestPagerHeaderRotation(t *testing.T) {
 	st := DefaultStyles()
 	st.Pager.HdrDefault = st.Pager.HdrDefault.Foreground(lipgloss.Color("#101010"))
-	st.Pager.HeaderRules = []config.HeaderRuleStyle{
-		{Pattern: "^From:", Style: config.Style{Fg: "#202020"}},
-		{Pattern: "^From:", Style: config.Style{Fg: "#303030"}},
-		{Pattern: "^Subject:", Style: config.Style{Fg: "#404040"}},
+	st.Pager.HeaderColors = []config.Style{
+		{Fg: "#202020"}, {Fg: "#303030"}, {Fg: "#404040"}, {Fg: "#505050"},
 	}
 	st.sgr = sgrSetOf(st)
-	rule := func(i int) sgr { return st.sgr.pagerHdrRules[i].g }
-	if got := st.sgr.pagerHdrStyle("From: alpha <alpha@example.com>"); got != rule(1) {
-		t.Fatalf("From must take the last matching rule")
+	col := func(i int) sgr { return st.sgr.pagerHdrColors[i] }
+	if got := st.sgr.pagerHdrColor(0); got != col(0) {
+		t.Fatalf("line 0 must take color 0")
 	}
-	if got := st.sgr.pagerHdrStyle("Subject: re: lorem"); got != rule(2) {
-		t.Fatalf("Subject must match its rule")
+	if got := st.sgr.pagerHdrColor(3); got != col(3) {
+		t.Fatalf("line 3 must take color 3")
 	}
-	if got := st.sgr.pagerHdrStyle("Date: Sat, 16 Aug 2026"); got != st.sgr.pagerDef {
-		t.Fatalf("a non-matching header must fall back to hdrdefault")
+	if got := st.sgr.pagerHdrColor(4); got != col(0) {
+		t.Fatalf("line 4 must wrap to color 0")
+	}
+	st2 := DefaultStyles()
+	st2.sgr = sgrSetOf(st2)
+	if got := st2.sgr.pagerHdrColor(0); got != st2.sgr.pagerDef {
+		t.Fatalf("an empty list must fall back to hdrdefault")
+	}
+	// the run resets after a non-header line: message 2's block
+	// restarts the cycle
+	p := newPager("", "", []core.Line{
+		{Kind: core.LineHeader, Text: "h0"},
+		{Kind: core.LineHeader, Text: "h1"},
+		{Kind: core.LineBody, Text: "body"},
+		{Kind: core.LineHeader, Text: "h2"},
+	})
+	p.st = st
+	opens := func(i int) string {
+		s := p.styleLine(i)
+		return s[:strings.Index(s, "m")+1]
+	}
+	if got := opens(0); got != col(0).open {
+		t.Fatalf("run line 0: %q, want %q", got, col(0).open)
+	}
+	if got := opens(1); got != col(1).open {
+		t.Fatalf("run line 1: %q, want %q", got, col(1).open)
+	}
+	if got := opens(3); got != col(0).open {
+		t.Fatalf("a run after a body line must restart: %q, want %q", got, col(0).open)
 	}
 	cfg := config.Default()
-	if len(cfg.Theme.Variants["dark"].Pager.HeaderRules) != 6 {
-		t.Fatalf("the default theme must carry the six onedark header rules, got %d", len(cfg.Theme.Variants["dark"].Pager.HeaderRules))
+	if len(cfg.Theme.Variants["dark"].Pager.HeaderColors) != 6 {
+		t.Fatalf("the default theme must carry the six onedark quoted colors, got %d", len(cfg.Theme.Variants["dark"].Pager.HeaderColors))
 	}
 }

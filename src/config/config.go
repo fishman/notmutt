@@ -9,7 +9,6 @@ import (
 	"maps"
 	"path/filepath"
 	"reflect"
-	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -421,18 +420,14 @@ type TagStyleTable struct {
 type PagerStyleTable struct {
 	Header     Style
 	HdrDefault Style
-	// HeaderRules color header lines by regex (the mutt `color header`
-	// surface): ordered, last match wins, non-matching lines fall back
-	// to HdrDefault.
-	HeaderRules []HeaderRuleStyle
-	Quoted      [6]Style
-	Signature   Style
-	Attachment  Style
-}
-
-type HeaderRuleStyle struct {
-	Pattern string
-	Style   Style
+	// HeaderColors rotate over a header block's lines (headers are an
+	// open set - any field can appear - so no per-name styles, the
+	// block cycles the list); empty block or empty list falls back to
+	// HdrDefault.
+	HeaderColors []Style
+	Quoted       [6]Style
+	Signature    Style
+	Attachment   Style
 }
 
 type Theme struct {
@@ -648,32 +643,20 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 					t.Pager.Header = style
 				case "hdrdefault":
 					t.Pager.HdrDefault = style
-				case "header-rules":
+				case "header-colors":
 					items, ok := pv.([]any)
 					if !ok {
-						return StyleTable{}, fmt.Errorf("pager.header-rules: expected a list")
+						return StyleTable{}, fmt.Errorf("pager.header-colors: expected a list")
 					}
-					// a named list replaces the variant's rules; an
+					// a named list replaces the variant's colors; an
 					// unnamed pager table keeps them (overlay rule)
-					t.Pager.HeaderRules = nil
+					t.Pager.HeaderColors = nil
 					for i, item := range items {
-						rm, ok := item.(map[string]any)
-						if !ok {
-							return StyleTable{}, fmt.Errorf("pager.header-rules[%d]: expected a table", i)
-						}
-						pattern, ok := rm["pattern"].(string)
-						if !ok {
-							return StyleTable{}, fmt.Errorf("pager.header-rules[%d]: missing pattern", i)
-						}
-						if _, err := regexp.Compile(pattern); err != nil {
-							return StyleTable{}, fmt.Errorf("pager.header-rules[%d]: bad pattern: %w", i, err)
-						}
-						delete(rm, "pattern")
-						s, err := rawStyle(rm)
+						s, err := rawStyle(item)
 						if err != nil {
-							return StyleTable{}, fmt.Errorf("pager.header-rules[%d]: %w", i, err)
+							return StyleTable{}, fmt.Errorf("pager.header-colors[%d]: %w", i, err)
 						}
-						t.Pager.HeaderRules = append(t.Pager.HeaderRules, HeaderRuleStyle{Pattern: pattern, Style: s})
+						t.Pager.HeaderColors = append(t.Pager.HeaderColors, s)
 					}
 				case "quoted0", "quoted1", "quoted2", "quoted3", "quoted4", "quoted5":
 					t.Pager.Quoted[pk[6]-'0'] = style
@@ -726,8 +709,8 @@ func (t *Theme) UnmarshalTOML(v any) error {
 // Resolved returns the variant's styles with normal-inheritance and
 // palette resolution applied: the id-keyed map (normal, indicator,
 // status, progress, error, index.number, index.tag.<name>, ...) plus
-// the resolved per-header regex rules (pattern order preserved).
-func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []HeaderRuleStyle) {
+// the resolved pager header rotation (list order preserved).
+func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 	table, ok := t.Variants[variant]
 	if !ok {
 		table = StyleTable{}
@@ -781,11 +764,11 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []HeaderRu
 	}
 	out["pager.signature"] = apply("pager.signature", table.Pager.Signature)
 	out["pager.attachment"] = apply("pager.attachment", table.Pager.Attachment)
-	rules := make([]HeaderRuleStyle, len(table.Pager.HeaderRules))
-	for i, r := range table.Pager.HeaderRules {
-		rules[i] = HeaderRuleStyle{Pattern: r.Pattern, Style: apply(r.Pattern, r.Style)}
+	colors := make([]Style, len(table.Pager.HeaderColors))
+	for i, s := range table.Pager.HeaderColors {
+		colors[i] = apply(fmt.Sprintf("pager.header-colors[%d]", i), s)
 	}
-	return out, rules
+	return out, colors
 }
 
 type View struct {
@@ -1195,15 +1178,13 @@ func defaultTheme() Theme {
 				},
 				Pager: PagerStyleTable{
 					Header: Style{Fg: "base0D"}, HdrDefault: Style{Fg: "base05"},
-					// the onedark port of the muttrc header colors
-					// (references/muttrc/theme/onedark.muttrc:37-43)
-					HeaderRules: []HeaderRuleStyle{
-						{Pattern: "^From:", Style: Style{Fg: "base0D"}},
-						{Pattern: "^To:", Style: Style{Fg: "base0D"}},
-						{Pattern: "^Subject:", Style: Style{Fg: "base0A"}},
-						{Pattern: "^Date:", Style: Style{Fg: "base0A"}},
-						{Pattern: "^Cc:", Style: Style{Fg: "base0C"}},
-						{Pattern: "^Reply-To:", Style: Style{Fg: "base0E"}},
+					// the onedark quoted palette as the header
+					// rotation (neomutt's quoted_colors_get model: the
+					// block cycles the list, wrapping past the end -
+					// references/muttrc/theme/onedark.muttrc:46-51)
+					HeaderColors: []Style{
+						{Fg: "base0B"}, {Fg: "base0C"}, {Fg: "base0D"},
+						{Fg: "base0E"}, {Fg: "base0A"}, {Fg: "base08"},
 					},
 					Quoted: [6]Style{
 						{Fg: "base0B"}, {Fg: "base0C"}, {Fg: "base0D"},

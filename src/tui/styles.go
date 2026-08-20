@@ -5,7 +5,6 @@ package tui
 
 import (
 	"image/color"
-	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -51,12 +50,12 @@ type IndexStyles struct {
 type PagerStyles struct {
 	Header     lipgloss.Style
 	HdrDefault lipgloss.Style
-	// HeaderRules are the resolved per-header regex styles (config
-	// order = priority, last match wins).
-	HeaderRules []config.HeaderRuleStyle
-	Quoted      [6]lipgloss.Style
-	Signature   lipgloss.Style
-	Attachment  lipgloss.Style
+	// HeaderColors are the resolved header rotation (config order):
+	// a header block cycles the list, wrapping at the end.
+	HeaderColors []config.Style
+	Quoted       [6]lipgloss.Style
+	Signature    lipgloss.Style
+	Attachment   lipgloss.Style
 }
 
 // styleOf converts a resolved config style to a lipgloss style
@@ -131,7 +130,7 @@ type sgrSet struct {
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
 	pagerDef                                     sgr
-	pagerHdrRules                                []pagerHdrRule
+	pagerHdrColors                               []sgr
 	pagerSig                                     sgr
 	pagerAtt                                     sgr
 	pagerErr                                     sgr
@@ -139,22 +138,14 @@ type sgrSet struct {
 	pagerKey                                     string // fingerprint of the pager-relevant opens (styleKey)
 }
 
-type pagerHdrRule struct {
-	re *regexp.Regexp
-	g  sgr
-}
-
-// pagerHdrStyle colors a header line by the pager header rules: last
-// match wins (the mutt `color header` semantics), no match falls back
-// to the hdrdefault style.
-func (sg sgrSet) pagerHdrStyle(text string) sgr {
-	g := sg.pagerDef
-	for _, r := range sg.pagerHdrRules {
-		if r.re.MatchString(text) {
-			g = r.g
-		}
+// pagerHdrColor picks the header rotation color for the n-th line of a
+// header block (n starts at 0), wrapping at the end of the list; an
+// empty list falls back to the hdrdefault style.
+func (sg sgrSet) pagerHdrColor(n int) sgr {
+	if len(sg.pagerHdrColors) == 0 {
+		return sg.pagerDef
 	}
-	return g
+	return sg.pagerHdrColors[n%len(sg.pagerHdrColors)]
 }
 
 func sgrSetOf(st Styles) sgrSet {
@@ -190,14 +181,11 @@ func sgrSetOf(st Styles) sgrSet {
 		pagerErr:    sgrOf(st.Error),
 		pagerQuoted: [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
 	}
-	for _, r := range st.Pager.HeaderRules {
-		// patterns are validated at config load
-		sg.pagerHdrRules = append(sg.pagerHdrRules, pagerHdrRule{re: regexp.MustCompile(r.Pattern), g: sgrOf(styleOf(r.Style))})
+	for _, c := range st.Pager.HeaderColors {
+		sg.pagerHdrColors = append(sg.pagerHdrColors, sgrOf(styleOf(c)))
 	}
 	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr}
-	for _, r := range sg.pagerHdrRules {
-		opens = append(opens, r.g)
-	}
+	opens = append(opens, sg.pagerHdrColors...)
 	opens = append(opens, sg.pagerQuoted[:]...)
 	key := make([]string, len(opens))
 	for i, g := range opens {
@@ -268,7 +256,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 	if theme.Default == "" || len(theme.Variants) == 0 {
 		return DefaultStyles()
 	}
-	ids, hdrRules := theme.Resolved(palette, theme.Default)
+	ids, hdrColors := theme.Resolved(palette, theme.Default)
 	to := func(id string, base lipgloss.Style) lipgloss.Style {
 		s, ok := ids[id]
 		if !ok {
@@ -310,7 +298,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 				to("pager.quoted4", normal), to("pager.quoted5", normal),
 			},
 			Signature: to("pager.signature", normal), Attachment: to("pager.attachment", normal),
-			HeaderRules: hdrRules,
+			HeaderColors: hdrColors,
 		},
 	}
 	st.sgr = sgrSetOf(st)

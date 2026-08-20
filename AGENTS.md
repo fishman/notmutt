@@ -384,7 +384,9 @@ Theming covers mutt's color surface but is configured better. Mutt
 objects that must exist (from `references/muttrc/theme/onedark.muttrc` +
 `references/muttrc/base.colors`): normal, indicator, status, tree, tilde, prompt,
 message, progress, error, search; index + index_number/author/subject/
-date/flags; hdrdefault, header (per-header regex), quoted0-5, body
+date/flags; hdrdefault, header (a rotating color list over the
+header block - header names are an open set, so the block cycles the
+list instead of per-name matching), quoted0-5, body
 (regex rules: URLs, email addresses, *bold* _underlined_ /italic/),
 signature, attachment; compose_header + compose_security_encrypt/sign/
 both; sidebar_new/flagged/ordinary/indicator; index_tag + index_tags.

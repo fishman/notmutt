@@ -65,6 +65,7 @@ func cloneStyleTable(t StyleTable) StyleTable {
 		&t.Index.Number, &t.Index.Date, &t.Index.Author, &t.Index.Subject,
 		&t.Index.Flags, &t.Index.Staged, &t.Index.Ghost, &t.Index.Tag.Default,
 		&t.Pager.Header, &t.Pager.HdrDefault, &t.Pager.Signature, &t.Pager.Attachment,
+		&t.Pager.Recent, &t.Pager.OtherSide,
 	} {
 		if s.Attrs != nil {
 			s.Attrs = append([]string(nil), s.Attrs...)

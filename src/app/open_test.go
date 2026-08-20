@@ -34,7 +34,7 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
 
-	openThread(fw, bus, "t1", "", false, core.RenderAuto, false, 80, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderAuto, false, 80, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -72,7 +72,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -93,7 +93,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 
 	// a mid-thread open names the opened message, not the thread
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
-	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 0, false, nil, nil)
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -116,7 +116,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", "", true, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", true, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -166,6 +166,68 @@ func TestOpenViewMode(t *testing.T) {
 	}
 }
 
+// TestOpenThreadMarkRides pins the mark ride: openThread classifies the
+// opened message against the full thread fetch and ThreadLoaded carries
+// the mark - the recent-5 window, the other-side winner, the sent-tag
+// identity (a mine-sent latest shifts the other-side mark to the
+// previous message), and a message outside the window stays unmarked.
+func TestOpenThreadMarkRides(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	me := []string{"alpha@example.com"}
+	msgs := []core.Message{}
+	for i := 1; i <= 8; i++ {
+		author := "Sender <sender@example.com>"
+		if i <= 4 {
+			author = "Alpha <alpha@example.com>"
+		}
+		msgs = append(msgs, core.Message{ID: string(rune('a' + i - 1)), ThreadID: "t1", Author: author, Timestamp: int64(i)})
+	}
+	fw := &fakeWorker{}
+	fw.setMsgs(msgs)
+	loaded := func() core.ThreadLoaded {
+		select {
+		case e := <-ch:
+			tl, ok := e.(core.ThreadLoaded)
+			if !ok {
+				t.Fatalf("expected ThreadLoaded, got %T", e)
+			}
+			return tl
+		case <-time.After(time.Second):
+			t.Fatal("no ThreadLoaded")
+			return core.ThreadLoaded{}
+		}
+	}
+	// a: the oldest message, outside the recent-5 and not the latest
+	// other-side -> unmarked
+	openThread(fw, bus, "t1", "a", false, core.RenderPlain, false, 0, false, nil, me)
+	if tl := loaded(); tl.Mark != core.MarkNone {
+		t.Fatalf("the oldest message must be unmarked, got %v", tl.Mark)
+	}
+	// e: inside the recent-5 window -> recent
+	openThread(fw, bus, "t1", "e", false, core.RenderPlain, false, 0, false, nil, me)
+	if tl := loaded(); tl.Mark != core.MarkRecent {
+		t.Fatalf("a recent-window message must be recent, got %v", tl.Mark)
+	}
+	// h: the latest message from the other side -> other
+	openThread(fw, bus, "t1", "h", false, core.RenderPlain, false, 0, false, nil, me)
+	if tl := loaded(); tl.Mark != core.MarkOther {
+		t.Fatalf("the latest other-side message must be other, got %v", tl.Mark)
+	}
+	// the latest message is mine (sent tag): the other-side mark shifts
+	// to the previous message, mine itself is recent
+	msgs[7].Tags = []string{"sent"}
+	fw.setMsgs(msgs)
+	openThread(fw, bus, "t1", "g", false, core.RenderPlain, false, 0, false, nil, me)
+	if tl := loaded(); tl.Mark != core.MarkOther {
+		t.Fatalf("the latest non-me message must be other, got %v", tl.Mark)
+	}
+	openThread(fw, bus, "t1", "h", false, core.RenderPlain, false, 0, false, nil, me)
+	if tl := loaded(); tl.Mark != core.MarkRecent {
+		t.Fatalf("a sent-tagged latest message must be recent, got %v", tl.Mark)
+	}
+}
+
 // TestOpenThreadTagFailureKeepsOpen pins the failure surface: a failed
 // mark-read (lock timeout) must not lose the open - ThreadLoaded still
 // publishes, the JobError reports the tag.
@@ -176,7 +238,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -223,7 +285,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		{ID: "b", ThreadID: "t1", Paths: []string{p2}},
 	})
 
-	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 80, false, nil)
+	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 80, false, nil, nil)
 	loaded := func() core.ThreadLoaded {
 		select {
 		case e := <-ch:
@@ -249,7 +311,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		t.Fatalf("the pager must render the opened message only:\n%s", got)
 	}
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 80, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 80, false, nil, nil)
 	tl = loaded()
 	if tl.MsgID != "a" {
 		t.Fatalf("a bare open must fall back to the thread's first, got %q", tl.MsgID)

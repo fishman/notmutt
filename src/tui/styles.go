@@ -57,6 +57,11 @@ type PagerStyles struct {
 	Quoted       [6]lipgloss.Style
 	Signature    lipgloss.Style
 	Attachment   lipgloss.Style
+	// Recent and OtherSide are the thread-position tints: the recent-5
+	// messages and the last other-side message of the thread (the pager
+	// highlight, whole message block).
+	Recent    lipgloss.Style
+	OtherSide lipgloss.Style
 }
 
 // styleOf converts a resolved config style to a lipgloss style
@@ -135,6 +140,8 @@ type sgrSet struct {
 	pagerSig                                     sgr
 	pagerAtt                                     sgr
 	pagerErr                                     sgr
+	pagerRecent                                  sgr
+	pagerOther                                   sgr
 	pagerQuoted                                  [6]sgr
 	pagerKey                                     string // fingerprint of the pager-relevant opens (styleKey)
 }
@@ -181,12 +188,14 @@ func sgrSetOf(st Styles) sgrSet {
 		pagerSig:    sgrOf(st.Pager.Signature),
 		pagerAtt:    sgrOf(st.Pager.Attachment),
 		pagerErr:    sgrOf(st.Error),
+		pagerRecent: sgrOf(st.Pager.Recent),
+		pagerOther:  sgrOf(st.Pager.OtherSide),
 		pagerQuoted: [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
 	}
 	for _, c := range st.Pager.HeaderColors {
 		sg.pagerHdrColors = append(sg.pagerHdrColors, sgrOf(styleOf(c)))
 	}
-	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr}
+	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr, sg.pagerRecent, sg.pagerOther}
 	opens = append(opens, sg.pagerHdrColors...)
 	opens = append(opens, sg.pagerQuoted[:]...)
 	key := make([]string, len(opens))
@@ -245,6 +254,8 @@ func DefaultStyles() Styles {
 			},
 			Signature:  lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Attachment: lipgloss.NewStyle().Foreground(c("#c678dd")),
+			Recent:     lipgloss.NewStyle().Foreground(c("#56b6c2")),
+			OtherSide:  lipgloss.NewStyle().Foreground(c("#c678dd")).Bold(true),
 		},
 	}
 	st.sgr = sgrSetOf(st)
@@ -302,6 +313,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 				to("pager.quoted4", normal), to("pager.quoted5", normal),
 			},
 			Signature: to("pager.signature", normal), Attachment: to("pager.attachment", normal),
+			Recent: to("pager.recent", normal), OtherSide: to("pager.other-side", normal),
 			HeaderColors: hdrColors,
 		},
 	}

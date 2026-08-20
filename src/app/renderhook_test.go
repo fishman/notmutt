@@ -46,7 +46,7 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 		return append(lines, core.Line{Text: "hook two", Kind: core.LineBody}), nil
 	})
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -84,7 +84,7 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 		return append(lines, core.Line{Text: "never seen", Kind: core.LineBody}), context.DeadlineExceeded
 	})
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -132,7 +132,7 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 		return lines, ctx.Err()
 	})
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -164,7 +164,7 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	ch := bus.Subscribe()
 	fw := emptyThreadWorker{}
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -196,7 +196,7 @@ func TestOpenThreadLinks(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{p}}})
 
-	openThread(fw, bus, "t1", "", false, core.RenderHTML, false, 0, true, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderHTML, false, 0, true, nil, nil)
 
 	select {
 	case e := <-ch:
@@ -221,7 +221,7 @@ func TestOpenThreadLinks(t *testing.T) {
 		t.Fatal("no ThreadLoaded")
 	}
 
-	openThread(fw, bus, "t1", "", false, core.RenderHTML, false, 0, false, nil)
+	openThread(fw, bus, "t1", "", false, core.RenderHTML, false, 0, false, nil, nil)
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)

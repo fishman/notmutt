@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"fmt"
 	"maps"
+	"net/mail"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -444,6 +445,11 @@ type PagerStyleTable struct {
 	Quoted       [6]Style
 	Signature    Style
 	Attachment   Style
+	// Recent tints the five most recent messages of a thread, OtherSide
+	// the most recent message from the other side (the pager highlight,
+	// whole message block).
+	Recent    Style
+	OtherSide Style
 }
 
 type Theme struct {
@@ -680,6 +686,10 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 					t.Pager.Signature = style
 				case "attachment":
 					t.Pager.Attachment = style
+				case "recent":
+					t.Pager.Recent = style
+				case "other-side":
+					t.Pager.OtherSide = style
 				default:
 					return StyleTable{}, fmt.Errorf("pager: unknown key %q", pk)
 				}
@@ -781,6 +791,8 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 	}
 	out["pager.signature"] = apply("pager.signature", table.Pager.Signature)
 	out["pager.attachment"] = apply("pager.attachment", table.Pager.Attachment)
+	out["pager.recent"] = apply("pager.recent", table.Pager.Recent)
+	out["pager.other-side"] = apply("pager.other-side", table.Pager.OtherSide)
 	colors := make([]Style, len(table.Pager.HeaderColors))
 	for i, s := range table.Pager.HeaderColors {
 		colors[i] = apply(fmt.Sprintf("pager.header-colors[%d]", i), s)
@@ -892,6 +904,24 @@ func (c Config) AccountTags() map[string]bool {
 		set[a.Tag(name)] = true
 	}
 	return set
+}
+
+// MyAddrs is the identity set: the bare lowercased address of every
+// account's from field. A message whose From matches one is authored
+// by the user (the pager's other-side highlight); the sent tag is the
+// other "me" signal, this catches web-sent mail that never saw the
+// client's Sent folder.
+func (c Config) MyAddrs() []string {
+	var out []string
+	for _, a := range c.Accounts {
+		if a.From == "" {
+			continue
+		}
+		if p, err := mail.ParseAddress(a.From); err == nil {
+			out = append(out, strings.ToLower(strings.TrimSpace(p.Address)))
+		}
+	}
+	return out
 }
 
 // mergeSchemes overlays file scheme tables over the embedded base per
@@ -1208,6 +1238,10 @@ func defaultTheme() Theme {
 						{Fg: "base0E"}, {Fg: "base0A"}, {Fg: "base08"},
 					},
 					Signature: Style{Fg: "base03"}, Attachment: Style{Fg: "base0E"},
+					// the thread-position highlight: the recent-5 tint
+					// (cyan) and the last other-side message (purple
+					// bold) - the pager's message landmarks
+					Recent: Style{Fg: "base0C"}, OtherSide: Style{Fg: "base0E", Attrs: []string{"bold"}},
 				},
 			},
 		},
@@ -1575,6 +1609,7 @@ func validateStyleTable(t StyleTable, p Palette) error {
 		{"index.tag", t.Index.Tag.Default},
 		{"pager.header", t.Pager.Header}, {"pager.hdrdefault", t.Pager.HdrDefault},
 		{"pager.signature", t.Pager.Signature}, {"pager.attachment", t.Pager.Attachment},
+		{"pager.recent", t.Pager.Recent}, {"pager.other-side", t.Pager.OtherSide},
 	}
 	for i := 0; i < 6; i++ {
 		styles = append(styles, struct {

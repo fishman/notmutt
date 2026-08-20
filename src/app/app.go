@@ -61,6 +61,7 @@ func Run() error {
 		return fmt.Errorf("config: %w", err)
 	}
 	i18n.SetLanguage(cfg.UI.Language)
+	me := cfg.MyAddrs()
 	bus := core.NewBus()
 	st := config.NewStore(cfg)
 	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
@@ -138,7 +139,7 @@ func Run() error {
 		// RenderAuto: the open default resolves per sender domain
 		// ([pager] default-views) once the message is in hand - the
 		// domain is message data, only the fetch has it
-		go openThread(worker, bus, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
+		go openThread(worker, bus, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, me)
 	})
 
 	// the render toggle (the v key in the pager), the source view
@@ -149,7 +150,7 @@ func Run() error {
 	// label and the target list rides the reply. The explicit modes
 	// never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, threadID, msgID, false, mode, headers, width, labelLinks, nil)
+		go openThread(worker, bus, threadID, msgID, false, mode, headers, width, labelLinks, nil, me)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key
@@ -371,11 +372,15 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // async job, never on the TUI's event path). The thread fetch narrows
 // to the message (msgID): the pager shows one message, never the
 // whole thread - a bare open (empty msgID) renders the thread's
-// first. A full open (preview=false) marks the opened message read
-// with an ActTag -unread (R1 - read is a tag; the refresh cycle
-// reconciles it into the view). The tag failure keeps the thread open
-// - the fetch already succeeded - and surfaces as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
+// first. The mark is computed against the FULL fetch before the
+// narrowing: the pager tints the message by its position in the
+// conversation (the recent-5 and other-side highlight, me = the
+// account from addresses). A full open (preview=false) marks the
+// opened message read with an ActTag -unread (R1 - read is a tag; the
+// refresh cycle reconciles it into the view). The tag failure keeps
+// the thread open - the fetch already succeeded - and surfaces as a
+// JobError.
+func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, me []string) {
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
@@ -385,8 +390,19 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
 		return
 	}
-	if msg, ok := findMsg(rpl.Msgs, msgID); ok {
-		rpl.Msgs = []core.Message{msg}
+	mark := core.MarkNone
+	idx := 0
+	if msgID != "" {
+		for i, m := range rpl.Msgs {
+			if m.ID == msgID {
+				idx = i
+				break
+			}
+		}
+	}
+	if len(rpl.Msgs) > 0 {
+		mark = core.ClassifyMsg(rpl.Msgs, idx, me)
+		rpl.Msgs = []core.Message{rpl.Msgs[idx]}
 	}
 	msgID = ""
 	if len(rpl.Msgs) > 0 {
@@ -410,7 +426,7 @@ func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, Mark: mark})
 	// the read mark names the opened message, never the whole thread:
 	// the other messages in the thread keep their unread state
 	if !preview && msgID != "" {

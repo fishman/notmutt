@@ -94,6 +94,52 @@ func TestQuoteColorDepthMapping(t *testing.T) {
 	}
 }
 
+// TestPagerMsgMark pins the thread-position tint: the whole message
+// block (subject, headers, body, attachments) carries the mark's open
+// - the recent-5 messages tint one color, the last other-side message
+// a more prominent one; an error line keeps the error style (it must
+// stay alarming), and an unmarked message dispatches normally. The
+// tint opens are part of the pagerKey fingerprint, so a theme switch
+// repaints marked messages.
+func TestPagerMsgMark(t *testing.T) {
+	cfg := config.Default()
+	st := ResolveStyles(cfg.Theme, cfg.Palette)
+	lines := []core.Line{
+		{Kind: core.LineSubject, Text: "Subject: tinted"},
+		{Kind: core.LineHeader, Text: "From: sender@example.com"},
+		{Kind: core.LineBody, Text: "body"},
+		{Kind: core.LineAttachment, Text: "[1] notes.txt"},
+		{Kind: core.LineError, Text: "open failed"},
+	}
+	for _, tc := range []struct {
+		mark  core.MsgMark
+		opens []sgr // per-line expected open: nil = the default dispatch
+	}{
+		{core.MarkRecent, []sgr{st.sgr.pagerRecent, st.sgr.pagerRecent, st.sgr.pagerRecent, st.sgr.pagerRecent, st.sgr.pagerErr}},
+		{core.MarkOther, []sgr{st.sgr.pagerOther, st.sgr.pagerOther, st.sgr.pagerOther, st.sgr.pagerOther, st.sgr.pagerErr}},
+		{core.MarkNone, []sgr{st.sgr.pagerHdr, st.sgr.pagerHdrColor(0), st.sgr.normal, st.sgr.pagerAtt, st.sgr.pagerErr}},
+	} {
+		p := newPager("t", "m", lines)
+		p.mark = tc.mark
+		p.setSize(0, 0, st)
+		for i, l := range lines {
+			got := p.styleLine(i)
+			want := tc.opens[i].open + l.Text + tc.opens[i].close
+			if tc.opens[i].open == "" {
+				want = l.Text
+			}
+			if got != want {
+				t.Fatalf("mark %v line %d: styleLine = %q, want %q", tc.mark, i, got, want)
+			}
+		}
+	}
+	for _, g := range []sgr{st.sgr.pagerRecent, st.sgr.pagerOther} {
+		if !strings.Contains(st.sgr.pagerKey, g.open) {
+			t.Fatal("the tint opens must fingerprint the pagerKey (theme-switch repaint)")
+		}
+	}
+}
+
 // TestRepaintPagerScroll pins the double-press regression: the pre-glow
 // pager moved a read-position indicator whose style-only change diffed
 // to ZERO emitted bytes (the indicator wrap was overridden by the

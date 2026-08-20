@@ -1265,6 +1265,51 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 	}
 }
 
+// TestPagerMarkThreadLoaded pins the model half of the highlight: the
+// ThreadLoaded reply carries the message's mark and the pager renders
+// the whole block with the mark's open; an unmarked reply (MarkNone)
+// renders the default dispatch, no tint.
+func TestPagerMarkThreadLoaded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mark core.MsgMark
+		want string // distinctive part of the expected open, "" = no tint
+	}{
+		{"other side", core.MarkOther, "1;38;2;198;120;221"},
+		{"recent", core.MarkRecent, "38;2;86;182;194"},
+		{"none", core.MarkNone, ""},
+	} {
+		cfg := config.Default()
+		view := core.NewView("inbox", "tag:inbox")
+		view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+			{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+		})})
+		st := config.NewStore(cfg)
+		m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
+		path := fixtureMsg(t, "body line\n")
+		SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+			next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+				ThreadID: threadID,
+				Mark:     tc.mark,
+				Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
+			}})
+			m = next
+		})
+		press(t, m, "enter")
+		if m.mode != "pager" {
+			t.Fatalf("%s: open must switch to pager, mode=%q", tc.name, m.mode)
+		}
+		out := m.View()
+		if tc.want == "" {
+			if strings.Contains(out, "198;120;221") || strings.Contains(out, "86;182;194") {
+				t.Fatalf("%s: an unmarked message must not tint:\n%s", tc.name, out)
+			}
+		} else if !strings.Contains(out, tc.want) {
+			t.Fatalf("%s: the marked message must render the %v tint:\n%s", tc.name, tc.mark, out)
+		}
+	}
+}
+
 func pressEvent(t *testing.T, m Model, e core.Event) Model {
 	t.Helper()
 	next, _ := m.Update(EventMsg{Event: e})

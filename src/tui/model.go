@@ -1598,6 +1598,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 			}
 			if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) {
 				m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
+				m.pager.mark = e.Mark
 				w, h := m.pagerSize()
 				m.pager.setSize(w, h, m.styles)
 			}
@@ -1615,6 +1616,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
 		m.attView = nil // the attachment view ends with the restore
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
+		m.pager.mark = e.Mark
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()

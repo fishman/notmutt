@@ -36,6 +36,9 @@ type pager struct {
 	// render only, never the whole thread. The identity guards the
 	// reloads - a same-message re-render replaces the content.
 	msgID string
+	// mark is the message's thread-position mark (computed app-side
+	// against the full thread fetch): the whole block tints with it.
+	mark  core.MsgMark
 	lines []core.Line
 	// linkSel is the F key's selected label marker ("[N]", "" = none):
 	// that run renders reversed - the easyjump highlight follows the
@@ -354,6 +357,16 @@ func (p *pager) styleLine(li int) string {
 		g = sg.pagerErr
 	default:
 		g = sg.normal
+	}
+	// the thread-position tint overrides the kind colors for the whole
+	// block (the highlight must be readable on a 70-line thread);
+	// error lines keep the error style - they stay alarming
+	if p.mark != core.MarkNone && l.Kind != core.LineError {
+		if p.mark == core.MarkOther {
+			g = sg.pagerOther
+		} else {
+			g = sg.pagerRecent
+		}
 	}
 	// the line's default background (the html view's mail-declared
 	// body color) covers the pad and the blank rows; a trailing run

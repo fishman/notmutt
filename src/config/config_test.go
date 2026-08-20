@@ -125,6 +125,30 @@ threads = true
 	}
 }
 
+// TestLoadPagerThreadMarkStyles pins the pager thread-position styles:
+// the [theme.dark.pager] recent/other-side keys decode, and a
+// non-style value there is a load error.
+func TestLoadPagerThreadMarkStyles(t *testing.T) {
+	cfg, err := Load(write(t, `
+[theme.dark.pager]
+recent = { fg = "base0C" }
+other-side = { fg = "base0E", attrs = ["bold"] }
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := cfg.Theme.Variants["dark"].Pager
+	if p.Recent.Fg != "base0C" || p.OtherSide.Fg != "base0E" || !slices.Contains(p.OtherSide.Attrs, "bold") {
+		t.Fatalf("pager mark styles wrong: %+v %+v", p.Recent, p.OtherSide)
+	}
+	if _, err := Load(write(t, `
+[theme.dark.pager]
+recent = "not a style"
+`)); err == nil {
+		t.Fatal("a non-style recent value must be a load error")
+	}
+}
+
 // TestLoadMultipleFiles pins the multi-file merge: every *.toml in the
 // dir loads, tables merge across files, config.toml wins on conflicts
 // (the splits merge first, the main file last), keys absent from

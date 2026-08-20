@@ -317,7 +317,11 @@ func attachmentPass(worker workerAPI, root, folder, query string, dryRun bool) (
 		for _, p := range m.Paths {
 			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, dryRun) {
 				if s.Err != nil {
-					return nil, 0, 0, fmt.Errorf("attachments: %v", s.Err)
+					// one stale path (an external maildir rename
+					// between notmuch new runs) must not abort the
+					// pass - the line is the review surface
+					lines = append(lines, fmt.Sprintf("skip %s (%v)", s.Name, s.Err))
+					continue
 				}
 				if s.Exists {
 					skipped++

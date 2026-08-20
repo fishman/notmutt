@@ -282,6 +282,22 @@ func TestCategorizeThread(t *testing.T) {
 		t.Fatal("no CategorizeResult")
 	}
 
+	// a stale snapshot path (an external maildir rename between
+	// notmuch new runs) degrades to a skip line - the pass never aborts
+	go categorizeThread(&recWorker{fjWorker: fjWorker{
+		delta: []core.Message{{ID: "m2"}},
+		snaps: []core.Message{{ID: "m2", Author: "a@example.com", Subject: "s", Paths: []string{filepath.Join(dir, "gone.eml")}}},
+	}}, bus, "t2", &cfg)
+	select {
+	case e := <-ch:
+		res := e.(core.CategorizeResult)
+		if res.Err != nil || res.Saved != 0 || len(res.Lines) != 1 || !strings.Contains(res.Lines[0], "skip") {
+			t.Fatalf("stale path: want one skip line, no error, got %+v", res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no CategorizeResult")
+	}
+
 	// a failing query publishes the error, never a hang
 	go categorizeThread(failWorker{}, bus, "t1", &cfg)
 	select {

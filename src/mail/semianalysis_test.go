@@ -19,9 +19,9 @@ import (
 )
 
 func TestRenderSemianalysisLayout(t *testing.T) {
-	body, err := os.ReadFile("../../testdata/html/semianalysis.html")
+	body, err := os.ReadFile("../testdata/html/semianalysis.html")
 	if err != nil {
-		t.Skip(err)
+		t.Fatal(err)
 	}
 	lines := RenderHTML(string(body), nil, 0)
 	narrow := RenderHTML(string(body), nil, 40)

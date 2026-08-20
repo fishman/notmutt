@@ -8,7 +8,26 @@ package html
 // properties under test are panic-freedom and determinism on hostile
 // stylesheet text.
 
-import "testing"
+import (
+	"testing"
+
+	"golang.org/x/net/html"
+)
+
+// TestDisplayNotInherited pins the CSS display rule: display is not an
+// inherited property, so a block element's content computes the tag
+// default (""), not the parent's display. The pre-fix StyleOf copied
+// the parent style, so a display:block anchor made its img children
+// block too - full-width image lines in responsive mail.
+func TestDisplayNotInherited(t *testing.T) {
+	parent := &Style{Display: "block"}
+	for _, tag := range []string{"img", "span", "a"} {
+		n := &html.Node{Type: html.ElementNode, Data: tag}
+		if got := StyleOf(n, parent, nil).Display; got != "" {
+			t.Fatalf("<%s> must compute the tag default display, got %q", tag, got)
+		}
+	}
+}
 
 // TestBackgroundShorthand pins the background shorthand (the commonest
 // way mail declares a body color): the first color token becomes the

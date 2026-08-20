@@ -141,6 +141,96 @@ func TestRenderHTMLLinks(t *testing.T) {
 	}
 }
 
+// TestBlockAnchorLinks pins the easyjump coverage of display:block
+// anchors (button links, responsive social modules): an anchor is a
+// link whatever its display value, so the block-split must not drop
+// its label - inline style, CSS rule, and cell content alike. The
+// pre-fix switch-order bug swallowed display:block anchors before the
+// 'a' case (10 of 24 anchors missing from the semicon fixture).
+func TestBlockAnchorLinks(t *testing.T) {
+	body := "<p><a href=\"https://alpha.example.com/a\" style=\"display:block\">alpha button</a></p>\n" +
+		"<style>.btn{display:block}</style>\n" +
+		"<p><a class=\"btn\" href=\"https://beta.example.com/b\">beta button</a></p>\n" +
+		"<table><tr><td><a href=\"https://gamma.example.com/c\" style=\"display:block\">gamma cell button</a></td></tr></table>\n" +
+		"<p>tail <a href=\"https://delta.example.com/d\">delta inline</a></p>\n"
+	lines, links := RenderHTMLWithLinks(body, nil, 80)
+	want := []string{
+		"https://alpha.example.com/a",
+		"https://beta.example.com/b",
+		"https://gamma.example.com/c",
+		"https://delta.example.com/d",
+	}
+	if len(links) != len(want) {
+		t.Fatalf("links = %v, want %v", links, want)
+	}
+	for i, w := range want {
+		if links[i] != w {
+			t.Fatalf("links[%d] = %q, want %q", i, links[i], w)
+		}
+	}
+	var joined string
+	for _, l := range lines {
+		joined += l.Text + "\n"
+	}
+	prev := -1
+	for i := range want {
+		idx := strings.Index(joined, fmt.Sprintf("[%d]", i+1))
+		if idx < 0 {
+			t.Fatalf("label [%d] missing from render:\n%s", i+1, joined)
+		}
+		if idx < prev {
+			t.Fatalf("labels out of document order:\n%s", joined)
+		}
+		prev = idx
+	}
+}
+
+// TestDisplayNotInheritedRender pins the img side of the same bug: an
+// img inside a display:block anchor in a cell must stay inline (its
+// row's word), not inherit block and render as a full-width cell
+// image - the semicon social icons regressed exactly this way. The
+// main flow's img is a block line by design; only the cell path
+// chooses by display.
+func TestDisplayNotInheritedRender(t *testing.T) {
+	body := "<table><tr><td><a href=\"https://alpha.example.com/a\" style=\"display:block\">" +
+		"<img src=\"https://x.example.com/icon.png\" width=\"24\" height=\"24\"> icon text</a></td></tr></table>\n"
+	lines := RenderHTML(body, nil, 80)
+	inline, block := 0, 0
+	for _, l := range lines {
+		if l.Image != nil {
+			block++
+		}
+		inline += len(l.Imgs)
+	}
+	if inline != 1 || block != 0 {
+		t.Fatalf("the block anchor's cell img must render inline (1 inline, 0 block lines), got inline=%d block=%d", inline, block)
+	}
+}
+
+// TestTrackingPixelStripped pins the render-side beacon strip: an img
+// declaring 1x1 (width/height attrs or style declarations) is a read
+// receipt, not content - it drops at render, in the main flow and in
+// table cells alike, before the fetch path can ever see it. Real
+// images keep rendering.
+func TestTrackingPixelStripped(t *testing.T) {
+	body := "<img src=\"https://x.example.com/pixel.gif\" width=\"1\" height=\"1\">\n" +
+		"<img src=\"https://x.example.com/pixel2.gif\" style=\"width:1px;height:1px\">\n" +
+		"<img src=\"https://x.example.com/pixel3.gif\" width=\"1\" height=\"1\" style=\"display:none\">\n" +
+		"<table><tr><td><img src=\"https://x.example.com/pixel4.gif\" width=\"1\" height=\"1\"></td></tr></table>\n" +
+		"<img src=\"https://x.example.com/real.png\" width=\"200\" height=\"100\">\n"
+	lines := RenderHTML(body, nil, 80)
+	imgs := 0
+	for _, l := range lines {
+		if l.Image != nil {
+			imgs++
+		}
+		imgs += len(l.Imgs)
+	}
+	if imgs != 1 {
+		t.Fatalf("the declared 1x1 pixels must drop at render, the real image stays: got %d images", imgs)
+	}
+}
+
 // TestRenderHTMLBackground pins the html view's background contract: a
 // mail-declared background (CSS or the bgcolor attribute) becomes the
 // lines' default bg, a mail without one gets the light default - the

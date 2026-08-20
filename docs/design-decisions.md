@@ -651,16 +651,40 @@ chain - a row is either emitted or the thread is not in the result.
 The walk's stall root cause is moot with it: the row-position cursor
 that parked inside hydrated blocks is gone.
 
-Measured tradeoff (33,256 threads / 38,508 messages, seven chunks):
-the full walk is 5.7s warm / 10.5s cold against 1.65s for the
-summary-only walk. First paint stays fast - the 100-thread
-first-chunk cadence lands in ~20ms - so the cost lands on full cover,
-not on the first rows. The client pays it with an open path that does
-not queue behind the walk (record: rows-first resolution from the
-registered views with the worker fetch as fallback, the walk data
-already carries headers and paths - the open, the render toggle, and
-the attachment handlers never touch the worker for a view-resident
-thread; only the read-mark write queues, and the refresh cycle
-reconciles it). The FullWalk addition (405 lines) lives in the fishman
-go.notmuch fork, tagged v0.40.1 by the author of record; the client
-pins and vendors it like any dependency (R7).
+Measured tradeoff (33,261 threads / 38,532 messages, seven chunks):
+the full walk was 5.7s warm until the references fallback dropped the
+per-message references/in-reply-to reads - get_header on those two
+headers file-parses every message (they have no value slots; only
+from/subject/message-id read from slots under
+NOTMUCH_FEATURE_FROM_SUBJECT_ID_VALUES), ~4s of the walk. The walk
+now ships empty chains and runs 1.77s; the client ingest is 2.07s and
+the app-level fullReload 2.72s (measured 2026-08-21). First paint
+stays fast - the 100-thread first-chunk cadence lands in ~20ms - so
+the cost lands on full cover, not on the first rows.
+
+The references fallback is a deliberate stopgap; docs/refs-from-terms.md
+specs the real fix. The index tree renders structure-less threads as a
+flat forest: buildTree marks the synthetic root Forest when every
+message is a root (no chains shipped), so no [...] markers appear on
+structure-less threads while genuine multi-root threads keep them.
+Reply prefill builds one-hop References chains (the reply still
+threads to the original via In-Reply-To; the per-thread fetch keeps
+the full chain, and the pager never needed it - RenderThread renders
+sequential blocks). The data is already in the DB term list at index
+time (the replyto term and the reference prefix terms); the version
+script hides the private accessors, so the real fix adds two public
+getters to libnotmuch (notmuch_message_get_in_reply_to /
+notmuch_message_get_references, exported free via the notmuch_* glob)
+and the binding re-adds the two reads - no client changes needed
+(refsSplit trims brackets the term getters never emit). Deferred:
+the client must not depend on a custom-built libnotmuch.
+
+The client pays the walk with an open path that does not queue behind
+it (record: rows-first resolution from the registered views with the
+worker fetch as fallback, the walk data already carries headers and
+paths - the open, the render toggle, and the attachment handlers
+never touch the worker for a view-resident thread; only the read-mark
+write queues, and the refresh cycle reconciles it). The FullWalk
+addition (405 lines) lives in the fishman go.notmuch fork, tagged
+v0.40.1 by the author of record; the client pins and vendors it like
+any dependency (R7).

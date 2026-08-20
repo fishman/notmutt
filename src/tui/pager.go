@@ -314,7 +314,7 @@ func (p *pager) styleLine(l core.Line) string {
 	case core.LineSubject:
 		g = sg.pagerHdr
 	case core.LineHeader:
-		g = sg.pagerDef
+		g = sg.pagerHdrStyle(l.Text)
 	case core.LineBody:
 		g = quoteColor(sg, l.Quoted)
 	case core.LineSignature:

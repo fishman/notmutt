@@ -298,3 +298,32 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 		t.Fatalf("bottom window must end at the document tail: %q", last)
 	}
 }
+
+// TestPagerHeaderRules pins the per-header regex colors (the mutt
+// `color header` surface): a matching rule wins over hdrdefault, the
+// last matching rule wins, and the default theme carries the onedark
+// port (references/muttrc/theme/onedark.muttrc:37-43).
+func TestPagerHeaderRules(t *testing.T) {
+	st := DefaultStyles()
+	st.Pager.HdrDefault = st.Pager.HdrDefault.Foreground(lipgloss.Color("#101010"))
+	st.Pager.HeaderRules = []config.HeaderRuleStyle{
+		{Pattern: "^From:", Style: config.Style{Fg: "#202020"}},
+		{Pattern: "^From:", Style: config.Style{Fg: "#303030"}},
+		{Pattern: "^Subject:", Style: config.Style{Fg: "#404040"}},
+	}
+	st.sgr = sgrSetOf(st)
+	rule := func(i int) sgr { return st.sgr.pagerHdrRules[i].g }
+	if got := st.sgr.pagerHdrStyle("From: alpha <alpha@example.com>"); got != rule(1) {
+		t.Fatalf("From must take the last matching rule")
+	}
+	if got := st.sgr.pagerHdrStyle("Subject: re: lorem"); got != rule(2) {
+		t.Fatalf("Subject must match its rule")
+	}
+	if got := st.sgr.pagerHdrStyle("Date: Sat, 16 Aug 2026"); got != st.sgr.pagerDef {
+		t.Fatalf("a non-matching header must fall back to hdrdefault")
+	}
+	cfg := config.Default()
+	if len(cfg.Theme.Variants["dark"].Pager.HeaderRules) != 6 {
+		t.Fatalf("the default theme must carry the six onedark header rules, got %d", len(cfg.Theme.Variants["dark"].Pager.HeaderRules))
+	}
+}

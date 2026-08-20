@@ -5,6 +5,7 @@ package tui
 
 import (
 	"image/color"
+	"regexp"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -50,9 +51,37 @@ type IndexStyles struct {
 type PagerStyles struct {
 	Header     lipgloss.Style
 	HdrDefault lipgloss.Style
-	Quoted     [6]lipgloss.Style
-	Signature  lipgloss.Style
-	Attachment lipgloss.Style
+	// HeaderRules are the resolved per-header regex styles (config
+	// order = priority, last match wins).
+	HeaderRules []config.HeaderRuleStyle
+	Quoted      [6]lipgloss.Style
+	Signature   lipgloss.Style
+	Attachment  lipgloss.Style
+}
+
+// styleOf converts a resolved config style to a lipgloss style
+// (fg/bg/attrs; resolved styles are concrete, no inheritance left).
+func styleOf(s config.Style) lipgloss.Style {
+	base := lipgloss.NewStyle()
+	if s.Fg != "" {
+		base = base.Foreground(lipgloss.Color(s.Fg))
+	}
+	if s.Bg != "" {
+		base = base.Background(lipgloss.Color(s.Bg))
+	}
+	for _, a := range s.Attrs {
+		switch a {
+		case "bold":
+			base = base.Bold(true)
+		case "italic":
+			base = base.Italic(true)
+		case "underline":
+			base = base.Underline(true)
+		case "reverse":
+			base = base.Reverse(true)
+		}
+	}
+	return base
 }
 
 // sgr is a style's precomputed render fragments: the SGR open sequence
@@ -102,11 +131,30 @@ type sgrSet struct {
 	tag                                          func(name string) sgr
 	pagerHdr                                     sgr
 	pagerDef                                     sgr
+	pagerHdrRules                                []pagerHdrRule
 	pagerSig                                     sgr
 	pagerAtt                                     sgr
 	pagerErr                                     sgr
 	pagerQuoted                                  [6]sgr
 	pagerKey                                     string // fingerprint of the pager-relevant opens (styleKey)
+}
+
+type pagerHdrRule struct {
+	re *regexp.Regexp
+	g  sgr
+}
+
+// pagerHdrStyle colors a header line by the pager header rules: last
+// match wins (the mutt `color header` semantics), no match falls back
+// to the hdrdefault style.
+func (sg sgrSet) pagerHdrStyle(text string) sgr {
+	g := sg.pagerDef
+	for _, r := range sg.pagerHdrRules {
+		if r.re.MatchString(text) {
+			g = r.g
+		}
+	}
+	return g
 }
 
 func sgrSetOf(st Styles) sgrSet {
@@ -142,7 +190,14 @@ func sgrSetOf(st Styles) sgrSet {
 		pagerErr:    sgrOf(st.Error),
 		pagerQuoted: [6]sgr{sgrOf(st.Pager.Quoted[0]), sgrOf(st.Pager.Quoted[1]), sgrOf(st.Pager.Quoted[2]), sgrOf(st.Pager.Quoted[3]), sgrOf(st.Pager.Quoted[4]), sgrOf(st.Pager.Quoted[5])},
 	}
+	for _, r := range st.Pager.HeaderRules {
+		// patterns are validated at config load
+		sg.pagerHdrRules = append(sg.pagerHdrRules, pagerHdrRule{re: regexp.MustCompile(r.Pattern), g: sgrOf(styleOf(r.Style))})
+	}
 	opens := []sgr{sg.normal, sg.pagerHdr, sg.pagerDef, sg.pagerSig, sg.pagerAtt, sg.pagerErr}
+	for _, r := range sg.pagerHdrRules {
+		opens = append(opens, r.g)
+	}
 	opens = append(opens, sg.pagerQuoted[:]...)
 	key := make([]string, len(opens))
 	for i, g := range opens {
@@ -213,31 +268,13 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 	if theme.Default == "" || len(theme.Variants) == 0 {
 		return DefaultStyles()
 	}
-	ids := theme.Resolved(palette, theme.Default)
+	ids, hdrRules := theme.Resolved(palette, theme.Default)
 	to := func(id string, base lipgloss.Style) lipgloss.Style {
 		s, ok := ids[id]
 		if !ok {
 			return base
 		}
-		if s.Fg != "" {
-			base = base.Foreground(lipgloss.Color(s.Fg))
-		}
-		if s.Bg != "" {
-			base = base.Background(lipgloss.Color(s.Bg))
-		}
-		for _, a := range s.Attrs {
-			switch a {
-			case "bold":
-				base = base.Bold(true)
-			case "italic":
-				base = base.Italic(true)
-			case "underline":
-				base = base.Underline(true)
-			case "reverse":
-				base = base.Reverse(true)
-			}
-		}
-		return base
+		return styleOf(s)
 	}
 	normal := to("normal", lipgloss.NewStyle())
 	st := Styles{
@@ -273,6 +310,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 				to("pager.quoted4", normal), to("pager.quoted5", normal),
 			},
 			Signature: to("pager.signature", normal), Attachment: to("pager.attachment", normal),
+			HeaderRules: hdrRules,
 		},
 	}
 	st.sgr = sgrSetOf(st)

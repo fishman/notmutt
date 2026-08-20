@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -315,6 +316,9 @@ func TestLogOverlay(t *testing.T) {
 		t.Fatalf("the log frame must be exactly 24 lines, got %d", strings.Count(frame, "\n")+1)
 	}
 	wantAll(t, frame, "log", "entry 0", "entry 1", "entry 2")
+	if !regexp.MustCompile(`\d\d:\d\d:\d\d entry 0`).MatchString(frame) {
+		t.Fatalf("log rows must carry a wall-clock stamp:\n%s", frame)
+	}
 	// the overlays intercept keys before dispatch (the help behavior):
 	// ? closes the log, ~ closes the help; each re-opens on its own
 	// next press - never both open at once
@@ -1564,7 +1568,7 @@ func TestKeyhintBar(t *testing.T) {
 // and the pager context's table replaces it in pager mode.
 func TestKeyhintRowInView(t *testing.T) {
 	m := model()
-	m.width, m.height = 160, 24
+	m.width, m.height = 220, 24
 	strip := stripANSI(m.View())
 	// the hint row truncates at the frame width, so the check anchors
 	// on the sorted row's head
@@ -2032,6 +2036,38 @@ func TestSearchTabOpen(t *testing.T) {
 	_, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q on the mail surface must still quit")
+	}
+}
+
+// TestSearchTabFromPager pins ctrl+f while reading: the prompt opens
+// over the pager, and the commit attaches the search tab and returns
+// the surface to the index rows (the pager is left behind).
+func TestSearchTabFromPager(t *testing.T) {
+	var got *core.View
+	SetSearchHandler(func(v *core.View) { got = v })
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+
+	m := model()
+	next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "body", Kind: core.LineBody}},
+	}})
+	m = next
+	if m.mode != "pager" {
+		t.Fatalf("the thread load must open the pager, mode %q", m.mode)
+	}
+	next, _ = m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	if d := textD(m); d == nil || d.field != "searchtab" {
+		t.Fatalf("ctrl+f in the pager must open the search prompt: %+v", m.dialogue)
+	}
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	if got == nil || got.ViewQuery() != "tag:acme" {
+		t.Fatalf("commit must create the query view: %+v", got)
+	}
+	if len(m.searchTabs) != 1 || m.mode != "index" {
+		t.Fatalf("the search tab must attach to the index surface: tabs %d mode %q", len(m.searchTabs), m.mode)
 	}
 }
 

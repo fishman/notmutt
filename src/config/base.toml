@@ -125,6 +125,7 @@ opener = ["xdg-open"]
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
 "H" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
 "enter" = { fun = "open", show = true }
+"ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
@@ -231,6 +232,7 @@ opener = ["xdg-open"]
 "F" = { fun = "open-links", desc = "Open a link by number" }
 "H" = { fun = "open-headers", desc = "Toggle the full header block" }
 "enter" = { fun = "open" }
+"ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }

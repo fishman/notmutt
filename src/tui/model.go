@@ -76,7 +76,8 @@ var Actions = map[string]map[string]bool{
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
 		"attachments": true, "save-attachment": true,
-		"tab-prev": true, "tab-next": true,
+		"search-tab": true,
+		"tab-prev":   true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
 	"compose": {
@@ -1412,8 +1413,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "search-tab":
 		// the ctrl+f prompt: a raw notmuch query opens in a new tab
 		// (the whole database, unlike / which searches the current
-		// rows); the last query preloads for a repeat
-		if m.mode == "index" {
+		// rows); the last query preloads for a repeat. Bound in the
+		// index and pager contexts - the search starts from wherever
+		// the reading is.
+		if m.mode == "index" || m.mode == "pager" {
 			d := &textDialogue{field: "searchtab", label: "search: ",
 				input: m.searchTabQuery, saved: m.searchTabQuery}
 			d.cur = len(d.input)

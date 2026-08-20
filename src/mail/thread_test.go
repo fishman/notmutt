@@ -43,6 +43,18 @@ func TestRenderThread(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// the curated header block tops every pager: Date/From/To/Subject,
+	// labels padded to one column (the %-8s alignment)
+	for i, want := range []string{
+		"Date:    Tue, 01 Jan 2019 00:00:00 +0000",
+		"From:    a@example.com",
+		"To:      b@example.com",
+		"Subject: hello",
+	} {
+		if lines[i].Text != want {
+			t.Fatalf("header line %d = %q, want %q", i, lines[i].Text, want)
+		}
+	}
 	joined := joinText(lines)
 	for _, want := range []string{"hello", "a@example.com", "line one", "quoted a", "quoted deep", "sig line"} {
 		if !strings.Contains(joined, want) {

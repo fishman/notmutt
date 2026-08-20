@@ -402,11 +402,16 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 	add := func(text string, kind core.LineKind, quoted int) {
 		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
+	// the curated header block (Date/From/To/Subject) tops every pager
+	// view, labels aligned; the h key replaces it with the full raw
+	// block (the plain view)
 	if headers && mode == core.RenderPlain {
 		lines = append(lines, headerLines(m)...)
 	} else {
-		add(subject, core.LineSubject, 0)
-		add(m.From+"  "+m.Date, core.LineHeader, 0)
+		add(fmt.Sprintf("%-8s %s", "Date:", m.Date), core.LineHeader, 0)
+		add(fmt.Sprintf("%-8s %s", "From:", m.From), core.LineHeader, 0)
+		add(fmt.Sprintf("%-8s %s", "To:", strings.Join(m.To, ", ")), core.LineHeader, 0)
+		add(fmt.Sprintf("%-8s %s", "Subject:", subject), core.LineSubject, 0)
 	}
 	hasPlain, hasHTML := partFlags(m)
 	// The view selection: the html view renders the html part, the plain

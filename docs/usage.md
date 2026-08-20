@@ -84,6 +84,7 @@ Enter opens the cursor message only, never the whole thread.
 | H | toggle the full header block |
 | h / l, left / right | scroll horizontally (long lines pan, never wrap) |
 | enter | advance to the next thread |
+| ctrl+f | search the whole database in a new tab (raw notmuch query) |
 | q | back to the list |
 
 Every pager opens with the header block - Date, From, To, Subject,

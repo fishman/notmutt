@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"notmutt/core"
 	"notmutt/lib/testutil"
@@ -154,6 +155,7 @@ func TestCGODeltaRoundTrip(t *testing.T) {
 		"synthetic fixture body\n")
 	fixture1 := filepath.Join(maildir, "fixture1.eml")
 	fixture2 := filepath.Join(maildir, "fixture2.eml")
+	wantTS := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC).Unix()
 	if err := os.WriteFile(fixture1, fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +202,8 @@ func TestCGODeltaRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snaps) != 1 || len(snaps[0].Paths) != 2 || !hasTag(snaps[0], "scratch") {
+	if len(snaps) != 1 || len(snaps[0].Paths) != 2 || !hasTag(snaps[0], "scratch") ||
+		snaps[0].Author != "alpha <alpha@example.com>" || snaps[0].Timestamp != wantTS {
 		t.Fatalf("snapshot after add wrong: %+v", snaps)
 	}
 	if err := b.RemovePaths(context.Background(), []string{fixture1}); err != nil {

@@ -454,7 +454,7 @@ func (b *CGOBackend) Snapshots(ctx context.Context, ids []string) ([]Message, er
 		if err != nil {
 			return nil, fmt.Errorf("notmuch snapshot: %w", err)
 		}
-		out = append(out, Message{ID: id, Subject: core.DecodeSubject(m.Header("subject")), Tags: tagsOf(m), Paths: pathsOf(m)})
+		out = append(out, Message{ID: id, Timestamp: m.Date().Unix(), Author: m.Header("from"), Subject: core.DecodeSubject(m.Header("subject")), Tags: tagsOf(m), Paths: pathsOf(m)})
 	}
 	return out, nil
 }

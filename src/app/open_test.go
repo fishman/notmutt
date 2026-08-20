@@ -5,6 +5,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,7 +35,7 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
 
-	openThread(fw, bus, "t1", "", false, core.RenderAuto, false, 80, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "", false, core.RenderAuto, false, 80, false, nil)
 
 	select {
 	case e := <-ch:
@@ -72,7 +73,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -93,7 +94,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 
 	// a mid-thread open names the opened message, not the thread
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
-	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 0, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "b", false, core.RenderPlain, false, 0, false, nil)
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -116,7 +117,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, "t1", "", true, core.RenderPlain, false, 0, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "", true, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -176,7 +177,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 0, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil)
 
 	select {
 	case e := <-ch:
@@ -223,7 +224,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		{ID: "b", ThreadID: "t1", Paths: []string{p2}},
 	})
 
-	openThread(fw, bus, "t1", "b", false, core.RenderPlain, false, 80, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "b", false, core.RenderPlain, false, 80, false, nil)
 	loaded := func() core.ThreadLoaded {
 		select {
 		case e := <-ch:
@@ -249,9 +250,70 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		t.Fatalf("the pager must render the opened message only:\n%s", got)
 	}
 
-	openThread(fw, bus, "t1", "", false, core.RenderPlain, false, 80, false, nil, nil)
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 80, false, nil)
 	tl = loaded()
 	if tl.MsgID != "a" {
 		t.Fatalf("a bare open must fall back to the thread's first, got %q", tl.MsgID)
+	}
+}
+
+// TestOpenThreadRowsFirst pins the open-while-loading path: the full
+// walk owns the worker for seconds, so an open must not queue behind
+// it. A thread resident in a registered view opens from the view's
+// rows - zero ActThread calls, the walk already loaded headers and
+// paths; a thread in no view falls back to the worker fetch.
+func TestOpenThreadRowsFirst(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	path := filepath.Join(t.TempDir(), "msg")
+	raw := "From: sender@example.com\nTo: alpha@example.com\nSubject: rows first\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\n\nbody\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msg := core.Message{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "rows first", Paths: []string{path}}
+	v := core.NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{&msg})})
+	views := map[string]*core.View{v.ViewName(): v}
+
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{msg})
+	openThread(fw, bus, views, "t1", "a", true, core.RenderPlain, false, 80, false, nil)
+	tl := loaded(ch)
+	if tl.Err != nil {
+		t.Fatalf("rows-first open failed: %v", tl.Err)
+	}
+	if tl.MsgID != "a" {
+		t.Fatalf("open must narrow to the opened message, got %q", tl.MsgID)
+	}
+	if len(tl.Lines) == 0 {
+		t.Fatal("rows-first open rendered no lines")
+	}
+	if n := fw.threads.Load(); n != 0 {
+		t.Fatalf("a view-resident thread must not fetch through the worker, got %d ActThread calls", n)
+	}
+
+	// the fallback: the thread is in no view (a closed tab's pager, a
+	// view reset race) - the worker fetch serves it
+	openThread(fw, bus, map[string]*core.View{}, "t1", "a", true, core.RenderPlain, false, 80, false, nil)
+	tl = loaded(ch)
+	if tl.Err != nil {
+		t.Fatalf("fallback open failed: %v", tl.Err)
+	}
+	if n := fw.threads.Load(); n != 1 {
+		t.Fatalf("a thread in no view must fall back to the fetch, got %d ActThread calls", n)
+	}
+}
+
+func loaded(ch <-chan core.Event) core.ThreadLoaded {
+	select {
+	case e := <-ch:
+		tl, ok := e.(core.ThreadLoaded)
+		if !ok {
+			panic(fmt.Sprintf("expected ThreadLoaded, got %T", e))
+		}
+		return tl
+	case <-time.After(time.Second):
+		panic("no ThreadLoaded")
 	}
 }

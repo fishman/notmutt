@@ -148,29 +148,33 @@ func Run() error {
 		}()
 	})
 
-	// open: the worker loads the thread's messages (headers + paths,
-	// ActThread), the open job renders the files and runs the render
-	// transforms, and the TUI attaches the lines on ThreadLoaded (R13
-	// two-step - content loads on open only). The preview variant (the
-	// p key) skips the read-marking; the TUI keeps the index surface
-	// for the popup. The headers flag is the h key: the render includes
-	// the full header block.
+	// open: the opened message's set resolves rows-first from the views
+	// (the full walk already loaded headers and paths - the open must
+	// not queue behind the walk that owns the worker); the worker fetch
+	// (ActThread) is the fallback for a thread in no view. The open job
+	// renders the files and runs the render transforms, and the TUI
+	// attaches the lines on ThreadLoaded (R13 two-step - content loads
+	// on open only). The preview variant (the p key) skips the
+	// read-marking; the TUI keeps the index surface for the popup. The
+	// headers flag is the h key: the render includes the full header
+	// block.
 	tui.SetOpenHandler(func(threadID, msgID string, preview, headers bool, width int) {
 		// RenderAuto: the open default resolves per sender domain
 		// ([pager] default-views) once the message is in hand - the
 		// domain is message data, only the fetch has it
-		go openThread(worker, bus, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, me)
+		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
 	})
 
 	// the render toggle (the v key in the pager), the source view
 	// (ctrl+u), and the link labels (the F key): the same open path
-	// with the other view - the worker refetches the thread (the open
-	// job is the render owner, R13; the TUI never renders). labelLinks
+	// with the other view - rows-first from the views, the worker
+	// re-fetches only when the thread left every view (the open job is
+	// the render owner, R13; the TUI never renders). labelLinks
 	// is the F key: the renderer prefixes every link with its "[N]"
 	// label and the target list rides the reply. The explicit modes
 	// never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, threadID, msgID, false, mode, headers, width, labelLinks, nil, me)
+		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key
@@ -178,10 +182,10 @@ func Run() error {
 	// from the thread's message on demand - ParseMessage never keeps
 	// non-image part bytes, the demand path reads one part
 	tui.SetAttachmentViewHandler(func(threadID, msgID string, ordinal int) {
-		go viewAttachment(worker, bus, threadID, msgID, ordinal)
+		go viewAttachment(worker, bus, views, threadID, msgID, ordinal)
 	})
 	tui.SetAttachmentSaveHandler(func(threadID, msgID string, ordinal int, path string) {
-		go saveAttachment(worker, bus, threadID, msgID, ordinal, path)
+		go saveAttachment(worker, bus, views, threadID, msgID, ordinal, path)
 	})
 
 	// the categorize hotkey (the index c key): the app runs the
@@ -393,59 +397,64 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 	return lines
 }
 
-// openThread loads the opened message through the worker, renders it,
-// and publishes ThreadLoaded with the render lines (R13 two-step:
-// content loads on open only; the render + transforms run here on the
-// async job, never on the TUI's event path). The thread fetch narrows
-// to the message (msgID): the pager shows one message, never the
-// whole thread - a bare open (empty msgID) renders the thread's
-// first. The mark is computed against the FULL fetch before the
-// narrowing: the pager tints the message by its position in the
-// conversation (the recent-5 and other-side highlight, me = the
-// account from addresses). A full open (preview=false) marks the
-// opened message read with an ActTag -unread (R1 - read is a tag; the
-// refresh cycle reconciles it into the view). The tag failure keeps
-// the thread open - the fetch already succeeded - and surfaces as a
-// JobError.
-func openThread(worker workerAPI, bus *core.Bus, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, me []string) {
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
-	if err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
-		return
-	}
-	if rpl.Err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
-		return
+// openThread renders the opened message and publishes ThreadLoaded
+// with the render lines (R13 two-step: content loads on open only; the
+// render + transforms run here on the async job, never on the TUI's
+// event path). The message set resolves rows-first from the registered
+// views: the full walk already loaded headers and paths, and the walk
+// owns the worker for seconds, so an open must not queue behind it
+// (the walk still runs when the first rows are openable). The worker
+// fetch is the fallback when the thread is not in any view (a closed
+// tab's pager, a view reset race). The render narrows to the message
+// (msgID): the pager shows one message, never the whole thread - a
+// bare open (empty msgID) renders the thread's first. A full open
+// (preview=false) marks the opened message read with an ActTag -unread
+// (R1 - read is a tag; the refresh cycle reconciles it into the view).
+// The tag failure keeps the thread open - the render already succeeded
+// - and surfaces as a JobError.
+func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
+	msgs := threadFromViews(views, threadID)
+	if msgs == nil {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+		if err != nil {
+			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
+			return
+		}
+		if rpl.Err != nil {
+			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
+			return
+		}
+		msgs = rpl.Msgs
 	}
 	idx := 0
 	if msgID != "" {
-		for i, m := range rpl.Msgs {
+		for i, m := range msgs {
 			if m.ID == msgID {
 				idx = i
 				break
 			}
 		}
 	}
-	if len(rpl.Msgs) > 0 {
-		rpl.Msgs = []core.Message{rpl.Msgs[idx]}
+	if len(msgs) > 0 {
+		msgs = []core.Message{msgs[idx]}
 	}
 	msgID = ""
-	if len(rpl.Msgs) > 0 {
-		msgID = rpl.Msgs[0].ID
+	if len(msgs) > 0 {
+		msgID = msgs[0].ID
 	}
 	if mode == core.RenderAuto {
-		mode = openViewMode(defViews, rpl.Msgs)
+		mode = openViewMode(defViews, msgs)
 		// an html-only message has no plain content: its plain render is
 		// the html structure with the colors stripped, so the open
 		// default upgrades it to the html view (an explicit default-views
 		// plain mapping cannot prefer content that does not exist)
-		if mode == core.RenderPlain && len(rpl.Msgs) > 0 && len(rpl.Msgs[0].Paths) > 0 {
-			if parsed, err := mail.ParseMessage(rpl.Msgs[0].Paths[0]); err == nil && mail.ViewMime(parsed, core.RenderPlain) == "text/html" {
+		if mode == core.RenderPlain && len(msgs) > 0 && len(msgs[0].Paths) > 0 {
+			if parsed, err := mail.ParseMessage(msgs[0].Paths[0]); err == nil && mail.ViewMime(parsed, core.RenderPlain) == "text/html" {
 				mode = core.RenderHTML
 			}
 		}
 	}
-	lines, mime, links, err := mail.RenderThread(rpl.Msgs, mode, headers, width, labelLinks)
+	lines, mime, links, err := mail.RenderThread(msgs, mode, headers, width, labelLinks)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 		return
@@ -485,20 +494,46 @@ func findMsg(msgs []core.Message, msgID string) (core.Message, bool) {
 	return msgs[0], true
 }
 
-// extractAttachment fetches the opened message and reads the
-// ordinal-th attachment's bytes and type - the shared demand path of
-// the view and save seams (one file open per demand, never held in
-// memory). foundID is the message actually used: the reply identity
+// threadFromViews resolves the thread's message set from the
+// registered views (rows-first): the full walk already loaded headers
+// and paths, and the walk owns the worker for seconds, so the read
+// seams (open, render toggle, attachment handlers) must not queue
+// behind it. The walk's rows are the same header-cache data an
+// ActThread fetch returns, so a walk-resident thread renders without
+// any worker round trip. nil when the thread is in no view (a closed
+// tab's pager, a view reset race): the caller falls back to the fetch.
+func threadFromViews(views map[string]*core.View, threadID string) []core.Message {
+	for _, v := range views {
+		if msgs := v.ThreadMsgs(threadID); msgs != nil {
+			out := make([]core.Message, len(msgs))
+			for i, m := range msgs {
+				out[i] = *m
+			}
+			return out
+		}
+	}
+	return nil
+}
+
+// extractAttachment reads the opened message's ordinal-th attachment
+// bytes and type - the shared demand path of the view and save seams
+// (one file open per demand, never held in memory). The message
+// resolves rows-first from the views; the worker fetch is the
+// fallback for a thread in no view (like openThread). foundID is the message actually used: the reply identity
 // must match the pager's.
-func extractAttachment(worker workerAPI, threadID, msgID string, ordinal int) (name, typ string, data []byte, foundID string, err error) {
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
-	if err != nil {
-		return "", "", nil, msgID, err
+func extractAttachment(worker workerAPI, views map[string]*core.View, threadID, msgID string, ordinal int) (name, typ string, data []byte, foundID string, err error) {
+	msgs := threadFromViews(views, threadID)
+	if msgs == nil {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+		if err != nil {
+			return "", "", nil, msgID, err
+		}
+		if rpl.Err != nil {
+			return "", "", nil, msgID, rpl.Err
+		}
+		msgs = rpl.Msgs
 	}
-	if rpl.Err != nil {
-		return "", "", nil, msgID, rpl.Err
-	}
-	msg, ok := findMsg(rpl.Msgs, msgID)
+	msg, ok := findMsg(msgs, msgID)
 	if !ok || len(msg.Paths) == 0 {
 		return "", "", nil, msgID, fmt.Errorf("no message path")
 	}
@@ -512,8 +547,8 @@ func extractAttachment(worker workerAPI, threadID, msgID string, ordinal int) (n
 // matching mailcap copiousoutput entry replaces the bytes with its
 // preview text (a pdf renders as pdftotext output, never as bytes);
 // a preview failure is an error, not a fallback to the raw dump.
-func viewAttachment(worker workerAPI, bus *core.Bus, threadID, msgID string, ordinal int) {
-	name, typ, data, foundID, err := extractAttachment(worker, threadID, msgID, ordinal)
+func viewAttachment(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, ordinal int) {
+	name, typ, data, foundID, err := extractAttachment(worker, views, threadID, msgID, ordinal)
 	if err != nil {
 		bus.Publish(core.AttachmentLoaded{ThreadID: threadID, MsgID: foundID, Err: err})
 		return
@@ -543,8 +578,8 @@ func previewMailcap(typ string) ([]string, bool) {
 // saveAttachment serves the s key in an attachment view: extract the
 // attachment and write it to the path (0600, F5); the result rides
 // AttachmentSaved for the status line.
-func saveAttachment(worker workerAPI, bus *core.Bus, threadID, msgID string, ordinal int, path string) {
-	_, _, data, _, err := extractAttachment(worker, threadID, msgID, ordinal)
+func saveAttachment(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, ordinal int, path string) {
+	_, _, data, _, err := extractAttachment(worker, views, threadID, msgID, ordinal)
 	if err != nil {
 		bus.Publish(core.AttachmentSaved{Path: path, Err: err})
 		return

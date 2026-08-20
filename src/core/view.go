@@ -554,6 +554,21 @@ func (v *View) Hydrated(id string) bool {
 	return false
 }
 
+// ThreadMsgs returns the thread's full message set - the walk's rows
+// carry headers and paths, the open path's rows-first resolution (an
+// open must not queue behind the full walk that owns the worker).
+// nil when the thread is not in the view.
+func (v *View) ThreadMsgs(id string) []*Message {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		if t.ID == id {
+			return t.msgs
+		}
+	}
+	return nil
+}
+
 // SlideWindow advances the thread's tree window by step rows and
 // reports whether it moved. False at the edges: the walk-through steps
 // (+-1) refuse when nothing hides in that direction or the thread fits

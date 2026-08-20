@@ -54,9 +54,13 @@ mail an external client moved into an INBOX.
 
 ```sh
 cp config/examples/systemd/* ~/.config/systemd/user/
-# edit mbsync-all.service: replace the mbsync account list with yours
 systemctl --user enable --now mail-sync.timer
 ```
+
+`mbsync-all.service` launches one mbsync process per `Channel` line in
+`~/.mbsyncrc`, all in parallel (mbsync locks each mailbox, so
+concurrent runs are safe) - add a channel there and it syncs, nothing
+to edit in the unit.
 
 The service's `ExecCondition` is the environment-specific part: it
 skips the sync while the network is down (`nmcli`), while a video is

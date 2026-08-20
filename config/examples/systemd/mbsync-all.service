@@ -5,7 +5,10 @@ Wants=network-online.target
 StartLimitBurst=2
 
 [Service]
-ExecStart=/bin/sh -c '/usr/bin/mbsync jelveh -a & wait'
+# one mbsync process per channel, all in parallel (mbsync locks each
+# mailbox, so concurrent runs are safe); the channel list comes from
+# ~/.mbsyncrc, no account names to maintain here
+ExecStart=/bin/sh -c 'for c in $(sed -n "s/^Channel //p" ~/.mbsyncrc); do /usr/bin/mbsync "$c" & done; wait'
 RuntimeMaxSec=5m
 Restart=on-failure
 

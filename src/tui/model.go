@@ -39,13 +39,10 @@ var chainTimeout = time.Second
 // comfortably under the render budget.
 var frameInterval = 8 * time.Millisecond
 
-// scrollStep is the horizontal pan step in cells (the h/l keys);
-// indexMaxScroll caps the index offset - the subject tail is bounded,
-// only a pathological title hides more than 4096 cells behind the frame.
-const (
-	scrollStep     = 8
-	indexMaxScroll = 4096
-)
+// scrollStep is the horizontal pan step in cells (the h/l keys). The
+// index offset clamps at the page's widest row content (render time),
+// not a fixed cap - a full title must always be reachable.
+const scrollStep = 8
 
 // Actions is the BUILTIN action vocabulary per context (R9): the index
 // context carries navigation (including the gg/G edge jumps), open, the
@@ -104,6 +101,14 @@ var Actions = map[string]map[string]bool{
 	},
 }
 
+// panState is the index pan's render-side state (see Model.pan): the
+// widest row content of the last-rendered page. The pan clamps at it,
+// so a right pan stops at the content end instead of scrolling into
+// blank (and never flips back to the row head).
+type panState struct {
+	maxX int
+}
+
 type Model struct {
 	view       *core.View
 	ch         <-chan core.Event
@@ -120,8 +125,13 @@ type Model struct {
 	// keys). The row cache stores the unclipped line; the clip lands at
 	// the write site, so panning never churns the cache.
 	indexX int
-	mode   string // "index" default; "pager" while a thread is open
-	pager  *pager
+	// pan is the pan's render-side state, shared through the value-copy
+	// render boundary: the render measures the page's widest row content
+	// through the pointer and the dispatch clamps the offset against it
+	// (a plain field would reset to zero on every render)
+	pan   *panState
+	mode  string // "index" default; "pager" while a thread is open
+	pager *pager
 	// renderMode is the pager's requested view (the toggle-render and
 	// source keys): the plain parts, the rendered html part, or the raw
 	// html source. renderMime is the last reply's mime label for the
@@ -340,7 +350,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -1012,7 +1022,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollRight()
 		} else if m.mode == "index" {
-			m.indexX = min(m.indexX+scrollStep, indexMaxScroll)
+			// the clamp is content-based (the render measured the page's
+			// widest row): the pan stops at the content end, and the
+			// offset stays bounded for the left pan
+			m.indexX = min(m.indexX+scrollStep, max(0, m.pan.maxX-m.width))
 		} else {
 			break
 		}
@@ -2792,6 +2805,10 @@ func (m Model) renderBase() string {
 	var b strings.Builder
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
+	// the pan clamps in the dispatch against this measure (the widest
+	// row of the last-rendered page); the clamp is loose after a
+	// refresh that narrowed the content - the rows render blank past
+	// the end, never the head again
 	for i := top; i < bottom; i++ {
 		// the row cache: a cursor move restyles only the two rows whose
 		// selected flag flips; the rest concatenate from the cache. The
@@ -2799,7 +2816,7 @@ func (m Model) renderBase() string {
 		// plus every style-affecting parameter; the outer row style is
 		// a function of the row's own fields and selected, so the
 		// rendered line is fully keyed.
-		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, width: m.width, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
+		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, pad: m.width + m.indexX, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
@@ -2826,11 +2843,16 @@ func (m Model) renderBase() string {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
 			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
+			if w := runewidth.StringWidth(stripANSI(line)); w > m.pan.maxX {
+				m.pan.maxX = w
+			}
 			if m.width > 0 {
 				// the loop's first View() runs before the resize lands:
 				// width 0 must not blank the rows (padRow would truncate
-				// them away)
-				line = padRowSGR(line, m.width, outer)
+				// them away). The style boundary is the view width plus
+				// the pan offset: a panned row carries the cells the
+				// clip will show (the pager pad rule)
+				line = padRowSGR(line, m.width+m.indexX, outer)
 			}
 			m.rowCache[key] = line
 		}

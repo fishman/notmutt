@@ -4313,39 +4313,54 @@ func TestModelOpenHeaders(t *testing.T) {
 // TestHorizontalScroll pins the h/l pan (the arrows bind the same
 // actions): the index offset moves in scrollStep cells and clips the
 // rows at the write site - the rendered row loses its head as the pan
-// grows (open-headers moved to H, so h/l are free).
+// grows, the deep title tail becomes visible (rows render to the view
+// width plus the offset), and the offset clamps at the page's widest
+// row content - scrolled past the end, the row never flips back to
+// its head. open-headers moved to H, so h/l are free.
 func TestHorizontalScroll(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
 	view := core.NewView("inbox", "tag:inbox")
+	subject := "HEAD" + strings.Repeat("x", 196) // 200 chars, wider than the view
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}, Subject: "012345678901234567890123456789"},
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}, Subject: subject},
 	})})
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
+	row := func() string {
+		m.paint = true // navigation defers its paint; force the render
+		return strings.SplitN(stripANSI(m.View()), "\n", 3)[1]
+	}
+	row() // the first render measures the page's widest row (the pan clamp needs it)
 	for i := 0; i < 4; i++ {
 		m = press(t, m, "l")
 	}
+	row() // the render clamps the offset and clips the rows
 	if m.indexX != 4*scrollStep {
 		t.Fatalf("index pan offset = %d, want %d", m.indexX, 4*scrollStep)
 	}
-	plain := stripANSI(m.View())
-	if !strings.Contains(plain, "67890123456789") {
-		t.Fatalf("the pan must reveal the subject tail:\n%s", plain)
+	// the fixed slots (cursor, number, flags, date) sit before the
+	// subject: 4 steps clip them, the subject still starts on screen
+	if strings.Contains(row(), cfg.UI.Glyphs.Cursor) {
+		t.Fatalf("the pan must clip the row head:\n%s", row())
 	}
-	for i := 0; i < 600; i++ {
+	for i := 0; i < 100; i++ {
 		m = press(t, m, "l")
 	}
-	if m.indexX != indexMaxScroll {
-		t.Fatalf("index pan must clamp at %d: %d", indexMaxScroll, m.indexX)
+	row() // the render clamps the offset against the measured content width
+	if want := m.pan.maxX - m.width; m.indexX != want {
+		t.Fatalf("index pan must clamp at the content end: %d, want %d", m.indexX, want)
 	}
-	for i := 0; i < 600; i++ {
+	if strings.Contains(row(), "HEAD") {
+		t.Fatalf("the clamped row must show the title tail, never flip back to its head:\n%s", row())
+	}
+	for i := 0; i < 200; i++ {
 		m = press(t, m, "h")
 	}
 	if m.indexX != 0 {
 		t.Fatalf("left pan must clamp at 0: %d", m.indexX)
 	}
-	if row := strings.SplitN(stripANSI(m.View()), "\n", 3)[1]; !strings.Contains(row, "01") {
-		t.Fatalf("the un-panned row must show its head:\n%s", row)
+	if !strings.Contains(row(), "HEAD") {
+		t.Fatalf("the un-panned row must show its head:\n%s", row())
 	}
 }
 

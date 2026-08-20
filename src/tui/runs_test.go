@@ -62,6 +62,7 @@ func TestSkipStyled(t *testing.T) {
 		{red + "ab" + reset + "cdef", 3, "def"}, // the reset closes the tracked open
 		{"ab界d", 4, "d"},                        // wide char fully skipped
 		{"a界b", 2, "b"},                         // the straddling wide char drops
+		{"0123456789", 20, ""},                  // fully scrolled past: blank, never the head
 	}
 	for _, c := range cases {
 		if got := skipStyled(c.in, c.x); got != c.want {

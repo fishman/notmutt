@@ -394,10 +394,12 @@ func truncateStyled(s string, w int) string {
 // skipStyled drops the first x visible cells of a styled string; the
 // last completed SGR open re-emits when the cut lands inside its run,
 // so the tail keeps the style it would otherwise lose. A reset inside
-// the skipped region closes the tracked open. The mirror of
-// truncateStyled for the horizontal scroll.
+// the skipped region closes the tracked open. A line fully scrolled
+// past returns empty - the content is gone, never the head again (the
+// flip a width-guard would cause). The mirror of truncateStyled for
+// the horizontal scroll.
 func skipStyled(s string, x int) string {
-	if x <= 0 || runewidth.StringWidth(stripANSI(s)) <= x {
+	if x <= 0 {
 		return s
 	}
 	var b strings.Builder

@@ -36,12 +36,13 @@ const rowCacheMax = 8192
 // ops reflatten and churn addresses (auto-miss); SetAtts mutates the
 // shared message without a reflatten, so the atts bool (the attach
 // icon reads only len(Atts) > 0) covers it. styleVer bumps on theme
-// changes.
+// changes. pad is the style boundary - the view width plus the pan
+// offset - so a pan re-renders every row at the new boundary.
 type rowKey struct {
 	row      *core.Row
 	numWidth int
 	tagWidth int
-	width    int
+	pad      int
 	styles   int
 	selected bool
 	atts     bool

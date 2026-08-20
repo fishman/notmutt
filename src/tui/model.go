@@ -2874,22 +2874,12 @@ func (m Model) renderBase() string {
 				outer = sg.stagedNormal
 			}
 		}
-		if key.mark != core.MarkNone {
-			// the opened message's thread-position mark: its index row
-			// tints (recent-5 in one color, the last other-side message
-			// more prominent) - the thread line, never the pager text
-			if key.mark == core.MarkOther {
-				outer = sg.pagerOther
-			} else {
-				outer = sg.pagerRecent
-			}
-		}
 		line, ok := m.rowCache[key]
 		if !ok {
 			if len(m.rowCache) > rowCacheMax {
 				m.rowCache = make(map[rowKey]string, 512)
 			}
-			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery)
+			line = renderRow(i+1, rows[i], st, m.ui, numWidth, tagWidth, i == cur, m.accountTags, m.searchQuery, key.mark)
 			if w := runewidth.StringWidth(stripANSI(line)); w > m.pan.maxX {
 				m.pan.maxX = w
 			}

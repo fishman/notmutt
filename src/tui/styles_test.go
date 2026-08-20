@@ -27,7 +27,7 @@ func TestRowStyled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
 	if !strings.Contains(out, "\x1b[38;2;97;175;239m") { // onedark author blue #61afef
 		t.Fatalf("author slot must carry its style:\n%q", out)
 	}
@@ -61,7 +61,7 @@ func TestRowCollapsedMarker(t *testing.T) {
 	}, Count: 5, Collapsed: true}
 	st := DefaultStyles()
 	ui := config.Default().UI
-	out := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "")
+	out := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
 	want := ui.Glyphs.Tree + "4"
 	if !strings.Contains(stripANSI(out), want) {
 		t.Fatalf("the collapsed row must show the tree glyph plus the hidden count %q: %q", want, out)
@@ -72,7 +72,7 @@ func TestRowCollapsedMarker(t *testing.T) {
 	// an expanded thread root carries no marker: same row shape without
 	// the collapsed flag stays a plain root
 	row.Collapsed = false
-	plain := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "")
+	plain := renderRow(1, row, st, ui, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
 	if strings.Contains(stripANSI(plain), want) {
 		t.Fatalf("an expanded root must not show the collapse marker: %q", plain)
 	}
@@ -83,7 +83,32 @@ func styledRow() string {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
+	return renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
+}
+
+// TestRowMarkTintsSubject pins the thread-position mark on the row:
+// the marked message's subject run (and its tree indicator) opens
+// with the tint style, the fixed slots keep their own colors - the
+// mark paints the subject line, never the whole row.
+func TestRowMarkTintsSubject(t *testing.T) {
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
+	}}
+	st := DefaultStyles()
+	ui := config.Default().UI
+	acc := config.Default().AccountTags()
+	out := renderRow(1, row, st, ui, 1, 0, false, acc, "", core.MarkOther)
+	if !strings.Contains(out, st.sgr.pagerOther.open+"hello") {
+		t.Fatalf("the marked subject must open with the tint: %q", out)
+	}
+	if !strings.Contains(out, "38;2;229;192;123") { // base0A: the date slot keeps its color
+		t.Fatalf("the fixed slots must keep their colors: %q", out)
+	}
+	plain := renderRow(1, row, st, ui, 1, 0, false, acc, "", core.MarkNone)
+	if strings.Contains(plain, st.sgr.pagerOther.open) {
+		t.Fatalf("an unmarked row must not tint: %q", plain)
+	}
 }
 
 // TestRowSelectedMarker pins the cursor row look: the row keeps its
@@ -95,7 +120,7 @@ func TestRowSelectedMarker(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
 	}}
-	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, true, config.Default().AccountTags(), "")
+	out := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, true, config.Default().AccountTags(), "", core.MarkNone)
 	if !strings.HasPrefix(out, "\x1b[38;2;33;37;43;48;2;229;192;123m▌") { // indicator fg #21252b + bg on the marker
 		t.Fatalf("cursor marker must carry the indicator style: %q", out)
 	}
@@ -104,7 +129,7 @@ func TestRowSelectedMarker(t *testing.T) {
 	}
 	// the marker cell reserves its column on unselected rows, so the
 	// line never shifts when the cursor moves
-	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "")
+	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
 	if !strings.HasPrefix(stripANSI(plain), " ") {
 		t.Fatalf("the marker cell must reserve its column on unselected rows: %q", plain)
 	}
@@ -119,7 +144,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 5, false, config.Default().AccountTags(), ""))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 5, false, config.Default().AccountTags(), "", core.MarkNone))
 	if !strings.HasPrefix(out, " 1    A ") {
 		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
 	}
@@ -146,7 +171,7 @@ func TestRowFlagSlot(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"replied", "signed", "work"},
 	}}
-	out := stripANSI(renderRow(1, row, st, ui, 1, 4, false, acc, ""))
+	out := stripANSI(renderRow(1, row, st, ui, 1, 4, false, acc, "", core.MarkNone))
 	if !strings.HasPrefix(out, " 1 R ") {
 		t.Fatalf("flags slot must show replied: %q", out)
 	}
@@ -161,7 +186,7 @@ func TestRowFlagSlot(t *testing.T) {
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"work"},
-	}}, st, ui, 1, 4, false, acc, ""))
+	}}, st, ui, 1, 4, false, acc, "", core.MarkNone))
 	col := func(s string) int { return runewidth.StringWidth(s[:strings.Index(s, "25/08/14")]) }
 	if col(out) != col(plain) {
 		t.Fatalf("the signed slot must reserve width:\n%q\n%q", out, plain)
@@ -178,7 +203,7 @@ func TestRowTagIcon(t *testing.T) {
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
-	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, false, config.Default().AccountTags(), ""))
+	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, false, config.Default().AccountTags(), "", core.MarkNone))
 	// number + blank flags slot precede the attachment slot; the icon must
 	// sit before the date column, not in the tag slot
 	if !strings.HasPrefix(out, " 1    x ") {
@@ -196,7 +221,7 @@ func TestRowTagIcon(t *testing.T) {
 	// icons nor names carry fixed padding (a padded cell would leave
 	// gaps between glyphs)
 	row.Msg.Tags = []string{"inbox", "newsletter"}
-	glyphs := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), ""))
+	glyphs := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), "", core.MarkNone))
 	if !strings.Contains(glyphs, "y z") || strings.Contains(glyphs, "y  z") {
 		t.Fatalf("icons must join with a single space: %q", glyphs)
 	}
@@ -205,7 +230,7 @@ func TestRowTagIcon(t *testing.T) {
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
-	}}, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), ""))
+	}}, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), "", core.MarkNone))
 	if strings.Index(out, "25/08/14") != strings.Index(plain, "25/08/14") {
 		t.Fatalf("attachment icon shifted the date column:\n%q\n%q", out, plain)
 	}
@@ -223,11 +248,11 @@ func TestRowTagSlotAlignsPage(t *testing.T) {
 	wide := renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox", "work"},
-	}}, st, ui, 1, 10, false, acc, "")
+	}}, st, ui, 1, 10, false, acc, "", core.MarkNone)
 	none := renderRow(2, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello",
-	}}, st, ui, 1, 10, false, acc, "")
+	}}, st, ui, 1, 10, false, acc, "", core.MarkNone)
 	if si := strings.Index(stripANSI(wide), "hello"); si != strings.Index(stripANSI(none), "hello") {
 		t.Fatalf("the subject column must align on the page:\n%q\n%q", wide, none)
 	}
@@ -235,7 +260,7 @@ func TestRowTagSlotAlignsPage(t *testing.T) {
 	wide13 := renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m3", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox", "newsletter"},
-	}}, st, ui, 1, 13, false, acc, "")
+	}}, st, ui, 1, 13, false, acc, "", core.MarkNone)
 	if !strings.Contains(wide13, "hello") {
 		t.Fatalf("the wider run must render in full: %q", wide13)
 	}
@@ -291,7 +316,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 		return core.Row{Msg: &core.Message{ID: "m1", ThreadID: "t1", Timestamp: 1755150000, Author: "Ann", Subject: "hello"}}
 	}
 	render := func(r core.Row) string {
-		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
+		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone))
 	}
 	if got := render(base()); strings.Contains(got, "+ ") {
 		t.Fatalf("a single message renders no tree glyph: %q", got)
@@ -372,7 +397,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 // count off the line - the indicator row owns the number.
 func TestRowMoreIndicator(t *testing.T) {
 	render := func(r core.Row) string {
-		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), ""))
+		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone))
 	}
 	ind := core.Row{Ghost: true, ThreadID: "t1", More: 30}
 	if got := render(ind); !strings.Contains(got, "+30 more") {

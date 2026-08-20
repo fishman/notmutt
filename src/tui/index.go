@@ -30,7 +30,7 @@ import (
 // is applied later by padRow). Glyphs and the tag-slot cap come from
 // config data, never hardcoded. Account tags never render here - the
 // account lives in the status bar (R2), not the mail title.
-func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool, query string) string {
+func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool, query string, mark core.MsgMark) string {
 	sg := st.sgr
 	// the row keeps its slot styles; the selection is the cursor
 	// marker cell (config glyph, indicator-styled) at the line start
@@ -103,6 +103,16 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	// subject moves with the thread indent, so there is no column
 	// alignment to keep - the fixed columns never move, the title
 	// eats the depth and padRow clamps the row at the frame width
+	// the thread-position mark (the opened message): the subject run
+	// and its tree indicator tint - the recent-5 cyan, the last
+	// other-side message purple bold; the rest of the row keeps its
+	// slot colors
+	subjectStyle := sg.subject
+	if mark == core.MarkOther {
+		subjectStyle = sg.pagerOther
+	} else if mark == core.MarkRecent {
+		subjectStyle = sg.pagerRecent
+	}
 	subject := core.SanitizeControls(row.Msg.Subject)
 	if row.Collapsed && row.Count > 1 {
 		// the collapsed marker: the tree glyph plus the hidden-row count
@@ -111,9 +121,9 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 		b.WriteString(sg.collapsed.render(ui.Glyphs.Tree + strconv.Itoa(row.Count-1)))
 		b.WriteByte(' ')
 	} else {
-		b.WriteString(sg.tree.render(treePrefix(row, ui.Glyphs)))
+		b.WriteString(subjectStyle.render(treePrefix(row, ui.Glyphs)))
 	}
-	b.WriteString(renderHighlighted(subject, query, sg.subject, sg.search))
+	b.WriteString(renderHighlighted(subject, query, subjectStyle, sg.search))
 	return b.String()
 }
 

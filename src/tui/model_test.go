@@ -1267,11 +1267,12 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 
 // TestPagerMarkThreadLoaded pins the mark contract: the ThreadLoaded
 // reply carries the opened message's thread-position mark, and the
-// highlight lands on the message's ROW in the index (the recent-5 and
-// last-other-side tints) - never the pager text. The body keeps its
-// own style in the pager (the plaintext highlighting regression), and
-// q-return shows the marked row in the list; an unmarked reply
-// (MarkNone) tints nothing.
+// highlight lands on the message's SUBJECT run and tree indicator in
+// the index (the recent-5 and last-other-side tints) - never the
+// pager text and never the whole row. The body keeps its own style in
+// the pager (the plaintext highlighting regression), and q-return
+// shows the tinted subject in the list; an unmarked reply (MarkNone)
+// tints nothing.
 func TestPagerMarkThreadLoaded(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1286,7 +1287,7 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 		styles := ResolveStyles(cfg.Theme, cfg.Palette)
 		view := core.NewView("inbox", "tag:inbox")
 		view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-			{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+			{ID: "a", Subject: "hello", Timestamp: 100, Tags: []string{"inbox"}},
 		})})
 		st := config.NewStore(cfg)
 		m := sized(New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI))
@@ -1314,7 +1315,7 @@ func TestPagerMarkThreadLoaded(t *testing.T) {
 				t.Fatalf("%s: an unmarked message must not tint the index:\n%s", tc.name, out)
 			}
 		} else if !strings.Contains(out, tc.want) {
-			t.Fatalf("%s: the marked row must carry the %v tint:\n%s", tc.name, tc.mark, out)
+			t.Fatalf("%s: the marked message must carry the %v tint:\n%s", tc.name, tc.mark, out)
 		}
 	}
 }

@@ -190,6 +190,9 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 			}
 			switch {
 			case tag == "img":
+				if isTrackingPixel(c) {
+					continue // a declared 1x1 beacon drops before the fetch path can ever see it
+				}
 				w.image(c, cs)
 			case tag == "br" && !cs.Pre:
 				w.flush()
@@ -213,6 +216,12 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 						w.pendingMark = &word{text: html.ListMark(w.lists[len(w.lists)-1]), st: cs}
 					}
 				}
+				if tag == "a" {
+					// a display:block anchor (button links) is still a
+					// link: the label leads its block, never lost to
+					// the display split
+					w.anchorLabel(c, cs)
+				}
 				w.walk(c, cs)
 				if tag == "ol" || tag == "ul" {
 					w.lists = w.lists[:len(w.lists)-1]
@@ -227,19 +236,40 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 				// the F key's link label: the anchor's href gets its
 				// "[N]" label inline before the anchor text (an
 				// anchor without an href is plain text)
-				if w.labelLinks {
-					if href := html.Attr(c, "href"); href != "" {
-						href = sanitize(href)
-						w.links = append(w.links, href)
-						w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs, true)
-					}
-				}
+				w.anchorLabel(c, cs)
 				w.walk(c, cs)
 			default:
 				w.walk(c, cs)
 			}
 		}
 	}
+}
+
+// anchorLabel registers the anchor's link label (the F key's "[N]"
+// marker): an anchor is a link whatever its display value - a
+// display:block anchor (button links) must not lose its label to the
+// block split. The caller emits it after any leading flush, so it
+// leads the anchor's first line; an anchor without an href is plain
+// text.
+func (w *htmlWalker) anchorLabel(c *xhtml.Node, cs *html.Style) {
+	if !w.labelLinks {
+		return
+	}
+	if href := html.Attr(c, "href"); href != "" {
+		href = sanitize(href)
+		w.links = append(w.links, href)
+		w.addWord(fmt.Sprintf("[%d]", len(w.links)), cs, true)
+	}
+}
+
+// isTrackingPixel is the declared-dims beacon fingerprint: an img
+// declaring 1x1 (width/height attributes or style declarations) is a
+// read receipt, not content - it drops at render, before the fetch
+// path can ever see it. The app's fetched-bytes 1x1 check (imgfetch)
+// stays as the runtime guard for pixels that hide their declared dims.
+func isTrackingPixel(c *xhtml.Node) bool {
+	dw, dh := imgSize(c, 0)
+	return dw == 1 && dh == 1
 }
 
 func isBlock(tag string, cs *html.Style) bool {
@@ -651,6 +681,9 @@ func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]stri
 // labels anchors and bare URLs inside cells like the main walk - the
 // layout-table era wraps every link in a td.
 func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
+	if st.Display == "none" {
+		return nil // a display:none cell renders nothing - display never inherits
+	}
 	var out []cellLine
 	var cur []word
 	align := ""
@@ -712,6 +745,9 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 				case tag == "br" && !cs.Pre:
 					flush()
 				case tag == "img":
+					if isTrackingPixel(c) {
+						continue // a declared 1x1 beacon drops before the fetch path can ever see it
+					}
 					// a resolved block image becomes its own full-width
 					// line (the column join can hold one image per
 					// line); an inline image (the icon rows) joins its
@@ -767,6 +803,15 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 							pendingMark = &word{text: html.ListMark(lists[len(lists)-1]), st: cs}
 						}
 					}
+					if tag == "a" && labelLinks {
+						// a display:block anchor in a cell (button links)
+						// is still a link: the label leads its block
+						if href := html.Attr(c, "href"); href != "" {
+							href = sanitize(href)
+							*links = append(*links, href)
+							cur = append(cur, word{text: fmt.Sprintf("[%d]", len(*links)), st: cs, label: true})
+						}
+					}
 					walk(c, cs)
 					if tag == "ol" || tag == "ul" {
 						lists = lists[:len(lists)-1]
@@ -815,6 +860,9 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 					continue
 				}
 				tcs := html.StyleOf(c, st, rules)
+				if tcs.Display == "none" {
+					continue
+				}
 				if tcs.Align == "right" && tcs.AlignSet {
 					if lineAlign != "right" {
 						flush()

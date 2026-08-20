@@ -244,6 +244,10 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s := *parent
 	s.AlignSet = false // align inherits, its explicit-source flag never does
 	s.FgSet = false    // same for color: the contrast derivation must override an inherited value
+	// display is NOT inherited (CSS): a block cell's content stays
+	// inline-by-default - the copy above must not carry the parent's
+	// display into the children
+	s.Display = ""
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {

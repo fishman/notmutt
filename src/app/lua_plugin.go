@@ -20,8 +20,10 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"sync"
+	"time"
 
 	lua "github.com/yuin/gopher-lua"
 
@@ -47,6 +49,7 @@ type luaPlugin struct {
 	vm         *lua.LState
 	mu         sync.Mutex
 	bodyRender *lua.LFunction
+	categorize *lua.LFunction
 }
 
 // loadLuaPlugins loads every *.lua file in dir (sorted, so the render
@@ -119,24 +122,57 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		L.Push(lua.LString(i18n.T(L.CheckString(1))))
 		return 1
 	}))
+	// re_match is the regex helper (Go regexp syntax - Lua string
+	// patterns have no alternation): match(bool), err(string or nil).
+	// A compile error is false plus the error text, so the common
+	// single-value usage keeps working.
+	vm.SetGlobal("re_match", vm.NewFunction(func(L *lua.LState) int {
+		re, err := regexp.Compile(L.CheckString(1))
+		if err != nil {
+			L.Push(lua.LFalse)
+			L.Push(lua.LString(err.Error()))
+			return 2
+		}
+		L.Push(lua.LBool(re.MatchString(L.CheckString(2))))
+		L.Push(lua.LNil)
+		return 2
+	}))
 	if err := vm.DoFile(path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)
 		vm.Close()
 		return
 	}
-	fn := vm.GetGlobal("body_render")
-	if fn == lua.LNil {
-		return // no render hook; other plugin effects are a later milestone
+	// hooks register per declared global: a plugin may carry only
+	// body_render, only categorize, or both - each registers
+	// independently
+	p := &luaPlugin{vm: vm}
+	if fn := vm.GetGlobal("body_render"); fn != lua.LNil {
+		lf, ok := fn.(*lua.LFunction)
+		if !ok {
+			log.Printf("lua plugin %s: body_render must be a function", path)
+		} else {
+			p.bodyRender = lf
+			RegisterBodyRenderHook(func(ctx context.Context, lines []core.Line) ([]core.Line, error) {
+				return p.renderBody(ctx, lines)
+			})
+		}
 	}
-	lf, ok := fn.(*lua.LFunction)
-	if !ok {
-		log.Printf("lua plugin %s: body_render must be a function", path)
-		return
+	if fn := vm.GetGlobal("categorize"); fn != lua.LNil {
+		lf, ok := fn.(*lua.LFunction)
+		if !ok {
+			log.Printf("lua plugin %s: categorize must be a function", path)
+		} else {
+			p.categorize = lf
+			RegisterCategorizeHook(func(m AttachMeta, a core.Attachment) (string, error) {
+				return p.categorizeAtt(m, a)
+			})
+		}
 	}
-	p := &luaPlugin{vm: vm, bodyRender: lf}
-	RegisterBodyRenderHook(func(ctx context.Context, lines []core.Line) ([]core.Line, error) {
-		return p.renderBody(ctx, lines)
-	})
+	if p.bodyRender == nil && p.categorize == nil {
+		// a hook-less plugin (http helpers, actions, attach commands)
+		// loaded its side effects during DoFile; nothing to register
+		vm.Close()
+	}
 }
 
 // openSandboxLibs opens the whitelisted libs (decision record 20 point
@@ -232,4 +268,52 @@ func (p *luaPlugin) callBodyRender(lines []core.Line) ([]core.Line, error) {
 		})
 	}
 	return out, nil
+}
+
+// attachHookBudget bounds one categorize call - the same kill-switch
+// role as the render chain's deadline: a busy-looping plugin falls
+// back, it never blocks the save pass.
+var attachHookBudget = time.Second
+
+// categorizeAtt runs the plugin's categorize for one attachment under
+// a per-call deadline: msg{from, subject, date} + att{name, mime,
+// size} in, a category string or nil (skip) out. A deadline kill
+// closes the VM and disables the plugin (the render path's fail-fast).
+func (p *luaPlugin) categorizeAtt(m AttachMeta, a core.Attachment) (string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.vm == nil {
+		return "", fmt.Errorf("lua plugin disabled after a deadline kill")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), attachHookBudget)
+	defer cancel()
+	p.vm.SetContext(ctx)
+	msg := p.vm.NewTable()
+	msg.RawSetString("from", lua.LString(m.From))
+	msg.RawSetString("subject", lua.LString(m.Subject))
+	msg.RawSetString("date", lua.LNumber(m.Date))
+	att := p.vm.NewTable()
+	att.RawSetString("name", lua.LString(a.Name))
+	att.RawSetString("mime", lua.LString(a.MimeType))
+	att.RawSetString("size", lua.LNumber(a.Size))
+	p.vm.Push(p.categorize)
+	p.vm.Push(msg)
+	p.vm.Push(att)
+	err := p.vm.PCall(2, 1, nil)
+	if err != nil && ctx.Err() != nil {
+		p.vm.Close()
+		p.vm = nil
+	}
+	if err != nil {
+		return "", err
+	}
+	ret := p.vm.Get(-1)
+	p.vm.Pop(1)
+	switch v := ret.(type) {
+	case lua.LString:
+		return string(v), nil
+	case *lua.LNilType:
+		return "", nil
+	}
+	return "", fmt.Errorf("categorize must return a string or nil, got %s", ret.Type().String())
 }

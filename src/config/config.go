@@ -123,6 +123,7 @@ type Config struct {
 	Refresh        Refresh                    `toml:"refresh"`
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
+	Attachments    Attachments                `toml:"attachments"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
 	AI             map[string]AIProvider      `toml:"ai"`
 	// Opener is the link opener argv (the pager F key): the url is
@@ -248,6 +249,18 @@ type Notify struct {
 	Priority []string `toml:"priority"`
 	Max      int      `toml:"max"`
 }
+
+// Attachments configures the local attachment download pass
+// ([attachments]): the destination folder for categorized attachments.
+// Categorization itself is plugin policy - the pass runs only while a
+// plugin declares a categorize function. Empty folder = the default.
+type Attachments struct {
+	Folder string `toml:"folder"`
+}
+
+// DefaultAttachFolder is the [attachments] fallback when folder is
+// empty, expanded against the home dir at use.
+const DefaultAttachFolder = "~/Downloads/Attachments"
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it
 // adds when it matches.
@@ -1135,6 +1148,9 @@ func Default() Config {
 		},
 		Notify: Notify{
 			Max: 3,
+		},
+		Attachments: Attachments{
+			Folder: DefaultAttachFolder,
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),

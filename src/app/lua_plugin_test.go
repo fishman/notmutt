@@ -8,6 +8,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +199,86 @@ func TestLuaSandboxNoOS(t *testing.T) {
 
 	if len(renderHooks) != 0 {
 		t.Fatalf("a plugin using os must not register, hooks=%d", len(renderHooks))
+	}
+}
+
+// TestLuaCategorizeRegisters pins the categorize adapter: a plugin
+// declaring only categorize registers a hook (the per-global
+// registration), the msg/att tables carry the metadata-only projection,
+// and a nil return skips the attachment. re_match is the regex helper
+// (alternation works - Lua string patterns have none).
+func TestLuaCategorizeRegisters(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	dir := pluginDir(t, map[string]string{"cat.lua": `
+function categorize(msg, att)
+  if att.mime ~= "application/pdf" then return nil end
+  local ok, err = re_match("invoice|receipt", msg.subject)
+  if not ok or err then return nil end
+  if not re_match("delta@", msg.from) then return nil end
+  return string.format("%d", msg.date) .. "/" .. string.format("%d", att.size)
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if len(categorizeHooks) != 1 {
+		t.Fatalf("categorize hooks = %d, want 1", len(categorizeHooks))
+	}
+	meta := AttachMeta{From: "delta@example.com", Subject: "hotel invoice", Date: 1720000000}
+	cat, err := categorizeHooks[0](meta, core.Attachment{Name: "invoice.pdf", MimeType: "application/pdf", Size: 1234})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cat != "1720000000/1234" {
+		t.Fatalf("category = %q, want the msg.date/att.size echo", cat)
+	}
+	cat, err = categorizeHooks[0](meta, core.Attachment{Name: "photo.png", MimeType: "image/png", Size: 5})
+	if err != nil || cat != "" {
+		t.Fatalf("a non-pdf must skip: %q %v", cat, err)
+	}
+}
+
+// TestLuaReMatchCompileError pins the two-value contract: a bad
+// pattern is false plus the error text (single-value use keeps
+// working), never a panic.
+func TestLuaReMatchCompileError(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	dir := pluginDir(t, map[string]string{"re.lua": `
+function categorize(msg, att)
+  local ok, err = re_match("(", att.name)
+  if not ok and err then return "compile:" .. err end
+  return nil
+end
+`})
+	loadLuaPlugins(dir, nil)
+	cat, err := categorizeHooks[0](AttachMeta{}, core.Attachment{Name: "x.pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(cat, "compile:") {
+		t.Fatalf("a compile error must surface as false+err, got %q", cat)
+	}
+}
+
+// TestLuaCategorizeDeadline pins the kill switch: a busy-looping
+// categorize is killed by the per-call budget, the VM is closed, and
+// the disabled plugin fails fast on later calls.
+func TestLuaCategorizeDeadline(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	savedBudget := attachHookBudget
+	attachHookBudget = 50 * time.Millisecond
+	defer func() { attachHookBudget = savedBudget }()
+	dir := pluginDir(t, map[string]string{"busy.lua": `
+function categorize(msg, att)
+  while true do end
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if _, err := categorizeHooks[0](AttachMeta{}, core.Attachment{}); err == nil {
+		t.Fatal("a busy loop must be killed by the budget")
+	}
+	if _, err := categorizeHooks[0](AttachMeta{}, core.Attachment{}); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatal("a killed plugin must fail fast")
 	}
 }

@@ -611,3 +611,52 @@ func TestHTMLPartListsAsAttachment(t *testing.T) {
 		t.Fatalf("extract = %q %q %q, want the raw html part", name, typ, data)
 	}
 }
+
+// TestParseMessageMimeType pins the content type on every attachment
+// entry: attachment headers carry their declared type and the html part
+// of an alternative pair carries text/html - the categorize hooks
+// match on it (attachsave.go). The entries stay ordinal-aligned with
+// ExtractAttachment.
+func TestParseMessageMimeType(t *testing.T) {
+	msg := "From: a@example.com\nSubject: atts\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nbody\n" +
+		"--x\nContent-Type: application/pdf\nContent-Disposition: attachment; filename=\"report.pdf\"\n\n%PDF-1.4 fake\n" +
+		"--x\nContent-Type: text/plain\nContent-Disposition: attachment; filename=\"notes.txt\"\n\nnote one\n" +
+		"--x--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ParseMessage(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Attachments) != 2 ||
+		m.Attachments[0].MimeType != "application/pdf" ||
+		m.Attachments[1].MimeType != "text/plain" {
+		t.Fatalf("attachments = %+v, want pdf + txt with their declared types", m.Attachments)
+	}
+	if _, typ, _, err := ExtractAttachment(p, 0); err != nil || typ != m.Attachments[0].MimeType {
+		t.Fatalf("extract 0 = %q, %v - the ordinal alignment must hold", typ, err)
+	}
+
+	alt := "From: a@example.com\nSubject: html\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/alternative; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nplain\n" +
+		"--x\nContent-Type: text/html; charset=utf-8\n\n<h1>hi</h1>\n" +
+		"--x--\n"
+	pa := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(pa, []byte(alt), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err = ParseMessage(pa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(m.Attachments) != 1 || m.Attachments[0].MimeType != "text/html" {
+		t.Fatalf("the html entry must carry text/html: %+v", m.Attachments)
+	}
+}

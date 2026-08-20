@@ -123,6 +123,7 @@ type Part struct {
 
 type Attachment struct {
 	Name      string
+	MimeType  string
 	Size      int64
 	Truncated bool // size count hit the cap; the listed size is the cap
 	ContentID string
@@ -220,7 +221,7 @@ func ParseMessage(path string) (*Message, error) {
 				m.Parts = append(m.Parts, Part{Body: string(data), HTML: true, Truncated: len(data) > maxPartBytes})
 				// and as a download entry: the raw markup is the
 				// debugging artifact (the v dialog / s save path)
-				m.Attachments = append(m.Attachments, Attachment{Name: "html", Size: int64(len(data)), Truncated: len(data) > maxPartBytes})
+				m.Attachments = append(m.Attachments, Attachment{Name: "html", MimeType: "text/html", Size: int64(len(data)), Truncated: len(data) > maxPartBytes})
 			}
 		case *mail.AttachmentHeader:
 			name, _ := h.Filename()
@@ -228,7 +229,9 @@ func ParseMessage(path string) (*Message, error) {
 				name = "attachment"
 			}
 			a := Attachment{Name: name, ContentID: h.Get("Content-Id")}
-			if ct, _, _ := h.ContentType(); strings.HasPrefix(ct, "image/") && imgBuffered < imgBudget {
+			ct, _, _ := h.ContentType()
+			a.MimeType = ct
+			if strings.HasPrefix(ct, "image/") && imgBuffered < imgBudget {
 				// image attachments buffer their bytes for the
 				// render-on-key path; other attachments are size-counted
 				// only. Over-budget images list without data.

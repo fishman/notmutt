@@ -78,6 +78,13 @@ Enter opens the cursor message only, never the whole thread.
 | enter | advance to the next thread |
 | q | back to the list |
 
+The opened message tints by its position in the thread: the five most
+recent messages render in one color, the most recent message from the
+other side (not you) in a more prominent one - a long thread reads by
+its tail. The tint covers the whole message block and overrides the
+quote colors; error lines stay red. Your identity is the message's
+`sent` tag or a From matching an account `from` field.
+
 ### Compose
 
 | key | action |
@@ -148,7 +155,10 @@ Truecolor baseline; styles reference palette names or raw hex. A
 theme states only what differs from `normal`; light/dark variants
 live in one file, switching re-renders live. Index row coloring is
 tag-driven: `[index.tag.<name>]` styles per tag, composing with the
-base row style.
+base row style. The pager tint keys: `[theme.dark.pager]`
+`recent = { fg = ... }` (the recent-5 tint) and
+`other-side = { fg = ..., attrs = ["bold"] }` (the prominent
+other-side tint).
 
 ### Staged operations
 

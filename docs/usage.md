@@ -31,6 +31,7 @@ every key is described there and rebindable.
 | m | compose a new message |
 | F | live-filter the index rows |
 | / | search the index (enter commits, n repeats) |
+| ctrl+f | search the whole database in a new tab (raw notmuch query) |
 | g g / G | jump to first/last row |
 | g i / u / a / p / s / S / d / D | jump to a view (inbox, unread, ...) |
 | ctrl+d / ctrl+u | half-page scroll |
@@ -41,6 +42,13 @@ every key is described there and rebindable.
 | [ / ] | previous / next tab |
 | ? | help |
 | = | check for new mail now |
+
+`ctrl+f` opens a prompt taking a raw notmuch query - the whole
+database, unlike `/` which filters the current rows. Enter opens the
+results in a new tab named by the query; `[ / ]` cycle to it, `q`
+closes it. The last query preloads for a repeat. `[ui]
+search-open = "background"` runs the query without attaching: the tab
+fills in the tab strip and the current surface stays.
 
 ### Threads
 
@@ -117,6 +125,7 @@ keys are load errors.
 ```toml
 [ui]
 keymap = "vim"        # or "emacs"
+search-open = "active"  # ctrl+f: "active" attaches the new tab, "background" runs the query behind the current surface
 
 [pager]
 # terminal image protocol: sixel by default (most terminals support

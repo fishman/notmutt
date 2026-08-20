@@ -4344,8 +4344,8 @@ func TestModelAttachmentDialog(t *testing.T) {
 		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
 		Lines: []core.Line{
 			{Text: "body line", Kind: core.LineBody},
-			{Text: "attachment: report.pdf (10 bytes)", Kind: core.LineAttachment},
-			{Text: "attachment: notes.txt (8 bytes)", Kind: core.LineAttachment},
+			{Text: "attachment: report.pdf (application/pdf, 10 bytes)", Kind: core.LineAttachment},
+			{Text: "attachment: notes.txt (text/plain, 8 bytes)", Kind: core.LineAttachment},
 		},
 	}})
 	m = next
@@ -4379,7 +4379,7 @@ func TestModelAttachmentDialog(t *testing.T) {
 	if !ok || d.f.kind != "attachments" {
 		t.Fatalf("v must open the attachment picker, got %+v", m.dialogue)
 	}
-	if len(d.f.entries) != 2 || d.f.entries[0] != "1. report.pdf" || d.f.entries[1] != "2. notes.txt" {
+	if len(d.f.entries) != 2 || d.f.entries[0] != "1. report.pdf (application/pdf)" || d.f.entries[1] != "2. notes.txt (text/plain)" {
 		t.Fatalf("entries = %v", d.f.entries)
 	}
 

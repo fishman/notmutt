@@ -1803,10 +1803,19 @@ func attachmentEntries(lines []core.Line) []string {
 		}
 		n++
 		name := strings.TrimPrefix(l.Text, "attachment: ")
+		mime := ""
 		if i := strings.Index(name, " ("); i > 0 {
+			rest := name[i+2:]
 			name = name[:i]
+			if j := strings.IndexByte(rest, ','); j > 0 {
+				mime = rest[:j]
+			}
 		}
-		entries = append(entries, fmt.Sprintf("%d. %s", n, name))
+		if mime != "" {
+			entries = append(entries, fmt.Sprintf("%d. %s (%s)", n, name, mime))
+		} else {
+			entries = append(entries, fmt.Sprintf("%d. %s", n, name))
+		}
 	}
 	return entries
 }

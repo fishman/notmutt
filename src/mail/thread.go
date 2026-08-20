@@ -10,7 +10,9 @@ package mail
 import (
 	"fmt"
 	"io"
+	"mime"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/emersion/go-message"
@@ -119,6 +121,25 @@ type Part struct {
 	Signature bool
 	HTML      bool // Body holds raw html (rendered, not split)
 	Truncated bool // HTML only: the raw body was capped
+}
+
+// refineMimeType maps generic header types onto the filename's
+// extension (the mime.TypeByExtension map the composer uses, type part
+// only): mailers ship docx/xlsx/pptx as application/octet-stream or
+// application/zip, and the header alone cannot tell the formats apart.
+// A concrete header type (image/png, application/pdf) stays as sent.
+func refineMimeType(ct, name string) string {
+	switch ct {
+	case "application/octet-stream", "application/zip":
+		t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name)))
+		if i := strings.IndexByte(t, ';'); i >= 0 {
+			t = t[:i]
+		}
+		if t != "" {
+			return t
+		}
+	}
+	return ct
 }
 
 type Attachment struct {
@@ -230,7 +251,7 @@ func ParseMessage(path string) (*Message, error) {
 			}
 			a := Attachment{Name: name, ContentID: h.Get("Content-Id")}
 			ct, _, _ := h.ContentType()
-			a.MimeType = ct
+			a.MimeType = refineMimeType(ct, name)
 			if strings.HasPrefix(ct, "image/") && imgBuffered < imgBudget {
 				// image attachments buffer their bytes for the
 				// render-on-key path; other attachments are size-counted
@@ -463,9 +484,9 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		}
 	}
 	for _, a := range m.Attachments {
-		line := fmt.Sprintf("attachment: %s (%d bytes)", a.Name, a.Size)
+		line := fmt.Sprintf("attachment: %s (%s, %d bytes)", a.Name, a.MimeType, a.Size)
 		if a.Truncated {
-			line = fmt.Sprintf("attachment: %s (truncated, >%d bytes)", a.Name, maxPartBytes)
+			line = fmt.Sprintf("attachment: %s (%s, truncated, >%d bytes)", a.Name, a.MimeType, maxPartBytes)
 		}
 		add(line, core.LineAttachment, 0)
 	}

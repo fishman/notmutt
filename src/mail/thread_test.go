@@ -92,8 +92,8 @@ func TestRenderThreadAttachment(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := joinText(lines)
-	if !strings.Contains(joined, "report.pdf") {
-		t.Fatalf("attachment line missing:\n%s", joined)
+	if !strings.Contains(joined, "attachment: report.pdf (application/pdf, 4 bytes)") {
+		t.Fatalf("attachment line must show the extension-refined mime:\n%s", joined)
 	}
 	if !strings.Contains(joined, "body") {
 		t.Fatalf("inline part missing:\n%s", joined)

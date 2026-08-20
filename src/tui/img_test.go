@@ -606,7 +606,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 // the bytes arrive, and collapse on the toggle-off press. Pins the
 // fixture's image flow, not its layout.
 func TestModelRenderSemianalysisImages(t *testing.T) {
-	html, err := os.ReadFile("../../testing/semianalysis.html")
+	html, err := os.ReadFile("../../testdata/html/semianalysis.html")
 	if err != nil {
 		t.Skip(err)
 	}

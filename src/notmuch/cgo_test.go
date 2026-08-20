@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -16,7 +15,16 @@ import (
 )
 
 func TestCGOSmoke(t *testing.T) {
-	db := testutil.DevMailbox(t)
+	db, maildir := testutil.ScratchMailbox(t)
+	for i := 0; i < 10; i++ {
+		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
+			"Subject: smoke %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
+			"Message-ID: <smoke%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
+		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("smoke%d.eml", i)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.NotmuchNew(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -55,16 +63,9 @@ func TestCGOSmoke(t *testing.T) {
 // remove it, assert again. The fixture is authored test data (no real
 // mail); the real mailbox is never written by the test suite.
 func TestCGOTagRoundTrip(t *testing.T) {
-	if os.Getenv("NOTMUCH_DB") != "" {
-		t.Skip("NOTMUCH_DB is set; scratch-db test would not isolate")
-	}
-	dir := t.TempDir()
-	maildir := filepath.Join(dir, "mail")
-	if err := os.MkdirAll(maildir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	fixture := []byte("From: cgo test <cgo@test.invalid>\n" +
-		"To: cgo@test.invalid\n" +
+	dir, maildir := testutil.ScratchMailbox(t)
+	fixture := []byte("From: alpha <alpha@example.com>\n" +
+		"To: beta@example.com\n" +
 		"Subject: cgo tag roundtrip\n" +
 		"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
 		"Message-ID: <cgo-tag-roundtrip@test.invalid>\n\n" +
@@ -72,19 +73,7 @@ func TestCGOTagRoundTrip(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(maildir, "fixture.eml"), fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(dir, "config")
-	cfg := "[database]\npath=" + dir + "\n[user]\nname=cgo test\nprimary_email=cgo@test.invalid\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// the binding resolves the config from the process env; export the
-	// scratch config so the test is hermetic (no ~/.notmuch-config)
-	t.Setenv("NOTMUCH_CONFIG", cfgPath)
-	cmd := exec.Command("notmuch", "new")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("notmuch new: %v: %s", err, out)
-	}
-
+	testutil.NotmuchNew(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), dir); err != nil {
 		t.Fatal(err)
@@ -114,16 +103,9 @@ func TestCGOTagRoundTrip(t *testing.T) {
 // walk, the snapshot, and the remove-side update - tags must survive
 // the path swap (the mover's add-first guarantee).
 func TestCGODeltaRoundTrip(t *testing.T) {
-	if os.Getenv("NOTMUCH_DB") != "" {
-		t.Skip("NOTMUCH_DB is set; scratch-db test would not isolate")
-	}
-	dir := t.TempDir()
-	maildir := filepath.Join(dir, "mail")
-	if err := os.MkdirAll(maildir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	fixture := []byte("From: cgo test <cgo@test.invalid>\n" +
-		"To: cgo@test.invalid\n" +
+	dir, maildir := testutil.ScratchMailbox(t)
+	fixture := []byte("From: alpha <alpha@example.com>\n" +
+		"To: beta@example.com\n" +
 		"Subject: cgo delta roundtrip\n" +
 		"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
 		"Message-ID: <cgo-delta-roundtrip@test.invalid>\n\n" +
@@ -133,19 +115,7 @@ func TestCGODeltaRoundTrip(t *testing.T) {
 	if err := os.WriteFile(fixture1, fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfgPath := filepath.Join(dir, "config")
-	cfg := "[database]\npath=" + dir + "\n[user]\nname=cgo test\nprimary_email=cgo@test.invalid\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// the binding resolves the config from the process env; export the
-	// scratch config so the test is hermetic (no ~/.notmuch-config)
-	t.Setenv("NOTMUCH_CONFIG", cfgPath)
-	cmd := exec.Command("notmuch", "new")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("notmuch new: %v: %s", err, out)
-	}
-
+	testutil.NotmuchNew(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), dir); err != nil {
 		t.Fatal(err)

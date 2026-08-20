@@ -13,9 +13,12 @@ import (
 // TestCGOWalkExhausts pins the progressive walk: the full walk must
 // terminate, yield every thread exactly once, and match Count - the
 // per-chunk restart bug made it loop forever re-yielding the head of
-// the result.
+// the result. Depth-1 threads keep threads == messages, so the
+// walk-vs-Count invariant holds by construction.
 func TestCGOWalkExhausts(t *testing.T) {
-	db := testutil.DevMailbox(t)
+	db, maildir := testutil.ScratchMailbox(t)
+	testutil.ThreadTree(t, maildir, 25, 1)
+	testutil.NotmuchNew(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), db); err != nil {
 		t.Fatal(err)
@@ -25,8 +28,8 @@ func TestCGOWalkExhausts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want == 0 {
-		t.Skip("empty test mailbox")
+	if want != 25 {
+		t.Fatalf("seed count = %d, want 25", want)
 	}
 	w, err := b.db.NewThreadsWalk("tag:inbox", 0)
 	if err != nil {

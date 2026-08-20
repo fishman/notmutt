@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"notmutt/lib/testutil"
 )
 
 // TestCGONewBracket: the new wrapper must capture the (pre, cur]
@@ -23,29 +25,8 @@ import (
 // moves with the wrapper's own new, and the post-run handle sees
 // both the wrapper's message and the external one.
 func TestCGONewBracket(t *testing.T) {
-	if os.Getenv("NOTMUCH_DB") != "" {
-		t.Skip("NOTMUCH_DB is set; scratch-db test would not isolate")
-	}
-	dir := t.TempDir()
-	maildir := filepath.Join(dir, "mail")
-	if err := os.MkdirAll(maildir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	cfgPath := filepath.Join(dir, "config")
-	cfg := "[database]\npath=" + dir + "\n[user]\nname=probe\nprimary_email=probe@test.invalid\n"
-	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	// the process env must carry the fixture config: the wrapper's own
-	// `notmuch new` subprocess inherits it (t.Setenv covers every
-	// subprocess regardless of spawner, and restores after the test).
-	t.Setenv("NOTMUCH_CONFIG", cfgPath)
-	newRun := func() {
-		out, err := exec.Command("notmuch", "new").CombinedOutput()
-		if err != nil {
-			t.Fatalf("notmuch new: %v: %s", err, out)
-		}
-	}
+	dir, maildir := testutil.ScratchMailbox(t)
+	newRun := testutil.NotmuchNew
 	write := func(id string) {
 		body := "From: probe <probe@test.invalid>\n" +
 			"To: probe@test.invalid\n" +
@@ -74,7 +55,7 @@ func TestCGONewBracket(t *testing.T) {
 	}
 
 	write("m1")
-	newRun()
+	newRun(t)
 	b := NewCGO()
 	if err := b.Open(context.Background(), dir); err != nil {
 		t.Fatal(err)
@@ -85,7 +66,7 @@ func TestCGONewBracket(t *testing.T) {
 	// hook, another client) must not leak into the bracket: the entry
 	// reopen makes the pre read fresh.
 	write("m3")
-	newRun()
+	newRun(t)
 	preCLI := revCLI()
 
 	// m2 sits in the maildir for the wrapper's own new run.

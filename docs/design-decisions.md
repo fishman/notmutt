@@ -539,3 +539,33 @@ memory beyond one request (fetched per request, cleared after), never
 appears in a log, and is referenced only where the auth header
 requires it. argv-only exec (F4) - a secret-bearing command is
 tokenized at config load, never shell-interpolated.
+
+## 26. Lua network access: endpoint allowlist and the data policy (2026-08-20)
+
+Decision: a plugin's network gate ([lua.network.<plugin>]) grants
+REST access as host targets plus "METHOD /path" endpoint rules - and
+a network-enabled plugin VM never sees mail content.
+
+The verb allowlist does not exist. A verb alone is meaningless
+without the path it applies to: "get" on a host that exposes
+destructive GETs, or a list of verbs that must be re-verified against
+every route the vendor adds, is security theater with a config file.
+Each paths entry is one rule unit - verb (case-insensitive) plus
+path, exact or trailing-`*` prefix - checked against the parsed URL
+path before any dial, and re-checked on every redirect hop. A verb
+that was never allowlisted against a path cannot be used on it;
+adding a path the plugin should not reach requires a config change,
+not a route discovery. Malformed entries are load errors (the strict
+load rule: a dead allowlist that denies everything is safe but
+invisible; an empty section that allows everything is the opposite
+regression - neither may pass silently).
+
+The data policy is the second half of the gate, and it is structural,
+not observational: what a plugin can send is bounded by what ever
+enters its VM. A plugin with a network section gets the metadata-only
+ctx - thread_id, thread_info, search, count, the same projection the
+MCP server exposes (one shared table builder) - and mail_lines (the
+full thread plain text) is never registered on that VM. Bodies cannot
+cross the allowlist because they are never present to cross it. The
+rule is not configurable: content-plus-network would be an explicit
+future decision, not a config knob.

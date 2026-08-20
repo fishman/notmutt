@@ -185,14 +185,26 @@ is deny-by-default:
 
 ```toml
 [lua.network.hubspot]
-targets = ["*.hubspot.com"]   # exact host or *.suffix, hostname-matched
-methods = ["get", "post"]     # verbs; omitted = any verb
+targets = ["*.hubspot.com"]        # exact host or *.suffix, hostname-matched
+paths = ["GET /crm/v3/objects/contacts*"]  # verb + path, one rule unit
 ```
 
 `http.request(method, url, opts)` returns `{status, headers, body}`
 or `nil, err`; `opts` may carry `headers` and `body`. Every request
-(redirect hops included) must match the targets, the body is capped
-at 1 MiB, and the VM deadline aborts in-flight requests.
+(redirect hops included) must match the targets AND one `paths`
+rule: a verb without its path is meaningless, so each entry is
+`"METHOD /path"` - the verb case-insensitive, the path exact or a
+trailing-`*` prefix (`GET /a*` allows `/a`, `/ab`, `/a/b/c`).
+Malformed entries are load errors. The response body is capped at
+256 KiB (a REST page, not a transfer), and the VM deadline aborts
+in-flight requests.
+
+The data policy is part of the gate: a plugin with a network section
+never sees mail content. Its ctx is the metadata surface only
+(`thread_id`, `thread_info`, `search`, `count` - the same projection
+the MCP server exposes); `mail_lines` (the full thread plain text) is
+absent, so a body cannot cross the allowlist. A plugin without a
+network section keeps the full ctx.
 
 ## MCP server
 

@@ -50,6 +50,12 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "poll" {
 		return pollOnce()
 	}
+	if len(os.Args) > 1 && os.Args[1] == "mcp" {
+		// the MCP stdio server (mcp.go): disabled by default - builds
+		// without the mcp+lua tags answer with the stub's not-built-in
+		// error
+		return serveMCP()
+	}
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)

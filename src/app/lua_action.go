@@ -240,19 +240,31 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 	bus.Publish(core.LuaResult{Output: ac.print.String(), Err: runErr})
 }
 
+// newSandboxVM builds one fresh sandboxed VM: the whitelisted libs
+// (openSandboxLibs) and the deadline kill (SetContext). Shared by the
+// action layer and the MCP server (mcp.go) - the invocation-VM start
+// is one concept. The caller owns cancel and closes the VM.
+func newSandboxVM(deadline time.Duration) (*lua.LState, context.Context, func(), error) {
+	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
+	if err := openSandboxLibs(vm, "<sandbox>"); err != nil {
+		vm.Close()
+		return nil, nil, nil, err
+	}
+	dctx, cancel := context.WithTimeout(context.Background(), deadline)
+	vm.SetContext(dctx)
+	return vm, dctx, cancel, nil
+}
+
 // newVM builds one invocation's VM: the sandboxed libs, the action
 // deadline (the SetContext kill), the API globals (the shared R8
 // surface - actions and :lua chunks see the same functions), and the
 // bundled picker library. The caller owns the returned cancel.
 func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), error) {
-	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
-	if err := openSandboxLibs(vm, "<invocation>"); err != nil {
-		vm.Close()
+	vm, dctx, cancel, err := newSandboxVM(actionDeadline)
+	if err != nil {
 		return nil, nil, nil, err
 	}
-	deadline, cancel := context.WithTimeout(context.Background(), actionDeadline)
-	ac.ctx = deadline
-	vm.SetContext(deadline)
+	ac.ctx = dctx
 	// the invocation-scoped registry: what THIS run of the file
 	// registered, not the load-time index.
 	reg := map[string]*lua.LFunction{}

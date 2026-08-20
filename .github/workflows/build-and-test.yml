@@ -58,3 +58,6 @@ jobs:
 
       - name: Test (lua)
         run: make test
+
+      - name: Test (lua mcp)
+        run: make test TAGS="lua mcp"

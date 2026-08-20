@@ -14,6 +14,7 @@ import (
 
 	"notmutt/core"
 	"notmutt/i18n"
+	"notmutt/mail"
 )
 
 func pluginDir(t *testing.T, files map[string]string) string {
@@ -202,38 +203,45 @@ func TestLuaSandboxNoOS(t *testing.T) {
 	}
 }
 
-// TestLuaCategorizeRegisters pins the categorize adapter: a plugin
-// declaring only categorize registers a hook (the per-global
-// registration), the msg/att tables carry the metadata-only projection,
-// and a nil return skips the attachment. re_match is the regex helper
-// (alternation works - Lua string patterns have none).
+// TestLuaCategorizeRegisters pins the categorize adapter end to end: a
+// plugin declaring only categorize registers a hook (the per-global
+// registration), the handle fetches the message's attachment list via
+// get_attachments, msg carries the metadata-only projection, and the
+// ordinal-keyed table is the contract's return shape.
 func TestLuaCategorizeRegisters(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
 	dir := pluginDir(t, map[string]string{"cat.lua": `
-function categorize(msg, att)
-  if att.mime ~= "application/pdf" then return nil end
-  local ok, err = re_match("invoice|receipt", msg.subject)
-  if not ok or err then return nil end
-  if not re_match("delta@", msg.from) then return nil end
-  return string.format("%d", msg.date) .. "/" .. string.format("%d", att.size)
+function categorize(handle, msg)
+  local out = {}
+  for i, att in ipairs(get_attachments(handle)) do
+    if att.mime == "application/pdf" and re_match("invoice|receipt", msg.subject) then
+      out[i] = msg.from .. "/" .. string.format("%d", msg.date) .. "/" .. string.format("%d", att.size)
+    end
+  end
+  return out
 end
 `})
 	loadLuaPlugins(dir, nil)
 	if len(categorizeHooks) != 1 {
 		t.Fatalf("categorize hooks = %d, want 1", len(categorizeHooks))
 	}
+	h := registerAttachments([]mail.Attachment{
+		{Name: "invoice.pdf", MimeType: "application/pdf", Size: 1234},
+		{Name: "photo.png", MimeType: "image/png", Size: 5},
+	})
+	defer unregisterAttachments(h)
 	meta := AttachMeta{From: "delta@example.com", Subject: "hotel invoice", Date: 1720000000}
-	cat, err := categorizeHooks[0](meta, core.Attachment{Name: "invoice.pdf", MimeType: "application/pdf", Size: 1234})
+	cats, err := categorizeHooks[0](h, meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cat != "1720000000/1234" {
-		t.Fatalf("category = %q, want the msg.date/att.size echo", cat)
+	if len(cats) != 1 || cats[1] != "delta@example.com/1720000000/1234" {
+		t.Fatalf("categories = %+v, want the pdf's ordinal-keyed category", cats)
 	}
-	cat, err = categorizeHooks[0](meta, core.Attachment{Name: "photo.png", MimeType: "image/png", Size: 5})
-	if err != nil || cat != "" {
-		t.Fatalf("a non-pdf must skip: %q %v", cat, err)
+	// unknown handle: get_attachments raises, the hook surfaces the error
+	if _, err := categorizeHooks[0]("att-999999", meta); err == nil || !strings.Contains(err.Error(), "unknown mail handle") {
+		t.Fatalf("an unknown handle must error, got %v", err)
 	}
 }
 
@@ -244,19 +252,15 @@ func TestLuaReMatchCompileError(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
 	dir := pluginDir(t, map[string]string{"re.lua": `
-function categorize(msg, att)
-  local ok, err = re_match("(", att.name)
-  if not ok and err then return "compile:" .. err end
+function categorize(handle, msg)
+  local ok, err = re_match("(", msg.subject)
+  if not ok and err then error("re_match: " .. err) end
   return nil
 end
 `})
 	loadLuaPlugins(dir, nil)
-	cat, err := categorizeHooks[0](AttachMeta{}, core.Attachment{Name: "x.pdf"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(cat, "compile:") {
-		t.Fatalf("a compile error must surface as false+err, got %q", cat)
+	if _, err := categorizeHooks[0]("", AttachMeta{Subject: "x"}); err == nil || !strings.Contains(err.Error(), "re_match:") {
+		t.Fatalf("a compile error must surface as false+err, got %v", err)
 	}
 }
 
@@ -270,15 +274,15 @@ func TestLuaCategorizeDeadline(t *testing.T) {
 	attachHookBudget = 50 * time.Millisecond
 	defer func() { attachHookBudget = savedBudget }()
 	dir := pluginDir(t, map[string]string{"busy.lua": `
-function categorize(msg, att)
+function categorize(handle, msg)
   while true do end
 end
 `})
 	loadLuaPlugins(dir, nil)
-	if _, err := categorizeHooks[0](AttachMeta{}, core.Attachment{}); err == nil {
+	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil {
 		t.Fatal("a busy loop must be killed by the budget")
 	}
-	if _, err := categorizeHooks[0](AttachMeta{}, core.Attachment{}); err == nil || !strings.Contains(err.Error(), "disabled") {
+	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatal("a killed plugin must fail fast")
 	}
 }

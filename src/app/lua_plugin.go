@@ -137,6 +137,28 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		L.Push(lua.LNil)
 		return 2
 	}))
+	// get_attachments is the mail-handle fetch (the categorize
+	// contract): the save pass registers each message's parsed
+	// attachment list under the handle it passes to categorize, and
+	// the binding returns name/mime/size/ordinal per attachment. The
+	// plugin never opens files - the list is what the client parsed.
+	vm.SetGlobal("get_attachments", vm.NewFunction(func(L *lua.LState) int {
+		atts, ok := attachmentsForHandle(L.CheckString(1))
+		if !ok {
+			L.RaiseError("get_attachments: unknown mail handle")
+		}
+		tbl := L.NewTable()
+		for i, a := range atts {
+			row := L.NewTable()
+			row.RawSetString("name", lua.LString(a.Name))
+			row.RawSetString("mime", lua.LString(a.MimeType))
+			row.RawSetString("size", lua.LNumber(a.Size))
+			row.RawSetString("ordinal", lua.LNumber(i+1))
+			tbl.Append(row)
+		}
+		L.Push(tbl)
+		return 1
+	}))
 	if err := vm.DoFile(path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)
 		vm.Close()
@@ -163,8 +185,8 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 			log.Printf("lua plugin %s: categorize must be a function", path)
 		} else {
 			p.categorize = lf
-			RegisterCategorizeHook(func(m AttachMeta, a core.Attachment) (string, error) {
-				return p.categorizeAtt(m, a)
+			RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+				return p.categorizeMessage(handle, m)
 			})
 		}
 	}
@@ -275,15 +297,17 @@ func (p *luaPlugin) callBodyRender(lines []core.Line) ([]core.Line, error) {
 // back, it never blocks the save pass.
 var attachHookBudget = time.Second
 
-// categorizeAtt runs the plugin's categorize for one attachment under
-// a per-call deadline: msg{from, subject, date} + att{name, mime,
-// size} in, a category string or nil (skip) out. A deadline kill
-// closes the VM and disables the plugin (the render path's fail-fast).
-func (p *luaPlugin) categorizeAtt(m AttachMeta, a core.Attachment) (string, error) {
+// categorizeMessage runs the plugin's categorize(handle, msg) under a
+// per-call deadline: handle fetches the attachment list via
+// get_attachments, msg carries the metadata projection (from, subject,
+// date). The return is a table of 1-based attachment ordinal to
+// category, or nil to skip the message. A deadline kill closes the VM
+// and disables the plugin (the render path's fail-fast).
+func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.vm == nil {
-		return "", fmt.Errorf("lua plugin disabled after a deadline kill")
+		return nil, fmt.Errorf("lua plugin disabled after a deadline kill")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), attachHookBudget)
 	defer cancel()
@@ -292,28 +316,42 @@ func (p *luaPlugin) categorizeAtt(m AttachMeta, a core.Attachment) (string, erro
 	msg.RawSetString("from", lua.LString(m.From))
 	msg.RawSetString("subject", lua.LString(m.Subject))
 	msg.RawSetString("date", lua.LNumber(m.Date))
-	att := p.vm.NewTable()
-	att.RawSetString("name", lua.LString(a.Name))
-	att.RawSetString("mime", lua.LString(a.MimeType))
-	att.RawSetString("size", lua.LNumber(a.Size))
 	p.vm.Push(p.categorize)
+	p.vm.Push(lua.LString(handle))
 	p.vm.Push(msg)
-	p.vm.Push(att)
 	err := p.vm.PCall(2, 1, nil)
 	if err != nil && ctx.Err() != nil {
 		p.vm.Close()
 		p.vm = nil
 	}
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	ret := p.vm.Get(-1)
 	p.vm.Pop(1)
 	switch v := ret.(type) {
-	case lua.LString:
-		return string(v), nil
 	case *lua.LNilType:
-		return "", nil
+		return nil, nil
+	case *lua.LTable:
+		out := map[int]string{}
+		var verr error
+		v.ForEach(func(k, val lua.LValue) {
+			if verr != nil {
+				return
+			}
+			o, ok := k.(lua.LNumber)
+			if !ok {
+				verr = fmt.Errorf("categorize keys must be attachment ordinals, got %s", k.Type().String())
+				return
+			}
+			s, ok := val.(lua.LString)
+			if !ok {
+				verr = fmt.Errorf("categorize values must be category strings, got %s", val.Type().String())
+				return
+			}
+			out[int(o)] = string(s)
+		})
+		return out, verr
 	}
-	return "", fmt.Errorf("categorize must return a string or nil, got %s", ret.Type().String())
+	return nil, fmt.Errorf("categorize must return a table or nil, got %s", ret.Type().String())
 }

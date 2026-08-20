@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,11 +88,14 @@ func TestAttachmentTarget(t *testing.T) {
 func TestSaveMessageAttachments(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
-	RegisterCategorizeHook(func(m AttachMeta, a core.Attachment) (string, error) {
-		if a.Name == "invoice.pdf" {
-			return "receipt", nil
+	// the hook fetches the list through the handle it received - the
+	// registry round trip is the contract
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		atts, ok := attachmentsForHandle(handle)
+		if !ok || len(atts) == 0 || atts[0].Name != "invoice.pdf" {
+			return nil, nil
 		}
-		return "", nil
+		return map[int]string{1: "receipt"}, nil
 	})
 	dir := t.TempDir()
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
@@ -139,31 +143,54 @@ func TestSaveMessageAttachments(t *testing.T) {
 	}
 }
 
-// TestSaveMessageAttachmentsHookError pins the fall-through: a hook
-// error surfaces as the attachment's Err entry (the review surface),
-// and the pass continues to the next attachment.
+// TestSaveMessageAttachmentsHookError pins the message-level error: a
+// hook error surfaces as the message's Err entry (the review surface),
+// nothing is saved for that message - and a clean message still saves.
 func TestSaveMessageAttachmentsHookError(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
-	RegisterCategorizeHook(func(m AttachMeta, a core.Attachment) (string, error) {
-		if a.Name == "invoice.pdf" {
-			return "", errors.New("boom")
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		if atts, ok := attachmentsForHandle(handle); ok && len(atts) > 0 && atts[0].Name == "invoice.pdf" {
+			return nil, errors.New("boom")
 		}
-		return "photo", nil
+		return map[int]string{1: "photo"}, nil
+	})
+	dir := t.TempDir()
+	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	meta := AttachMeta{Date: ts.Unix()}
+	p1 := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
+	saves := saveMessageAttachments(p1, meta, filepath.Join(dir, "dl"), false)
+	if len(saves) != 1 || saves[0].Err == nil {
+		t.Fatalf("the hook error must surface as the message entry: %+v", saves)
+	}
+	p2 := fixtureMail(t, dir, "m2.eml", "airline receipt", "Delta <delta@example.com>", "boarding.pdf", ts)
+	saves = saveMessageAttachments(p2, meta, filepath.Join(dir, "dl"), false)
+	if len(saves) != 1 || saves[0].Err != nil || !strings.HasSuffix(saves[0].Target, filepath.Join("photo", "boarding.pdf")) {
+		t.Fatalf("a clean message must still save: %+v", saves)
+	}
+}
+
+// TestSaveMessageAttachmentsOutOfRange pins the ordinal contract: a
+// category key beyond the message's attachment count is an error
+// entry, the in-range saves proceed.
+func TestSaveMessageAttachmentsOutOfRange(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		return map[int]string{1: "receipt", 5: "receipt"}, nil
 	})
 	dir := t.TempDir()
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
 	path := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
-	meta := AttachMeta{Date: ts.Unix()}
-	saves := saveMessageAttachments(path, meta, filepath.Join(dir, "dl"), false)
+	saves := saveMessageAttachments(path, AttachMeta{Date: ts.Unix()}, filepath.Join(dir, "dl"), false)
 	if len(saves) != 2 {
-		t.Fatalf("saves = %+v, want the error entry and the photo save", saves)
+		t.Fatalf("saves = %+v, want the clean save and the out-of-range error", saves)
 	}
-	if saves[0].Name != "invoice.pdf" || saves[0].Err == nil {
-		t.Fatalf("the hook error must surface: %+v", saves[0])
+	if saves[0].Err != nil || !strings.HasSuffix(saves[0].Target, filepath.Join("receipt", "invoice.pdf")) {
+		t.Fatalf("the in-range save must proceed: %+v", saves[0])
 	}
-	if saves[1].Name != "photo.png" || saves[1].Err != nil {
-		t.Fatalf("the pass must continue to the next attachment: %+v", saves[1])
+	if saves[1].Err == nil || !strings.Contains(saves[1].Err.Error(), "out of range") {
+		t.Fatalf("the out-of-range ordinal must error: %+v", saves[1])
 	}
 }
 
@@ -209,11 +236,8 @@ func (w *recWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 func TestRunAttachmentBackfill(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
-	RegisterCategorizeHook(func(m AttachMeta, a core.Attachment) (string, error) {
-		if a.Name == "invoice.pdf" || a.Name == "boarding.pdf" {
-			return "receipt", nil
-		}
-		return "", nil
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		return map[int]string{1: "receipt"}, nil
 	})
 	dir := t.TempDir()
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
@@ -229,7 +253,7 @@ func TestRunAttachmentBackfill(t *testing.T) {
 	dl := filepath.Join(dir, "dl")
 	target := filepath.Join(dl, "2026-08", "receipt", "invoice.pdf")
 
-	savedN, skipped, err := runAttachmentBackfill(w, dl, "*", true)
+	savedN, skipped, err := runAttachmentBackfill(w, "", dl, "*", true)
 	if err != nil || savedN != 2 || skipped != 0 {
 		t.Fatalf("dry-run backfill = %d saved %d skipped err %v", savedN, skipped, err)
 	}
@@ -240,7 +264,7 @@ func TestRunAttachmentBackfill(t *testing.T) {
 		t.Fatalf("the query must pass through, got %v", w.queries)
 	}
 
-	savedN, skipped, err = runAttachmentBackfill(w, dl, "*", false)
+	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "*", false)
 	if err != nil || savedN != 2 || skipped != 0 {
 		t.Fatalf("live backfill = %d saved %d skipped err %v", savedN, skipped, err)
 	}
@@ -248,8 +272,40 @@ func TestRunAttachmentBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	savedN, skipped, err = runAttachmentBackfill(w, dl, "*", false)
+	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "*", false)
 	if err != nil || savedN != 0 || skipped != 2 {
 		t.Fatalf("re-run = %d saved %d skipped err %v, want the exists skips", savedN, skipped, err)
+	}
+}
+
+// TestRunAttachmentBackfillRelative pins the mail-root join: a
+// snapshot path relative to root resolves against it.
+func TestRunAttachmentBackfillRelative(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		return map[int]string{1: "receipt"}, nil
+	})
+	dir := t.TempDir()
+	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	root := filepath.Join(dir, "mail")
+	mailDir := filepath.Join(root, "cur")
+	if err := os.MkdirAll(mailDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixtureMail(t, mailDir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
+	w := &recWorker{fjWorker: fjWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{
+			{ID: "m1", Author: "delta@example.com", Subject: "hotel invoice", Timestamp: ts.Unix(), Paths: []string{"cur/m1.eml"}},
+		},
+	}}
+	dl := filepath.Join(dir, "dl")
+	savedN, _, err := runAttachmentBackfill(w, root, dl, "*", false)
+	if err != nil || savedN != 1 {
+		t.Fatalf("backfill = %d saved err %v", savedN, err)
+	}
+	if _, err := os.Stat(filepath.Join(dl, "2026-08", "receipt", "invoice.pdf")); err != nil {
+		t.Fatalf("the relative path must resolve against root: %v", err)
 	}
 }

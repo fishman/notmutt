@@ -154,7 +154,6 @@ import "C"
 
 import (
 	"encoding/base64"
-	"encoding/binary"
 	"encoding/hex"
 	"strings"
 	"unsafe"
@@ -213,9 +212,15 @@ func (db *DB) Addresses(query string, opts AddressOpts) ([]AddressEntry, error) 
 			}
 			return nil, ErrUnknownError
 		}
+		if size > 0x7fffffff {
+			C.free(arena)
+			return nil, ErrMalformedData
+		}
 		data := C.GoBytes(arena, C.int(size))
 		C.free(arena)
-		harvest(data, buckets, &order)
+		if err := harvest(data, buckets, &order); err != nil {
+			return nil, err
+		}
 	}
 	out := make([]AddressEntry, 0, len(order))
 	for _, key := range order {
@@ -241,19 +246,24 @@ func (b *addrBucket) bestName() string {
 	return best
 }
 
-func harvest(data []byte, buckets map[string]*addrBucket, order *[]string) {
-	if len(data) < 4 {
-		return
+// harvest walks one packed chunk with blobReader (summary.go) so a
+// corrupt or truncated arena errors instead of panicking.
+func harvest(data []byte, buckets map[string]*addrBucket, order *[]string) error {
+	r := &blobReader{data: data}
+	n, err := r.u32()
+	if err != nil {
+		return err
 	}
-	p := 4
-	for i, n := 0, int(binary.LittleEndian.Uint32(data)); i < n; i++ {
-		nh := int(binary.LittleEndian.Uint32(data[p:]))
-		p += 4
+	for i := 0; i < n; i++ {
+		nh, err := r.u32()
+		if err != nil {
+			return err
+		}
 		for j := 0; j < nh; j++ {
-			l := int(binary.LittleEndian.Uint32(data[p:]))
-			p += 4
-			hdr := string(data[p : p+l])
-			p += l
+			hdr, err := r.str()
+			if err != nil {
+				return err
+			}
 			for _, mb := range parseMailboxes(hdr) {
 				key := asciiLower(mb[1])
 				b := buckets[key]
@@ -267,6 +277,7 @@ func harvest(data []byte, buckets map[string]*addrBucket, order *[]string) {
 			}
 		}
 	}
+	return nil
 }
 
 // parseMailboxes parses an RFC 5322 address-list header value into
@@ -441,7 +452,7 @@ func mailbox(part string) ([2]string, bool) {
 }
 
 func validAddr(addr string) bool {
-	return strings.Contains(addr, "@") && !strings.ContainsAny(addr, "\"'\r\n<>\\")
+	return strings.Contains(addr, "@") && !strings.ContainsAny(addr, "\"'\r\n<>\\ \t")
 }
 
 func decodeName(s string) string {

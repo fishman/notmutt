@@ -30,6 +30,29 @@ package notmuch
 // 	return na;
 // }
 //
+// // query_apply_excludes mirrors the CLI's default search behavior:
+// // the config search.exclude_tags are excluded and omitted from
+// // results. The raw C API excludes nothing by default; without this
+// // the flat walks return the deleted/spam messages the CLI search
+// // hides. Threaded walks keep full membership on purpose (the view
+// // applies the deleted-leaf rule itself).
+// static void query_apply_excludes(notmuch_database_t *db, notmuch_query_t *q) {
+// 	char *ex = NULL;
+// 	if (notmuch_database_get_config(db, "search.exclude_tags", &ex) != NOTMUCH_STATUS_SUCCESS || !ex) {
+// 		return;
+// 	}
+// 	char *copy = strdup(ex);
+// 	if (!copy) {
+// 		return;
+// 	}
+// 	char *save = NULL;
+// 	for (char *tok = strtok_r(copy, ";", &save); tok; tok = strtok_r(NULL, ";", &save)) {
+// 		notmuch_query_add_tag_exclude(q, tok);
+// 	}
+// 	free(copy);
+// 	notmuch_query_set_omit_excluded(q, NOTMUCH_EXCLUDE_TRUE);
+// }
+//
 // // summary_walk is a progressive thread-summary walker: the query and
 // // its threads iterator stay alive in C across chunk calls, so each
 // // chunk continues where the previous stopped. The per-thread
@@ -232,6 +255,22 @@ package notmuch
 // 	return 1;
 // }
 //
+// // full_pack_buf is full_pack_str over an explicit length: blobs
+// // carry embedded NULs, strlen would truncate at the first.
+// static int full_pack_buf(void **arena, size_t *cap, size_t *fill, const char *s, size_t l) {
+// 	void *na = grow_arena(*arena, cap, *fill, 4 + l);
+// 	if (!na) {
+// 		return 0;
+// 	}
+// 	*arena = na;
+// 	int32_t n = (int32_t)l;
+// 	memcpy((char *)*arena + *fill, &n, 4);
+// 	*fill += 4;
+// 	memcpy((char *)*arena + *fill, s, l);
+// 	*fill += l;
+// 	return 1;
+// }
+//
 // static int full_pack_i64(void **arena, size_t *cap, size_t *fill, long long v) {
 // 	void *na = grow_arena(*arena, cap, *fill, 8);
 // 	if (!na) {
@@ -284,7 +323,7 @@ package notmuch
 // 		return 0;
 // 	}
 // 	tbuf[tfill++] = '\0';
-// 	int ok2 = full_pack_str(arena, cap, fill, tbuf);
+// 	int ok2 = full_pack_buf(arena, cap, fill, tbuf, tfill);
 // 	free(tbuf);
 // 	return ok2;
 // }
@@ -325,7 +364,7 @@ package notmuch
 // 		return 0;
 // 	}
 // 	tbuf[tfill++] = '\0';
-// 	int ok2 = full_pack_str(arena, cap, fill, tbuf);
+// 	int ok2 = full_pack_buf(arena, cap, fill, tbuf, tfill);
 // 	free(tbuf);
 // 	return ok2;
 // }
@@ -450,6 +489,92 @@ package notmuch
 // 	notmuch_query_destroy(w->q);
 // 	free(w);
 // }
+// // msg_walk is the progressive message-level walker: the query and
+// // its messages iterator stay alive in C across chunk calls - the
+// // flat views' shape (unread, deleted, search): one row per MATCHED
+// // message, no thread drag. limit bounds the message count, like
+// // `notmuch search --limit`.
+// typedef struct msg_walk {
+// 	notmuch_query_t *q;
+// 	notmuch_messages_t *msgs;
+// 	int limit; // <= 0 = no limit
+// 	int count; // messages packed so far
+// } msg_walk;
+//
+// static void msg_walk_free(msg_walk *w) {
+// 	if (!w) {
+// 		return;
+// 	}
+// 	notmuch_messages_destroy(w->msgs);
+// 	notmuch_query_destroy(w->q);
+// 	free(w);
+// }
+//
+// static msg_walk *msg_walk_new(notmuch_database_t *db, const char *query_str, int limit) {
+// 	msg_walk *w = calloc(1, sizeof(*w));
+// 	if (!w) {
+// 		return NULL;
+// 	}
+// 	w->q = notmuch_query_create(db, query_str);
+// 	if (!w->q) {
+// 		free(w);
+// 		return NULL;
+// 	}
+// 	notmuch_query_set_sort(w->q, NOTMUCH_SORT_NEWEST_FIRST);
+// 	query_apply_excludes(db, w->q);
+// 	if (notmuch_query_search_messages(w->q, &w->msgs) != NOTMUCH_STATUS_SUCCESS || !w->msgs) {
+// 		notmuch_query_destroy(w->q);
+// 		free(w);
+// 		return NULL;
+// 	}
+// 	w->limit = limit;
+// 	return w;
+// }
+//
+// // msg_walk_chunk packs up to cap more messages: [int32 count][per
+// // message: threadid, then the full_pack_msg row]. The caller frees
+// // the buffer. Returns NULL with *out_status 1 when exhausted, 2 on
+// // error.
+// static void *msg_walk_chunk(msg_walk *w, int cap, size_t *out_size, int *out_status) {
+// 	*out_status = 0;
+// 	void *arena = NULL;
+// 	size_t cap_ = 0, fill = 4; /* [int32 count] header */
+// 	int32_t count = 0;
+// 	arena = grow_arena(arena, &cap_, 0, fill);
+// 	if (!arena) {
+// 		*out_status = 2;
+// 		return NULL;
+// 	}
+// 	while (notmuch_messages_valid(w->msgs) && (w->limit <= 0 || w->count < w->limit) && count < cap) {
+// 		notmuch_message_t *m = notmuch_messages_get(w->msgs);
+// 		if (!m) {
+// 			free(arena);
+// 			*out_status = 2;
+// 			return NULL;
+// 		}
+// 		const char *tid = notmuch_message_get_thread_id(m);
+// 		if (!tid) {
+// 			tid = "";
+// 		}
+// 		if (!full_pack_str(&arena, &cap_, &fill, tid) || !full_pack_msg(&arena, &cap_, &fill, m)) {
+// 			free(arena);
+// 			*out_status = 2;
+// 			return NULL;
+// 		}
+// 		count++;
+// 		w->count++;
+// 		notmuch_messages_move_to_next(w->msgs);
+// 	}
+// 	if (count == 0) {
+// 		free(arena);
+// 		*out_status = 1;
+// 		return NULL;
+// 	}
+// 	memcpy(arena, &count, 4);
+// 	*out_size = fill;
+// 	return arena;
+// }
+//
 import "C"
 
 import (
@@ -528,6 +653,7 @@ func (w *ThreadsWalk) Close() error {
 // read from the header cache like ThreadSummary.
 type FullMessage struct {
 	ID         string
+	ThreadID   string // the message-level walk's pack: its thread id
 	Timestamp  int64
 	Author     string
 	Subject    string
@@ -646,6 +772,102 @@ func decodeFull(data []byte) []FullThread {
 			t.Msgs = append(t.Msgs, m)
 		}
 		out = append(out, t)
+	}
+	return out
+}
+
+// MsgWalk is the progressive message-level walker: the flat views'
+// shape (unread, deleted, search) - one row per MATCHED message, no
+// thread drag. The query and its messages iterator stay alive in C
+// across chunk calls; each chunk packs threadid + the full message
+// row (the full_pack_msg shape, minus the C-side thread loop).
+type MsgWalk cStruct
+
+func (w *MsgWalk) toC() *C.msg_walk {
+	return (*C.msg_walk)(w.cptr)
+}
+
+// NewMsgWalk opens a progressive message-level walk over the query's
+// messages. limit bounds the message count, like `notmuch search
+// --limit`.
+func (db *DB) NewMsgWalk(query string, limit int) (*MsgWalk, error) {
+	if !db.live() {
+		return nil, ErrClosedDatabase
+	}
+	cq := C.CString(query)
+	defer C.free(unsafe.Pointer(cq))
+	walk := C.msg_walk_new(db.toC(), cq, C.int(limit))
+	if walk == nil {
+		return nil, ErrUnknownError
+	}
+	w := &MsgWalk{cptr: unsafe.Pointer(walk)}
+	setGcCloseErr(w)
+	return w, nil
+}
+
+// Next packs up to cap more messages; done=true when the result is
+// exhausted (an empty tail chunk ends the walk).
+func (w *MsgWalk) Next(cap int) (rows []FullMessage, done bool, err error) {
+	if !(*cStruct)(w).live() {
+		return nil, false, ErrClosedDatabase
+	}
+	var size C.size_t
+	var st C.int
+	arena := C.msg_walk_chunk(w.toC(), C.int(cap), &size, &st)
+	if arena == nil {
+		if st == 1 {
+			return nil, true, nil
+		}
+		return nil, false, ErrUnknownError
+	}
+	defer C.free(arena)
+	return decodeMsgs(C.GoBytes(arena, C.int(size))), false, nil
+}
+
+// Close frees the walk and its C iterator.
+func (w *MsgWalk) Close() error {
+	return (*cStruct)(w).doClose(func() error {
+		C.msg_walk_free(w.toC())
+		return nil
+	})
+}
+
+func decodeMsgs(data []byte) []FullMessage {
+	if len(data) < 4 {
+		return nil
+	}
+	n := int(binary.LittleEndian.Uint32(data))
+	out := make([]FullMessage, 0, n)
+	read := func(p int) (int, string) {
+		l := int(binary.LittleEndian.Uint32(data[p:]))
+		p += 4
+		s := string(data[p : p+l])
+		return p + l, s
+	}
+	split := func(s string) []string {
+		var out []string
+		for _, e := range strings.Split(s, "\x00") {
+			if e != "" {
+				out = append(out, e)
+			}
+		}
+		return out
+	}
+	for i, p := 0, 4; i < n; i++ {
+		var m FullMessage
+		p, m.ThreadID = read(p)
+		p, m.ID = read(p)
+		m.Timestamp = int64(binary.LittleEndian.Uint64(data[p:]))
+		p += 8
+		p, m.Author = read(p)
+		p, m.Subject = read(p)
+		var blob string
+		p, blob = read(p)
+		m.Tags = split(blob)
+		p, blob = read(p)
+		m.Paths = split(blob)
+		p, m.References = read(p)
+		out = append(out, m)
 	}
 	return out
 }

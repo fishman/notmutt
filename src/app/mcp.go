@@ -22,8 +22,11 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	lua "github.com/yuin/gopher-lua"
 
+	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 	"notmutt/notmuch"
 )
 
@@ -44,11 +47,15 @@ const (
 
 // mcpToolSpec is one registry entry: the MCP-facing name/description/
 // schema, the Lua chunk that implements it, and the arg validation.
+// A gated spec is served only when [mcp] allow names it - the default
+// surface is the metadata-only three, and content-adjacent tools
+// (attachments) must be whitelisted explicitly.
 type mcpToolSpec struct {
 	name     string
 	desc     string
 	schema   []mcp.ToolOption
 	chunk    string
+	gated    bool
 	validate func(mcp.CallToolRequest) (map[string]any, error)
 }
 
@@ -109,15 +116,41 @@ var mcpToolSpecs = []mcpToolSpec{
 			return map[string]any{"query": q}, nil
 		},
 	},
+	{
+		name: "attachments",
+		desc: "The attachment list of one message: name, mime, and size per attachment. Attachment metadata only - bytes never cross. Gated: served only when [mcp] allow names it.",
+		schema: []mcp.ToolOption{
+			mcp.WithString("id", mcp.Required(), mcp.Description("The message id (the id field of thread_info/search results)")),
+		},
+		chunk: mcpAttachmentsChunk,
+		gated: true,
+		validate: func(req mcp.CallToolRequest) (map[string]any, error) {
+			id := req.GetString("id", "")
+			if id == "" {
+				return nil, fmt.Errorf("id is required")
+			}
+			return map[string]any{"id": id}, nil
+		},
+	},
 }
 
-// mcpTools builds the fixed tool registry for a worker: one
-// ServerTool per spec, the handler closing over the worker. The
-// tool-level description is the WithDescription option (Description is
-// the property-level one); it prefixes the property schema options.
-func mcpTools(worker workerAPI) []server.ServerTool {
+// The attachments chunk calls the MCP-only ctx binding (registered in
+// mcpRunChunk, never in the shared metadataCtxTable - network-enabled
+// plugin VMs must not see it).
+const mcpAttachmentsChunk = `return function(ctx, args) return ctx.attachments(args.id) end`
+
+// mcpTools builds the tool registry for a worker and mail root: one
+// ServerTool per spec, the handler closing over the worker. A gated
+// spec is served only when allow names it (the [mcp] allow list).
+// The tool-level description is the WithDescription option
+// (Description is the property-level one); it prefixes the property
+// schema options.
+func mcpTools(worker workerAPI, root string, allow map[string]bool) []server.ServerTool {
 	tools := make([]server.ServerTool, 0, len(mcpToolSpecs))
 	for _, spec := range mcpToolSpecs {
+		if spec.gated && !allow[spec.name] {
+			continue
+		}
 		// the whole surface is read-only; annotate it so clients see it
 		opts := append([]mcp.ToolOption{
 			mcp.WithDescription(spec.desc),
@@ -126,15 +159,15 @@ func mcpTools(worker workerAPI) []server.ServerTool {
 		}, spec.schema...)
 		tools = append(tools, server.ServerTool{
 			Tool:    mcp.NewTool(spec.name, opts...),
-			Handler: mcpToolHandler(spec, worker),
+			Handler: mcpToolHandler(spec, worker, root),
 		})
 	}
 	return tools
 }
 
-func newMCPServer(worker workerAPI) *server.MCPServer {
+func newMCPServer(worker workerAPI, root string, allow map[string]bool) *server.MCPServer {
 	s := server.NewMCPServer("notmutt", "0.1.0", server.WithToolCapabilities(false))
-	s.AddTools(mcpTools(worker)...)
+	s.AddTools(mcpTools(worker, root, allow)...)
 	return s
 }
 
@@ -142,13 +175,13 @@ func newMCPServer(worker workerAPI) *server.MCPServer {
 // run the chunk in a fresh sandboxed VM, wrap the result. A script
 // error is a tool-failure result the client sees, not a transport
 // error.
-func mcpToolHandler(spec mcpToolSpec, worker workerAPI) server.ToolHandlerFunc {
+func mcpToolHandler(spec mcpToolSpec, worker workerAPI, root string) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, err := spec.validate(req)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		out, err := mcpRunChunk(spec.chunk, args, worker)
+		out, err := mcpRunChunk(spec.chunk, args, worker, root)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -167,7 +200,7 @@ func mcpToolHandler(spec mcpToolSpec, worker workerAPI) server.ToolHandlerFunc {
 // chunk receives (ctx, args) and its first return value is the tool
 // result. Mirrors runLuaCommand's LoadString + SetGlobal + push +
 // PCall (lua_action.go).
-func mcpRunChunk(chunk string, args map[string]any, worker workerAPI) (any, error) {
+func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root string) (any, error) {
 	vm, _, cancel, err := newSandboxVM(mcpDeadline)
 	if err != nil {
 		return nil, err
@@ -175,6 +208,36 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI) (any, erro
 	defer cancel()
 	defer vm.Close()
 	ctx := metadataCtxTable(vm, worker)
+	// the attachments binding is the MCP-only surface extension,
+	// registered here and never in metadataCtxTable: a network-enabled
+	// plugin VM (which shares that table) must not see it. It lists
+	// one message's attachments by id - name/mime/size, never bytes.
+	ctx.RawSetString("attachments", vm.NewFunction(func(L *lua.LState) int {
+		id := L.CheckString(1)
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{id}})
+		if err != nil || rpl.Err != nil {
+			L.RaiseError("attachments: %v %v", err, rpl.Err)
+		}
+		if len(rpl.Msgs) == 0 {
+			L.RaiseError("attachments: no such message %q", id)
+		}
+		tbl := L.NewTable()
+		for _, p := range rpl.Msgs[0].Paths {
+			msg, err := mail.ParseMessage(absMailPath(root, p))
+			if err != nil {
+				L.RaiseError("attachments: %v", err)
+			}
+			for _, a := range msg.Attachments {
+				row := L.NewTable()
+				row.RawSetString("name", lua.LString(a.Name))
+				row.RawSetString("mime", lua.LString(a.MimeType))
+				row.RawSetString("size", lua.LNumber(a.Size))
+				tbl.Append(row)
+			}
+		}
+		L.Push(tbl)
+		return 1
+	}))
 	vm.SetGlobal("ctx", ctx)
 	vm.SetGlobal("args", luaValue(vm, args, 0))
 	fn, err := vm.LoadString(chunk)
@@ -199,11 +262,41 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI) (any, erro
 	return out, err
 }
 
-// serveMCP runs the MCP stdio server: the read-only worker (ActOpen
-// resolves the DB path via `notmuch config get database.path`, the
-// same empty-query resolution), then ServeStdio owns stdin/stdout
-// until the client closes the pipe. Nothing else may write stdout.
+// resolveMCPAllow maps the config's [mcp] allow names to the served
+// set; an unknown name is an error - a typo fails loudly instead of
+// silently serving fewer tools.
+func resolveMCPAllow(allow []string) (map[string]bool, error) {
+	known := map[string]bool{}
+	for _, spec := range mcpToolSpecs {
+		known[spec.name] = true
+	}
+	out := map[string]bool{}
+	for _, name := range allow {
+		if !known[name] {
+			return nil, fmt.Errorf("mcp: unknown allowed tool %q", name)
+		}
+		out[name] = true
+	}
+	return out, nil
+}
+
+// serveMCP runs the MCP stdio server: the config's [mcp] allow list
+// decides which gated tools are served, the read-only worker opens the
+// DB, and ServeStdio owns stdin/stdout until the client closes the
+// pipe. Nothing else may write stdout.
 func serveMCP() error {
+	cfg, err := config.Load(configDir())
+	if err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
+	allow, err := resolveMCPAllow(cfg.MCP.Allow)
+	if err != nil {
+		return err
+	}
+	root, err := mailRoot()
+	if err != nil {
+		return fmt.Errorf("mcp: mail root: %w", err)
+	}
 	bus := core.NewBus()
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -212,7 +305,7 @@ func serveMCP() error {
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
 		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
 	}
-	if err := server.ServeStdio(newMCPServer(worker)); err != nil {
+	if err := server.ServeStdio(newMCPServer(worker, root, allow)); err != nil {
 		return fmt.Errorf("mcp: %w", err)
 	}
 	return nil

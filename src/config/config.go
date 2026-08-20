@@ -124,6 +124,7 @@ type Config struct {
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
 	Attachments    Attachments                `toml:"attachments"`
+	MCP            MCP                        `toml:"mcp"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
 	AI             map[string]AIProvider      `toml:"ai"`
 	// Opener is the link opener argv (the pager F key): the url is
@@ -261,6 +262,15 @@ type Attachments struct {
 // DefaultAttachFolder is the [attachments] fallback when folder is
 // empty, expanded against the home dir at use.
 const DefaultAttachFolder = "~/Downloads/Attachments"
+
+// MCP is the [mcp] section: the whitelist of extra tools the stdio
+// server may expose beyond the metadata-only defaults (thread_info,
+// search, count). The mcp+lua build reads it; other builds ignore it.
+// An unknown method name is a startup error in that build, so a typo
+// fails loudly instead of silently serving fewer tools.
+type MCP struct {
+	Allow []string `toml:"allow"`
+}
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it
 // adds when it matches.
@@ -1151,6 +1161,9 @@ func Default() Config {
 		},
 		Attachments: Attachments{
 			Folder: DefaultAttachFolder,
+		},
+		MCP: MCP{
+			Allow: []string{},
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),

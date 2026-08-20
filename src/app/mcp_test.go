@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/mcptest"
@@ -72,7 +73,7 @@ func callTool(t *testing.T, tools []server.ServerTool, name string, args map[str
 // projected fields.
 func TestMCPToolExecution(t *testing.T) {
 	fw := mcpFixture()
-	tools := mcpTools(fw)
+	tools := mcpTools(fw, "", nil)
 
 	info := callTool(t, tools, "thread_info", map[string]any{"thread_id": "alpha"})
 	infoJSON, _ := json.MarshalIndent(info.StructuredContent, "", "  ")
@@ -137,7 +138,7 @@ func TestMCPRestrictedSurface(t *testing.T) {
 		`return function(ctx, args) ai_chat("p", {text = "x"}) end`,
 		`return function(ctx, args) prompt("y") end`,
 	} {
-		if _, err := mcpRunChunk(chunk, nil, fw); err == nil {
+		if _, err := mcpRunChunk(chunk, nil, fw, ""); err == nil {
 			t.Fatalf("chunk %q must fail in the MCP sandbox", chunk)
 		}
 	}
@@ -160,12 +161,54 @@ func TestMCPRestrictedSurface(t *testing.T) {
 	}
 }
 
+// TestMCPAttachmentsGate pins the whitelist gate: the attachments tool
+// is absent from the default registry and served only when [mcp] allow
+// names it. Served, it lists a real message's attachments (name, mime,
+// size - never bytes) with the mail-root join for relative paths.
+func TestMCPAttachmentsGate(t *testing.T) {
+	root := t.TempDir()
+	fixtureMail(t, root, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local))
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "m1", Paths: []string{"m1.eml"}}})
+
+	// default: not in the registry
+	names := map[string]bool{}
+	for _, st := range mcpTools(fw, root, nil) {
+		names[st.Tool.Name] = true
+	}
+	if names["attachments"] {
+		t.Fatal("the attachments tool must be gated off by default")
+	}
+
+	// whitelisted: served, and the result is metadata only
+	tools := mcpTools(fw, root, map[string]bool{"attachments": true})
+	res := callTool(t, tools, "attachments", map[string]any{"id": "m1"})
+	b, _ := json.Marshal(res)
+	s := string(b)
+	for _, want := range []string{`"invoice.pdf"`, `"application/pdf"`, `"photo.png"`, `"image/png"`} {
+		if !strings.Contains(s, want) {
+			t.Errorf("attachments result missing %s: %s", want, s)
+		}
+	}
+	if strings.Contains(s, "fake pdf bytes") || strings.Contains(s, "fake png bytes") {
+		t.Errorf("attachment bytes must never cross: %s", s)
+	}
+
+	// an unknown allow name is a startup error, never a silent drop
+	if _, err := resolveMCPAllow([]string{"attachments"}); err != nil {
+		t.Fatalf("attachments must be a known name: %v", err)
+	}
+	if _, err := resolveMCPAllow([]string{"bogus"}); err == nil {
+		t.Fatal("an unknown allow name must error")
+	}
+}
+
 // TestMCPServerStdio drives the full MCP round trip through the
 // mcp-go stdio server (io.Pipe, real JSON-RPC framing): initialize,
 // tools/list, and a tools/call over the client.
 func TestMCPServerStdio(t *testing.T) {
 	fw := mcpFixture()
-	s, err := mcptest.NewServer(t, mcpTools(fw)...)
+	s, err := mcptest.NewServer(t, mcpTools(fw, "", nil)...)
 	if err != nil {
 		t.Fatal(err)
 	}

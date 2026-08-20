@@ -42,6 +42,28 @@ remote images, `F` enters the easyjump link mode, `$` applies staged
 tag ops, `u` undoes them. The help overlay (`?`) derives from the
 binding map, so rebinds update the hints.
 
+## Background sync (systemd)
+
+The example units in `config/examples/systemd/` run the reference
+pipeline on a timer: every 30 minutes `mail-sync.timer` fires
+`mail-sync.service`, which starts vdirsyncer (contacts/calendars) in
+parallel and syncs all mbsync accounts, delivery triggering the
+notmuch pipeline (post-new tags and moves). A sync marker - files
+delivered by the run are newer than it - lets the post-new hook untag
+mail an external client moved into an INBOX.
+
+```sh
+cp config/examples/systemd/* ~/.config/systemd/user/
+# edit mbsync-all.service: replace the mbsync account list with yours
+systemctl --user enable --now mail-sync.timer
+```
+
+The service's `ExecCondition` is the environment-specific part: it
+skips the sync while the network is down (`nmcli`), while a video is
+playing (`playerctl`, `pw-dump`) or a fullscreen app is up (`mmsg`),
+so a sync never stutters playback. Drop the whole `ExecCondition`
+line for a plain timer if you do not want those guards.
+
 If notmutt works for you, [star the repository](https://github.com/fishman/notmutt).
 When something breaks, [open an issue](https://github.com/fishman/notmutt/issues)
 - reproduce with fabricated mail if the bug is message-specific.

@@ -1063,7 +1063,7 @@ status = { fg = "#ff0000" }
 	}
 	// dark: fg (base0A) resolves through the base palette, bg inherits
 	// normal's base00 through the base palette
-res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
+	res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
 	if res["status"].Fg != "#e5c07b" || res["status"].Bg != "#21252b" {
 		t.Fatalf("dark resolution: %+v", res["status"])
 	}
@@ -1082,7 +1082,7 @@ func TestThemeComposeLabel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
+	res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
 	if res["compose.label"].Fg != "#61afef" {
 		t.Fatalf("compose.label fg = %q, want the resolved base0D (#61afef)", res["compose.label"].Fg)
 	}
@@ -1106,7 +1106,7 @@ subject = { fg = "base0B" }
 	if err != nil {
 		t.Fatal(err)
 	}
-res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
+	res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
 	if got := res["index.number"].Fg; got != "#5c6370" {
 		t.Fatalf("index.number must survive the partial overlay, got %q", got)
 	}

@@ -11,7 +11,7 @@ FUZZTIME?= 30s
 GO_CMD   = cd src && $(GO)
 GO_TAGS  = -tags "$(TAGS)"
 
-.PHONY: all build test fuzz vet fmt clean
+.PHONY: all build test test-race fuzz vet format clean
 
 all: build
 
@@ -21,14 +21,22 @@ build:
 test:
 	$(GO_CMD) test $(GO_TAGS) ./...
 
+test-race:
+	$(GO_CMD) test $(GO_TAGS) -race ./...
+
 fuzz:
 	$(GO_CMD) test $(GO_TAGS) -run '^$$' -fuzz "$(FUZZ)" -fuzztime "$(FUZZTIME)"
 
 vet:
 	$(GO_CMD) vet $(GO_TAGS) ./...
 
-fmt:
-	cd src && gofmt -l -w .
+# format: the CI gofmt gate (default); `make format FMT=write` applies
+# the fixes instead. One file list serves both modes.
+FMT ?= check
+FMT_LIST := gofmt -l . | grep -v '^vendor/'
+
+format:
+	cd src && if [ "$(FMT)" = write ]; then $(FMT_LIST) | xargs -r gofmt -w; else test -z "$$($(FMT_LIST))"; fi
 
 clean:
 	rm -f src/$(BIN)

@@ -108,6 +108,11 @@ var (
 	// ErrNoRepliesOrPointerNotFromThread is returned if a message has no replies or if the message's C
 	// pointer did not come from a thread.
 	ErrNoRepliesOrPointerNotFromThread = errors.New("message has no replies or message's pointer not from a thread")
+
+	// ErrMalformedData is returned when a walk arena is corrupt or
+	// truncated - the decode path never panics, every read is
+	// bounds-checked.
+	ErrMalformedData = errors.New("malformed walk data")
 )
 
 // Convert a notmuch status to an error. This is almost a simple cast, but

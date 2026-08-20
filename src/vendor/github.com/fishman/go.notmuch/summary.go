@@ -442,12 +442,19 @@ package notmuch
 // 			return NULL;
 // 		}
 // 		int32_t mcount = (int32_t)notmuch_thread_get_total_messages(t);
+// 		// pack a placeholder row count and patch it with the rows
+// 		// actually emitted after the loop: total_messages and the
+// 		// iterator length must agree, but the packed count is the
+// 		// truth - a divergence must not let the decoder read past
+// 		// the arena
+// 		size_t mcount_pos = fill;
 // 		if (!full_pack_i32(&arena, &cap_, &fill, mcount)) {
 // 			free(arena);
 // 			*out_status = 2;
 // 			return NULL;
 // 		}
 // 		notmuch_messages_t *msgs = notmuch_thread_get_messages(t);
+// 		int32_t packed = 0;
 // 		if (msgs) {
 // 			for (int i = 0; i < mcount && notmuch_messages_valid(msgs); i++) {
 // 				notmuch_message_t *m = notmuch_messages_get(msgs);
@@ -463,10 +470,12 @@ package notmuch
 // 					*out_status = 2;
 // 					return NULL;
 // 				}
+// 				packed++;
 // 				notmuch_messages_move_to_next(msgs);
 // 			}
 // 			notmuch_messages_destroy(msgs);
 // 		}
+// 		memcpy((char *)arena + mcount_pos, &packed, 4);
 // 		count++;
 // 		w->count++;
 // 		notmuch_threads_move_to_next(w->threads);
@@ -637,7 +646,14 @@ func (w *ThreadsWalk) Next(cap int) (rows []ThreadSummary, done bool, err error)
 		return nil, false, ErrUnknownError
 	}
 	defer C.free(arena)
-	return decodeSummaries(C.GoBytes(arena, C.int(size))), false, nil
+	if size > 0x7fffffff {
+		return nil, false, ErrMalformedData
+	}
+	rows, err = decodeSummaries(C.GoBytes(arena, C.int(size)))
+	if err != nil {
+		return nil, false, err
+	}
+	return rows, false, nil
 }
 
 // Close frees the walk and its C iterator.
@@ -713,7 +729,14 @@ func (w *FullWalk) Next(cap int) (rows []FullThread, done bool, err error) {
 		return nil, false, ErrUnknownError
 	}
 	defer C.free(arena)
-	return decodeFull(C.GoBytes(arena, C.int(size))), false, nil
+	if size > 0x7fffffff {
+		return nil, false, ErrMalformedData
+	}
+	rows, err = decodeFull(C.GoBytes(arena, C.int(size)))
+	if err != nil {
+		return nil, false, err
+	}
+	return rows, false, nil
 }
 
 // Close frees the walk and its C iterator.
@@ -724,56 +747,118 @@ func (w *FullWalk) Close() error {
 	})
 }
 
-func decodeFull(data []byte) []FullThread {
-	if len(data) < 4 {
-		return nil
+// blobReader walks a packed arena; every read checks its bounds so a
+// corrupt or truncated arena errors instead of panicking.
+type blobReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *blobReader) u32() (int, error) {
+	if r.pos+4 > len(r.data) {
+		return 0, ErrMalformedData
 	}
-	n := int(binary.LittleEndian.Uint32(data))
-	out := make([]FullThread, 0, n)
-	read := func(p int) (int, string) {
-		l := int(binary.LittleEndian.Uint32(data[p:]))
-		p += 4
-		s := string(data[p : p+l])
-		return p + l, s
+	n := int(binary.LittleEndian.Uint32(r.data[r.pos:]))
+	r.pos += 4
+	return n, nil
+}
+
+func (r *blobReader) i64() (int64, error) {
+	if r.pos+8 > len(r.data) {
+		return 0, ErrMalformedData
 	}
-	split := func(s string) []string {
-		var out []string
-		for _, e := range strings.Split(s, "\x00") {
-			if e != "" {
-				out = append(out, e)
-			}
+	n := int64(binary.LittleEndian.Uint64(r.data[r.pos:]))
+	r.pos += 8
+	return n, nil
+}
+
+func (r *blobReader) str() (string, error) {
+	if r.pos+4 > len(r.data) {
+		return "", ErrMalformedData
+	}
+	l := int(binary.LittleEndian.Uint32(r.data[r.pos:]))
+	r.pos += 4
+	if l < 0 || r.pos+l > len(r.data) {
+		return "", ErrMalformedData
+	}
+	s := string(r.data[r.pos : r.pos+l])
+	r.pos += l
+	return s, nil
+}
+
+func splitBlob(s string) []string {
+	var out []string
+	for _, e := range strings.Split(s, "\x00") {
+		if e != "" {
+			out = append(out, e)
 		}
-		return out
 	}
-	for i, p := 0, 4; i < n; i++ {
+	return out
+}
+
+func decodeFull(data []byte) ([]FullThread, error) {
+	if len(data) < 4 {
+		return nil, ErrMalformedData
+	}
+	r := blobReader{data: data}
+	n, err := r.u32()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]FullThread, 0, n)
+	for i := 0; i < n; i++ {
 		var t FullThread
-		t.Timestamp = int64(binary.LittleEndian.Uint64(data[p:]))
-		p += 8
-		p, t.ThreadID = read(p)
-		p, t.Authors = read(p)
-		p, t.Subject = read(p)
-		var tags string
-		p, tags = read(p)
-		t.Tags = split(tags)
-		mcount := int(binary.LittleEndian.Uint32(data[p:]))
-		p += 4
+		if t.Timestamp, err = r.i64(); err != nil {
+			return nil, err
+		}
+		if t.ThreadID, err = r.str(); err != nil {
+			return nil, err
+		}
+		if t.Authors, err = r.str(); err != nil {
+			return nil, err
+		}
+		if t.Subject, err = r.str(); err != nil {
+			return nil, err
+		}
+		var blob string
+		if blob, err = r.str(); err != nil {
+			return nil, err
+		}
+		t.Tags = splitBlob(blob)
+		mcount, err := r.u32()
+		if err != nil {
+			return nil, err
+		}
 		for j := 0; j < mcount; j++ {
 			var m FullMessage
-			p, m.ID = read(p)
-			m.Timestamp = int64(binary.LittleEndian.Uint64(data[p:]))
-			p += 8
-			p, m.Author = read(p)
-			p, m.Subject = read(p)
-			p, tags = read(p)
-			m.Tags = split(tags)
-			p, tags = read(p)
-			m.Paths = split(tags)
-			p, m.References = read(p)
+			if m.ID, err = r.str(); err != nil {
+				return nil, err
+			}
+			if m.Timestamp, err = r.i64(); err != nil {
+				return nil, err
+			}
+			if m.Author, err = r.str(); err != nil {
+				return nil, err
+			}
+			if m.Subject, err = r.str(); err != nil {
+				return nil, err
+			}
+			if blob, err = r.str(); err != nil {
+				return nil, err
+			}
+			m.Tags = splitBlob(blob)
+			if blob, err = r.str(); err != nil {
+				return nil, err
+			}
+			m.Paths = splitBlob(blob)
+			if m.References, err = r.str(); err != nil {
+				return nil, err
+			}
 			t.Msgs = append(t.Msgs, m)
 		}
 		out = append(out, t)
 	}
-	return out
+	return out, nil
 }
 
 // MsgWalk is the progressive message-level walker: the flat views'
@@ -821,7 +906,14 @@ func (w *MsgWalk) Next(cap int) (rows []FullMessage, done bool, err error) {
 		return nil, false, ErrUnknownError
 	}
 	defer C.free(arena)
-	return decodeMsgs(C.GoBytes(arena, C.int(size))), false, nil
+	if size > 0x7fffffff {
+		return nil, false, ErrMalformedData
+	}
+	rows, err = decodeMsgs(C.GoBytes(arena, C.int(size)))
+	if err != nil {
+		return nil, false, err
+	}
+	return rows, false, nil
 }
 
 // Close frees the walk and its C iterator.
@@ -832,73 +924,80 @@ func (w *MsgWalk) Close() error {
 	})
 }
 
-func decodeMsgs(data []byte) []FullMessage {
+func decodeMsgs(data []byte) ([]FullMessage, error) {
 	if len(data) < 4 {
-		return nil
+		return nil, ErrMalformedData
 	}
-	n := int(binary.LittleEndian.Uint32(data))
+	r := blobReader{data: data}
+	n, err := r.u32()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]FullMessage, 0, n)
-	read := func(p int) (int, string) {
-		l := int(binary.LittleEndian.Uint32(data[p:]))
-		p += 4
-		s := string(data[p : p+l])
-		return p + l, s
-	}
-	split := func(s string) []string {
-		var out []string
-		for _, e := range strings.Split(s, "\x00") {
-			if e != "" {
-				out = append(out, e)
-			}
-		}
-		return out
-	}
-	for i, p := 0, 4; i < n; i++ {
+	for i := 0; i < n; i++ {
 		var m FullMessage
-		p, m.ThreadID = read(p)
-		p, m.ID = read(p)
-		m.Timestamp = int64(binary.LittleEndian.Uint64(data[p:]))
-		p += 8
-		p, m.Author = read(p)
-		p, m.Subject = read(p)
+		if m.ThreadID, err = r.str(); err != nil {
+			return nil, err
+		}
+		if m.ID, err = r.str(); err != nil {
+			return nil, err
+		}
+		if m.Timestamp, err = r.i64(); err != nil {
+			return nil, err
+		}
+		if m.Author, err = r.str(); err != nil {
+			return nil, err
+		}
+		if m.Subject, err = r.str(); err != nil {
+			return nil, err
+		}
 		var blob string
-		p, blob = read(p)
-		m.Tags = split(blob)
-		p, blob = read(p)
-		m.Paths = split(blob)
-		p, m.References = read(p)
+		if blob, err = r.str(); err != nil {
+			return nil, err
+		}
+		m.Tags = splitBlob(blob)
+		if blob, err = r.str(); err != nil {
+			return nil, err
+		}
+		m.Paths = splitBlob(blob)
+		if m.References, err = r.str(); err != nil {
+			return nil, err
+		}
 		out = append(out, m)
 	}
-	return out
+	return out, nil
 }
 
-func decodeSummaries(data []byte) []ThreadSummary {
+func decodeSummaries(data []byte) ([]ThreadSummary, error) {
 	if len(data) < 4 {
-		return nil
+		return nil, ErrMalformedData
 	}
-	n := int(binary.LittleEndian.Uint32(data))
+	r := blobReader{data: data}
+	n, err := r.u32()
+	if err != nil {
+		return nil, err
+	}
 	out := make([]ThreadSummary, 0, n)
-	read := func(p int) (int, string) {
-		l := int(binary.LittleEndian.Uint32(data[p:]))
-		p += 4
-		s := string(data[p : p+l])
-		return p + l, s
-	}
-	for i, p := 0, 4; i < n; i++ {
+	for i := 0; i < n; i++ {
 		var s ThreadSummary
-		s.Timestamp = int64(binary.LittleEndian.Uint64(data[p:]))
-		p += 8
-		p, s.ThreadID = read(p)
-		p, s.Authors = read(p)
-		p, s.Subject = read(p)
-		var blob string
-		p, blob = read(p)
-		for _, tag := range strings.Split(blob, "\x00") {
-			if tag != "" {
-				s.Tags = append(s.Tags, tag)
-			}
+		if s.Timestamp, err = r.i64(); err != nil {
+			return nil, err
 		}
+		if s.ThreadID, err = r.str(); err != nil {
+			return nil, err
+		}
+		if s.Authors, err = r.str(); err != nil {
+			return nil, err
+		}
+		if s.Subject, err = r.str(); err != nil {
+			return nil, err
+		}
+		var blob string
+		if blob, err = r.str(); err != nil {
+			return nil, err
+		}
+		s.Tags = splitBlob(blob)
 		out = append(out, s)
 	}
-	return out
+	return out, nil
 }

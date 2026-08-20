@@ -29,6 +29,16 @@ type fakeWorker struct {
 	countErr  atomic.Value // error: fails every ActCount when set
 	pruneErr  atomic.Value // error: fails the prune intersect queries when set
 	threadMap atomic.Value // ActThread content per thread id (the hydrated-thread re-fetch)
+	blockTID  atomic.Value // thread id whose ActThread blocks until the channel closes
+	blockCh   atomic.Value // the release channel for the blocked fetch
+}
+
+// setBlock makes ActThread for tid block until ch closes: the
+// view-switch test holds a wave's fetch in flight while the view
+// changes underneath it.
+func (f *fakeWorker) setBlock(tid string, ch chan struct{}) {
+	f.blockTID.Store(tid)
+	f.blockCh.Store(ch)
 }
 
 // setThreadMsgs installs the full thread content for ActThread fetches,
@@ -117,6 +127,11 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		}
 	case notmuch.ActThread:
 		f.threads.Add(1)
+		if tid, _ := f.blockTID.Load().(string); tid == a.ThreadID && tid != "" {
+			if ch, _ := f.blockCh.Load().(chan struct{}); ch != nil {
+				<-ch
+			}
+		}
 		if byID, ok := f.threadMap.Load().(map[string][]core.Message); ok {
 			if m, ok := byID[a.ThreadID]; ok {
 				r.Msgs = m

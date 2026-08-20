@@ -47,6 +47,11 @@ type View struct {
 	// intermediate keypresses and rebuilds once per batch end.
 	mergeDepth int
 	mergeDirty bool
+	// gen is the view generation: bumped on Reset, so the hydrator can
+	// scope its dedupe, cursor, and merges to the view's current query
+	// (thread ids span folders - a wave started for one view must never
+	// land in another's rows).
+	gen uint64
 	// the tree window budget ([index.thread]): winRows rows per thread.
 	// Zero winRows = no window.
 	winRows int
@@ -76,7 +81,16 @@ func (v *View) Reset() {
 	v.dirty = true
 	v.cursorID = ""
 	v.lastRow = 0
+	v.gen++
 	v.mu.Unlock()
+}
+
+// Gen is the view generation: the hydrator scopes its wave to it, so
+// a view switch neither suppresses nor misdirects in-flight fetches.
+func (v *View) Gen() uint64 {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.gen
 }
 
 // NewThread builds a thread with a reference tree. msgs are sorted by

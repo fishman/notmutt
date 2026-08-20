@@ -26,13 +26,18 @@ type threadJob struct {
 	worker   workerAPI
 	view     *core.View
 	threaded func() bool // live config truth: Views[ActiveView].Threads
+	gen      uint64      // the view generation the cursor and dedupe belong to
 	next     int         // the scan cursor: each scan takes the next scanPage rows
 	mu       sync.Mutex
-	pending  map[string]bool
+	// pending dedupes in-flight fetches PER VIEW GENERATION: thread ids
+	// span folders (one thread can hold messages in both inbox and
+	// deleted), so a wave started for one view must never suppress or
+	// block another view's hydration of the same id.
+	pending map[uint64]map[string]bool
 }
 
 func newThreadJob(bus *core.Bus, w workerAPI, view *core.View, threaded func() bool) *threadJob {
-	return &threadJob{bus: bus, worker: w, view: view, threaded: threaded, pending: map[string]bool{}}
+	return &threadJob{bus: bus, worker: w, view: view, threaded: threaded, pending: map[uint64]map[string]bool{}}
 }
 
 func (t *threadJob) Run(ctx context.Context) {
@@ -93,6 +98,15 @@ func (t *threadJob) scanVisible() {
 	if !t.threaded() {
 		return
 	}
+	gen := t.view.Gen()
+	if gen != t.gen {
+		// a view switch: the scan starts at the top of the new view's
+		// rows, and its dedupe is a fresh set - ids in flight for the
+		// old view are refetched here (their results are gated out of
+		// the merge below, so no double work lands)
+		t.gen = gen
+		t.next = 0
+	}
 	rows := t.view.Rows()
 	if len(rows) == 0 {
 		return
@@ -118,18 +132,27 @@ func (t *threadJob) scanVisible() {
 		}
 		tid := r.ThreadID
 		t.mu.Lock()
-		if t.pending[tid] {
+		if t.pending[gen][tid] {
 			t.mu.Unlock()
 			continue
 		}
-		t.pending[tid] = true
+		if t.pending[gen] == nil {
+			t.pending[gen] = map[string]bool{}
+		}
+		t.pending[gen][tid] = true
 		t.mu.Unlock()
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			rpl, err := t.worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: tid})
 			t.mu.Lock()
-			delete(t.pending, tid) // a failed fetch clears the gate: the next scan retries
+			// a failed fetch clears the gate: the next scan retries
+			if set := t.pending[gen]; set != nil {
+				delete(set, tid)
+				if len(set) == 0 {
+					delete(t.pending, gen)
+				}
+			}
 			done++
 			// the per-fetch progress is the paint trigger (the TUI re-reads
 			// rows on Progress, not ViewDiff); the bar advances once per
@@ -137,6 +160,12 @@ func (t *threadJob) scanVisible() {
 			t.bus.Publish(core.Progress{Job: "threads", View: t.view.Name, Done: done, Total: total})
 			t.mu.Unlock()
 			if err != nil || rpl.Err != nil {
+				return
+			}
+			if t.view.Gen() != gen {
+				// the view switched while the fetch was in flight: the
+				// result belongs to the old view's rows - dropping it
+				// lets the new view's own scan refetch the id
 				return
 			}
 			msgs := make([]*core.Message, len(rpl.Msgs))

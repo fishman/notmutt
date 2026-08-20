@@ -569,3 +569,29 @@ full thread plain text) is never registered on that VM. Bodies cannot
 cross the allowlist because they are never present to cross it. The
 rule is not configurable: content-plus-network would be an explicit
 future decision, not a config knob.
+## 27. Attachment categorization: manual, metadata-only Lua hooks (2026-08-20)
+
+Decision: attachment categorization is a manual, headless command
+(`notmutt attachments [--dry-run] [query]`), not a pipeline stage, and
+its Lua `categorize(msg, att)` hooks see a metadata projection only.
+
+The pipeline side effect was designed and rejected: an automatic
+download pass on every poll would write files the user never asked
+for, on mail they may not have inspected, and the filter job's
+dry-run/review flow does not extend to file writes (dry-run mode
+exists precisely because writes are irreversible). Attachment
+downloads stay a deliberate act: run the backfill, review the
+`save`/`skip` lines, re-run with a narrower query. The idempotency
+check (existing target -> skip before the extract) makes re-runs
+cheap and safe.
+
+The hook contract is the privacy boundary's own shape: `msg` is
+from/subject/date, `att` is name/mime/size - no paths, no message
+ids, no content. A plugin cannot leak what it never receives. The
+first non-empty category across hooks wins; a hook error falls
+through to the next hook and surfaces in the save report when
+nothing decided. Filenames and categories pass one sanitizer
+(control runes dropped, `/` and `\` become `_`, empty/`.`/`..`
+rejected) so a name is always a single path segment - traversal is
+structurally impossible. The month folder comes from the message
+date in local time; files are 0600, dirs 0700.

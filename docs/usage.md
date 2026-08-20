@@ -224,6 +224,52 @@ the MCP server exposes); `mail_lines` (the full thread plain text) is
 absent, so a body cannot cross the allowlist. A plugin without a
 network section keeps the full ctx.
 
+### Attachment categorization
+
+Attachment downloading is manual and local: a Lua plugin declares a
+`categorize(msg, att)` function, and the headless command saves the
+categorized attachments. Nothing runs on new mail - you invoke it.
+
+The plugin contract is metadata-only, the same privacy boundary as the
+rest of the Lua layer: `msg` carries `from`, `subject`, and `date`
+(unix seconds) - never paths, ids, or content. `att` carries `name`,
+`mime`, and `size`. Return a category string ("travel", "receipt",
+...) or `nil` to skip that attachment:
+
+```lua
+function categorize(msg, att)
+  if att.mime ~= "application/pdf" then return nil end
+  local ok, err = re_match("airline|hotel", msg.from .. " " .. msg.subject)
+  if not ok or err then return nil end
+  return "travel"
+end
+```
+
+`re_match(pattern, str)` is the regex helper: Go's RE2 syntax (Lua
+string patterns have no alternation), returning `match, err` - a bad
+pattern is `false` plus the error text, never a raise.
+
+The command:
+
+```sh
+./notmutt attachments --dry-run 'has:attachment'   # report the plan, write nothing
+./notmutt attachments 'has:attachment'             # save, no dry-run (query defaults to *)
+```
+
+Files land in `<folder>/<YYYY-MM from the message date>/<category>/<filename>`,
+with the download root from the config (default `~/Downloads/Attachments`):
+
+```toml
+[attachments]
+folder = "~/Downloads/Attachments"
+```
+
+Idempotent: an existing target is skipped (`skip <path> (exists)`),
+never overwritten - re-runs are safe. Filenames and categories are
+sanitized as single path segments (separators become `_`, control
+runes dropped), so no name can traverse the tree. Files are 0600,
+directories 0700.
+
 ## MCP server
 
 An optional Model Context Protocol server lets LLM clients query the

@@ -19,11 +19,15 @@ mailbox (mbsync or vdirsyncer into maildirs plus `notmuch new`).
 
 ```sh
 git clone git@github.com:fishman/notmutt.git
-cd notmutt/src
-go build -o ../notmutt .
-cd ..
+cd notmutt
+make
 ./notmutt
 ```
+
+The Makefile drives build and test (`make build`, `make test`, `make
+fuzz`, `make vet`); its default build carries the Lua runtime
+(R8), override with `make build TAGS="cli"` for a Lua-free build or
+the CLI backend.
 
 If notmuch sees your mail, notmutt reads it. Your tags, views, and
 queries stay yours and stay queryable by every other notmuch tool. The

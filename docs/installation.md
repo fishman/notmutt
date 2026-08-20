@@ -19,20 +19,22 @@ No libnotmuch available, or you prefer not to link it? The CLI backend
 is one build tag away - the same binary code, the same interface:
 
 ```sh
-cd src
-go build -tags cli -o ../notmutt .
+make build TAGS="cli"
 ```
 
 ## Build
 
 ```sh
 git clone git@github.com:fishman/notmutt.git
-cd notmutt/src
-go build -o ../notmutt .
+cd notmutt
+make build
 ```
 
-The binary lands at `./notmutt`. Run it from anywhere; your
-configuration is read from `~/.config/notmutt/config.toml`.
+The Makefile default carries the Lua runtime (R8); `TAGS` overrides
+(`make build TAGS="cli"` for the CLI backend, `make build TAGS=""` for
+a plain Go build). `make test` runs the suite under the same tags. The
+binary lands at `./notmutt`. Run it from anywhere; your configuration
+is read from `~/.config/notmutt/config.toml`.
 
 ## Configuration
 

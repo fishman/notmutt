@@ -64,9 +64,8 @@ same code, one build tag away).
 
 ```sh
 git clone git@github.com:fishman/notmutt.git
-cd notmutt/src
-go build -o ../notmutt .
-cd ..
+cd notmutt
+make
 ./notmutt
 ```
 

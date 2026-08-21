@@ -6,6 +6,7 @@ package app
 import (
 	"fmt"
 	netmail "net/mail"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -122,6 +123,61 @@ func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, ms
 		}
 	}
 	return nil, fmt.Errorf("thread %s: no parseable message", msg.ThreadID)
+}
+
+// mailtoCompose opens a dialogue from a mailto: link (the pager F key
+// seam): the To list from the URL path, subject/cc/bcc/body from the
+// query (RFC 6068, x-www-form-urlencoded). The sender identity comes
+// from the account chain, never the link - same derivation as
+// buildCompose.
+func mailtoCompose(cfg config.Config, root, rawURL string) (*compose.State, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil || !strings.EqualFold(u.Scheme, "mailto") {
+		return nil, fmt.Errorf("not a mailto url: %q", rawURL)
+	}
+	account := resolveAccount(cfg, nil, nil)
+	from := cfg.Accounts[account].From
+	sigName, sigBody := defaultSig(cfg, account)
+	st := compose.NewCompose(account, from, sigName, sigBody)
+	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	if addr, err := url.PathUnescape(u.Opaque); err == nil {
+		st.To = mailtoAddresses(addr)
+	}
+	for k, vs := range u.Query() {
+		for _, v := range vs {
+			switch strings.ToLower(k) {
+			case "to":
+				st.To = append(st.To, mailtoAddresses(v)...)
+			case "cc":
+				st.Cc = append(st.Cc, mailtoAddresses(v)...)
+			case "bcc":
+				st.Bcc = append(st.Bcc, mailtoAddresses(v)...)
+			case "reply-to":
+				st.ReplyTo = append(st.ReplyTo, mailtoAddresses(v)...)
+			case "subject":
+				if st.Subject == "" {
+					st.Subject = v
+				}
+			case "body":
+				if st.Body == "" {
+					st.Body = v
+				}
+			}
+		}
+	}
+	return st, nil
+}
+
+// mailtoAddresses splits a mailto address list (comma-separated, RFC
+// 6068) into trimmed non-empty entries.
+func mailtoAddresses(s string) []string {
+	var out []string
+	for _, a := range strings.Split(s, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func tagsOf(msg *core.Message) []string {

@@ -264,6 +264,36 @@ end
 	}
 }
 
+// TestLuaDateStr pins the date_str binding: the YYYY/MM/DD token
+// pattern formats a unix timestamp (the calendar lives in Go, not the
+// plugin), and the default pattern is YYYY/MM.
+func TestLuaDateStr(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	dir := pluginDir(t, map[string]string{"ds.lua": `
+function categorize(handle, msg)
+  local out = {}
+  out[1] = date_str(msg.date, "YYYY/MM")
+  out[2] = date_str(msg.date, "YYYY-MM")
+  out[3] = date_str(msg.date)
+  out[4] = date_str(msg.date, "MM/YYYY")
+  return out
+end
+`})
+	loadLuaPlugins(dir, nil)
+	meta := AttachMeta{Date: 1720000000} // 2024-07-03T12:26:40Z
+	cats, err := categorizeHooks[0]("", meta)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]string{1: "2024/07", 2: "2024-07", 3: "2024/07", 4: "07/2024"}
+	for o, w := range want {
+		if cats[o] != w {
+			t.Fatalf("ordinal %d = %q, want %q", o, cats[o], w)
+		}
+	}
+}
+
 // TestLuaCategorizeDeadline pins the kill switch: a busy-looping
 // categorize is killed by the per-call budget, the VM is closed, and
 // the disabled plugin fails fast on later calls.

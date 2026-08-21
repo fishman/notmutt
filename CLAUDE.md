@@ -5,6 +5,15 @@ Pi and other tools). Read it first; it is normative.
 
 @AGENTS.md
 
+## Prompt caching
+
+- CLAUDE.md + AGENTS.md load once at session start; mid-session edits
+  neither apply nor cost a cache miss. State missing rules in the
+  conversation; file doc changes at session end.
+- Cache busts on: model/effort switches, MCP/plugin toggles, tool deny
+  rules, /compact, CC upgrade. Not on: file edits, skills, subagents.
+- Every response is re-read at cached rate on later turns - terse wins.
+
 ## Privacy (hard rule, overrides everything)
 
 - Never submit mail content (bodies, headers, whole .eml/.mbox files) to

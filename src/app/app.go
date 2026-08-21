@@ -249,11 +249,23 @@ func Run() error {
 	loadConfigAttachCommands(cfg)
 	tui.SetAttachCommandSource(func() []tui.AttachCommand { return attachCommandSnapshot() })
 
-	// the link opener (the pager F key): the config's opener argv with
+	// the link opener (the pager F key): a mailto: link opens a compose
+	// dialogue (the same ComposeOpened path as reply - the TUI attaches
+	// the tab), everything else goes to the config's opener argv with
 	// the url appended (F4 - argv only, never shell-interpolated), a
 	// missing config opens with xdg-open. Fire-and-forget: the opener
 	// detaches its viewer and returns.
 	tui.SetOpenLinkHandler(func(url string) {
+		if strings.HasPrefix(strings.ToLower(url), "mailto:") {
+			st, err := mailtoCompose(cfg, root, url)
+			if err != nil {
+				diag.Warn("mailto", "err", err.Error())
+				return
+			}
+			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(st))
+			return
+		}
 		argv := cfg.Opener
 		if len(argv) == 0 {
 			argv = []string{"xdg-open"}

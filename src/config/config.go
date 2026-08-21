@@ -257,11 +257,15 @@ type Notify struct {
 }
 
 // Attachments configures the local attachment download pass
-// ([attachments]): the destination folder for categorized attachments.
-// Categorization itself is plugin policy - the pass runs only while a
-// plugin declares a categorize function. Empty folder = the default.
+// ([attachments]): the destination folder for categorized attachments
+// and the date layout for a bare-category return (a plugin that returns
+// a full relative path owns the structure and bypasses it). Empty
+// folder = the default.
 type Attachments struct {
 	Folder string `toml:"folder"`
+	// Layout is the date pattern for a bare-category return: YYYY/MM/DD
+	// tokens, "/"-separated into directories. Empty = no date directory.
+	Layout string `toml:"layout"`
 }
 
 // DefaultAttachFolder is the [attachments] fallback when folder is
@@ -1183,6 +1187,7 @@ func Default() Config {
 		},
 		Attachments: Attachments{
 			Folder: DefaultAttachFolder,
+			Layout: "YYYY-MM",
 		},
 		MCP: MCP{
 			Allow: []string{},

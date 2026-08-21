@@ -50,6 +50,55 @@ func (t *threadBackend) Revision(ctx context.Context) (string, uint64, error) {
 }
 func (t *threadBackend) New(ctx context.Context) (uint64, uint64, error) { return 41, 42, nil }
 
+func TestMailtoCompose(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"acme": {From: "me@acme.com"}}
+	root := t.TempDir()
+
+	st, err := mailtoCompose(cfg, root,
+		"mailto:alpha@example.com,beta@example.com?subject=Hi%20there&cc=cc@example.com&bcc=secret@example.com&body=line1%0Aline2")
+	if err != nil {
+		t.Fatalf("mailtoCompose: %v", err)
+	}
+	if st.Mode != compose.ModeCompose {
+		t.Fatalf("mode = %v, want compose", st.Mode)
+	}
+	if st.Account != "acme" || st.From != "me@acme.com" {
+		t.Fatalf("sender = %q/%q, want acme/me@acme.com", st.Account, st.From)
+	}
+	if len(st.To) != 2 || st.To[0] != "alpha@example.com" || st.To[1] != "beta@example.com" {
+		t.Fatalf("to = %v", st.To)
+	}
+	if len(st.Cc) != 1 || st.Cc[0] != "cc@example.com" {
+		t.Fatalf("cc = %v", st.Cc)
+	}
+	if len(st.Bcc) != 1 || st.Bcc[0] != "secret@example.com" {
+		t.Fatalf("bcc = %v", st.Bcc)
+	}
+	if st.Subject != "Hi there" {
+		t.Fatalf("subject = %q", st.Subject)
+	}
+	if st.Body != "line1\nline2" {
+		t.Fatalf("body = %q", st.Body)
+	}
+	if st.Fcc == "" {
+		t.Fatal("fcc unset")
+	}
+
+	// a bare mailto:?subject with no recipient is valid (RFC 6068)
+	st, err = mailtoCompose(cfg, root, "mailto:?subject=Just%20a%20note")
+	if err != nil {
+		t.Fatalf("empty-to mailtoCompose: %v", err)
+	}
+	if len(st.To) != 0 || st.Subject != "Just a note" {
+		t.Fatalf("empty-to: to=%v subject=%q", st.To, st.Subject)
+	}
+
+	if _, err := mailtoCompose(cfg, root, "https://example.com/"); err == nil {
+		t.Fatal("non-mailto url accepted")
+	}
+}
+
 func TestResolveAccountChain(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"acme": {}, "globex": {}, "nimbus": {}}

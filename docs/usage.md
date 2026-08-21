@@ -218,7 +218,8 @@ the review flow: read a dry-run report, then apply.
 ### Lua plugins
 
 Plugins are files in `<configdir>/lua`, loaded into a sandboxed VM
-with a deadline: no os/io/debug, no filesystem. Every plugin gets a
+with a deadline: no os/io/debug, no filesystem. The full function
+reference is the [Lua library](lua.html) page. Every plugin gets a
 `json` global (encode/decode, depth- and size-capped); the `http`
 global exists only when the plugin has a network section - network
 is deny-by-default:
@@ -251,6 +252,8 @@ network section keeps the full ctx.
 Attachment downloading is manual and local: a Lua plugin declares a
 `categorize(handle, msg)` function, and the headless command saves the
 categorized attachments. Nothing runs on new mail - you invoke it.
+The library helpers it draws on (`get_attachments`, `re_match`,
+`date_str`) are on the [Lua library](lua.html) page.
 
 The plugin receives an opaque mail `handle` plus the metadata-only
 projection: `msg` carries `from`, `subject`, and `date` (unix seconds)
@@ -260,15 +263,28 @@ returns the message's attachments as `{name, mime, size, ordinal}`
 tables (the ordinal is the 1-based position in the message). The
 plugin never opens files - the client parsed the list.
 
-Return a table of attachment ordinal to category string ("travel",
-"receipt", ...); attachments without an entry are skipped, and `nil`
-skips the whole message:
+Return a table of attachment ordinal to a relative path below the
+download root: a full path (`"travel/flights/london.pdf"`) is used
+verbatim - the plugin owns the structure and the filename; a bare
+category (`"travel"`) falls back to the config `layout`, so the client
+adds the date. Attachments without an entry are skipped, and `nil`
+skips the whole message.
 
 Patterns are RE2 (Lua string patterns have no alternation). RE2
 escapes with backslash, so a literal dot is `\.` and the Lua literal
-needs `\\` - a single backslash is swallowed by the Lua parser:
+needs `\\` - a single backslash is swallowed by the Lua parser. The
+filename transform below is plain Lua string work on the returned
+value - the client writes whatever path comes back, segment by
+segment:
 
 ```lua
+function slug(s)
+  s = string.lower(s)
+  s = s:gsub("[^%w.%-]", "-")   -- non word/dot/dash chars to a dash
+  s = s:gsub("%-+", "-")
+  return s
+end
+
 local rules = {
   { from = "trip\\.com", subject = "^Flight Booking Confirmed:", category = "travel" },
   { from = "delta\\.com", subject = "boarding pass", category = "travel" },
@@ -287,7 +303,9 @@ function categorize(handle, msg)
 
   local out = {}
   for i, att in ipairs(get_attachments(handle)) do
-    if att.mime == "application/pdf" then out[i] = category end
+    if att.mime == "application/pdf" then
+      out[i] = category .. "/" .. date_str(msg.date, "YYYY/MM") .. "/" .. slug(att.name)
+    end
   end
   return out
 end
@@ -295,8 +313,11 @@ end
 
 `re_match(pattern, str)` is the regex helper: Go's RE2 syntax (Lua
 string patterns have no alternation), returning `match, err` - a bad
-pattern is `false` plus the error text, never a raise. The file above
-ships as `config/examples/lua/categorize.lua` - copy it to
+pattern is `false` plus the error text, never a raise.
+`date_str(sec, pattern)` formats a unix timestamp by the same
+`YYYY`/`MM`/`DD` token pattern as the config `layout` (default
+`YYYY/MM`) - the calendar lives in the client, not the plugin. The
+file above ships as `config/examples/lua/categorize.lua` - copy it to
 `<configdir>/lua`.
 
 The command:
@@ -306,13 +327,19 @@ The command:
 ./notmutt attachments 'has:attachment'             # save, no dry-run (query defaults to *)
 ```
 
-Files land in `<folder>/<YYYY-MM from the message date>/<category>/<filename>`,
-with the download root from the config (default `~/Downloads/Attachments`):
+The plugin's path lands below the download root from the config
+(default `~/Downloads/Attachments`); a bare category gets its date
+from the config layout - `YYYY`, `MM`, `DD` tokens, `/`-separated into
+directories, empty = no date:
 
 ```toml
 [attachments]
 folder = "~/Downloads/Attachments"
+layout = "YYYY-MM"   # date pattern for bare-category returns; "" = none
 ```
+
+A multi-segment plugin path bypasses the layout entirely - the
+structure it returns is the structure written.
 
 Idempotent: an existing target is skipped (`skip <path> (exists)`),
 never overwritten - re-runs are safe. Filenames and categories are

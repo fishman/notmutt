@@ -352,6 +352,10 @@ notmutt, never cite authority.
 
 ## Agent working rules (Claude Code and Pi both)
 
+- Scope (hard rule): only write code under `src/`. `references/` is
+  read-only source material - never edit, move, or add to it; consult
+  it as needed, copy patterns out as needed, leave it untouched.
+  Anything outside `src/` is doc/config unless the task names it.
 - Privacy (hard rule, overrides everything): NEVER submit mail content
   (bodies, headers, whole .eml/.mbox files) to the LLM. To read a
   subject or field from inside mail, extract it with a script first

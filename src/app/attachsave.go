@@ -48,10 +48,12 @@ type AttachMeta struct {
 	Date    int64
 }
 
-// CategorizeHook decides one message's attachment categories. The hook
-// receives the mail handle - the message's parsed attachment list,
+// CategorizeHook decides one message's attachment destinations. The
+// hook receives the mail handle - the message's parsed attachment list,
 // fetched through it by the plugin - plus the metadata projection, and
-// returns a map of 1-based attachment ordinal to category. Attachments
+// returns a map of 1-based attachment ordinal to a relative path: a
+// bare category (single segment, slotted into the config layout) or a
+// full folder/filename path (multi segment, used verbatim). Attachments
 // without an entry are skipped. The Lua layer registers its adapter
 // here (the R2 filter interface shape).
 type CategorizeHook func(handle string, m AttachMeta) (map[int]string, error)
@@ -130,17 +132,48 @@ func sanitizeSegment(s string) string {
 	return s
 }
 
-// attachmentTarget resolves one save's target:
-// <folder>/<YYYY-MM>/<category>/<filename> (the month from the
-// message date, local time). Empty when the sanitizer dropped a
-// segment (nothing to save).
-func attachmentTarget(folder string, meta AttachMeta, category, name string) string {
-	cat := sanitizeSegment(category)
-	file := sanitizeSegment(name)
-	if cat == "" || file == "" {
+// attachmentTarget resolves one save's target from the hook's relative
+// path. A multi-segment value (travel/flights/london.pdf) is the full
+// destination below the [attachments] folder - the plugin owns the
+// structure and the filename, and the date layout is bypassed. A single
+// segment (travel) is a legacy category slotted into the config layout
+// (<YYYY-MM>/<category>/<filename>). Every segment passes the
+// sanitizer; an empty or collapsed path means nothing to save.
+func attachmentTarget(folder, layout string, meta AttachMeta, rel, name string) string {
+	var segs []string
+	for _, p := range strings.Split(rel, "/") {
+		if p = sanitizeSegment(p); p != "" {
+			segs = append(segs, p)
+		}
+	}
+	if len(segs) == 0 {
 		return ""
 	}
-	return filepath.Join(folder, time.Unix(meta.Date, 0).Format("2006-01"), cat, file)
+	if len(segs) == 1 {
+		file := sanitizeSegment(name)
+		if file == "" {
+			return ""
+		}
+		segs = append(layoutDir(layout, meta.Date), segs[0], file)
+	}
+	return filepath.Join(append([]string{folder}, segs...)...)
+}
+
+// dateLayout translates a YYYY/MM/DD token pattern into a Go time
+// layout (the user-facing pattern, not Go's reference layout). Shared
+// by the [attachments] config and the date_str Lua binding.
+func dateLayout(pattern string) string {
+	return strings.NewReplacer("YYYY", "2006", "MM", "01", "DD", "02").Replace(pattern)
+}
+
+// layoutDir renders the [attachments] layout date pattern into path
+// segments: YYYY/MM/DD map to the year, month, and day, everything else
+// literal. Empty layout = no date directory.
+func layoutDir(layout string, ts int64) []string {
+	if layout == "" {
+		return nil
+	}
+	return strings.Split(time.Unix(ts, 0).UTC().Format(dateLayout(layout)), "/")
 }
 
 // AttachSave is one attachment's pass outcome - the review surface of
@@ -162,7 +195,7 @@ type AttachSave struct {
 // never re-read already-saved attachments. Dry-run reports the plan
 // without writing. Failures are recorded per attachment, never
 // aborting the message or the pass.
-func saveMessageAttachments(file string, meta AttachMeta, folder string, dryRun bool) []AttachSave {
+func saveMessageAttachments(file string, meta AttachMeta, folder, layout string, dryRun bool) []AttachSave {
 	msg, err := mail.ParseMessage(file)
 	if err != nil {
 		return []AttachSave{{Name: file, Err: err}}
@@ -180,19 +213,19 @@ func saveMessageAttachments(file string, meta AttachMeta, folder string, dryRun 
 	sort.Ints(ordinals)
 	var saves []AttachSave
 	for _, o := range ordinals {
-		cat := cats[o]
+		rel := cats[o]
 		if o < 1 || o > len(msg.Attachments) {
-			saves = append(saves, AttachSave{Name: fmt.Sprintf("attachment %d", o), Category: cat,
+			saves = append(saves, AttachSave{Name: fmt.Sprintf("attachment %d", o), Category: rel,
 				Err: fmt.Errorf("ordinal %d out of range 1..%d", o, len(msg.Attachments))})
 			continue
 		}
 		att := msg.Attachments[o-1]
-		target := attachmentTarget(folder, meta, cat, att.Name)
+		target := attachmentTarget(folder, layout, meta, rel, att.Name)
 		if target == "" {
-			saves = append(saves, AttachSave{Category: cat, Name: att.Name, Err: fmt.Errorf("unsafe name %q", att.Name)})
+			saves = append(saves, AttachSave{Category: rel, Name: att.Name, Err: fmt.Errorf("unsafe name %q", att.Name)})
 			continue
 		}
-		s := AttachSave{Category: cat, Name: att.Name, Target: target}
+		s := AttachSave{Category: rel, Name: att.Name, Target: target}
 		if _, err := os.Stat(target); err == nil {
 			s.Exists = true
 			saves = append(saves, s)
@@ -272,7 +305,7 @@ func attachmentsOnce() error {
 	if err != nil {
 		return fmt.Errorf("attachments: mail root: %w", err)
 	}
-	saved, skipped, err := runAttachmentBackfill(worker, root, attachmentFolder(cfg), query, dryRun)
+	saved, skipped, err := runAttachmentBackfill(worker, root, attachmentFolder(cfg), cfg.Attachments.Layout, query, dryRun)
 	if err != nil {
 		return err
 	}
@@ -296,7 +329,7 @@ func absMailPath(root, p string) string {
 // filter engine's two-step. Returns one save/skip line per attachment
 // plus the tallies; the callers decide the sink (stdout for the
 // command, the session log for the hotkey).
-func attachmentPass(worker workerAPI, root, folder, query string, dryRun bool) (lines []string, saved, skipped int, err error) {
+func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun bool) (lines []string, saved, skipped int, err error) {
 	var ids []string
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQueryMsgs, Query: query,
 		Emit: func(chunk []core.Message) bool {
@@ -315,7 +348,7 @@ func attachmentPass(worker workerAPI, root, folder, query string, dryRun bool) (
 		m := rpl.Msgs[i]
 		meta := AttachMeta{From: m.Author, Subject: m.Subject, Date: m.Timestamp}
 		for _, p := range m.Paths {
-			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, dryRun) {
+			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, layout, dryRun) {
 				if s.Err != nil {
 					// one stale path (an external maildir rename
 					// between notmuch new runs) must not abort the
@@ -338,8 +371,8 @@ func attachmentPass(worker workerAPI, root, folder, query string, dryRun bool) (
 
 // runAttachmentBackfill is the headless command body: attachmentPass
 // with the lines printed (the command's review surface).
-func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun bool) (saved, skipped int, err error) {
-	lines, saved, skipped, err := attachmentPass(worker, root, folder, query, dryRun)
+func runAttachmentBackfill(worker workerAPI, root, folder, layout, query string, dryRun bool) (saved, skipped int, err error) {
+	lines, saved, skipped, err := attachmentPass(worker, root, folder, layout, query, dryRun)
 	for _, l := range lines {
 		fmt.Println(l)
 	}
@@ -351,7 +384,7 @@ func runAttachmentBackfill(worker workerAPI, root, folder, query string, dryRun 
 // lines and tallies published as CategorizeResult for the session log.
 func categorizeThread(worker workerAPI, bus *core.Bus, threadID string, cfg *config.Config) {
 	res := core.CategorizeResult{ThreadID: threadID}
-	lines, saved, skipped, err := attachmentPass(worker, "", attachmentFolder(*cfg), "thread:"+threadID, false)
+	lines, saved, skipped, err := attachmentPass(worker, "", attachmentFolder(*cfg), cfg.Attachments.Layout, "thread:"+threadID, false)
 	if err != nil {
 		res.Err = err
 		bus.Publish(res)

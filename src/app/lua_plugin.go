@@ -159,6 +159,16 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		L.Push(tbl)
 		return 1
 	}))
+	// date_str formats a unix timestamp by the YYYY/MM/DD token pattern
+	// (the same tokens as the [attachments] layout): date_str(msg.date,
+	// "YYYY/MM") -> "2026/08". Literal text passes through; the default
+	// pattern is "YYYY/MM". The calendar lives here, not in the plugin.
+	vm.SetGlobal("date_str", vm.NewFunction(func(L *lua.LState) int {
+		pattern := L.OptString(2, "YYYY/MM")
+		s := time.Unix(int64(L.CheckNumber(1)), 0).UTC().Format(dateLayout(pattern))
+		L.Push(lua.LString(s))
+		return 1
+	}))
 	if err := vm.DoFile(path); err != nil {
 		log.Printf("lua plugin %s: %v", path, err)
 		vm.Close()
@@ -346,7 +356,7 @@ func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]stri
 			}
 			s, ok := val.(lua.LString)
 			if !ok {
-				verr = fmt.Errorf("categorize values must be category strings, got %s", val.Type().String())
+				verr = fmt.Errorf("categorize values must be relative path strings, got %s", val.Type().String())
 				return
 			}
 			out[int(o)] = string(s)

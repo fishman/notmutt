@@ -69,18 +69,32 @@ func TestAttachmentFolder(t *testing.T) {
 func TestAttachmentTarget(t *testing.T) {
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
 	meta := AttachMeta{Date: ts.Unix()}
-	if got := attachmentTarget("/dl", meta, "travel", "boarding-pass.pdf"); got != "/dl/2026-08/travel/boarding-pass.pdf" {
-		t.Fatalf("target = %q", got)
+	// a bare category slots into the layout (the legacy shape)
+	if got := attachmentTarget("/dl", "YYYY-MM", meta, "travel", "boarding-pass.pdf"); got != "/dl/2026-08/travel/boarding-pass.pdf" {
+		t.Fatalf("category target = %q", got)
 	}
-	// separators flatten into one safe segment - traversal is impossible
-	if got := attachmentTarget("/dl", meta, "a/b", "../x.pdf"); got != "/dl/2026-08/a_b/.._x.pdf" {
-		t.Fatalf("separator target = %q", got)
+	// the layout is a config pattern, not a fixed month dir
+	if got := attachmentTarget("/dl", "YYYY/MM", meta, "travel", "boarding-pass.pdf"); got != "/dl/2026/08/travel/boarding-pass.pdf" {
+		t.Fatalf("nested layout target = %q", got)
 	}
-	for _, c := range []struct{ cat, name string }{
+	// empty layout = no date directory
+	if got := attachmentTarget("/dl", "", meta, "travel", "boarding-pass.pdf"); got != "/dl/travel/boarding-pass.pdf" {
+		t.Fatalf("no-date target = %q", got)
+	}
+	// a full path is used verbatim: the plugin owns structure and
+	// filename, the layout is bypassed
+	if got := attachmentTarget("/dl", "YYYY-MM", meta, "travel/flights/Boarding Pass.pdf", "x.pdf"); got != "/dl/travel/flights/Boarding Pass.pdf" {
+		t.Fatalf("full path target = %q", got)
+	}
+	// traversal segments are dropped, never joined
+	if got := attachmentTarget("/dl", "YYYY-MM", meta, "travel/../x.pdf", "x.pdf"); got != "/dl/travel/x.pdf" {
+		t.Fatalf("traversal target = %q", got)
+	}
+	for _, c := range []struct{ rel, name string }{
 		{"", "x.pdf"}, {"travel", ""}, {".", "x.pdf"}, {"..", "x.pdf"},
 	} {
-		if got := attachmentTarget("/dl", meta, c.cat, c.name); got != "" {
-			t.Fatalf("unsafe %q/%q must be rejected, got %q", c.cat, c.name, got)
+		if got := attachmentTarget("/dl", "YYYY-MM", meta, c.rel, c.name); got != "" {
+			t.Fatalf("unsafe %q/%q must be rejected, got %q", c.rel, c.name, got)
 		}
 	}
 }
@@ -104,7 +118,7 @@ func TestSaveMessageAttachments(t *testing.T) {
 	dl := filepath.Join(dir, "dl")
 	target := filepath.Join(dl, "2026-08", "receipt", "invoice.pdf")
 
-	saves := saveMessageAttachments(path, meta, dl, true)
+	saves := saveMessageAttachments(path, meta, dl, "YYYY-MM", true)
 	if len(saves) != 1 || saves[0].Target != target || saves[0].Exists {
 		t.Fatalf("dry-run plan = %+v, want the single save at %s", saves, target)
 	}
@@ -112,7 +126,7 @@ func TestSaveMessageAttachments(t *testing.T) {
 		t.Fatal("a dry run must not write")
 	}
 
-	saves = saveMessageAttachments(path, meta, dl, false)
+	saves = saveMessageAttachments(path, meta, dl, "YYYY-MM", false)
 	if len(saves) != 1 || saves[0].Err != nil || saves[0].Exists {
 		t.Fatalf("live saves = %+v, want one clean save", saves)
 	}
@@ -133,7 +147,7 @@ func TestSaveMessageAttachments(t *testing.T) {
 	}
 
 	before := fi.ModTime()
-	saves = saveMessageAttachments(path, meta, dl, false)
+	saves = saveMessageAttachments(path, meta, dl, "YYYY-MM", false)
 	if len(saves) != 1 || !saves[0].Exists {
 		t.Fatalf("re-run = %+v, want the exists skip", saves)
 	}
@@ -159,12 +173,12 @@ func TestSaveMessageAttachmentsHookError(t *testing.T) {
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
 	meta := AttachMeta{Date: ts.Unix()}
 	p1 := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
-	saves := saveMessageAttachments(p1, meta, filepath.Join(dir, "dl"), false)
+	saves := saveMessageAttachments(p1, meta, filepath.Join(dir, "dl"), "YYYY-MM", false)
 	if len(saves) != 1 || saves[0].Err == nil {
 		t.Fatalf("the hook error must surface as the message entry: %+v", saves)
 	}
 	p2 := fixtureMail(t, dir, "m2.eml", "airline receipt", "Delta <delta@example.com>", "boarding.pdf", ts)
-	saves = saveMessageAttachments(p2, meta, filepath.Join(dir, "dl"), false)
+	saves = saveMessageAttachments(p2, meta, filepath.Join(dir, "dl"), "YYYY-MM", false)
 	if len(saves) != 1 || saves[0].Err != nil || !strings.HasSuffix(saves[0].Target, filepath.Join("photo", "boarding.pdf")) {
 		t.Fatalf("a clean message must still save: %+v", saves)
 	}
@@ -182,7 +196,7 @@ func TestSaveMessageAttachmentsOutOfRange(t *testing.T) {
 	dir := t.TempDir()
 	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
 	path := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
-	saves := saveMessageAttachments(path, AttachMeta{Date: ts.Unix()}, filepath.Join(dir, "dl"), false)
+	saves := saveMessageAttachments(path, AttachMeta{Date: ts.Unix()}, filepath.Join(dir, "dl"), "YYYY-MM", false)
 	if len(saves) != 2 {
 		t.Fatalf("saves = %+v, want the clean save and the out-of-range error", saves)
 	}
@@ -343,7 +357,7 @@ func TestRunAttachmentBackfill(t *testing.T) {
 	dl := filepath.Join(dir, "dl")
 	target := filepath.Join(dl, "2026-08", "receipt", "invoice.pdf")
 
-	savedN, skipped, err := runAttachmentBackfill(w, "", dl, "*", true)
+	savedN, skipped, err := runAttachmentBackfill(w, "", dl, "YYYY-MM", "*", true)
 	if err != nil || savedN != 2 || skipped != 0 {
 		t.Fatalf("dry-run backfill = %d saved %d skipped err %v", savedN, skipped, err)
 	}
@@ -354,7 +368,7 @@ func TestRunAttachmentBackfill(t *testing.T) {
 		t.Fatalf("the query must pass through, got %v", w.queries)
 	}
 
-	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "*", false)
+	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "YYYY-MM", "*", false)
 	if err != nil || savedN != 2 || skipped != 0 {
 		t.Fatalf("live backfill = %d saved %d skipped err %v", savedN, skipped, err)
 	}
@@ -362,7 +376,7 @@ func TestRunAttachmentBackfill(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "*", false)
+	savedN, skipped, err = runAttachmentBackfill(w, "", dl, "YYYY-MM", "*", false)
 	if err != nil || savedN != 0 || skipped != 2 {
 		t.Fatalf("re-run = %d saved %d skipped err %v, want the exists skips", savedN, skipped, err)
 	}
@@ -391,7 +405,7 @@ func TestRunAttachmentBackfillRelative(t *testing.T) {
 		},
 	}}
 	dl := filepath.Join(dir, "dl")
-	savedN, _, err := runAttachmentBackfill(w, root, dl, "*", false)
+	savedN, _, err := runAttachmentBackfill(w, root, dl, "YYYY-MM", "*", false)
 	if err != nil || savedN != 1 {
 		t.Fatalf("backfill = %d saved err %v", savedN, err)
 	}

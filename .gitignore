@@ -38,3 +38,9 @@ afew/
 # build artifacts
 /notmutt
 /docs/_site/
+
+# read-only reference material (external clones) - never commit
+/references/
+
+# local-only settings
+.claude/settings.local.json

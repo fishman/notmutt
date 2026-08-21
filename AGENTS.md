@@ -239,8 +239,11 @@ concept exists once. Where two features share data or behavior, one
 derives from the other - the account + preset data drives both the
 derived folder rules and the mover; the canonical sort comparator is
 one function, shared by the worker's batch emission and the view's
-diff merge-walk. Duplicated concepts across modules are design
-errors, not TODOs.
+diff merge-walk; the thread's display order is a flatten-time reversal
+of the rows (the [index.thread] sort config), never a reorder of the
+stored sets - the comparator order is the diff invariant, display
+order flips only at the flatten. Duplicated concepts across modules
+are design errors, not TODOs.
 
 ### R8. Config TOML; Lua bindings later
 

@@ -760,3 +760,45 @@ hydration class at ~4.5 minutes on the 33k-thread inbox), and still
 lands stale: a count fetched at walk time cannot see the staged ops
 that replay at render time. The headache is not the indicator; it is
 computing it away from the tree that is actually shown.
+
+## 32. The thread's display order is a flatten-time reversal (2026-08-21)
+
+Decision: `[index.thread] sort = "asc" | "desc"` (default desc)
+controls the flattened row order inside a thread. The implementation
+reverses the flattened row list at flatten time (flattenThread, one
+in-place slices.Reverse per thread per dirty rebuild) and never
+reorders what the view stores: the per-thread message sets keep their
+MsgLess-asc order and the reference tree keeps its topology. A
+binding-side (notmuch) sort flag was considered and rejected.
+
+Why not a cgo flag: notmuch has no per-thread sort flag -
+notmuch_thread_get_messages is always oldest-first (lib/thread.cc,
+the order MsgLess documents). A binding flag would mean writing a
+sort in C, duplicating the comparator in a second language; the
+canonical sort comparator is one function (AGENTS.md R7) and must not
+exist twice.
+
+Why the stored order cannot flip: the message sets are the diff
+invariant. DiffSorted (the thread-level and per-thread diffs) and the
+merge-walk in MergeThreads require both sides sorted by the same
+comparator; a stored desc order would corrupt the refresh diff and
+re-hydrate stale or duplicate rows. The tree is the invariant surface;
+the flatten is the display surface - display concerns stop at the
+flatten.
+
+Why the reversal is not a bidirectional walk: date-desc is a list
+order, not a traversal order. The tree topology is fixed by the
+references (the root is the oldest message), so no tree walk emits
+newest-first - reversing child order is a no-op on a linear chain
+(A->B->C stays A->B->C), and the newest message sits at a depth
+nothing walks first. The row list is consumed positionally by the
+cursor, the tree window, the filter maps, and the marks (O(1) slice
+index); a doubly-linked structure would make indexed access O(n)
+across the whole UI. The reversal itself is one pass over rows
+materialized milliseconds earlier by the same flatten, amortized by
+the memoized rebuild - the 129k-row index reverses in
+microsecond-class time next to the merge that triggered it.
+
+The positionally-agnostic machinery (window ghosts, the +/-N counts,
+the thread-tail marks) is order-independent by construction, so the
+flip is free for it.

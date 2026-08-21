@@ -197,18 +197,33 @@ func flags(tags []string) string {
 	return padCellsRight(flagChars(tags), 3)
 }
 
+// flagLetters is the canonical status-flag lookup table: tag -> the
+// letter it owns in the row-start flags cell (mutt's %S index flags as
+// tags, R1: client state is tags, not flags). A tag with an entry never
+// renders in the tag slot (flagTag) - it renders its letter in the
+// flags slot (flagChars). One table, both consumers.
+var flagLetters = map[string]byte{
+	"new":       'N',
+	"unread":    'N',
+	"replied":   'R',
+	"forwarded": 'F',
+	"deleted":   'D',
+	"trash":     'D',
+}
+
+// flagTag reports whether tag is a flag-slot tag (a flagLetters key):
+// it owns a letter in the row-start flags cell and never renders in
+// the tag slot.
+func flagTag(tag string) bool {
+	_, ok := flagLetters[tag]
+	return ok
+}
+
 func flagChars(tags []string) string {
 	var f strings.Builder
 	for _, t := range tags {
-		switch t {
-		case "unread":
-			f.WriteByte('N')
-		case "replied":
-			f.WriteByte('R')
-		case "forwarded":
-			f.WriteByte('F')
-		case "deleted":
-			f.WriteByte('D')
+		if l, ok := flagLetters[t]; ok {
+			f.WriteByte(l)
 		}
 	}
 	return f.String()
@@ -254,16 +269,16 @@ func formatDate(ts int64) string {
 // (spec section 6). Each glyph renders through its per-tag style (R11),
 // falling back to the default tag style. A tag with an icon entry in the
 // ui.tags.icons dict renders the icon instead of its name (muttrc
-// tag-transforms); flags-slot tags (unread, replied) and the signed
-// marker tag are skipped - they own row-start cells (flagChars,
-// signedIcon) - the attachment marker tag is skipped too - it owns
-// the attachment slot at the row start - and account tags are
-// skipped - the account lives in the status bar (R2).
+// tag-transforms); flag-slot tags (flagTag) and the signed marker tag
+// are skipped - they own row-start cells (flagChars, signedIcon) - the
+// attachment marker tag is skipped too - it owns the attachment slot
+// at the row start - and account tags are skipped - the account lives
+// in the status bar (R2), never the mail title.
 func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITags, accountTags map[string]bool) string {
 	var b strings.Builder
 	n := 0
 	for _, tag := range tags {
-		if tag == "unread" || tag == "replied" || tag == "signed" || tag == t.Attach || accountTags[tag] {
+		if flagTag(tag) || tag == "signed" || tag == t.Attach || accountTags[tag] {
 			continue
 		}
 		if n >= max {
@@ -289,10 +304,12 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITag
 // their natural width, names in full, one separator space per pair.
 // The per-page tag slot width is the widest run among the visible
 // rows; rows pad to it, so the subject column aligns within the page.
+// The skip list mirrors tagGlyphs - the width measures exactly the run
+// the render emits.
 func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bool) int {
 	n, cells := 0, 0
 	for _, tag := range tags {
-		if tag == "unread" || tag == "replied" || tag == "signed" || tag == t.Attach || accounts[tag] {
+		if flagTag(tag) || tag == "signed" || tag == t.Attach || accounts[tag] {
 			continue
 		}
 		if n >= max {

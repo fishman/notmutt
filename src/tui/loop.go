@@ -16,7 +16,7 @@ import (
 // and safe (the draw clobbers the cursor position on the next frame).
 func Run(model Model, quitCh <-chan struct{}) error {
 	probeCellSize()
-	s, err := tcell.NewScreen()
+	s, err := tcell.NewScreen(tcell.OptAdvancedKeys(true))
 	if err != nil {
 		return err
 	}

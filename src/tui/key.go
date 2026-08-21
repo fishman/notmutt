@@ -110,6 +110,11 @@ var specialKeyName = map[rune]string{
 // rune - the bindings bind "G" and "j" separately); special keys map
 // to the special codes; ctrl/alt-modified keys carry no Text, so
 // actionForKey's canonical probe resolves them.
+//
+// The screen opens with OptAdvancedKeys (loop.go): tcell's newer key
+// normalization reports ctrl+letter as KeyRune with ModCtrl on every
+// input path (kitty-protocol CSI-u, legacy control bytes, win32), so
+// the legacy KeyCtrlA..KeyCtrlZ folding never reaches this mapping.
 func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 	code := ev.Key()
 	mod := modNone
@@ -133,12 +138,6 @@ func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 			return KeyPressMsg{Text: " ", Code: KeySpace, Mod: mod}, KeyReleaseMsg{}, true
 		}
 		return KeyPressMsg{Text: text, Code: r, Mod: mod}, KeyReleaseMsg{}, true
-	}
-	if code >= tcell.KeyCtrlA && code <= tcell.KeyCtrlZ {
-		// legacy keyboard reporting folds ctrl+letter into a
-		// KeyCtrlX code (no rune, the modifier implicit): unbundle
-		// it so the binding canonical name ("ctrl+f") resolves.
-		return KeyPressMsg{Code: 'a' + rune(code-tcell.KeyCtrlA), Mod: mod | modCtrl}, KeyReleaseMsg{}, true
 	}
 	if k, ok := specialKeyCode[code]; ok {
 		return KeyPressMsg{Code: k, Mod: mod}, KeyReleaseMsg{}, true

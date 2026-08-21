@@ -329,11 +329,13 @@ package notmuch
 // }
 //
 // // full_pack_msg packs one message's row: id (id: prefix stripped),
-// // date, from, subject, tags, paths, and an empty refs slot. The
-// // references/in-reply-to reads are a deliberate drop (the refs
-// // fallback, docs/refs-from-terms.md): get_header on those headers
-// // file-parses every message (~4s of the walk); the chain rides the
-// // per-thread fetch, and the libnotmuch getter fix re-adds the reads.
+// // date, from, subject, tags, paths, and the refs slot (full_pack_refs:
+// // the reference chain from the fork's term-list getters under
+// // NOTMUCH_HAS_REF_GETTERS - the refsfromterms build option, docs/
+// // refs-from-terms.md). A stock build packs the slot empty: get_header
+// // on the references headers file-parses every message (~4s of the
+// // walk), so the drop keeps the walk fast there and the chain rides
+// // the per-thread fetch.
 // // full_pack_paths is full_pack_blob over the filenames iterator (the
 // // same string-iterator shape, distinct type).
 // static int full_pack_paths(void **arena, size_t *cap, size_t *fill, notmuch_filenames_t *paths) {
@@ -369,6 +371,39 @@ package notmuch
 // 	return ok2;
 // }
 //
+// // full_pack_refs packs the message's reference chain into the row's
+// // refs slot: "refs irt" space-joined, the ids notmuch parsed at index
+// // time (the replyto term plus the reference terms). Gated on
+// // NOTMUCH_HAS_REF_GETTERS, defined only by the refsfromterms build
+// // tag (refsfromterms.go): stock notmuch lacks the getters, so the
+// // slot packs empty and the walk keeps its file-open-free fast path.
+// static int full_pack_refs(void **arena, size_t *cap, size_t *fill, notmuch_message_t *m) {
+// 	const char *refs = "", *irt = "";
+// #ifdef NOTMUCH_HAS_REF_GETTERS
+// 	refs = notmuch_message_get_references(m);
+// 	irt = notmuch_message_get_in_reply_to(m);
+// #endif
+// 	if (!refs) {
+// 		refs = "";
+// 	}
+// 	if (!irt) {
+// 		irt = "";
+// 	}
+// 	size_t lr = strlen(refs), li = strlen(irt), n = lr + li + (lr && li ? 1 : 0);
+// 	char *buf = malloc(n + 1);
+// 	if (!buf) {
+// 		return 0;
+// 	}
+// 	memcpy(buf, refs, lr);
+// 	if (lr && li) {
+// 		buf[lr] = ' ';
+// 	}
+// 	memcpy(buf + lr + (lr && li ? 1 : 0), irt, li);
+// 	int ok = full_pack_buf(arena, cap, fill, buf, n);
+// 	free(buf);
+// 	return ok;
+// }
+//
 // static int full_pack_msg(void **arena, size_t *cap, size_t *fill, notmuch_message_t *m) {
 // 	const char *id = notmuch_message_get_message_id(m);
 // 	if (id && strncmp(id, "id:", 3) == 0) {
@@ -391,7 +426,7 @@ package notmuch
 // 	int ok = full_pack_str(arena, cap, fill, id) && full_pack_i64(arena, cap, fill, ts) &&
 // 		full_pack_str(arena, cap, fill, from) && full_pack_str(arena, cap, fill, subj) &&
 // 		full_pack_blob(arena, cap, fill, mtags) && full_pack_paths(arena, cap, fill, mfiles) &&
-// 		full_pack_str(arena, cap, fill, "");
+// 		full_pack_refs(arena, cap, fill, m);
 // 	if (mfiles) {
 // 		notmuch_filenames_destroy(mfiles);
 // 	}
@@ -675,7 +710,7 @@ type FullMessage struct {
 	Subject    string
 	Tags       []string
 	Paths      []string
-	References string // raw "references in-reply-to" headers, space-joined
+	References string // refs + irt, space-joined: term-list ids (refsfromterms build) or empty (stock)
 }
 
 // FullThread is a thread's summary plus its full message rows, packed

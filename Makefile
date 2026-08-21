@@ -8,6 +8,13 @@ BIN     ?= notmutt
 FUZZ    ?= FuzzRenderHTML
 FUZZTIME?= 30s
 
+# REFSFROMTERMS=1 links the notmuch fork with the term-list ref getters
+# (docs/refs-from-terms.md); the default build targets stock notmuch,
+# where the walk packs empty reference chains.
+ifeq ($(REFSFROMTERMS),1)
+TAGS += refsfromterms
+endif
+
 GO_CMD   = cd src && $(GO)
 GO_TAGS  = -tags "$(TAGS)"
 

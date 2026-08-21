@@ -75,6 +75,7 @@ opener = ["xdg-open"]
 "c" = { fun = "categorize", desc = "Categorize the thread's attachments", show = true }
 "C" = { fun = "collapse-thread", desc = "Collapse or expand the thread under the cursor", show = true }
 "ctrl+v" = { fun = "collapse-all", desc = "Flatten or expand every thread", show = true }
+"z" = { fun = "toggle-flat", desc = "Toggle the thread tree / flat display", show = true }
 "g g" = { fun = "cursor-top", desc = "Jump to the first row" }
 "G" = { fun = "cursor-bottom", desc = "Jump to the last row" }
 "g r" = { fun = "reply-all", show = true }
@@ -199,6 +200,7 @@ opener = ["xdg-open"]
 "P" = { fun = "preview", show = true }
 "C" = { fun = "collapse-thread", show = true }
 "ctrl+v" = { fun = "collapse-all", show = true }
+"z" = { fun = "toggle-flat", show = true }
 "pgdown" = { fun = "page-down" }
 "pgup" = { fun = "page-up" }
 "[" = { fun = "tab-prev", show = true }

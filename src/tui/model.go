@@ -61,7 +61,7 @@ var Actions = map[string]map[string]bool{
 		"scroll-left": true, "scroll-right": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
 		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true,
-		"collapse-thread": true, "collapse-all": true,
+		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,

@@ -831,6 +831,10 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 type View struct {
 	Query   string `toml:"query"`
 	Threads bool   `toml:"threads"`
+	// Flat renders the threaded views' rows at the same level - the
+	// thread grouping stays, the tree glyphs go (the z key toggles
+	// the live view the same way).
+	Flat bool `toml:"flat"`
 }
 
 // IndexSection is the [index] table (R11): the index surface budgets.

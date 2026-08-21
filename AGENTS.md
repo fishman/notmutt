@@ -689,6 +689,32 @@ Security (SECURITY.md is normative for trust boundaries; the hard rules):
 - Parser-adjacent code passes the fuzz targets in SECURITY.md before it
   is accepted (F1-F4, F10).
 
+### MCP data boundary (locked)
+
+The [mcp] server is an LLM-agent boundary: every tool result is
+metadata an agent may act on. The scope config is the boundary, and
+it is deny-by-default:
+
+- `[mcp] accounts` - the account folder spaces the server may see.
+  Each entry grants its folder prefix AND its account tag
+  (`folder:/^<name>\// AND tag:<name>`, subfolders included) - the
+  physical location and the logical identity, both required. A
+  read-only account can never match (its mail carries no account tag)
+  and is a load error, not a silent empty grant.
+- `[mcp] tags` - the soft tags whose mail is reachable; a message
+  must carry at least one allowed tag. The account tag is part of the
+  account grant, not this list.
+- Empty `accounts` or `tags` serves nothing. Enforcement is per-tool:
+  search/count intersect the query with the scope, thread_info
+  projects only in-scope messages, attachments refuses out-of-scope
+  ids before any file open.
+
+The correctness test for this boundary is
+`TestMCPScopeEnforcement` (src/app/mcp_test.go). It is LOCKED: it
+must never be loosened, weakened, or removed without explicit user
+approval stated in the conversation - a change to the boundary must
+start with that approval, not end with a test edit.
+
 ## Non-goals
 
 - No IMAP/POP3 client implementation (transport stays mbsync/vdirsyncer or

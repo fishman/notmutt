@@ -361,6 +361,30 @@ allow = ["attachments"]
 An unknown name in `allow` is a startup error - a typo fails loudly
 instead of silently serving fewer tools.
 
+## The data boundary: accounts and tags
+
+The server's world is explicit: `[mcp] accounts` names the account
+folder spaces it may see, `[mcp] tags` the soft tags whose mail is
+reachable. Deny by default - an empty `accounts` or `tags` list
+serves nothing.
+
+```toml
+[mcp]
+allow = ["attachments"]
+accounts = ["gmail"]        # folder space AND the account tag
+tags = ["inbox", "sent"]    # a message must carry one of these
+```
+
+Each allowed account grants its folder prefix AND its account tag
+(`folder:/^gmail\// AND tag:gmail`, subfolders included). Every tool
+enforces the scope: `search` and `count` intersect the query with the
+scope before it reaches notmuch, `thread_info` projects only in-scope
+messages of the thread, and the gated `attachments` tool refuses any
+message outside the scope before its file is opened. An unknown
+account name, a read-only account (its mail carries no account tag,
+so the scope could never match), or a tag that would break the query
+are startup errors - never a silent partial grant.
+
 The privacy rule (never submit mail content to an LLM) is a hard
 boundary of the server: results carry thread metadata only. Bodies,
 raw maildir paths, and headers are never projected, and no tool reads

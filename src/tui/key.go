@@ -134,6 +134,12 @@ func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 		}
 		return KeyPressMsg{Text: text, Code: r, Mod: mod}, KeyReleaseMsg{}, true
 	}
+	if code >= tcell.KeyCtrlA && code <= tcell.KeyCtrlZ {
+		// legacy keyboard reporting folds ctrl+letter into a
+		// KeyCtrlX code (no rune, the modifier implicit): unbundle
+		// it so the binding canonical name ("ctrl+f") resolves.
+		return KeyPressMsg{Code: 'a' + rune(code-tcell.KeyCtrlA), Mod: mod | modCtrl}, KeyReleaseMsg{}, true
+	}
 	if k, ok := specialKeyCode[code]; ok {
 		return KeyPressMsg{Code: k, Mod: mod}, KeyReleaseMsg{}, true
 	}

@@ -96,7 +96,8 @@ no stub rows, no per-thread hydration job. The references/in-reply-to
 reads are dropped by the refs fallback (docs/refs-from-terms.md,
 decision record 30): get_header on those headers file-parses every
 message, so the walk ships empty chains and runs 1.77s; the chain
-rides the per-thread fetch, and the queued libnotmuch getter fix
+rides the per-thread fetch, and the refsfromterms build's libnotmuch
+getter fix (docs/refs-from-terms.md)
 re-adds the reads with no client changes. The cgo
 handle stays read-only; Tag reopens read-write for the op only (the
 CLI's lock footprint - a persistent write handle would block every

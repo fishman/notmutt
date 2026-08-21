@@ -57,6 +57,9 @@ The index renders each thread as a tree, windowed to
 chunk with a leading "-N more" ghost (rows hidden above) and a trailing
 "+N more" ghost (rows hidden below). Walking to the window edge slides
 it to the next chunk, so the whole thread is reachable row by row.
+`[index.thread] sort` orders the flattened rows inside a thread:
+`"desc"` (the default) reads newest-first like the index, `"asc"` the
+notmuch-native oldest-first order.
 
 `C` collapses the cursor thread to its summary row. The collapse is
 cursor-scoped: moving the cursor off the thread expands it again, so a

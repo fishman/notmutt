@@ -109,6 +109,7 @@ func Run() error {
 	view.SetGroups(groups)
 	b := st.Config().Index.Thread
 	view.SetWindowBudget(b.MaxRows)
+	view.SetMsgDesc(b.Sort == "desc")
 	// the thread-tail marks derive from the view rows (never an open);
 	// the identity set is startup-captured like the seam closures above
 	view.SetMe(me)
@@ -124,6 +125,7 @@ func Run() error {
 		}
 		v.SetGroups(groups)
 		v.SetWindowBudget(b.MaxRows)
+		v.SetMsgDesc(b.Sort == "desc")
 		v.SetMe(me)
 		// search results are flat: a raw query lists messages, never a
 		// conversation tree

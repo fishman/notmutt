@@ -71,6 +71,31 @@ func TestRowsFlattenThreadTree(t *testing.T) {
 	}
 }
 
+// TestFlattenSortOrder pins the [index.thread] sort config: asc is
+// the notmuch-native oldest-first order, desc reverses the flattened
+// rows so the thread reads newest-first like the index.
+func TestFlattenSortOrder(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	th := NewThread("t1", []*Message{msg("a", 1), msg("b", 2, "a"), msg("c", 3, "b")})
+	v.MergeThreads([]*Thread{th})
+	ids := func() []string {
+		var out []string
+		for _, r := range v.Rows() {
+			if r.Msg != nil {
+				out = append(out, r.Msg.ID)
+			}
+		}
+		return out
+	}
+	if got := ids(); !slices.Equal(got, []string{"a", "b", "c"}) {
+		t.Fatalf("default flatten = %v (want a b c, oldest first)", got)
+	}
+	v.SetMsgDesc(true)
+	if got := ids(); !slices.Equal(got, []string{"c", "b", "a"}) {
+		t.Fatalf("desc flatten = %v (want c b a, newest first)", got)
+	}
+}
+
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})

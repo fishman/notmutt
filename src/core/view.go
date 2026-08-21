@@ -55,6 +55,10 @@ type View struct {
 	// the tree window budget ([index.thread]): winRows rows per thread.
 	// Zero winRows = no window.
 	winRows int
+	// msgDesc flips the flatten's per-thread row order (SetMsgDesc,
+	// the [index.thread] sort config): desc reverses the flattened
+	// rows so the thread reads newest-first.
+	msgDesc bool
 	// me is the identity set for the thread-tail marks (SetMe, the
 	// account from fields): the sent-tag or address "me" detection in
 	// ClassifyRows. Zero = sent-tag identity only.
@@ -84,6 +88,16 @@ func (v *View) SetWindowBudget(winRows int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.winRows = winRows
+}
+
+// SetMsgDesc sets the flatten's message order inside a thread (the
+// [index.thread] sort config): desc reverses the flattened rows so the
+// thread reads newest-first like the index.
+func (v *View) SetMsgDesc(desc bool) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.msgDesc = desc
+	v.dirty = true
 }
 
 func NewView(name, query string) *View {
@@ -212,7 +226,7 @@ func (v *View) Rows() []Row {
 func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
-		full := flattenThread(t, t.Collapsed, v.threaded)
+		full := flattenThread(t, t.Collapsed, v.threaded, v.msgDesc)
 		// the thread-tail marks: only a windowed thread marks - one with
 		// rows hidden above or below (the "+N more" ghosts). The marks
 		// classify the FULL tree and ride the rows through the window,
@@ -373,8 +387,12 @@ func collapseMsg(root *Node, skipDeleted bool) *Message {
 // full message set (the user's rule: fetch everything first, filter
 // after): a deleted message with children keeps its row - the
 // subtree hangs under it and removing it would break the hierarchy -
-// only a deleted LEAF vanishes from the threaded view.
-func flattenThread(t *Thread, collapsed, skipDeleted bool) []Row {
+// only a deleted LEAF vanishes from the threaded view. desc reverses
+// the flattened rows: the thread reads newest-first (the notmuch
+// tree itself is never reordered - the rows' depth and sibling
+// glyphs describe the reference structure, only the display order
+// flips, so the diff machinery's MsgLess ordering stays untouched).
+func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 	var rows []Row
 	if t.Root == nil {
 		return rows
@@ -413,6 +431,9 @@ func flattenThread(t *Thread, collapsed, skipDeleted bool) []Row {
 		}
 	}
 	walk(t.Root, 0, nil)
+	if desc {
+		slices.Reverse(rows)
+	}
 	return rows
 }
 
@@ -626,7 +647,7 @@ func (v *View) SlideWindow(threadID string, step int) bool {
 		if t.ID != threadID {
 			continue
 		}
-		full := flattenThread(t, t.Collapsed, v.threaded)
+		full := flattenThread(t, t.Collapsed, v.threaded, v.msgDesc)
 		if len(full) <= v.winRows {
 			return false
 		}

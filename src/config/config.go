@@ -844,6 +844,10 @@ type IndexSection struct {
 
 type ThreadBudget struct {
 	MaxRows int `toml:"max-rows"`
+	// Sort is the flatten's message order inside a thread: "desc"
+	// (the default) reads newest-first like the index, "asc" the
+	// notmuch-native oldest-first order.
+	Sort string `toml:"sort"`
 }
 
 // Send is the send transport argv (R4): ONE configurable command,
@@ -1143,7 +1147,7 @@ func Default() Config {
 			"archive": {Query: "tag:archive", Threads: true},
 		},
 		Index: IndexSection{
-			Thread: ThreadBudget{MaxRows: 10},
+			Thread: ThreadBudget{MaxRows: 10, Sort: "desc"},
 		},
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
@@ -1453,6 +1457,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.UI.SearchOpen != "active" && cfg.UI.SearchOpen != "background" {
 		return fmt.Errorf("ui.search-open: must be active or background, got %q", cfg.UI.SearchOpen)
+	}
+	if s := cfg.Index.Thread.Sort; s != "asc" && s != "desc" {
+		return fmt.Errorf("index.thread.sort: must be asc or desc, got %q", s)
 	}
 	if cfg.Refresh.Interval < 0 {
 		return fmt.Errorf("refresh.interval: must be >= 0 minutes (0 disables the poll), got %d", cfg.Refresh.Interval)

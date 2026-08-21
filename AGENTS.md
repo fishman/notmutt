@@ -1,684 +1,381 @@
 # notmutt - requirements and architecture
 
-Workspace: a mail client under construction. This workspace holds the source
-material: `references/neomutt/` (fork carrying async patches), `references/muttrc/` (live config,
-the reference mail setup), `references/afew/` (fork with the per-account MailMover),
-`references/notmuch/` (notmuch source), `neovim/` (neovim checkout, reference for UI
-async + Lua integration).
+Workspace: mail client under construction. Source material:
+`references/neomutt/` (async patches), `references/muttrc/` (live config),
+`references/afew/` (per-account MailMover), `references/notmuch/` (notmuch
+source), `neovim/` (UI async + Lua reference).
 
-The goal: an async, command-line-first mail client. All mail handled by
-notmuch. Read these rules as architecture constraints, not suggestions.
+Goal: async, command-line-first mail client. All mail via notmuch.
+Architecture constraints, not suggestions.
 
-## The mail concept (derived from muttrc + afew + notmuch configs)
+## The mail concept
 
-Tags are the logical model. Folders are physical storage. Every view,
-filter, and trigger is a notmuch query or tag operation; folders exist only
-for sync-tool compatibility (mbsync/vdirsyncer) and for physical moves.
-
-Current classification pipeline (the reference flow):
-
-1. transport: mbsync/vdirsyncer deliver to per-account maildirs
-2. index: `notmuch new` (new mail gets `new.tags`: unread, inbox)
-3. folder rules: `notmuch tag --input` - mail in folder X gets the
-   corresponding hard tag (archive, sent, spam, draft, deleted, pending)
-   plus per-account tags (the account name via a
-   `folder:/^<account>\//` regex)
-4. header rules (post-new hook): content-based soft tags (work, xolo,
-   meeting, cfp, conference, exhibition, receipt, newsletter)
-5. physical move: afew `--move-mails` with per-account `folder_priorities`
-6. side effects: untag-reversal on delivery, address cache for query
-   completion, notification
+Tags = logical model. Folders = physical storage. Every view, filter,
+trigger = notmuch query or tag op; folders only for sync-tool
+compatibility and physical moves.
 
 ### Hard-tag exclusivity (KNOWN PAIN - must be fixed)
 
-Folder tags are mutually exclusive: one message has exactly one home
-(inbox, archive, deleted, sent, draft, pending, spam). The current config
-enforces this by hand: every new folder tag requires adding `-newtag` to
-every older rule and a cross-untag rule. This is unacceptable.
+Folder tags mutually exclusive: one message, one home (inbox, archive,
+deleted, sent, draft, pending, spam). Config enforces by hand: every new
+folder tag needs `-newtag` on every older rule + cross-untag rule.
+Unacceptable.
 
-The new client's filter engine MUST support declarative exclusive tag
-groups: `[tag-groups.folder] tags = ["inbox", "archive", "deleted",
-"sent", "draft", "pending", "spam"]`. Applying any tag in a group
-removes the others automatically; soft tags (work, conference, ...)
-are simply not in any group - unlimited, coexisting, never moved.
-Adding a tag to a group must not require touching existing rules.
+Filter engine MUST support declarative exclusive tag groups:
+`[tag-groups.folder] tags = ["inbox", "archive", "deleted", "sent",
+"draft", "pending", "spam"]`. Applying any member removes the others
+automatically. Soft tags in no group - unlimited, coexisting, never
+moved. Adding a group tag must not touch existing rules.
 
 ### Idempotency
 
-Every filter rule must carry a NOT guard so re-runs touch only new mail
-(first backfill on ~129k messages takes minutes; steady state must be
-cheap). Applied at every stage of the pipeline.
+Every filter rule must carry a NOT guard: re-runs touch only new mail
+(first backfill ~129k messages takes minutes; steady state must be
+cheap).
 
 ### Per-account folder priorities
 
-Physical move destinations resolve per account by existence: candidates are
-tried in order, first existing folder wins, `*` candidates are globs
-(afew `folder_priorities`; `references/muttrc/afew/config`). The new client's move
-engine must keep this model.
+Move destinations resolve per account by existence: candidates in order,
+first existing wins, `*` = globs (afew `folder_priorities`). Move engine
+must keep this model.
 
 ### Lock handling
 
-notmuch lock waits must be capped (config has `lock_timeout=10`) so UI tag
-operations error out instead of hanging behind a background index/send
-holding the lock.
+notmuch lock waits must be capped (`lock_timeout=10`): UI tag ops error
+out instead of hanging behind a background index/send.
 
 ## Requirements
 
-### R1. notmuch is the single source of truth
+### R1. notmuch = single source of truth
 
-No own database. Mailbox state, flags, threads, search all come from
-libnotmuch. The client is a notmuch front-end. Virtual views are tag
-queries; folder state is derived, never authoritative.
+No own DB. State, flags, threads, search from libnotmuch. Virtual views
+= tag queries; folder state derived, never authoritative. ONE derived
+store: index cache (R13) - bbolt mirror of the overview query,
+revision-keyed, invalidated by lastmod, rebuilt from query output only.
+Stale read re-syncs (startup O(changed); full walk only on cache miss
+or revision mismatch).
 
-The ONE derived store: the index cache (R13) - a bbolt mirror of the
-overview query output. It is a materialized view, not a second truth:
-revision-keyed, invalidated by notmuch's lastmod, rebuilt from query
-output only, never written independently. Every mutation still goes
-through notmuch; the cache can be stale only by invalidation, and a
-read that finds it stale re-syncs from notmuch (startup is O(changed),
-a full walk only on cache miss or revision mismatch).
-
-Backend verdict (2026-08-14, flipped 2026-08-16; inbox = 33k
-mails / 32952 threads, NOTMUCH_BENCH=1): the CLI full-walk is 1.5s
-vs the cgo binding's original 8.7s (~230us per-message row - the
-per-message iterator overhead). The batched walk landed 2026-08-16
-(binding ThreadsWalk: the C threads iterator stays alive across
-chunks, one boundary crossing per chunk): cgo full-walk 1.65s vs
-CLI 1.58s - the gap is closed, the cgo peek (50) is 11ms and the
-thread fetch 8ms. cgo IS the runtime backend (decision record 3:
-re-benchmarked 1.645s vs the CLI's 1.534s on the flip day); the CLI
-backend survives behind `-tags cli` as the F10 escape hatch - the
-same binary code, the same interface, one build tag away. The index
-fill runs the FULL walk (binding FullWalk, decision record 29): one C
-pass emitting thread summaries AND every message row (id, date, from,
-subject, tags, paths) in progressive chunks (100 first, 5000 steady) -
-no stub rows, no per-thread hydration job. The references/in-reply-to
-reads are dropped by the refs fallback (docs/refs-from-terms.md,
-decision record 30): get_header on those headers file-parses every
-message, so the walk ships empty chains and runs 1.77s; the chain
-rides the per-thread fetch, and the refsfromterms build's libnotmuch
-getter fix (docs/refs-from-terms.md)
-re-adds the reads with no client changes. The cgo
-handle stays read-only; Tag reopens read-write for the op only (the
-CLI's lock footprint - a persistent write handle would block every
-other notmuch process for the client's lifetime). The
-cache ingests the CLI's JSON
-output as typed structs in batch (one bbolt transaction per emitted
-chunk); a JSON-ingesting DB (sqlite json_each) is not needed - the
-parse is ~10ms, and the write-at-end mset wall is untouched by the
-ingestion mechanism.
+cgo = the runtime backend (record 3); CLI behind `-tags cli` as the F10
+escape hatch - same code, one build tag away. Index fill = FULL walk
+(record 29), one C pass, no stubs. In-reply-to refs ride the per-thread
+fetch (refsfromterms build, record 30). cgo handle read-only; Tag
+reopens read-write for the op only (persistent write handle blocks
+other notmuch processes).
 
 ### R2. Filters and triggers through notmuch + afew
 
-Rules live in notmuch hooks (post-new) and afew. afew may later be replaced
-by an integrated filter engine, so the filter interface must be a boundary:
-a module that consumes notmuch documents + a rule set and produces tag
-changes. Same contract for both implementations.
+Filter interface must be a boundary: consumes notmuch docs + rules,
+emits tag changes. Same contract: hooks/afew pipeline + integrated
+engine replacing afew.
 
-The MailMover is NATIVE in the client (references/afew/MailMover.py is the
-reference logic, never the runtime). Every account owns a folder
-space (the muttrc `folder:/^gmail\//` account-tag pattern as data:
-`[accounts.<name>] folder = "gmail"`), and mover rules are defined
-PER ACCOUNT: tag -> folder, resolved only within that account's
-folder space. No global priority table exists - a tag under an
-account is unambiguous by construction; within-account provider
-variants (Gmail vs standard folder names) may be an ordered list,
-first existing wins, `*` globs allowed. Same-maildir-tree skip,
-copy-then-delete (sources deleted only after all copies succeeded).
+MailMover NATIVE (src/filter/mover.go; MailMover.py = reference logic,
+never runtime).
 
-Provider presets ship as data (a `presets/` tree, the muttrc base16
-palette pattern): a preset is the tag -> folder-name map for a
-provider (gmail, outlook, icloud, generic-imap). Accounts inherit by
-`preset = "gmail"` and override per tag; user presets in the config
-dir override built-ins by name. Default move rules derive from the
-hard tag group (`tag:<t>` moves to t's folder - the rule is universal,
-only the folder names vary); only non-standard rules (e.g. the trash
-return-to-inbox rule in references/muttrc/afew/config) are written explicitly.
+Engine owns the FULL pipeline (folder rules, header rules, mover
+in-process); muttrc hook + afew = reference shapes, not backends. Folder
+rules DERIVED: hard tag candidates -> `folder:"<account>/<candidate>"`
+OR-queries with auto NOT-guards; account tags from the folder prefix.
+Exclusive groups per the concept section. Header rules = data (query +
+add, guards by engine). Conditional rules explicit (delivery
+untag-reversal, trash return-to-inbox). Read-only accounts never
+classified: no folder tags, no account tag, no header tags, no moves.
+Side effects on filter job completion.
 
-The filter engine owns the FULL classification pipeline - folder
-rules, header rules, and the mover all run inside the client; the
-muttrc post-new hook and afew are reference shapes, not backends.
-Folder rules are DERIVED from the account + preset data: each hard
-tag's candidates become `folder:"<account>/<candidate>"` OR-queries
-with auto NOT-guards (references/muttrc/notmuch/tags proves the shape), account
-tags derive from the account folder prefix (`folder:/^gmail\//`).
-The exclusive group is pure mutual exclusion - no priority, no
-implied removals (the tags-file conflict chain and the `-inbox`
-folder rule are the pain this replaces): applying any member removes
-the other members present, and inbox is a member. Header rules stay
-data (references/muttrc/notmuch/post-new): query + add, guards enforced by the
-engine. Conditional rules stay explicit:
-delivery-gated untag-reversal, trash return-to-inbox. Read-only
-accounts (atlas, toptal) are never classified: no folder tags, no
-account tag, no header tags, no moves - the client writes nothing to
-their mail. Side effects
-(address cache, notification) subscribe to the filter job's
-completion event; they are not hook steps.
-
-The filter contract is per-message (afew's filter shape): a filter
-gets a message snapshot and returns tag ops. Declarative query rules
-are the data-driven implementation of this contract; algorithmic
-filters (afew's SpamFilter, DMIMValidation - not implemented yet)
-plug in later as registered Go implementations behind the same
-interface, selected by `[filter.<name>] type = "..."` - unknown type
-is a load error under strict load. The exclusive-group resolution
-runs after every filter, so algorithmic output (bayes spam, DKIM
-verdicts) normalizes into hard-tag exclusivity like query rules.
-Content-consuming filters run in-process in the filter job; they
-never hold DB handles (the worker owns the DB) and never send
-content anywhere.
-The mover updates the DB through the client's own notmuch layer, not
-a subprocess - the revision bump is picked up by the next refresh
-cycle, so the stale-handle problem afew works around (MailMover.py
-:214-220) does not exist here. DRY-RUN is a first-class job mode:
-resolve every target, write nothing, report what-would-move (per
-message from -> to, unresolved fallback, skipped) into the job output
-ring for review. Validation flow: dry-run, review the report, then
-live run - the first runs against a real mailbox are always dry.
+Contract per-message (afew shape): snapshot in, tag ops out. Query rules
+= data-driven impl; algorithmic filters (SpamFilter, DKIM - later) =
+registered Go impls, `[filter.<name>] type = "..."`, unknown type = load
+error. Group resolution after every filter. Content filters in-process,
+no DB handles, no content out. Mover updates via own notmuch layer, not
+a subprocess. DRY-RUN = first-class mode: resolve every target, write
+nothing, report what-would-move. Flow: dry-run -> review -> live; first
+real-mailbox runs always dry.
 
 ### R3. Async read/update with incremental thread views
 
-All notmuch reads and updates happen asynchronously; the UI never blocks on
-a query. The query layer must support thread-type queries
-(`nm_query_type` = NM_QUERY_TYPE_THREADS; this is the "nm_message_type
-threads" concept): the view holds thread objects, and a refresh must be
-able to INSERT new messages into existing visible threads between entries
-without a full rebuild. No full-refresh-on-new-mail. Diff-and-insert, not
-rebuild.
-
-Neomutt's current state (the gap to close): thread queries load
-synchronously (`references/notmuch/notmuch.c:1074-1119`), and the mail check re-runs
-the whole query with a message-level search even for thread mailboxes,
-marks everything inactive, merges, then fires NT_MAILBOX_INVALID which
-rebuilds the thread tree (`references/notmuch/notmuch.c:2183-2308`). notmutt must do
-better on both: async thread loading and diff-and-insert refresh.
+All reads/updates async; UI never blocks. Query layer must support
+thread-type queries (NM_QUERY_TYPE_THREADS): view holds thread objects;
+refresh must INSERT new messages into existing visible threads, no full
+rebuild. Diff-and-insert, not rebuild. notmutt must do better than
+neomutt: async thread loading + diff-and-insert refresh.
 
 ### R4. Async send + dialogue state machine
 
-`send_command` is asynchronous. The dialogue (compose dialog) is a state
-machine whose state is SEPARATE from the UI rendering: fields, attachments,
-send progress, error, output. Dialogues can be PAUSED and RESTARTED (state
-survives the pause). Composition is TABBED: multiple dialogue state
-instances alive concurrently. The send runs as a background job with
-captured output kept for review after completion.
+`send_command` async. Dialogue = state machine, state SEPARATE from UI
+rendering: fields, attachments, send progress, error, output. Dialogues
+PAUSE and RESTART (state survives); composition TABBED (multiple
+dialogue states alive concurrently). Send = background job, captured
+output kept for review.
 
-Rationale beyond rendering: background sync + filter runs (notmuch new,
-tag pipelines, afew moves) must NEVER interrupt an active composition.
-Because the dialogue state lives outside the UI, a filter run can retag
-and re-render the mailbox while the user keeps typing in the compose tab;
-the dialogue only observes mailbox state through the same async channel.
-Anything that touches mail state while a dialogue is open must go through
-the async layer - never block, never invalidate in place.
+Background sync + filter runs must NEVER interrupt an active
+composition; anything touching mail state while a dialogue is open must
+go through the async layer - never block, never invalidate in place.
 
 ### R5. TUI-first, extractable
 
-The UI is a TUI. Architecture rule: the core (dialogue state machines,
-event handling, rendering primitives) must be structured so the whole TUI
-layer can be extracted into a standalone library and published. The client
-is the reference consumer. No UI code in the core; no core logic in the UI.
+TUI. Core (dialogue state machines, event handling, rendering
+primitives) must be structured so the whole TUI layer extracts into a
+standalone library; client = reference consumer. No UI code in core; no
+core logic in UI.
 
 ### R6. Mail parsing/composition from a library
 
-Do NOT port neomutt's C mail parsing. Search first for a mail library and
-use it; only fall back to porting neomutt code if a library falls short.
-Candidate parsers in the selected language must cover RFC 5322 + MIME
-parse AND compose (header + MIME construction). mailcap must be supported
-for attachments/HTML viewing.
+Do NOT port neomutt's C parsing. Library must cover RFC 5322 + MIME
+parse AND compose; port only if a library falls short. mailcap must be
+supported for attachments/HTML. Chosen: emersion/go-message (record 4).
 
 ### R7. Language: Go
 
-Analysis (see decision record below). Go with go-message (emersion) for
-mail, tcell for TUI (lipgloss for layout math in the frame builders -
-decision record 23 flips record 5; lazygit's pairing: same renderer,
-no widget layer), goroutines for the async model, libnotmuch via
-cgo (aerc's in-tree binding pattern). Supply-chain policy is mandatory
-(below).
+go-message for mail, tcell + lipgloss for TUI (record 23; lazygit's
+pairing: renderer only, no widget layer), goroutines for async,
+libnotmuch via cgo (aerc's in-tree binding pattern). Full language
+analysis: record 1.
 
-Idiomatic Go is a design rule: stdlib first, gofmt-clean, clear over
-clever. DRY is an architectural rule, not a style preference: a
-concept exists once. Where two features share data or behavior, one
-derives from the other - the account + preset data drives both the
-derived folder rules and the mover; the canonical sort comparator is
-one function, shared by the worker's batch emission and the view's
-diff merge-walk; the thread's display order is a flatten-time reversal
-of the rows (the [index.thread] sort config), never a reorder of the
-stored sets - the comparator order is the diff invariant, display
-order flips only at the flatten. Duplicated concepts across modules
-are design errors, not TODOs.
+Idiomatic Go = design rule: stdlib first, gofmt-clean, clear over
+clever. DRY = architectural: a concept exists once - account + preset
+data drives both derived folder rules and the mover; canonical sort
+comparator = one function, shared by the worker's batch emission and the
+view's diff merge-walk; thread display order = flatten-time reversal of
+the rows (record 32), never a reorder of stored sets. Duplicated
+concepts = design errors.
+
+Supply-chain policy (hard):
+- Minimal deliberate deps; every dep must earn its place - large,
+  established, audited projects over small convenience ones.
+- Pin exact versions; audit + vet in CI; review dep diffs on upgrade;
+  no auto-bump bots.
+- Vendor the build. Reproducible builds.
+- Never accept a dep with unclear provenance or authorship.
+- AI code allowed, but ALL code owned by its human author: no commit
+  carries an AI marker; every line reviewed like any contribution
+  (tests proving the edge cases).
+
+CI standard (mirror `references/neomutt-docs/docs/actions.md`): build + test on
+every commit, sanitizers (ASAN/UBSAN), static analysis, fuzzing on the
+mail-parsing boundary - the parser is the trust boundary and must be
+fuzzed.
 
 ### R8. Config TOML; Lua bindings later
 
-All configuration is TOML. The TOML schema must be designed so Lua bindings
-can be added later without breaking it: TOML is declarative config, Lua is
-scripting on top (hooks, custom filters, UI callbacks). Follow the neovim
-model (neovim/ checkout in this workspace): libuv event loop, RPC
-(msgpack), Lua as extension language, UI attached via protocol. UI async
-design should be compatible with that model.
+All config TOML; schema must allow Lua later without breaking it: TOML
+= declarative config, Lua = scripting on top (hooks, filters, UI
+callbacks). Follow the neovim model (event loop, RPC/msgpack, Lua as
+extension language, UI via protocol).
 
-The Lua runtime is a build-tag-gated layer (the R12 pattern): the adapter
-and the gopher-lua dependency exist only under the `lua` build tag
-(src/app/lua_plugin.go vs the `!lua` no-op stub); default builds carry no
-Lua runtime. Plugins are files in `<configdir>/lua`; the initial surface
-is one `body_render(lines)` function per plugin, registered as a render
-transform (decision record 20) and run on the open job under the chain
-deadline via SetContext - a busy-looping plugin falls back, it never
-freezes the UI. The VM sandbox is a lib whitelist (no os/io/debug).
+Lua runtime = build-tag-gated (the R12 pattern): adapter + gopher-lua
+only under the `lua` tag; default builds carry no Lua. Plugins = files
+in `<configdir>/lua`; initial surface = one `body_render(lines)` per
+plugin (record 20), run on the open job under the chain deadline via
+SetContext - a busy-looping plugin falls back, never freezes the UI. VM
+sandbox = lib whitelist (no os/io/debug).
 
-Config model: TOML is the config language and the file shape IS the
-schema shape. Config files unmarshal into typed Go structs (1:1 with
-the TOML), with neomutt's ConfigSet properties (`references/neomutt-docs/docs/
-config.md`) as requirements, not mechanism: typed values (string,
-number, bool, enum, path, list, regex, sort), validators, defaults,
-observers. Load is strict - unknown keys are load errors, no silent
-typos. The store is the single write path: runtime mutations (theme
-variant, keymap switch) go through typed per-section setters that
-notify per-section observers on the event bus; the async core never
-reads config ad-hoc from disk. A flat key registry is the C-era
-mechanism for neomutt's flat `set key = value` language; TOML's
-document shape needs struct-mapped tables, not dotted keys.
+Config model: the file shape IS the schema shape; files unmarshal 1:1
+into typed structs. Neomutt ConfigSet properties as requirements, not
+mechanism: typed values, validators, defaults, observers. Load strict -
+unknown keys = load errors. Store = single write path: typed per-section
+setters notify per-section observers on the event bus; async core never
+reads config ad-hoc.
 
 ### R9. Keybindings: vim by default, emacs as an option, configurable
 
-Keybindings are declarative data, not code. The binding map is per-context
-(global, index, pager, compose, compose-editor, compose-review, terminal -
-mirror aerc's binds.conf contexts). Default scheme is vim/mutt-style (j/k
-navigation, q quit, etc.). An alternative scheme (emacs-style) is a config
-choice, not a fork: `[ui] keymap = "vim" | "emacs"`, with per-context
-overrides on top. Every action must be bound in the default scheme - the
-client works out of the box with zero keybinding config (aerc
-`config/binds.conf` is the reference: `<key> = :command`, contexts as
-sections). The keyhint/help UI derives from the binding map, so
-rebinding updates the hints automatically.
+Keybindings = declarative data. Binding map per-context (global, index,
+pager, compose, compose-editor, compose-review, terminal - aerc
+binds.conf contexts). Default: vim/mutt-style. Emacs-style = config
+choice, not a fork: `[ui] keymap = "vim" | "emacs"`, per-context
+overrides on top. Every action must be bound in default scheme - works
+with zero keybinding config. Keyhint/help derives from binding map;
+rebinding updates hints.
 
 ### R10. PGP and S/MIME via system tools, not libraries
 
-Crypto is a Provider interface with CLI backends - zero crypto code in the
-client. PGP via the system `gpg` CLI (aerc `lib/crypto/gpg/gpgbin`
-pattern: `--status-fd`, parsed status); S/MIME via `openssl smime` or
-gpg's CMS mode. Trust boundary is the system tool, never a vendored
-crypto dependency.
+Crypto = Provider interface with CLI backends - zero crypto code in the
+client. PGP via `gpg` CLI (aerc gpgbin pattern: `--status-fd`, parsed
+status); S/MIME via `openssl smime` or gpg CMS mode. Trust boundary =
+system tool, never a vendored crypto dep.
 
-- Sign/encrypt is a transform stage between MIME assembly and the send
-  job: assemble (go-message) -> sign/encrypt per dialogue flags -> fcc ->
-  send job. Key resolution (locate/recv keys) is async - it can hit key
-  servers.
-- Decrypt/verify is an async job on the read path; the view model carries
-  decrypted body + signature status (valid/invalid, signer, key id);
-  the pager renders body and status.
-- Passphrase: gpg-agent + external pinentry with TUI suspend/resume
-  (aerc `lib/pinentry`) - the ONLY prompt path for the gpg backend.
-  No loopback mode for gpg: passphrase in client memory (Go cannot
-  zero secrets), prompt path becomes client security surface, smartcard
-  PINs fail under loopback. Native PromptFunction prompting only for
-  the in-process provider. The Provider takes a PromptFunction - the
-  crypto layer never prompts itself.
-- Key selection is selector dialogue state (R4 machinery), fed by keyring
-  queries (`gpg --list-secret-keys --with-colons` etc.).
-- neomutt references: `ncrypt/cryptglue.c` (backend registration per
-  crypto family), `ncrypt/gnupgparse.c` (keyring parsing), `smime/smime.c`
-  (S/MIME via openssl), `ncrypt/dlg_gpgme.c` (passphrase dialog concept).
-
-Keybindings are declarative data, not code. The binding map is per-context
-(global, index, pager, compose, compose-editor, compose-review, terminal -
-mirror aerc's binds.conf contexts). Default scheme is vim/mutt-style (j/k
-navigation, q quit, etc.). An alternative scheme (emacs-style) is a config
-choice, not a fork: `[ui] keymap = "vim" | "emacs"`, with per-context
-overrides on top. Every action must be bound in the default scheme - the
-client works out of the box with zero keybinding config (aerc
-`config/binds.conf` is the reference: `<key> = :command`, contexts as
-sections). The keyhint/help UI derives from the binding map, so
-rebinding updates the hints automatically.
-
-## Language decision record (R7)
-
-Question: Rust, Zig, or Go?
-
-| dimension | Rust | Go | Zig |
-|---|---|---|---|
-| notmuch bindings | `notmuch` crate (0.8.0, wraps C API, stale ~3y but works); FFI direct | go.notmuch (github.com/fishman/go.notmuch, community-maintained, modernized 2026-08-14) | none; hand-written FFI |
-| mail parse+compose | mail-parser + mail-builder (Stalwart, RFC 5322/MIME, zero-copy, fuzzed, production mail server, actively maintained 2026) | go-message (emersion, used by aerc) | none |
-| TUI | ratatui (mature, widget lib - UI extracted by design) | tcell + lipgloss (screen + input only, no widget layer - record 23 flips record 5; lazygit's pairing) | none mature |
-| async | tokio (mature) | goroutines (built-in, simple) | none; std.event.Loop is barebones, userland |
-| Lua | mlua (mature, used by neovim) | gopher-lua (stale-ish) | none |
-| supply chain (user concern: AI-generated code) | crates.io has the worst AI-generated-crate flood; mitigated by tiny dep set + vetting + cargo-audit + vendoring | module proxy + checksum db, typosquatting still exists | smallest surface (no registry sprawl, vendoring natural) |
-
-Decision: Go (R7 is binding; the analysis above is the record).
-Decisive factors: go-message is aerc's production parser - the same
-client whose worker model notmutt mirrors (R3/R4), so the mail
-library is proven against the reference architecture; goroutines
-make the async model native; the cgo binding is go.notmuch
-(module path github.com/fishman/go.notmuch, NOT an official binding -
-the official contrib/go bindings were dormant 2018-2026 and lack the
-revision/UUID API the refresh cycle needs; we added DB.Revision() to
-the vendored fork, see the T14 benchmark report). Pinned
-at the v0.40.0 release, go.sum-verified, vendored. The Rust
-column's strengths (ratatui, mlua, tokio) are real; they lost on
-integration surface - mirroring aerc's proven stack beats best-in-class
-per part. Zig remains greenfield on every dimension.
-
-Mail library verification (2026-08-14, R6): the field was re-checked
-before M1. emersion/go-message v0.18.2 stays the choice - it is the
-only candidate with parse AND part-level compose in one library
-(ProtonMail/go-mime is parse-only; its composer lives inside
-proton-bridge, not importable), it is proven in the reference
-architecture (aerc's worker parses and composes with it), go-pgpmail
-builds on it for the R10 crypto transform stage, and its dependency
-tree is one package (golang.org/x/text). enmime's builder is
-content-oriented (text/HTML body in, message out) - the send-email
-use case, not a mail client's part-level construction. The known
-go-message issue report (#144) was traced to go-imap misuse, not the
-library. mailcap support is client-side logic over the library's
-part model in all cases; no library provides it natively.
-
-Supply-chain policy (the user's stated concern is real; treat it as a hard
-constraint):
-- Keep the dependency set minimal and deliberate. Every dependency must
-  earn its place; prefer large, established, audited projects over small
-  convenience crates.
-- Pin exact versions; use cargo-audit and vet (cargo-vet or supply-chain
-  review) in CI.
-- Vendor the build. Reproducible builds.
-- Review dependency diffs on upgrade; no auto-bump bots.
-- Never accept a dependency whose provenance or authorship is unclear.
-- AI-generated code is allowed, but ALL code in this repo is owned by
-  its human author: no commit carries an AI-generated marker, and every
-  line is reviewed like any other contribution (tests proving the edge
-  cases). An `AI-assisted` trailer is not a disclaimer - the author
-  answers for the code whether or not an AI drafted it.
-
-CI standard (mirror `references/neomutt-docs/docs/actions.md`): build + test on every
-commit, sanitizers (ASAN/UBSAN), fuzzing on the mail-parsing boundary,
-static analysis in CI. The mail parser is the trust boundary - it must be
-fuzzed like the firmware it is.
+- Sign/encrypt = transform stage between MIME assembly and the send job:
+  assemble -> sign/encrypt per dialogue flags -> fcc -> send. Key
+  resolution (locate/recv) async - can hit key servers.
+- Decrypt/verify = async job on the read path; view model carries
+  decrypted body + signature status; pager renders both.
+- Passphrase: gpg-agent + external pinentry with TUI suspend/resume -
+  the ONLY prompt path. No loopback mode (Go cannot zero secrets;
+  smartcard PINs fail under loopback). Provider takes a PromptFunction -
+  never prompts itself.
+- Key selection = selector dialogue state (R4), fed by keyring queries
+  (`gpg --list-secret-keys --with-colons`).
 
 ### R11. Truecolor theming engine
 
-Theming covers mutt's color surface but is configured better. Mutt
-objects that must exist (from `references/muttrc/theme/onedark.muttrc` +
-`references/muttrc/base.colors`): normal, indicator, status, tree, tilde, prompt,
-message, progress, error, search; index + index_number/author/subject/
-date/flags; hdrdefault, header (a rotating color list over the
-header block - header names are an open set, so the block cycles the
-list instead of per-name matching), quoted0-5, body
-(regex rules: URLs, email addresses, *bold* _underlined_ /italic/),
-signature, attachment; compose_header + compose_security_encrypt/sign/
-both; sidebar_new/flagged/ordinary/indicator; index_tag + index_tags.
+mutt's color surface, configured better. Objects that must exist
+(from `references/muttrc/theme/onedark.muttrc` + `references/muttrc/base.colors`):
+normal, indicator, status, tree, tilde, prompt, message, progress,
+error, search; index + index_number/author/subject/date/flags;
+hdrdefault, header (rotating list - names an open set), quoted0-5,
+body (regex: URLs, emails, *bold* _underlined_ /italic/), signature,
+attachment; compose_header + compose_security_encrypt/sign/both;
+sidebar_new/flagged/ordinary/indicator; index_tag + index_tags.
 
 Better configuration, all in TOML:
-
-- Palette indirection with escape hatches: `[palette]` holds named
-  colors; per-variant `[palette.dark]`/`[palette.light]` override
-  single names when variants genuinely diverge, without touching
-  styles. Styles reference palette names OR raw hex - a one-off color
-  pins hex directly and never pollutes the palette. Resolution order:
-  style hex > variant palette > base palette. Truecolor is the
-  baseline; no 256-color mapping.
-- No repetition: styles inherit (a base `normal` style; fg/bg/attrs
-  default to normal unless overridden). A theme states only what
-  differs.
-- Attrs unified per style (bold/italic/underline/reverse) - not mutt's
-  separate attribute objects.
-- Index coloring is TAG-driven, not mutt's `~X` patterns: `~l <tag>`
-  and `index_tag` become declarative `[index.tag.<name>]` styles
-  (references/muttrc/base.colors already colors by notmuch tags; notmutt makes it
-  data). Tag styles compose with the exclusive tag groups (R2/R6) and
-  with the base index style; conflicts resolve by the group priority.
-- Index row layout is a fixed-slot template, not mutt's format string.
-  `[index.row]` lists slots in order (number, flags, attachment, date,
-  author, subject, count, tags - the muttrc `index_format` is the
-  reference for the slot list, never the mechanism). Optional slots
-  (attachment, tag slots) ALWAYS reserve their column and render blank
-  when the content is absent - alignment never shifts per row.
-- Tag slots: `[index.tags] max = N` fixed cells, filled by a display
-  priority list (hard tag group first) - at most N glyphs show,
-  whichever tags are present, blank-padded otherwise. Glyph transforms
-  (`tag-transforms` in muttrc) are config data; the raw emoji/strings
-  never hardcode in code.
-- Column widths are in terminal cells (wcwidth), not runes: emoji
-  glyphs are double-width, so truncation and padding count cells or
-  alignment breaks exactly like mutt's conditional format.
-- Regex rules keep mutt's semantics: ordered, last match wins, more
-  specific overrides less.
-- Light/dark variants in one theme file: `[theme.dark]` / `[theme.light]`,
-  `default` selects. Switching is a config-store notification - the
-  same observer path as any config change, so the UI re-renders live
-  with zero reload.
-- The onedark theme in `references/muttrc/theme/onedark.muttrc` is the reference
-  port; the base16 palette collection in `references/muttrc/themes/palette/` is
-  the import source (a converter is a future task, not M1).
+- Palette indirection: `[palette]` named colors + per-variant overrides;
+  styles use names OR raw hex. Resolution: style hex > variant > base.
+  Truecolor; no 256-color mapping.
+- Styles inherit from `normal` (fg/bg/attrs); attrs unified per style.
+  Theme states only differences.
+- Index coloring TAG-driven: `[index.tag.<name>]` styles, composing with
+  exclusive tag groups (R2) + base style; conflicts by group priority.
+- Index row = fixed-slot template (`[index.row]` slots: number, flags,
+  attachment, date, author, subject, count, tags). Optional slots ALWAYS
+  reserve their column, render blank when absent - alignment never
+  shifts per row.
+- Tag slots: `[index.tags] max = N` fixed cells, display priority list
+  (hard group first); glyph transforms = config data, never hardcoded.
+- Column widths in terminal cells (wcwidth), not runes - emoji
+  double-width, truncation/padding count cells.
+- Regex rules: ordered, last match wins.
+- Light/dark variants in one theme file; switching = config-store
+  notification - live re-render, zero reload.
+- onedark = reference port; base16 collection = import source.
 
 ### R12. Dark/light sync via DBus (optional build tag)
 
-A build-tag-gated DBus integration that switches the theme variant with
-the system. `//go:build linux && dbus`: the code and the godbus/dbus
-dependency exist ONLY in the `dbus` build; default builds, macOS, and
-Windows are DBus-free (darwin/windows excluded by build constraints).
+Build-tag-gated: `//go:build linux && dbus` - code + godbus/dbus ONLY in
+the `dbus` build; default builds, macOS, Windows DBus-free.
 
-- Reads the system color scheme via xdg-desktop-portal:
-  `org.freedesktop.portal.Settings` - `Read("org.freedesktop.appearance",
-  "color-scheme")` plus the `SettingChanged` signal for live updates.
-  GSettings/GTK-theme-name as fallback if the portal is absent.
-  Session bus only, never the system bus; the color-scheme value is
-  validated as a strict enum (0/1/2), variants resolve by exact name
-  with fallback to default (SECURITY.md F11).
-- The scheme change arrives as an event on the event bus
-  (ColorSchemeChanged(dark|light)); the theme store resolves the
-  variant; observers re-render. Same async path as everything else.
-- No portal/DBus available: `:theme` command switches manually.
-- Supply chain: godbus/dbus is a dependency only in the dbus build;
-  it is pinned and vetted like everything else (R7 policy).
+- Reads scheme via xdg-desktop-portal (`Settings.Read(...,
+  "color-scheme")` + `SettingChanged`); GSettings/GTK fallback. Session
+  bus only; value = strict enum (0/1/2), fallback to default (SECURITY.md
+  F11).
+- Change arrives as ColorSchemeChanged(dark|light) on the event bus;
+  theme store resolves variant; observers re-render. Same async path as
+  everything else.
+- No portal/DBus: `:theme` switches manually.
 
 ### R13. Derived caches (bbolt)
 
-Two derived stores behind the same `Cache` interface (Get/Put/Delete,
-pluggable backends, embedded pure-Go bbolt default - the R7
-supply-chain bar; interface first, so a backend can change without
-touching the notmuch layer, the same boundary discipline as the
-filter engine, R2). Both are 0600 (SECURITY.md F5); cached strings
-(subjects, attachment filenames - attacker-influenced) always pass
-the same sanitize/render/mailcap paths as fresh data - never trusted
-by virtue of being cached.
+Two derived stores behind one `Cache` interface (Get/Put/Delete,
+pluggable backends, pure-Go bbolt default; interface first, same
+boundary discipline as the filter engine).
+Both 0600 (SECURITY.md F5); cached strings (subjects, attachment
+filenames - attacker-influenced) always pass the same
+sanitize/render/mailcap paths as fresh data - never trusted by virtue of
+being cached.
 
-Index cache (the read surface; R1): mirrors the overview query output
-(thread id, timestamp, author, subject, tags, per-thread message
-counts), keyed by thread id, ingested from the one-call query output
-in batch - one bbolt transaction per emitted chunk (the Query emit
-cadence IS the ingestion batch). Revision-keyed; startup reads the
-cache and syncs the notmuch lastmod delta (O(changed)); a full walk
-only on cache miss or revision mismatch. notmuch stays authoritative
-- the cache mirrors tag state, never mutates it.
+Index cache (read surface; R1): mirrors the overview query output
+(thread id, timestamp, author, subject, tags, per-thread counts), keyed
+by thread id, ingested in batch (one bbolt transaction per emitted
+chunk). Revision-keyed; startup syncs the lastmod delta (O(changed));
+full walk only on cache miss or revision mismatch. Mirrors tag state,
+never mutates it.
 
-MIME cache (per-message content metadata): attachment presence and
-list, structure, sizes - the only per-message data notmuch cannot
-serve (those need a file open and parse). Keyed by (path, size,
-mtime): renames (flag renames, afew folder moves) and edits
-invalidate naturally; steady state is hit-only. Payload is small
-structs (attachment list: name/type/size). Compression is a future
-knob, not a requirement - measure first.
+MIME cache (per-message content metadata): attachment presence, list,
+structure, sizes - the only per-message data notmuch cannot serve (needs
+a file open and parse). Keyed by (path, size, mtime): renames and edits
+invalidate naturally; steady state hit-only.
 
-Client-local state is tags, not flags: reply/forward markers are
+Client-local state = tags, not flags: reply/forward markers =
 +replied/+forwarded tags (R1). Nothing else needs storing.
 
 ### R14. Staged tag operations (apply and undo)
 
-UI tag operations (read/unread, archive, delete, flag, ...) never write to
-notmuch at keypress time. They stage into a per-session buffer; notmuch sees
-them only when the user applies. The buffer is the undo mechanism - the thing
-immediate tag writes can never provide: in neomutt every tag application is
-final, a mis-tap is permanent, and exclusive-group conflicts land as DB state
-instead of a reversible stage.
+UI tag ops never write at keypress time; stage into a per-session
+buffer, notmuch sees them only on apply. Buffer = undo mechanism -
+immediate writes final, group conflicts land as DB state instead of a
+reversible stage.
 
-- A tag action on the cursor message STAGES a pending op: the view re-renders
-  the staged state immediately (applied tags plus pending ops, with the R2
-  exclusive-group resolution applied, so staging archive drops inbox from
-  the render); notmuch is untouched. unread is a soft tag - it is never a
-  group member, survives folder moves (a move must not clear read state),
-  and leaves the render only via its own staged op (the r toggle).
-- Staged state is visually distinct and themable: a row with pending ops
-  renders with the `[index.staged]` style (R11 machinery - palette names or
-  raw hex, inherits the base index style, unified attrs) plus a staged glyph
-  in the flags slot. The glyph is config data (default `*`, the
-  tag-transforms rule from R11), never hardcoded. Undo clears style and
-  glyph together with the ops.
-- APPLY (default `$`, mutt's sync semantics) flushes the buffer: one ActTag
-  batch per message carrying the fully resolved op set (pending ops plus
-  exclusive-group removals), on the worker's lock-budgeted action path. A
-  failed message's ops stay staged - retry or undo. A folder-tag op must
-  resolve its physical move BEFORE the tag lands - the account folder
-  space must cover the message's paths, the winner tag must have move
-  candidates, and the account must not be readonly; any failure refuses
-  the apply with an error naming the config fix (a tag without a
-  resolvable move is the state the next poll's location-wins resolution
-  eats). Mover-level skips (dest exists, not managed, ...) are logged on
-  diag, never silent.
-- UNDO (`u`) discards the cursor message's staged ops and re-renders its
-  last-applied state. Before apply it is a pure buffer drop, free of DB
-  traffic.
-- The refresh cycle never clobbers the buffer: merges apply snapshot truth
-  first, then replay pending ops on top (reconcile-then-replay, the view
-  ordering T11/T12 built). Staged ops survive view switches and refreshes;
-  they are session-local and lost on exit (persistence is future work).
-  Filter-engine writes (R2 pipeline) bypass the buffer; where a filter
-  retags a staged message, the replay ordering lets the user's pending ops
-  win the render, and apply recomputes the op set against the current state.
-- Buffer entries are keyed by message identity, never position, so merges
-  and cursor movement cannot mis-attribute a staged op.
-
-M1's immediate toggle (tui toggleRead -> ActTag) is the placeholder this
-requirement supersedes.
+- Tag action on the cursor message STAGES a pending op: view re-renders
+  the staged state immediately (with R2 group resolution, so staging
+  archive drops inbox from the render); notmuch untouched. unread =
+  soft tag - never a group member, survives folder moves (a move must
+  not clear read state), leaves the render only via its own staged op.
+- Staged state visually distinct and themable: `[index.staged]` style +
+  staged glyph in the flags slot (config data, default `*`). Undo clears
+  style and glyph together with the ops.
+- APPLY (default `$`, mutt sync semantics) flushes the buffer: one
+  ActTag batch per message with the fully resolved op set (pending ops +
+  group removals), on the worker's lock-budgeted action path. Failed ops
+  stay staged - retry or undo. Folder-tag op must resolve its physical
+  move BEFORE the tag lands: account folder space must cover the paths,
+  winner tag must have move candidates, account must not be readonly;
+  failure refuses the apply with an error naming the config fix.
+  Mover-level skips logged on diag, never silent.
+- UNDO (`u`) discards the cursor message's staged ops - pure buffer
+  drop, free of DB traffic.
+- Refresh never clobbers the buffer: merges apply snapshot truth first,
+  then replay pending ops (reconcile-then-replay). Staged ops survive
+  view switches and refreshes; session-local, lost on exit (persistence
+  = future work). Filter-engine writes (R2) bypass the buffer; where a
+  filter retags a staged message, the user's pending ops win the render,
+  and apply recomputes against current state.
+- Buffer entries keyed by message identity, never position.
 
 ### R15. Async progress display
 
-Background work reports progress on the bus, and the TUI renders it as a
-bar in the bottom right corner, in the row above the status line, while
-the user keeps navigating the index or composing elsewhere.
+Background work reports progress on the bus; TUI renders a bar in the
+bottom right corner, row above the status line, while the user keeps
+navigating or composing.
 
-- Jobs emit Progress events (job kind, done/total, label) at batch
-  boundaries: the refresher's thread fetches (page budget), the cache
-  scan (visible rows), the filter job (message batches), the send and
-  crypto jobs (R4). The worker action loop is not a progress source -
-  jobs report their own totals.
-- The widget subscribes to the bus and repaints on Progress exactly like
-  the index repaints on ViewDiff (the same async channel, R3). It
-  renders the latest event: a bar (done/total cells) plus a
-  kind-derived label, right-aligned in a fixed-width region above the
-  status line (the R11 slot-reservation rule - the region never shifts
-  with content). A completion event clears the bar. The widget never
-  takes focus and never blocks; labels are job-kind derived, never mail
+- Jobs emit Progress events (kind, done/total, label) at batch
+  boundaries: refresher fetches (page budget), cache scan (visible
+  rows), filter job (message batches), send/crypto jobs (R4). Worker
+  action loop not a progress source - jobs report own totals.
+- Widget subscribes to the bus, repaints on Progress like the index on
+  ViewDiff (same async channel, R3). Bar (done/total cells) + kind-
+  derived label, right-aligned in a fixed-width region above the status
+  line (the R11 slot-reservation rule). Completion event clears the bar.
+  Never takes focus, never blocks; labels job-kind derived, never mail
   content (F6).
-- Theming: the `progress` style (R11 mutt surface - fg/bg/attrs through
-  the palette machinery, inherits the base style) plus the filled-cell
-  glyph as config data (default block, the tag-transforms rule).
+- Theming: `progress` style (R11 machinery) + filled-cell glyph as config
+  data (default block, the tag-transforms rule).
 
-The reference repos (neomutt, aerc, afew, neovim, lazygit, muttrc) are
-advisory:
-they prove the mail concept, the config intent, and the failure modes -
-not the implementation. Design decisions are made for notmutt (Go, TOML,
-async), never inherited from C tools. When a reference behavior is cited,
-the spec must say why it serves notmutt, not cite it as authority.
+## Reference code in this workspace (advisory)
 
-## Reference code in this workspace
+Reference repos prove mail concept, config intent, failure modes - not
+implementation. Decisions made for notmutt (Go, TOML, async), never
+inherited from C tools. Cited reference behavior must say why it serves
+notmutt, never cite authority.
 
-- `references/neomutt/background/` - the background job model that R4's send-job
-  design comes from. Concrete state: fixed job table `Jobs[MAX_JOBS]`
-  (`background/background.c:55`, `private.h:30-44`), reaping via
-  non-blocking `waitpid` + `WNOHANG` in an event-loop timeout observer
-  (`background/background.c:281-317`, `516-519`), output kept for review
-  in a 10-job ring (`background/background.c:53-60`, `f2f246718`),
-  non-blocking wait by macro parking (`background/background.c:386-396`,
-  `bda3d6ff0`), dedicated dialog that renders live state
-  (`background/dlg_background.c`, `126b53b26`, `ccafd3068`). Known gaps
-  to fix: no job-state enum, completion is polled not evented, no
-  per-job observers.
-- `references/neomutt/send` (branch `async_send`, commit aa4478969) - async send:
-  `$sendmail_async` skips the parent's waitpid and hands the pid back
-  (`send/sendmail.c:246-255`); `bg_send_register` tracks the job;
-  deferred Fcc on reap; failed sends RETAIN the Email and `bg_send_retry`
-  re-opens the compose dialog with the failed message - the pause/restart
-  seed for R4.
-- `references/neomutt/compose/shared_data.{c,h}` - ComposeSharedData splits dialogue
-  state (email, attachments, fcc, return code) from the dialog window.
-  Source of R4's state/UI split.
-- `references/neomutt/notmuch/` - notmuch backend: `$nm_query_type` (MESSAGES vs
-  THREADS, `references/notmuch/query.h:36-38`), progressive time-sliced filling for
-  message mode (`references/notmuch/notmuch.c:983-1043`, `2137-2174` - budgeted
-  iterator slices, not threads), synchronous thread loading
-  (`references/notmuch/notmuch.c:1074-1119`), full re-query refresh
-  (`references/notmuch/notmuch.c:2183-2308`). Reference for R3; the gaps are R3's
-  reason to exist.
-- `references/neomutt/lua/` - module registering Lua commands (config-level Lua).
-  Reference for R8's Lua layer.
-- `neovim/` - full neovim checkout. Reference for R8: event loop, RPC,
-  Lua API, UI protocol, fast events.
-- `references/aerc/` - the production Go notmuch client. Design reference for MAIL
-  HANDLING ONLY (not the UI): the notmuch worker action loop
-  (`worker/references/notmuch/worker.go` - `Run()` + `handleMessage` dispatch,
-  worker factory registration with build tags in `worker/handlers`),
-  cgo-free notmuch integration via the CLI (`worker/references/notmuch/lib`), and
-  go-message for parsing. The worker model is the R3/R4 async reference.
-  Its per-context keybinding config (`config/binds.conf`) is the
-  keybinding-config model for R9.
-- `references/lazygit/` - production Go TUI (checkout d25315b55, tcell/v3 renderer).
-  Reference for HOW to structure a Go TUI (R5/R9): view models separated
-  from rendering (`pkg/gui/context/` - per-panel state), actions as
-  keybinding-driven controllers (`pkg/gui/controllers/`), the
-  config-driven binding map (`pkg/config/user_config.go:448`, per-context
-  sections, the help panel derives from it - the R9 model), the theme
-  struct (`pkg/config/user_config.go:231`), and cancellable background
-  tasks with UI update hooks (`pkg/tasks/` - the R3 refresh pattern).
-  Reference the ARCHITECTURE (state/UI split, data-driven config), not the
-  renderer: notmutt's TUI is tcell with lipgloss (decision record 23 -
-  the R5/R9 architecture reference now pairs with the same renderer).
-- `references/afew/MailMover.py` - per-account folder priority resolution.
-- `references/muttrc/notmuch/tags` + `references/muttrc/notmuch/post-new` + `references/muttrc/afew/config`
-  - the live classification pipeline (R2 reference).
-- `references/matcha/` - production Go mail client with a gopher-lua plugin system.
-  Reference for R8's Lua layer ONLY (decision record 20 in
-  docs/design-decisions.md): one VM on the orchestrator goroutine,
-  Protect-then-log dispatch, lib-whitelist sandbox (no os/io/debug),
-  deferred side effects (the pending-* pattern - plugin API calls queue,
-  the orchestrator drains after the hook returns), per-plugin identity
-  threading, plugin-declared settings (out of the strict TOML load), and
-  plugin keybindings as a fallback layer under core bindings. The gaps
-  it leaves (inline render-path hooks with no deadline, no hot reload)
-  are notmutt's design constraints, not its defaults.
+- `references/neomutt/` - R4 job model (background/), async send +
+  failed-send retry (send, branch async_send), dialogue state split
+  (compose/shared_data), thread backend gaps (notmuch/), Lua (lua/).
+- `neovim/` - event loop, RPC, Lua API, UI protocol (R8).
+- `references/aerc/` - MAIL HANDLING only: worker action loop, CLI
+  integration, go-message (R3/R4); binds.conf (R9).
+- `references/lazygit/` - Go TUI architecture (R5/R9): view models,
+  keybinding controllers, config-driven binding map, background tasks.
+  Not the renderer: tcell + lipgloss (record 23).
+- `references/afew/MailMover.py` - per-account folder priorities (R2).
+- `references/muttrc/notmuch/tags` + `post-new` + `afew/config` - live
+  classification pipeline (R2 reference).
+- `references/matcha/` - gopher-lua plugin system, R8 Lua ONLY (record
+  20): orchestrator VM, Protect-then-log, lib whitelist, deferred side
+  effects. Its gaps = notmutt's constraints, not defaults.
 
 ## Agent working rules (Claude Code and Pi both)
 
-- Behavior: reverse-engineering mindset - how-it-works over hype,
-  constraints matter, assume failure until proven reliable. No fluff,
-  no press-release language, no optimism bias. Neutral-critical on AI:
-  tool, not prophecy. Engineering analogies; cite hardware/software
-  tradeoffs and bureaucratic bottlenecks; call out noise and hidden
-  failure modes.
-- Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
-  in all output and code.
-- Privacy: NEVER submit mail content (bodies, headers, whole .eml/.mbox
-  files) to the LLM. To read a subject or field from inside mail, extract
-  it with a script first and pass only the extracted value. Include a
-  checksum (sha256 or faster) when correlating or verifying message
-  identity.
-- Commits: Conventional Commits style (`type(scope): subject`), brief
-  lowercase imperative subject. ALL code is owned by the human author -
-  code commits carry no AI marker and no co-author line, whether or
-  not an AI drafted them (the README explains the rule: an AI marker
-  is like mail typed on an iPhone - the device produced the words, the
-  owner answers for them). Doc/spec commits carry
+- Privacy (hard rule, overrides everything): NEVER submit mail content
+  (bodies, headers, whole .eml/.mbox files) to the LLM. To read a
+  subject or field from inside mail, extract it with a script first
+  (pattern: `references/muttrc/bin/dedupe-mail`), pass only the extracted value.
+  Include a checksum (sha256, or faster md5/xxhash) when correlating or
+  verifying message identity. Config files are not mail content and may
+  be read freely; mail files are not.
+- Commits: Conventional Commits (`type(scope): subject`), brief lowercase
+  imperative. ALL code owned by the human author - code commits carry no
+  AI marker and no co-author line, whether or not AI drafted them (an AI
+  marker is like mail typed on an iPhone - the device produced the words,
+  the owner answers for them). Doc/spec commits carry
   `Co-Authored-By: Deepseek` (the model that drafted them); review
   responsibility stays with the human either way.
-- Testing: treat AI-generated output like firmware - assume it fails in
-  production until exercised. Non-trivial logic leaves ONE runnable check
-  (assert-based self-test or a single small test). No test frameworks
-  beyond what the project already uses. Test data is generated, never
-  personal: tests use fabricated account and email names (alpha, atlas,
-  acme, sender@example.com) - real account names and real people's
-  addresses never appear in tests.
-- Code style: no unnecessary comments; self-documenting names; never
-  explain basic syntax; only non-obvious constraints get a comment.
-- Context: read files with limit/offset where possible; prefer Edit over
-  Write; match existing patterns verbatim; batch independent edits.
+- Testing: treat AI output like firmware - assume it fails in production
+  until exercised. Non-trivial logic leaves ONE runnable check. No test
+  frameworks beyond what the project already uses. Test data generated,
+  never personal: fabricated names (alpha, atlas, acme,
+  sender@example.com).
+- Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
+  in all output and code. No unnecessary comments; only non-obvious
+  constraints get a comment.
 
-Security (SECURITY.md is normative for trust boundaries; the hard rules):
+Security (SECURITY.md normative for trust boundaries; hard rules):
 - argv exec only. Never interpolate mail content, filenames, or queries
   into shell strings - tokenize commands at config load, pass data as
   argv (F4).
@@ -686,39 +383,37 @@ Security (SECURITY.md is normative for trust boundaries; the hard rules):
   before it reaches the terminal (F1).
 - Never log message bodies, headers, or passphrases (F6).
 - 0600 on files, 0700 on dirs, for everything written (F5, F7).
-- Parser-adjacent code passes the fuzz targets in SECURITY.md before it
-  is accepted (F1-F4, F10).
+- Parser-adjacent code passes the fuzz targets in SECURITY.md before
+  acceptance (F1-F4, F10).
 
 ### MCP data boundary (locked)
 
-The [mcp] server is an LLM-agent boundary: every tool result is
-metadata an agent may act on. The scope config is the boundary, and
-it is deny-by-default:
+The [mcp] server is an LLM-agent boundary: every tool result is metadata
+an agent may act on. The scope config is the boundary, and it is
+deny-by-default:
 
-- `[mcp] accounts` - the account folder spaces the server may see.
-  Each entry grants its folder prefix AND its account tag
+- `[mcp] accounts` - the account folder spaces the server may see. Each
+  entry grants its folder prefix AND its account tag
   (`folder:/^<name>\// AND tag:<name>`, subfolders included) - the
-  physical location and the logical identity, both required. A
-  read-only account can never match (its mail carries no account tag)
-  and is a load error, not a silent empty grant.
-- `[mcp] tags` - the soft tags whose mail is reachable; a message
-  must carry at least one allowed tag. The account tag is part of the
-  account grant, not this list.
+  physical location and the logical identity, both required. A read-only
+  account can never match (its mail carries no account tag) and is a
+  load error, not a silent empty grant.
+- `[mcp] tags` - the soft tags whose mail is reachable; a message must
+  carry at least one allowed tag. The account tag is part of the account
+  grant, not this list.
 - Empty `accounts` or `tags` serves nothing. Enforcement is per-tool:
-  search/count intersect the query with the scope, thread_info
-  projects only in-scope messages, attachments refuses out-of-scope
-  ids before any file open.
+  search/count intersect the query with the scope, thread_info projects
+  only in-scope messages, attachments refuses out-of-scope ids before
+  any file open.
 
-The correctness test for this boundary is
-`TestMCPScopeEnforcement` (src/app/mcp_test.go). It is LOCKED: it
-must never be loosened, weakened, or removed without explicit user
-approval stated in the conversation - a change to the boundary must
-start with that approval, not end with a test edit.
+The correctness test for this boundary is `TestMCPScopeEnforcement`
+(src/app/mcp_test.go). It is LOCKED: it must never be loosened, weakened,
+or removed without explicit user approval stated in the conversation - a
+change to the boundary must start with that approval, not end with a
+test edit.
 
 ## Non-goals
 
-- No IMAP/POP3 client implementation (transport stays mbsync/vdirsyncer or
-  external sync tools).
+- No IMAP/POP3 implementation (external sync tools: mbsync/vdirsyncer).
 - No own mail storage format.
-- No GUI (TUI only; the extractable TUI library may gain GUI backends
-  later, but that is out of scope).
+- No GUI (TUI only; extractable TUI library may gain GUI backends later).

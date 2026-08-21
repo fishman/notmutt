@@ -144,9 +144,13 @@ type Model struct {
 	// mirrors the last ThreadLoaded - a same-thread reload with another
 	// view replaces the pager content.
 	renderMode core.RenderMode
-	renderMime string
-	linkMode   bool
-	linkList   []string
+	// prevRenderMode is the view saved by the source toggle (ctrl+u):
+	// the second press restores it, so the source view is a toggle,
+	// not a one-way door.
+	prevRenderMode core.RenderMode
+	renderMime     string
+	linkMode       bool
+	linkList       []string
 	// linkInput is the easyjump number under entry: digits extend it,
 	// backspace drops it (no prompt - the selection is the live
 	// highlight). A complete number opens the link on the spot.
@@ -1209,10 +1213,17 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			deferred = true
 		}
 	case "show-source":
-		// the raw html source view (ctrl+u): re-opens the thread in
-		// the source view unless it is already showing it.
-		if m.mode == "pager" && m.pager != nil && m.renderMode != core.RenderSource {
-			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
+		// the raw html source view (ctrl+u): a true toggle - the
+		// first press saves the current view and opens the source,
+		// the second restores it (v's html/plain cycle stays
+		// source-free; v from the source view leaves into plain).
+		if m.mode == "pager" && m.pager != nil {
+			if m.renderMode == core.RenderSource {
+				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, m.width, false)
+			} else {
+				m.prevRenderMode = m.renderMode
+				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
+			}
 			deferPaint()
 			deferred = true
 		}

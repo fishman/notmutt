@@ -4254,6 +4254,12 @@ func TestModelToggleRender(t *testing.T) {
 	if out := stripANSI(m.View()); !strings.Contains(out, "raw source") {
 		t.Fatalf("the source reply must replace the pager content:\n%s", out)
 	}
+
+	// ctrl+u again toggles back to the view the source replaced
+	m = press(t, m, "ctrl+u")
+	if got != "t1" || gotMode != core.RenderHTML {
+		t.Fatalf("second ctrl+u must restore the pre-source view, got %q mode=%v", got, gotMode)
+	}
 }
 
 // TestModelCollapseThread pins the C and ctrl+v keys: the cursor

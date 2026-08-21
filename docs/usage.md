@@ -82,7 +82,7 @@ Enter opens the cursor message only, never the whole thread.
 | j / k, space, ctrl+d, pgdown/pgup, g / G | scroll |
 | alt+i | load remote images (and render embedded ones) - privacy gate |
 | v | toggle the plain/html view |
-| ctrl+u | show the html part's raw source |
+| ctrl+u | toggle the html part's raw source view |
 | F | easyjump link mode (type the [N] number to open) |
 | H | toggle the full header block |
 | h / l, left / right | scroll horizontally (long lines pan, never wrap) |

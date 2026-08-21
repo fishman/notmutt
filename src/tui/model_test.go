@@ -4074,8 +4074,8 @@ func TestAttachTabChooser(t *testing.T) {
 	m = press(t, m, "a")
 	next, cmd := m.Update(KeyPressMsg{Text: "tab", Code: 't'})
 	m = next
-	if m.dialogue != nil {
-		t.Fatal("Tab with a chooser must close the prompt")
+	if d, ok := m.dialogue.(*textDialogue); !ok || d.field != "attach" {
+		t.Fatal("Tab with a chooser must keep the attach prompt open")
 	}
 	if cmd == nil {
 		t.Fatal("Tab must arm the chooser exec")
@@ -5159,7 +5159,9 @@ func TestSummaryViewFromIndex(t *testing.T) {
 // action runs async and its picker request rides the bus, so the Tab
 // keypress must re-arm the event channel (a nil Cmd leaves the request
 // sitting in the buffer until the next keypress - the picker never
-// opens).
+// opens). The prompt must STAY open: closing it drops the next Tab
+// into the compose keymap (tab=attach reopens the prompt) instead of
+// re-running the chooser - the followup pick appears to hang.
 func TestAttachChooseReArmsBus(t *testing.T) {
 	old := pluginActions
 	pluginActions = func() map[string]bool { return map[string]bool{"attach-choose": true} }
@@ -5171,8 +5173,37 @@ func TestAttachChooseReArmsBus(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("the attach-choose Tab must re-arm the event channel")
 	}
-	if m.dialogue != nil {
-		t.Fatal("the action run must close the prompt")
+	if m.dialogue == nil {
+		t.Fatal("the attach-choose Tab must keep the prompt open (the followup Tab re-runs the chooser)")
+	}
+}
+
+// TestPickerRequestRunsExec pins the picker deadlock: the request's
+// exec must run with an idle bus. A batch(EventCmd, exec) sequences
+// yazi behind the next bus event the blocked Lua action can never
+// produce - the exec never runs and the picker never opens (the
+// goroutine dump shows the batch parked on EventCmd).
+func TestPickerRequestRunsExec(t *testing.T) {
+	bus := core.NewBus()
+	m := sized(New(core.NewView("inbox", "tag:inbox"), bus.Subscribe(),
+		testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
+	next, cmd := m.Update(EventMsg{Event: core.PickerRequest{ID: "p1", Argv: []string{"/bin/true"}}})
+	m = next
+	if cmd == nil {
+		t.Fatal("a picker request must arm the exec")
+	}
+	done := make(chan []any, 1)
+	go func() { done <- cmd() }()
+	select {
+	case msgs := <-done:
+		if len(msgs) != 1 {
+			t.Fatalf("want exactly the done message, got %d", len(msgs))
+		}
+		if _, ok := msgs[0].(pickerCmdDoneMsg); !ok {
+			t.Fatalf("want pickerCmdDoneMsg, got %T", msgs[0])
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the picker exec must not wait on a bus event (the batch deadlock)")
 	}
 }
 

@@ -650,7 +650,9 @@ func (m Model) Update(msg any) (Model, Cmd) {
 	case pickerCmdDoneMsg:
 		// the Lua picker's exec completed: the chooser file's paths
 		// ride PickerResult back to the app, which resumes the blocked
-		// action (R8)
+		// action (R8). The re-arm is required: the resumed action's
+		// attach_add drain publishes AttachFiles, and no other reader
+		// is guaranteed after the exec consumed the picker request.
 		if m.bus != nil {
 			var paths []string
 			if msg.err == nil {
@@ -667,7 +669,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.bus.Publish(core.PickerResult{ID: msg.id, Paths: paths, Err: msg.err})
 		}
 		os.Remove(msg.path)
-		return m, nil
+		return m, EventCmd(m.ch)
 	case frameTick:
 		// the deferred paint lands here at the fixed cadence; a tick
 		// with nothing deferred (idle model) turns the gate off again
@@ -731,9 +733,13 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.onAiResult(e)
 		case core.PickerRequest:
 			// the Lua action's picker call: run the argv through the
-			// attach-command exec path and publish the selection back
+			// attach-command exec path and publish the selection back.
+			// The exec must NOT batch behind EventCmd: batch runs its
+			// children in sequence, so yazi would wait on the next bus
+			// event the blocked action can never produce (deadlock -
+			// pickerCmdDoneMsg re-arms the bus on completion).
 			if cmd := m.runPicker(e); cmd != nil {
-				return m, batch(EventCmd(m.ch), cmd)
+				return m, cmd
 			}
 			return m, EventCmd(m.ch)
 		case core.PromptRequest:
@@ -3355,15 +3361,18 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 				// the action runs async and the picker request rides the
 				// bus: re-arm the event channel or the request sits in
 				// the buffer until the next keypress (the loop only
-				// reads it through EventCmd)
-				return nil, EventCmd(m.ch)
+				// reads it through EventCmd). The dialogue stays open:
+				// closing it drops the next Tab into the compose keymap
+				// (tab=attach reopens the prompt) instead of re-running
+				// the chooser - the followup pick appears to hang.
+				return d, EventCmd(m.ch)
 			}
 			if name := defaultChooser(attachCommands()); name != "" {
 				cmd := m.runAttachCommand(name)
 				if cmd == nil {
 					return d, nil // the send gate is armed: no exec
 				}
-				return nil, cmd
+				return d, cmd
 			}
 			return m.filePicker(d), nil
 		}

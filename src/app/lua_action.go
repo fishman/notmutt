@@ -355,7 +355,7 @@ func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_id", lua.LString(ac.tid))
 	if net {
-		meta := metadataCtxTable(vm, ac.worker)
+		meta := metadataCtxTable(vm, ac.worker, nil) // plugins carry their own config gates, no MCP scope
 		meta.ForEach(func(k, v lua.LValue) { ctx.RawSet(k, v) })
 		return ctx
 	}

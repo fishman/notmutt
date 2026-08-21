@@ -270,11 +270,16 @@ const DefaultAttachFolder = "~/Downloads/Attachments"
 
 // MCP is the [mcp] section: the whitelist of extra tools the stdio
 // server may expose beyond the metadata-only defaults (thread_info,
-// search, count). The mcp+lua build reads it; other builds ignore it.
-// An unknown method name is a startup error in that build, so a typo
-// fails loudly instead of silently serving fewer tools.
+// search, count). Accounts and Tags are the server's data boundary:
+// the account folder spaces it may see and the soft tags whose mail
+// is reachable. Both are deny-by-default - an empty accounts or tags
+// list serves nothing. The mcp+lua build reads it; other builds
+// ignore it. An unknown method name is a startup error in that build,
+// so a typo fails loudly instead of silently serving fewer tools.
 type MCP struct {
-	Allow []string `toml:"allow"`
+	Allow    []string `toml:"allow"`
+	Accounts []string `toml:"accounts"`
+	Tags     []string `toml:"tags"`
 }
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it

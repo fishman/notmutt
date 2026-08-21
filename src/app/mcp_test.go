@@ -8,6 +8,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/yuin/gopher-lua"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -73,7 +76,7 @@ func callTool(t *testing.T, tools []server.ServerTool, name string, args map[str
 // projected fields.
 func TestMCPToolExecution(t *testing.T) {
 	fw := mcpFixture()
-	tools := mcpTools(fw, "", nil)
+	tools := mcpTools(fw, "", nil, nil)
 
 	info := callTool(t, tools, "thread_info", map[string]any{"thread_id": "alpha"})
 	infoJSON, _ := json.MarshalIndent(info.StructuredContent, "", "  ")
@@ -138,7 +141,7 @@ func TestMCPRestrictedSurface(t *testing.T) {
 		`return function(ctx, args) ai_chat("p", {text = "x"}) end`,
 		`return function(ctx, args) prompt("y") end`,
 	} {
-		if _, err := mcpRunChunk(chunk, nil, fw, ""); err == nil {
+		if _, err := mcpRunChunk(chunk, nil, fw, "", nil); err == nil {
 			t.Fatalf("chunk %q must fail in the MCP sandbox", chunk)
 		}
 	}
@@ -150,7 +153,7 @@ func TestMCPRestrictedSurface(t *testing.T) {
 	defer cancel()
 	defer vm.Close()
 	keys := map[string]bool{}
-	metadataCtxTable(vm, fw).ForEach(func(k, _ lua.LValue) { keys[k.String()] = true })
+	metadataCtxTable(vm, fw, nil).ForEach(func(k, _ lua.LValue) { keys[k.String()] = true })
 	for _, want := range []string{"thread_info", "search", "count"} {
 		if !keys[want] {
 			t.Errorf("ctx table missing binding %s", want)
@@ -173,7 +176,7 @@ func TestMCPAttachmentsGate(t *testing.T) {
 
 	// default: not in the registry
 	names := map[string]bool{}
-	for _, st := range mcpTools(fw, root, nil) {
+	for _, st := range mcpTools(fw, root, nil, nil) {
 		names[st.Tool.Name] = true
 	}
 	if names["attachments"] {
@@ -181,7 +184,7 @@ func TestMCPAttachmentsGate(t *testing.T) {
 	}
 
 	// whitelisted: served, and the result is metadata only
-	tools := mcpTools(fw, root, map[string]bool{"attachments": true})
+	tools := mcpTools(fw, root, map[string]bool{"attachments": true}, nil)
 	res := callTool(t, tools, "attachments", map[string]any{"id": "m1"})
 	b, _ := json.Marshal(res)
 	s := string(b)
@@ -203,12 +206,171 @@ func TestMCPAttachmentsGate(t *testing.T) {
 	}
 }
 
+// scopeFixture is the [mcp] boundary fixture: a gmail account (the
+// allowed one) plus the readonly atlas account (which must be
+// rejected as allowed), messages across both folder spaces, and a
+// thread mixing in-scope and out-of-scope messages.
+func scopeFixture() *fakeWorker {
+	fw := &fakeWorker{}
+	fw.setStubs([]core.Message{
+		{ID: "gm1", ThreadID: "gt", Timestamp: 1755400000, Author: "sender@example.com",
+			Subject: "gmail inbox report", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}},
+		{ID: "om1", ThreadID: "ot", Timestamp: 1755405000, Author: "gamma@example.com",
+			Subject: "outlook inbox mail", Tags: []string{"outlook", "inbox"}, Paths: []string{"outlook/Inbox/cur/4"}},
+	})
+	fw.setThreadMsgs(map[string][]core.Message{
+		"gt": {
+			{ID: "gm1", ThreadID: "gt", Timestamp: 1755400000, Author: "sender@example.com",
+				Subject: "gmail inbox report", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}},
+			{ID: "gm2", ThreadID: "gt", Timestamp: 1755403600, Author: "alpha@example.com",
+				Subject: "gmail sent note", Tags: []string{"gmail", "sent"}, Paths: []string{"gmail/Sent/cur/2"}},
+			{ID: "gm3", ThreadID: "gt", Timestamp: 1755404000, Author: "beta@example.com",
+				Subject: "gmail work mail", Tags: []string{"gmail", "work"}, Paths: []string{"gmail/Inbox/cur/3"}},
+		},
+	})
+	return fw
+}
+
+func scopeConfig() *config.Config {
+	return &config.Config{Accounts: map[string]config.Account{
+		"gmail":   {},
+		"outlook": {},
+		"atlas":   {ReadOnly: true},
+	}}
+}
+
+// TestMCPScopeEnforcement is the LOCKED correctness test for the MCP
+// data boundary ([mcp] accounts + tags). It pins, in order: the
+// resolver's deny-by-default and validation errors; the query
+// intersection on search/count; the per-message projection gate on
+// thread_info; and the file-read gate on attachments. AGENTS.md
+// forbids loosening or removing this test without explicit user
+// approval - it is the enforcement proof of the boundary.
+func TestMCPScopeEnforcement(t *testing.T) {
+	cfg := scopeConfig()
+
+	// the resolver: empty lists deny everything (the default posture),
+	// unknown and readonly accounts are errors, a query-breaking tag is
+	// an error, and the granted scope carries the folder space AND the
+	// account tag AND the soft tags as one intersection
+	if _, err := resolveMCPScope(cfg); err != nil {
+		t.Fatalf("empty scope config must be legal (deny-all), got %v", err)
+	}
+	cfg.MCP.Accounts = []string{"gmail"}
+	if s, err := resolveMCPScope(cfg); err != nil {
+		t.Fatalf("accounts without tags must be legal (deny-all): %v", err)
+	} else if s.allowed() {
+		t.Fatal("accounts without tags must not allow anything")
+	}
+	cfg.MCP.Tags = []string{"inbox"}
+	s, err := resolveMCPScope(cfg)
+	if err != nil {
+		t.Fatalf("resolveMCPScope: %v", err)
+	}
+	wantQuery := "((folder:/^gmail\\// AND tag:gmail)) AND (tag:inbox)"
+	if s.query != wantQuery {
+		t.Errorf("scope query = %q, want %q", s.query, wantQuery)
+	}
+	cfg.MCP.Accounts = []string{"bogus"}
+	if _, err := resolveMCPScope(cfg); err == nil {
+		t.Fatal("an unknown account in [mcp] accounts must error")
+	}
+	cfg.MCP.Accounts = []string{"atlas"}
+	if _, err := resolveMCPScope(cfg); err == nil {
+		t.Fatal("a readonly account in [mcp] accounts must error (no account tag = never matches)")
+	}
+	cfg.MCP.Accounts = []string{"gmail"}
+	cfg.MCP.Tags = []string{"inbox) or tag:spam"}
+	if _, err := resolveMCPScope(cfg); err == nil {
+		t.Fatal("a query-breaking tag must error at config resolution, not at query time")
+	}
+	cfg.MCP.Tags = []string{"inbox"}
+
+	fw := scopeFixture()
+	tools := mcpTools(fw, "", nil, s)
+
+	// search and count: the user query alone may match any folder and
+	// any tag - the binding must intersect it with the scope before it
+	// reaches the worker
+	callTool(t, tools, "search", map[string]any{"query": "tag:inbox", "limit": 5})
+	if q, _ := fw.lastQuery.Load().(string); !strings.Contains(q, wantQuery) || !strings.HasPrefix(q, "(tag:inbox) AND ") {
+		t.Errorf("search query not intersected with the scope: %q", q)
+	}
+	callTool(t, tools, "count", map[string]any{"query": "*"})
+	if q, _ := fw.countQ.Load().(string); !strings.Contains(q, wantQuery) || !strings.HasPrefix(q, "(*) AND ") {
+		t.Errorf("count query not intersected with the scope: %q", q)
+	}
+
+	// thread_info: the thread fetch returns the whole thread - the
+	// projection must drop every out-of-scope message, so an
+	// out-of-scope tail cannot ride a visible thread id
+	info := callTool(t, tools, "thread_info", map[string]any{"thread_id": "gt"})
+	got, _ := json.Marshal(info.StructuredContent)
+	for _, want := range []string{`"count":1`, `"gmail inbox report"`} {
+		if !strings.Contains(string(got), want) {
+			t.Errorf("thread_info missing in-scope row %s: %s", want, got)
+		}
+	}
+	for _, leak := range []string{`"gmail sent note"`, `"gmail work mail"`} {
+		if strings.Contains(string(got), leak) {
+			t.Errorf("thread_info leaked an out-of-scope message (%s): %s", leak, got)
+		}
+	}
+
+	// attachments: the in-scope message's file is read, the out-of-scope
+	// id is refused before any file open
+	root := t.TempDir()
+	maildir := filepath.Join(root, "gmail", "Inbox", "cur")
+	if err := os.MkdirAll(maildir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixtureMail(t, maildir, "1", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local))
+	fw.setMsgs([]core.Message{{ID: "gm1", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}}})
+	at := mcpTools(fw, root, map[string]bool{"attachments": true}, s)
+	res := callTool(t, at, "attachments", map[string]any{"id": "gm1"})
+	if res.IsError {
+		t.Errorf("in-scope attachments refused: %v", res)
+	}
+	fw.setMsgs([]core.Message{{ID: "om1", Tags: []string{"outlook", "inbox"}, Paths: []string{"outlook/Inbox/cur/4"}}})
+	res = callTool(t, at, "attachments", map[string]any{"id": "om1"})
+	if !res.IsError {
+		t.Errorf("out-of-scope attachments must be refused: %v", res)
+	}
+	if b, _ := json.Marshal(res); !strings.Contains(string(b), "not in the allowed mcp scope") {
+		t.Errorf("out-of-scope attachments refusal must name the boundary: %s", b)
+	}
+
+	// deny-all: the default scope serves nothing - no query reaches the
+	// worker, no thread row and no attachment file crosses
+	deny, _ := resolveMCPScope(&config.Config{})
+	denyTools := mcpTools(fw, root, map[string]bool{"attachments": true}, deny)
+	denyRes := callTool(t, denyTools, "search", map[string]any{"query": "tag:inbox"})
+	if b, _ := json.Marshal(denyRes.StructuredContent); strings.Contains(string(b), "report") {
+		t.Errorf("deny-all search must not leak a row: %v", denyRes.StructuredContent)
+	}
+	if fw.queries.Load() != 1 {
+		t.Errorf("deny-all search reached the worker (queries=%d, want the 1 scoped one)", fw.queries.Load())
+	}
+	cnt := callTool(t, denyTools, "count", map[string]any{"query": "*"})
+	if cnt.StructuredContent != float64(0) {
+		t.Errorf("deny-all count = %v, want 0", cnt.StructuredContent)
+	}
+	info = callTool(t, denyTools, "thread_info", map[string]any{"thread_id": "gt"})
+	if got, _ := json.Marshal(info.StructuredContent); !strings.Contains(string(got), `"count":0`) {
+		t.Errorf("deny-all thread_info must project nothing: %s", got)
+	}
+	res = callTool(t, denyTools, "attachments", map[string]any{"id": "gm1"})
+	if !res.IsError {
+		t.Errorf("deny-all attachments must be refused: %v", res)
+	}
+}
+
 // TestMCPServerStdio drives the full MCP round trip through the
 // mcp-go stdio server (io.Pipe, real JSON-RPC framing): initialize,
 // tools/list, and a tools/call over the client.
 func TestMCPServerStdio(t *testing.T) {
 	fw := mcpFixture()
-	s, err := mcptest.NewServer(t, mcpTools(fw, "", nil)...)
+	s, err := mcptest.NewServer(t, mcpTools(fw, "", nil, nil)...)
 	if err != nil {
 		t.Fatal(err)
 	}

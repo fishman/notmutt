@@ -12,12 +12,23 @@
 // privacy boundary: metadata only (subject, author, timestamp, tags,
 // thread id, message count, references) - mail content, paths, and raw
 // headers never cross it.
+//
+// The data boundary is the [mcp] scope (resolveMCPScope): accounts
+// names the folder spaces the server may see (folder prefix AND the
+// account tag), tags the soft tags whose mail is reachable. Deny by
+// default - empty lists serve nothing; every query is intersected
+// with the scope (search/count), every id-addressed read is checked
+// per message (thread_info rows, attachments). The scope enforcement
+// test is TestMCPScopeEnforcement - never loosened without explicit
+// approval (AGENTS.md).
 package app
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -141,11 +152,12 @@ const mcpAttachmentsChunk = `return function(ctx, args) return ctx.attachments(a
 
 // mcpTools builds the tool registry for a worker and mail root: one
 // ServerTool per spec, the handler closing over the worker. A gated
-// spec is served only when allow names it (the [mcp] allow list).
-// The tool-level description is the WithDescription option
-// (Description is the property-level one); it prefixes the property
-// schema options.
-func mcpTools(worker workerAPI, root string, allow map[string]bool) []server.ServerTool {
+// spec is served only when allow names it (the [mcp] allow list);
+// the scope is the data boundary every handler enforces. The
+// tool-level description is the WithDescription option (Description
+// is the property-level one); it prefixes the property schema
+// options.
+func mcpTools(worker workerAPI, root string, allow map[string]bool, scope *mcpScope) []server.ServerTool {
 	tools := make([]server.ServerTool, 0, len(mcpToolSpecs))
 	for _, spec := range mcpToolSpecs {
 		if spec.gated && !allow[spec.name] {
@@ -159,15 +171,15 @@ func mcpTools(worker workerAPI, root string, allow map[string]bool) []server.Ser
 		}, spec.schema...)
 		tools = append(tools, server.ServerTool{
 			Tool:    mcp.NewTool(spec.name, opts...),
-			Handler: mcpToolHandler(spec, worker, root),
+			Handler: mcpToolHandler(spec, worker, root, scope),
 		})
 	}
 	return tools
 }
 
-func newMCPServer(worker workerAPI, root string, allow map[string]bool) *server.MCPServer {
+func newMCPServer(worker workerAPI, root string, allow map[string]bool, scope *mcpScope) *server.MCPServer {
 	s := server.NewMCPServer("notmutt", "0.1.0", server.WithToolCapabilities(false))
-	s.AddTools(mcpTools(worker, root, allow)...)
+	s.AddTools(mcpTools(worker, root, allow, scope)...)
 	return s
 }
 
@@ -175,13 +187,13 @@ func newMCPServer(worker workerAPI, root string, allow map[string]bool) *server.
 // run the chunk in a fresh sandboxed VM, wrap the result. A script
 // error is a tool-failure result the client sees, not a transport
 // error.
-func mcpToolHandler(spec mcpToolSpec, worker workerAPI, root string) server.ToolHandlerFunc {
+func mcpToolHandler(spec mcpToolSpec, worker workerAPI, root string, scope *mcpScope) server.ToolHandlerFunc {
 	return func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		args, err := spec.validate(req)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		out, err := mcpRunChunk(spec.chunk, args, worker, root)
+		out, err := mcpRunChunk(spec.chunk, args, worker, root, scope)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -200,18 +212,20 @@ func mcpToolHandler(spec mcpToolSpec, worker workerAPI, root string) server.Tool
 // chunk receives (ctx, args) and its first return value is the tool
 // result. Mirrors runLuaCommand's LoadString + SetGlobal + push +
 // PCall (lua_action.go).
-func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root string) (any, error) {
+func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root string, scope *mcpScope) (any, error) {
 	vm, _, cancel, err := newSandboxVM(mcpDeadline)
 	if err != nil {
 		return nil, err
 	}
 	defer cancel()
 	defer vm.Close()
-	ctx := metadataCtxTable(vm, worker)
+	ctx := metadataCtxTable(vm, worker, scope)
 	// the attachments binding is the MCP-only surface extension,
 	// registered here and never in metadataCtxTable: a network-enabled
 	// plugin VM (which shares that table) must not see it. It lists
 	// one message's attachments by id - name/mime/size, never bytes.
+	// The in-scope check gates the file read: a message outside the
+	// allowed folder space and tags is refused, not parsed.
 	ctx.RawSetString("attachments", vm.NewFunction(func(L *lua.LState) int {
 		id := L.CheckString(1)
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{id}})
@@ -220,6 +234,9 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root strin
 		}
 		if len(rpl.Msgs) == 0 {
 			L.RaiseError("attachments: no such message %q", id)
+		}
+		if !scope.inScope(rpl.Msgs[0]) {
+			L.RaiseError("attachments: message %q is not in the allowed mcp scope", id)
 		}
 		tbl := L.NewTable()
 		for _, p := range rpl.Msgs[0].Paths {
@@ -280,16 +297,66 @@ func resolveMCPAllow(allow []string) (map[string]bool, error) {
 	return out, nil
 }
 
+// resolveMCPScope maps the config's [mcp] accounts and tags to the
+// server's data boundary: each account grants its folder space AND
+// its account tag (folder:/^<name>\// AND tag:<name>), each tag the
+// soft-tag membership. An unknown account name is an error (a typo
+// fails loudly), a read-only account is an error (its mail carries no
+// account tag, so the scope would silently match nothing), and a tag
+// that could break out of the query term is an error. Empty accounts
+// or tags yield a deny-all scope - the default posture serves
+// nothing.
+func resolveMCPScope(cfg *config.Config) (*mcpScope, error) {
+	if len(cfg.MCP.Accounts) == 0 || len(cfg.MCP.Tags) == 0 {
+		return &mcpScope{}, nil
+	}
+	scope := &mcpScope{}
+	for _, name := range cfg.MCP.Accounts {
+		a, ok := cfg.Accounts[name]
+		if !ok {
+			return nil, fmt.Errorf("mcp: unknown account %q in accounts", name)
+		}
+		if a.ReadOnly {
+			return nil, fmt.Errorf("mcp: account %q is readonly - it carries no account tag, the scope would never match", name)
+		}
+		scope.folders = append(scope.folders, a.Tag(name))
+	}
+	for _, t := range cfg.MCP.Tags {
+		if t == "" || strings.ContainsAny(t, " \t()\"") {
+			return nil, fmt.Errorf("mcp: invalid allowed tag %q", t)
+		}
+		scope.tags = append(scope.tags, t)
+	}
+	// the account tag IS the folder name (Account.Tag), so the regex
+	// is QuoteMeta'd but the tag term stays literal - the tag side
+	// pins the identity exactly
+	acct := make([]string, len(scope.folders))
+	for i, f := range scope.folders {
+		acct[i] = fmt.Sprintf("(folder:/^%s\\// AND tag:%s)", regexp.QuoteMeta(f), f)
+	}
+	tags := make([]string, len(scope.tags))
+	for i, t := range scope.tags {
+		tags[i] = "tag:" + t
+	}
+	scope.query = "(" + strings.Join(acct, " OR ") + ") AND (" + strings.Join(tags, " OR ") + ")"
+	return scope, nil
+}
+
 // serveMCP runs the MCP stdio server: the config's [mcp] allow list
-// decides which gated tools are served, the read-only worker opens the
-// DB, and ServeStdio owns stdin/stdout until the client closes the
-// pipe. Nothing else may write stdout.
+// decides which gated tools are served and the scope decides which
+// mail the server may see, the read-only worker opens the DB, and
+// ServeStdio owns stdin/stdout until the client closes the pipe.
+// Nothing else may write stdout.
 func serveMCP() error {
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	allow, err := resolveMCPAllow(cfg.MCP.Allow)
+	if err != nil {
+		return err
+	}
+	scope, err := resolveMCPScope(&cfg)
 	if err != nil {
 		return err
 	}
@@ -305,7 +372,7 @@ func serveMCP() error {
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
 		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
 	}
-	if err := server.ServeStdio(newMCPServer(worker, root, allow)); err != nil {
+	if err := server.ServeStdio(newMCPServer(worker, root, allow, scope)); err != nil {
 		return fmt.Errorf("mcp: %w", err)
 	}
 	return nil

@@ -216,12 +216,88 @@ func luaNetworkEndpointAllowed(method, path string, paths []string) bool {
 	return false
 }
 
+// mcpScope is the MCP server's data boundary: the account folder
+// spaces it may see (each = folder prefix AND the account's tag) and
+// the soft tags whose mail is reachable. Deny by default: an empty
+// accounts or tags list allows nothing, and the nil scope (network
+// plugin VMs, which carry their own config gates) is unscoped.
+type mcpScope struct {
+	folders []string // account folder prefixes; the account tag is the folder name
+	tags    []string // allowed soft tags; a message must carry one
+	query   string   // the scope as a notmuch term, for query intersection
+}
+
+// allowed reports whether the scope admits anything at all. Both
+// lists must be non-empty: the account space and the tag list are
+// each an explicit grant. The nil scope (plugin VMs) is unscoped -
+// the bindings pass through when scope is nil, deny-all short-circuits
+// only a non-nil scope.
+func (s *mcpScope) allowed() bool {
+	return len(s.folders) > 0 && len(s.tags) > 0
+}
+
+// and intersects a user query with the scope: the user query alone
+// may match any folder and any tag, the scope term pins both. A nil
+// scope passes the query through untouched.
+func (s *mcpScope) and(q string) string {
+	if s == nil {
+		return q
+	}
+	return "(" + q + ") AND " + s.query
+}
+
+// inScope is the per-message check for the id-addressed tools
+// (thread_info rows, attachments): the message must live under an
+// allowed account's folder space, carry that account's tag, and
+// carry at least one allowed soft tag - the folder pin alone could
+// be spoofed by a moved message, the tag alone by a retag. A nil
+// scope (plugin VMs) admits everything.
+func (s *mcpScope) inScope(m core.Message) bool {
+	if s == nil {
+		return true
+	}
+	if !s.allowed() {
+		return false
+	}
+	has := make(map[string]bool, len(m.Tags))
+	for _, t := range m.Tags {
+		has[t] = true
+	}
+	under := false
+	for _, f := range s.folders {
+		if has[f] && underFolder(m.Paths, f) {
+			under = true
+			break
+		}
+	}
+	if !under {
+		return false
+	}
+	for _, t := range s.tags {
+		if has[t] {
+			return true
+		}
+	}
+	return false
+}
+
+func underFolder(paths []string, folder string) bool {
+	for _, p := range paths {
+		if strings.HasPrefix(p, folder+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // metadataCtxTable builds the metadata-only ctx table over the worker:
 // thread_info, search, count - nothing that projects mail content
 // (no mail_lines, no ai_chat). The MCP server (mcp.go) and
 // network-enabled plugin VMs share this surface: the data policy says
-// what may cross the network is exactly what this table can see.
-func metadataCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
+// what may cross the network is exactly what this table can see. The
+// scope is the MCP boundary - the id-addressed bindings per-message
+// check it, the query bindings intersect the user query with it.
+func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_info", vm.NewFunction(func(L *lua.LState) int {
 		tid := L.CheckString(1)
@@ -229,11 +305,20 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
 		if err != nil || rpl.Err != nil {
 			L.RaiseError("thread_info: %v %v", err, rpl.Err)
 		}
+		// the thread fetch returns the whole thread; only in-scope
+		// messages cross into the projection, so an out-of-scope tail
+		// cannot ride a visible thread id
+		var rows []core.Message
+		for _, m := range rpl.Msgs {
+			if scope.inScope(m) {
+				rows = append(rows, m)
+			}
+		}
 		tbl := L.NewTable()
 		tbl.RawSetString("thread_id", lua.LString(tid))
-		tbl.RawSetString("count", lua.LNumber(len(rpl.Msgs)))
+		tbl.RawSetString("count", lua.LNumber(len(rows)))
 		msgs := L.NewTable()
-		for _, m := range rpl.Msgs {
+		for _, m := range rows {
 			msgs.Append(projectMessage(L, m))
 		}
 		tbl.RawSetString("messages", msgs)
@@ -242,6 +327,10 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
 	}))
 	ctx.RawSetString("search", vm.NewFunction(func(L *lua.LState) int {
 		q := L.CheckString(1)
+		if scope != nil && !scope.allowed() {
+			L.Push(L.NewTable())
+			return 1
+		}
 		limit := int(L.OptNumber(2, mcpSearchDefaultLimit))
 		if limit < 1 {
 			limit = 1
@@ -252,7 +341,7 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
 		var rows []core.Message
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:  notmuch.ActQuery,
-			Query: q,
+			Query: scope.and(q),
 			Limit: limit,
 			// the Emit closure only appends to an invocation-local slice
 			// (the refresher.changed pattern); it runs on the worker
@@ -274,7 +363,11 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI) *lua.LTable {
 	}))
 	ctx.RawSetString("count", vm.NewFunction(func(L *lua.LState) int {
 		q := L.CheckString(1)
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: q})
+		if scope != nil && !scope.allowed() {
+			L.Push(lua.LNumber(0))
+			return 1
+		}
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: scope.and(q)})
 		if err != nil || rpl.Err != nil {
 			L.RaiseError("count: %v %v", err, rpl.Err)
 		}

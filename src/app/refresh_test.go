@@ -23,6 +23,7 @@ type fakeWorker struct {
 	msgs      atomic.Value
 	stubs     atomic.Value
 	lastQuery atomic.Value
+	countQ    atomic.Value // ActCount query - the scope-intersection pin
 	queries   atomic.Int32
 	emits     atomic.Int32 // ActQuery emit chunks - the chunk cadence
 	threads   atomic.Int32 // ActThread calls - must stay zero in the load path
@@ -66,6 +67,7 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.UUID, _ = f.uuid.Load().(string)
 		r.Rev = f.rev.Load()
 	case notmuch.ActCount:
+		f.countQ.Store(a.Query)
 		if err, _ := f.countErr.Load().(error); err != nil {
 			return notmuch.Reply{ID: a.ID}, err
 		}

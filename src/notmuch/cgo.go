@@ -177,13 +177,28 @@ func refsSplit(raw string) []string {
 }
 
 // CountMsgs returns the message count for the query - the flat fill's
-// progress total (the threaded fill counts threads).
+// progress total (the threaded fill counts threads). The msg walk
+// omits the config search.exclude_tags (the CLI search default, the
+// binding's query_apply_excludes); the count applies the same
+// excludes, or a result with excluded-tagged matches never reaches
+// Done == Total and the bar sticks short of completion.
 func (b *CGOBackend) CountMsgs(ctx context.Context, query string) (int, error) {
 	if b.db == nil {
 		return 0, fmt.Errorf("notmuch count: database not open")
 	}
 	q := b.db.NewQuery(query)
 	defer q.Close()
+	// mirror the msg walk: read search.exclude_tags and omit them
+	// (EXCLUDE_TRUE), skipping the tag adds on error like the C
+	// helper - an unset key means no excludes on either side.
+	if ex, err := b.db.GetConfig("search.exclude_tags"); err == nil {
+		for _, tag := range strings.Split(ex, ";") {
+			if tag != "" {
+				q.AddTagExclude(tag)
+			}
+		}
+		q.SetExcludeScheme(nm.EXCLUDE_TRUE)
+	}
 	n, err := q.CountMessages()
 	if err != nil {
 		return 0, fmt.Errorf("notmuch count: %w", err)

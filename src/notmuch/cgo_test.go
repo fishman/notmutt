@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -98,6 +99,65 @@ func TestCGOMsgWalk(t *testing.T) {
 	}
 	if got != 5 {
 		t.Fatalf("flat walk = %d rows (want 5)", got)
+	}
+}
+
+// TestCGOMsgWalkExcludes pins the flat path's exclude scheme: the msg
+// walk omits the config search.exclude_tags (the CLI search default),
+// and CountMsgs must count exactly what the walk emits - a mismatch
+// leaves the progress bar stuck short of completion (the search tab's
+// 2212/2230 stall on the real mailbox). The threaded Count keeps full
+// membership: the threaded walk does not exclude (the view applies
+// the deleted-leaf rule itself).
+func TestCGOMsgWalkExcludes(t *testing.T) {
+	db, maildir := testutil.ScratchMailbox(t)
+	for i := range 6 {
+		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
+			"Subject: excl %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
+			"Message-ID: <excl%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
+		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("excl%d.eml", i)), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	testutil.NotmuchNew(t)
+	if out, err := exec.Command("notmuch", "tag", "+deleted", "--",
+		"id:excl1@test.invalid or id:excl2@test.invalid").CombinedOutput(); err != nil {
+		t.Fatalf("notmuch tag: %v: %s", err, out)
+	}
+	// the exclude scheme is read from the config at database open
+	cfgPath := filepath.Join(db, "config")
+	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("\n[search]\nexclude_tags = deleted\n"); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	b := NewCGO()
+	if err := b.Open(context.Background(), db); err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close(context.Background())
+	n, err := b.CountMsgs(context.Background(), "tag:inbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 4 {
+		t.Fatalf("count msgs with excludes = %d (want 4: 6 minus 2 deleted)", n)
+	}
+	got := 0
+	if err := b.Query(context.Background(), "tag:inbox", 0, true, func(chunk []core.Message) bool {
+		got += len(chunk)
+		return true
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got != 4 {
+		t.Fatalf("flat walk with excludes = %d rows (want 4)", got)
+	}
+	if n, err := b.Count(context.Background(), "tag:inbox"); err != nil || n != 6 {
+		t.Fatalf("count threads = %d, %v (want 6, full membership)", n, err)
 	}
 }
 

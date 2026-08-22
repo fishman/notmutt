@@ -178,32 +178,27 @@ func (w *Worker) handle(a Action) {
 	a.replyCh <- r
 }
 
+// actionNames is the canonical action-name table: the lock-timeout
+// diagnostics render ActionKind through it.
+var actionNames = map[ActionKind]string{
+	ActOpen:        "open",
+	ActQuery:       "query",
+	ActQueryMsgs:   "querymsgs",
+	ActCount:       "count",
+	ActThread:      "thread",
+	ActSnapshots:   "snapshots",
+	ActTag:         "tag",
+	ActAddPaths:    "addpaths",
+	ActRemovePaths: "removepaths",
+	ActRevision:    "revision",
+	ActNew:         "new",
+	ActAddresses:   "addresses",
+	ActClose:       "close",
+}
+
 func actionName(k ActionKind) string {
-	switch k {
-	case ActOpen:
-		return "open"
-	case ActQuery:
-		return "query"
-	case ActQueryMsgs:
-		return "querymsgs"
-	case ActThread:
-		return "thread"
-	case ActSnapshots:
-		return "snapshots"
-	case ActTag:
-		return "tag"
-	case ActAddPaths:
-		return "addpaths"
-	case ActRemovePaths:
-		return "removepaths"
-	case ActRevision:
-		return "revision"
-	case ActNew:
-		return "new"
-	case ActAddresses:
-		return "addresses"
-	case ActClose:
-		return "close"
+	if n, ok := actionNames[k]; ok {
+		return n
 	}
 	return "unknown"
 }

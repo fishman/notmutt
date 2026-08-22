@@ -23,14 +23,19 @@ const (
 	ModeForward
 )
 
+// modeNames is the canonical Mode wire-name table: the dialogue's
+// event round trip parses names (parseMode) and renders them
+// (Mode.String) from one table - no drift between the directions.
+var modeNames = map[Mode]string{
+	ModeCompose:  "compose",
+	ModeReply:    "reply",
+	ModeReplyAll: "reply-all",
+	ModeForward:  "forward",
+}
+
 func (m Mode) String() string {
-	switch m {
-	case ModeReply:
-		return "reply"
-	case ModeReplyAll:
-		return "reply-all"
-	case ModeForward:
-		return "forward"
+	if s, ok := modeNames[m]; ok {
+		return s
 	}
 	return "compose"
 }
@@ -70,14 +75,19 @@ const (
 	SecuritySignEncrypt
 )
 
+// securityNames is the canonical Security wire-name table: the
+// dialogue's event round trip parses names (parseSecurity) and
+// renders them (Security.String) from one table.
+var securityNames = map[Security]string{
+	SecurityNone:        "none",
+	SecuritySign:        "sign",
+	SecurityEncrypt:     "encrypt",
+	SecuritySignEncrypt: "sign+encrypt",
+}
+
 func (s Security) String() string {
-	switch s {
-	case SecuritySign:
-		return "sign"
-	case SecurityEncrypt:
-		return "encrypt"
-	case SecuritySignEncrypt:
-		return "sign+encrypt"
+	if n, ok := securityNames[s]; ok {
+		return n
 	}
 	return "none"
 }

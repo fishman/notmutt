@@ -43,25 +43,19 @@ func FromEvent(e core.ComposeOpened) *State {
 }
 
 func parseMode(s string) Mode {
-	switch s {
-	case "reply":
-		return ModeReply
-	case "reply-all":
-		return ModeReplyAll
-	case "forward":
-		return ModeForward
+	for m, name := range modeNames {
+		if name == s {
+			return m
+		}
 	}
 	return ModeCompose
 }
 
 func parseSecurity(s string) Security {
-	switch s {
-	case "sign":
-		return SecuritySign
-	case "encrypt":
-		return SecurityEncrypt
-	case "sign+encrypt":
-		return SecuritySignEncrypt
+	for sec, name := range securityNames {
+		if name == s {
+			return sec
+		}
 	}
 	return SecurityNone
 }

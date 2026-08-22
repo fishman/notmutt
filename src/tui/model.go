@@ -1980,14 +1980,15 @@ func (m *Model) addrPicker() dialogue {
 	return &listDialogue{f: f, back: d}
 }
 
-// isAddrField reports whether the dialogue field carries addresses -
-// the Tab completion surface.
+// addrFields is the address-field set: the compose-editor Tab
+// completion treats these as address inputs.
+var addrFields = map[string]bool{
+	"to": true, "cc": true, "bcc": true, "replyto": true,
+}
+
+// isAddrField reports whether the dialogue field carries addresses.
 func isAddrField(f string) bool {
-	switch f {
-	case "to", "cc", "bcc", "replyto":
-		return true
-	}
-	return false
+	return addrFields[f]
 }
 
 // onComposeOpened attaches a dialogue tab (R4). The opened set makes

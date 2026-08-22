@@ -17,21 +17,17 @@ import (
 )
 
 func TestCGOSmoke(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	for i := 0; i < 10; i++ {
 		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
 			"Subject: smoke %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
 			"Message-ID: <smoke%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
-		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("smoke%d.eml", i)), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(e.Maildir, fmt.Sprintf("smoke%d.eml", i)), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	uuid, rev, err := b.Revision(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -67,21 +63,17 @@ func TestCGOSmoke(t *testing.T) {
 // The message row carries its real thread id, so open still finds the
 // conversation.
 func TestCGOMsgWalk(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	for i := 0; i < 5; i++ {
 		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
 			"Subject: flat %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
 			"Message-ID: <flat%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
-		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("flat%d.eml", i)), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(e.Maildir, fmt.Sprintf("flat%d.eml", i)), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	if n, err := b.CountMsgs(context.Background(), "tag:inbox"); err != nil || n != 5 {
 		t.Fatalf("count msgs = %d, %v (want 5)", n, err)
 	}
@@ -110,12 +102,12 @@ func TestCGOMsgWalk(t *testing.T) {
 // membership: the threaded walk does not exclude (the view applies
 // the deleted-leaf rule itself).
 func TestCGOMsgWalkExcludes(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	for i := range 6 {
 		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
 			"Subject: excl %d\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
 			"Message-ID: <excl%d@test.invalid>\n\nsynthetic fixture body\n", i, i)
-		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("excl%d.eml", i)), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(e.Maildir, fmt.Sprintf("excl%d.eml", i)), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -125,7 +117,7 @@ func TestCGOMsgWalkExcludes(t *testing.T) {
 		t.Fatalf("notmuch tag: %v: %s", err, out)
 	}
 	// the exclude scheme is read from the config at database open
-	cfgPath := filepath.Join(db, "config")
+	cfgPath := filepath.Join(e.DB, "config")
 	f, err := os.OpenFile(cfgPath, os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -134,11 +126,7 @@ func TestCGOMsgWalkExcludes(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.Close()
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	n, err := b.CountMsgs(context.Background(), "tag:inbox")
 	if err != nil {
 		t.Fatal(err)
@@ -166,22 +154,18 @@ func TestCGOMsgWalkExcludes(t *testing.T) {
 // remove it, assert again. The fixture is authored test data (no real
 // mail); the real mailbox is never written by the test suite.
 func TestCGOTagRoundTrip(t *testing.T) {
-	dir, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	fixture := []byte("From: alpha <alpha@example.com>\n" +
 		"To: beta@example.com\n" +
 		"Subject: cgo tag roundtrip\n" +
 		"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
 		"Message-ID: <cgo-tag-roundtrip@test.invalid>\n\n" +
 		"synthetic fixture body\n")
-	if err := os.WriteFile(filepath.Join(maildir, "fixture.eml"), fixture, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(e.Maildir, "fixture.eml"), fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), dir); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	const id = "id:cgo-tag-roundtrip@test.invalid"
 	if n, err := b.Count(context.Background(), "tag:scratch"); err != nil || n != 0 {
 		t.Fatalf("scratch tag present before add: %d %v", n, err)
@@ -206,25 +190,21 @@ func TestCGOTagRoundTrip(t *testing.T) {
 // walk, the snapshot, and the remove-side update - tags must survive
 // the path swap (the mover's add-first guarantee).
 func TestCGODeltaRoundTrip(t *testing.T) {
-	dir, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	fixture := []byte("From: alpha <alpha@example.com>\n" +
 		"To: beta@example.com\n" +
 		"Subject: cgo delta roundtrip\n" +
 		"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
 		"Message-ID: <cgo-delta-roundtrip@test.invalid>\n\n" +
 		"synthetic fixture body\n")
-	fixture1 := filepath.Join(maildir, "fixture1.eml")
-	fixture2 := filepath.Join(maildir, "fixture2.eml")
+	fixture1 := filepath.Join(e.Maildir, "fixture1.eml")
+	fixture2 := filepath.Join(e.Maildir, "fixture2.eml")
 	wantTS := time.Date(2026, 8, 16, 12, 0, 0, 0, time.UTC).Unix()
 	if err := os.WriteFile(fixture1, fixture, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), dir); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	const id = "cgo-delta-roundtrip@test.invalid"
 	if err := b.Tag(context.Background(), "id:"+id, []TagOp{{Tag: "scratch", Add: true}}); err != nil {
 		t.Fatal(err)

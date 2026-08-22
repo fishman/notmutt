@@ -25,7 +25,8 @@ import (
 // moves with the wrapper's own new, and the post-run handle sees
 // both the wrapper's message and the external one.
 func TestCGONewBracket(t *testing.T) {
-	dir, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
+	b := newTestBackend(t, e)
 	newRun := testutil.NotmuchNew
 	write := func(id string) {
 		body := "From: probe <probe@test.invalid>\n" +
@@ -34,7 +35,7 @@ func TestCGONewBracket(t *testing.T) {
 			"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
 			"Message-ID: <" + id + "@test.invalid>\n\n" +
 			"synthetic fixture body\n"
-		if err := os.WriteFile(filepath.Join(maildir, id+".eml"), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(e.Maildir, id+".eml"), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -56,11 +57,6 @@ func TestCGONewBracket(t *testing.T) {
 
 	write("m1")
 	newRun(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), dir); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
 
 	// an external commit while the handle is open (a CLI new from a
 	// hook, another client) must not leak into the bracket: the entry

@@ -21,7 +21,7 @@ import (
 // identity, and the old messages staying unmarked. notmuch reports
 // message ids bare (no angle brackets).
 func TestRealThreadClassifies(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
+	e := testutil.Setup(t)
 	// one thread of 9 fabricated messages; mine are alpha (the scratch
 	// user), the rest sender@example.com; timestamps ascend by hour
 	me := []string{"alpha@example.com"}
@@ -39,16 +39,12 @@ func TestRealThreadClassifies(t *testing.T) {
 		}
 		body += "\nsynthetic fixture body\n"
 		prev = id
-		if err := os.WriteFile(filepath.Join(maildir, fmt.Sprintf("c%d.eml", i)), []byte(body), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(e.Maildir, fmt.Sprintf("c%d.eml", i)), []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	threadID := ""
 	err := b.Query(context.Background(), "subject:classify thread", 10, false, func(chunk []core.Message) bool {
 		if len(chunk) > 0 {

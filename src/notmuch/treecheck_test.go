@@ -45,14 +45,10 @@ func dump(t *testing.T, label string, v *core.View) {
 // stub load, hydration, refresh merges, and the window slide. Row dumps
 // only, fabricated data - the scratch-db harness, never the real mailbox.
 func TestDebugTreeCheck(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
-	testutil.ThreadTree(t, maildir, 1, 10)
+	e := testutil.Setup(t)
+	testutil.ThreadTree(t, e.Maildir, 1, 10)
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	var tid string
 	if err := b.Query(context.Background(), "tag:inbox", 1, false, func(chunk []core.Message) bool {
 		if len(chunk) > 0 {

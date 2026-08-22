@@ -16,14 +16,10 @@ import (
 // the result. Depth-1 threads keep threads == messages, so the
 // walk-vs-Count invariant holds by construction.
 func TestCGOWalkExhausts(t *testing.T) {
-	db, maildir := testutil.ScratchMailbox(t)
-	testutil.ThreadTree(t, maildir, 25, 1)
+	e := testutil.Setup(t)
+	testutil.ThreadTree(t, e.Maildir, 25, 1)
 	testutil.NotmuchNew(t)
-	b := NewCGO()
-	if err := b.Open(context.Background(), db); err != nil {
-		t.Fatal(err)
-	}
-	defer b.Close(context.Background())
+	b := newTestBackend(t, e)
 	want, err := b.Count(context.Background(), "tag:inbox")
 	if err != nil {
 		t.Fatal(err)

@@ -45,6 +45,21 @@ func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
 	return nil
 }
 
+// OpenConfig opens the database at dbPath with an explicit notmuch
+// config file: no environment resolution, so the caller guarantees
+// which config applies (its search.exclude_tags included). The plain
+// Open resolves the config from the environment (NOTMUCH_CONFIG or
+// ~/.notmuch-config); OpenConfig binds both inputs - the test env's
+// explicit-init form.
+func (b *CGOBackend) OpenConfig(ctx context.Context, dbPath, configPath string) error {
+	db, err := nm.OpenWithConfig(&dbPath, &configPath, nil, nm.DBReadOnly)
+	if err != nil {
+		return fmt.Errorf("notmuch open: %w", err)
+	}
+	b.db = db
+	return nil
+}
+
 func (b *CGOBackend) Close(ctx context.Context) error {
 	if b.db != nil {
 		err := b.db.Close()

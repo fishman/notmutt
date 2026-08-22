@@ -7,13 +7,12 @@
 // detection template is a Lua file returning a table with name, match
 // (the TOP-LEVEL folders that gate the template), and folders (tag ->
 // candidate-folder paths for extraction). The shipped templates
-// (lua/templates/, the examples contributors copy) are embedded and
-// evaluated as the built-ins; contributed templates from
-// <configdir>/lua/templates are OPT-IN - only the names listed in
-// [setup] templates load, replacing built-ins by name (the R2 preset
-// override rule) or adding to the detection set. Compiles only under
-// the lua build tag - default builds carry setup_lua_stub.go, no Lua
-// runtime, and the Go fallback in setup.Templates.
+// (lua/templates/) are embedded and evaluated as the built-ins;
+// contributed templates from <configdir>/lua/templates are OPT-IN -
+// only the names listed in [setup] templates load, replacing built-ins
+// by name (the R2 preset override rule) or adding to the detection
+// set. Compiles only under the lua build tag - default builds carry
+// setup_lua_stub.go and the Go fallback in setup.Templates.
 //
 // The template shape (copy a file from lua/templates/ to
 // <configdir>/lua/templates/, enable its name in [setup] templates,
@@ -52,9 +51,9 @@ import (
 
 // builtinTemplates evaluates the shipped template files in the Go
 // fallback's order: setup.Templates is the canonical sequence (the
-// first match wins in Detect, so order is behavior), and the sync
-// test pins the content equal. A leftover template not in the Go
-// data would fail the pin test - appended sorted as a guard.
+// first match wins in Detect, so order is behavior), and the sync test
+// pins the content equal. A leftover template not in the Go data would
+// fail the pin test - appended sorted as a guard.
 func builtinTemplates() []setup.Template {
 	entries, err := fs.ReadDir(templateFS, "lua/templates")
 	if err != nil {
@@ -97,13 +96,11 @@ func builtinTemplates() []setup.Template {
 
 // luaTemplates loads the OPT-IN contributed templates from
 // dir/templates: a file is one detection template, named <name>.lua,
-// and only the names in active load (not every template is
-// autoloaded - the seeded examples stay inert until [setup] templates
-// names them; an unlisted file is not even evaluated). Sorted, so the
-// detection order is deterministic. A listed file that fails to load
-// is logged and skipped (the plugin degrade rule - a bad template
-// never breaks setup). A missing dir is a no-op - no contributed
-// templates.
+// and only the names in active load - the seeded examples stay inert
+// until [setup] templates names them. Sorted, so the detection order
+// is deterministic. A listed file that fails to load is logged and
+// skipped (a bad template never breaks setup). A missing dir is a
+// no-op.
 func luaTemplates(dir string, active []string) []setup.Template {
 	tdir := filepath.Join(dir, "templates")
 	entries, err := os.ReadDir(tdir)
@@ -143,11 +140,10 @@ func luaTemplates(dir string, active []string) []setup.Template {
 }
 
 // templateFromSource evaluates one template file's source. The VM
-// opens no libs: a template is data (a returned table) - there is
-// nothing to call, so the sandbox has no surface at all. A fixed
-// deadline aborts a busy-looping template (SetContext, the
-// decision-record 20 kill switch); the load then fails and the
-// template is skipped.
+// opens no libs: a template is data (a returned table) - the sandbox
+// has no surface at all. A fixed deadline aborts a busy-looping
+// template (decision-record 20 kill switch); the load then fails and
+// the template is skipped.
 func templateFromSource(src []byte) (setup.Template, error) {
 	vm := lua.NewState(lua.Options{SkipOpenLibs: true})
 	defer vm.Close()
@@ -192,8 +188,8 @@ func stringList(v lua.LValue) []string {
 }
 
 // tagFolders converts a Lua table of tag -> candidate-name arrays.
-// Non-table values are skipped - the strict shape is the author's
-// contract, enforced by the loader's checks above.
+// Non-table values are skipped - the loader's checks above enforce the
+// strict shape.
 func tagFolders(v lua.LValue) map[string][]string {
 	tbl, ok := v.(*lua.LTable)
 	if !ok {

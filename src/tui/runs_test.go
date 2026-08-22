@@ -7,8 +7,7 @@ package tui
 // fragments inside the line's base style. The runs path emits each
 // run's truecolor open + text, resets only after a styled run, and
 // leaves the pad region in the base style (padRowSGR re-applies the
-// base open after every reset, so a quoted/header line's color covers
-// the gaps).
+// base open after every reset).
 
 import (
 	"strings"
@@ -45,9 +44,8 @@ func TestStyleRunsTrailingBgResetsForPad(t *testing.T) {
 // cells drop (a rune starting exactly at the cut renders), the last
 // completed SGR open re-emits when the cut lands inside its run, a
 // reset in the skipped region closes the tracked open, and past the
-// cut the sequences pass through whole - the tail keeps its own
-// transitions. A wide char straddling the cut drops (a partial wide
-// char cannot render).
+// cut the sequences pass through whole. A wide char straddling the
+// cut drops.
 func TestSkipStyled(t *testing.T) {
 	red := "\x1b[31m"
 	reset := "\x1b[0m"

@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// TestDiagLogRotates pins the size cap: writes past the cap rotate to
-// <name>.1 (one generation kept) and the live file stays at or under
-// the cap with 0600 perms (F5) - the rename-failure path truncates.
+// TestDiagLogRotates pins the size cap (F5): writes past the cap rotate
+// to <name>.1 (one generation kept), the live file stays <= cap with
+// 0600 perms; the rename-failure path truncates.
 func TestDiagLogRotates(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "notmutt.log")
@@ -42,9 +42,9 @@ func TestDiagLogRotates(t *testing.T) {
 	}
 }
 
-// TestDiagLogWrites0600 pins the file log (F5): the cache-dir log
-// receives the entry, and the file is 0600 - the default handler
-// discards, so the marker only lands after openDiagLog.
+// TestDiagLogWrites0600 (F5): the cache-dir log receives the entry at
+// 0600; the default handler discards, so the marker only lands after
+// openDiagLog.
 func TestDiagLogWrites0600(t *testing.T) {
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	openDiagLog()

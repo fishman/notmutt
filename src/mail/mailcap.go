@@ -4,12 +4,11 @@
 package mail
 
 // Mailcap preview support (mutt's mailcap format, R6): an attachment
-// whose type matches a copiousoutput entry previews in the pager as
-// the command's stdout - a pdf renders as pdftotext text, never as
-// bytes. Commands tokenize at parse (F4: argv exec, no shell - a
-// pipeline or redirect in a mailcap command is a literal argument
-// here); the %s token substitutes the attachment's temp file. User
-// entries override the built-ins by type.
+// matching a copiousoutput entry previews as the command's stdout - a
+// pdf renders as pdftotext text, never bytes. Commands tokenize at
+// parse (F4: argv exec, no shell - a pipeline or redirect is a literal
+// argument); the %s token is the attachment's temp file. User entries
+// override the built-ins by type.
 
 import (
 	"bytes"
@@ -22,13 +21,12 @@ import (
 	"time"
 )
 
-// previewCap bounds a preview command's stdout - the pager render
-// budget; a runaway dump must not fill memory.
+// previewCap bounds a preview command's stdout - a runaway dump must
+// not fill memory.
 const previewCap = 1 << 20
 
-// mailcapEntry is one parsed mailcap line: the type key (lowercased,
-// "*" wildcard suffix allowed), the tokenized command, and whether
-// the command's stdout is the preview text.
+// mailcapEntry is one parsed mailcap line: the lowercased type key
+// ("*" wildcard suffix allowed), the tokenized command, copious flag.
 type mailcapEntry struct {
 	typ     string
 	argv    []string // "%s" marks the attachment file slot
@@ -42,8 +40,7 @@ type Mailcap struct {
 }
 
 // DefaultMailcap ships the zero-config previews: a pdf opens as
-// pdftotext text (the layout flag keeps columns aligned). The user's
-// mailcap file overrides by type.
+// pdftotext text (the layout flag keeps columns aligned).
 func DefaultMailcap() *Mailcap {
 	return &Mailcap{entries: []mailcapEntry{
 		{typ: "application/pdf", argv: []string{"pdftotext", "-layout", "%s", "-"}, copious: true},
@@ -89,8 +86,7 @@ func (mc *Mailcap) Parse(data []byte) {
 }
 
 // tokenize splits a mailcap command into argv: whitespace splits,
-// single quotes group (mutt quotes the %s slot as '%s'); quote
-// characters never reach the argv.
+// single quotes group; quote chars never reach the argv.
 func tokenize(s string) []string {
 	var out []string
 	var cur strings.Builder
@@ -116,11 +112,9 @@ func tokenize(s string) []string {
 }
 
 // PreviewCommand returns the tokenized preview argv for a content
-// type: the matching copiousoutput entry's command (exact type first,
-// then the "*" wildcard). A non-copious match (exact or wildcard)
-// handles the type without a preview - the raw dump never reaches the
-// pager (mutt semantics; the reference mailcap's image/* openfile
-// entry is exactly this shape).
+// type: the matching copiousoutput entry (exact type first, then the
+// "*" wildcard). A non-copious match handles the type without a
+// preview - the raw dump never reaches the pager (mutt semantics).
 func (mc *Mailcap) PreviewCommand(typ string) ([]string, bool) {
 	typ = strings.ToLower(typ)
 	var wildcard *mailcapEntry // the first wildcard match in file order
@@ -144,11 +138,10 @@ func (mc *Mailcap) PreviewCommand(typ string) ([]string, bool) {
 	return wildcard.argv, true
 }
 
-// RunPreview executes a preview command: the attachment bytes land in
-// a 0600 temp file (F5), the %s token becomes its path, stdout is
-// captured capped at previewCap (the excess drains - a big dump must
-// not deadlock the Wait). The command dies after 15s: a hung preview
-// must not park the bus goroutine.
+// RunPreview executes a preview command: the bytes land in a 0600 temp
+// file (F5), the %s token becomes its path, stdout is captured capped
+// at previewCap (excess drains so the Wait never deadlocks). The
+// command dies after 15s - a hung preview must not park the bus.
 func RunPreview(argv []string, data []byte) ([]byte, error) {
 	f, err := os.CreateTemp("", "notmutt-preview-*")
 	if err != nil {

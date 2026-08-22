@@ -9,11 +9,8 @@ import (
 	"testing"
 )
 
-// DevMailbox resolves the dev-mailbox path (NOTMUCH_DB or the default
-// $HOME/Mail) and its notmuch config, skipping the test when either is
-// missing: CI has neither (hermetic skip), a dev machine runs against
-// its real mailbox. Tests that need a live database call it as their
-// preflight.
+// DevMailbox resolves the dev-mailbox path (NOTMUCH_DB or $HOME/Mail)
+// and its notmuch config, skipping the test when either is missing.
 func DevMailbox(t testing.TB) string {
 	db := os.Getenv("NOTMUCH_DB")
 	if db == "" {
@@ -40,13 +37,10 @@ func DevMailbox(t testing.TB) string {
 	return db
 }
 
-// ScratchMailbox sets up a hermetic notmuch database in the notmuch
-// test-harness shape: a temp mail folder, an own config (exported so
-// subprocesses inherit it), and an initial `notmuch new`. Tests write
-// fixtures into maildir and call NotmuchNew to index them; the real
-// mailbox is never touched. NOTMUCH_DB set in the environment would
-// point the binding at a live database, so the test skips instead of
-// running unisolated.
+// ScratchMailbox sets up a hermetic notmuch DB in the test-harness
+// shape: temp maildir, own config exported for subprocesses, initial
+// notmuch new. The real mailbox is never touched; NOTMUCH_DB set
+// skips (the scratch DB would not isolate).
 func ScratchMailbox(t testing.TB) (db, maildir string) {
 	if os.Getenv("NOTMUCH_DB") != "" {
 		t.Skip("NOTMUCH_DB is set; scratch-db test would not isolate")
@@ -61,16 +55,13 @@ func ScratchMailbox(t testing.TB) (db, maildir string) {
 	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// the binding resolves the config from the process env; export the
-	// scratch config so the test is hermetic (no ~/.notmuch-config);
-	// t.Setenv restores after the test
+	// the binding reads the config from the env: export the scratch config (no ~/.notmuch-config fallback)
 	t.Setenv("NOTMUCH_CONFIG", cfgPath)
 	NotmuchNew(t)
 	return db, maildir
 }
 
-// NotmuchNew runs `notmuch new` against the environment's config (the
-// ScratchMailbox setup), the harness's index step.
+// NotmuchNew runs `notmuch new` against the env config (ScratchMailbox) - the index step.
 func NotmuchNew(t testing.TB) {
 	t.Helper()
 	if out, err := exec.Command("notmuch", "new").CombinedOutput(); err != nil {
@@ -78,12 +69,10 @@ func NotmuchNew(t testing.TB) {
 	}
 }
 
-// ThreadTree seeds maildir with nested reply threads: roots root
-// messages, each a chain of depth messages (a reply references its
-// parent, so each chain is one notmuch thread of depth levels).
-// Lorem-ipsum bodies, ids and dates derived from the position - the
-// tree is deterministic, the same call reproduces it exactly. The
-// caller runs NotmuchNew to index it.
+// ThreadTree seeds maildir with roots messages, each a reply chain of
+// depth (a reply references its parent: one notmuch thread per chain).
+// Deterministic - ids, dates, bodies derive from position. The caller
+// runs NotmuchNew to index it.
 func ThreadTree(t testing.TB, maildir string, roots, depth int) {
 	t.Helper()
 	for r := 0; r < roots; r++ {
@@ -112,10 +101,9 @@ const loremIpsum = "Lorem ipsum dolor sit amet, consectetur adipiscing elit, " +
 	"Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris " +
 	"nisi ut aliquip ex ea commodo consequat."
 
-// MaildirTree creates the fixture maildir tree the mover tests use: a
-// gmail-account tree under t.TempDir() with one file per folder
-// (folder -> file name), named by the caller because mover behavior
-// depends on the exact paths. Returns the mail root.
+// MaildirTree creates a gmail-account maildir tree under t.TempDir()
+// with one file per folder (folder -> file name); the caller names
+// files because mover behavior depends on exact paths.
 func MaildirTree(t testing.TB, files map[string]string) string {
 	root := filepath.Join(t.TempDir(), "mail")
 	for folder, name := range files {

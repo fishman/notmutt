@@ -9,8 +9,7 @@ package tui
 // press rendered nothing), and the frame is always exactly height
 // lines with the status row last, so a short pager never leaves the
 // previous frame's rows on screen (the diff renderer's stale-row
-// failure mode; the loop writes the full frame and tcell diffs
-// internally).
+// failure mode).
 
 import (
 	"fmt"
@@ -72,9 +71,9 @@ func show(s string) string {
 }
 
 // TestQuoteColorDepthMapping pins the quote color rules: depth 0
-// (plain body text) renders the normal text color - a plain mail never
-// shares a custom color with the first reply layer quote - and quote
-// depths 1-5 keep their own colors, five distinct layers.
+// (plain body text) renders the normal color - a plain mail never
+// shares a custom color with the first reply layer quote; depths 1-5
+// keep five distinct colors.
 func TestQuoteColorDepthMapping(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
@@ -99,7 +98,7 @@ func TestQuoteColorDepthMapping(t *testing.T) {
 // to ZERO emitted bytes (the indicator wrap was overridden by the
 // line's own fg+bg style, so the parsed cells were identical), and the
 // first press rendered nothing. Line scrolling changes every visible
-// line's content, so the first press must change the buffer.
+// line, so the first press must change the buffer.
 func TestRepaintPagerScroll(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
@@ -129,10 +128,8 @@ func TestRepaintPagerScroll(t *testing.T) {
 // TestRepaintAfterSuspend pins the editor-return corruption: the
 // suspend cycle wipes the cell buffer while pushFrame's row cache
 // survives, so a post-resume push must re-emit every row. A row-skip
-// against the fresh buffer leaves the cleared terminal blank everywhere
-// except the changed rows, and later repaints skip the same rows
-// forever - the compose dialog recovers only when a wholly different
-// frame (leaving compose) re-pushes everything.
+// against the fresh buffer leaves the cleared terminal blank, and
+// later repaints skip the same rows forever.
 func TestRepaintAfterSuspend(t *testing.T) {
 	s := newSim(t, 20, 4)
 	pushFrameCapture(s, "aaaa\nbbbb\ncccc\ndddd")
@@ -150,8 +147,8 @@ func TestRepaintAfterSuspend(t *testing.T) {
 
 // TestRepaintEmptyPagerFrame pins the status-at-top regression: the
 // pre-glow pager rendered fewer lines than the window for short or
-// empty content, and the diff placed the keyhint and status rows at the
-// top while stale rows stayed on screen. The frame must always be
+// empty content, and the diff placed the keyhint and status rows at
+// the top while stale rows stayed on screen. The frame must always be
 // exactly height lines (blank rows padded), the status row last.
 func TestRepaintEmptyPagerFrame(t *testing.T) {
 	cfg := config.Default()
@@ -172,8 +169,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	s := newSim(t, 80, 24)
 	pushFrameCapture(s, idx.String())
 
-	// empty thread: pager renders 22 blank rows, keyhint and status
-	// anchored at the bottom - a 24-line frame every time
+	// empty thread: pager renders 22 blank rows, keyhint and status anchored at the bottom - a 24-line frame every time
 	p := newPager("t1", "", nil)
 	p.setSize(80, 22, st)
 	frame := pagerFrame(p, km, st, ui, d)
@@ -205,8 +201,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 // pre-fix style() pass re-styled the whole document on every resize -
 // the 385ms stall): setSize styles only the visible band plus a
 // margin, a same-width resize extends the band without re-styling old
-// lines, a width or theme change restyles only the band, and scrolls
-// into unstyled regions render the right lines.
+// lines, a width or theme change restyles only the band.
 func TestPagerLazyLargeDoc(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
@@ -242,8 +237,7 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	}
 	assert := func(offset, height, width, wantStyled int) {
 		t.Helper()
-		// styling is lazy at render time: the render styles the band,
-		// then the cache count must reflect only that band
+		// styling is lazy at render time: the render styles the band, then the cache count must reflect only that band
 		got := stripANSI(p.render())
 		if n := styled(); n != wantStyled {
 			t.Fatalf("styled lines = %d, want %d", n, wantStyled)
@@ -258,8 +252,7 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	// the band is window + 2*margin (42), never the 500-line document
 	assert(0, 22, 80, 42)
 
-	// a same-width resize (height only) extends the band by the 8 new
-	// lines; the 42 old lines are not re-styled
+	// a same-width resize (height only) extends the band by the 8 new lines; the 42 old lines are not re-styled
 	p.setSize(80, 30, st)
 	assert(0, 30, 80, 50)
 
@@ -277,20 +270,17 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 	p.scrollUp(10)
 	assert(450, 30, 100, 190)
 
-	// a height shrink keeps the band inside the styled range: nothing
-	// restyles
+	// a height shrink keeps the band inside the styled range: nothing restyles
 	p.setSize(100, 25, st)
 	assert(450, 25, 100, 190)
 
-	// a theme switch (a different style set) invalidates like a width
-	// change: the band restyles at the new colors
+	// a theme switch (a different style set) invalidates like a width change: the band restyles at the new colors
 	st2 := DefaultStyles()
 	st2.Pager.Quoted[0] = st2.Pager.Quoted[0].Foreground(lipgloss.Color("#ff0000"))
 	st2.sgr = sgrSetOf(st2)
 	p.setSize(100, 25, st2)
 	assert(450, 25, 100, 65)
-	// a jump to the tail styles the tail band on demand and renders the
-	// document's last line
+	// a jump to the tail styles the tail band on demand and renders the document's last line
 	p.scrollBottom()
 	assert(475, 25, 100, 70)
 	last := strings.Split(stripANSI(p.render()), "\n")[24]
@@ -301,8 +291,7 @@ func TestPagerLazyLargeDoc(t *testing.T) {
 
 // TestPagerHeaderRotation pins the header block colors: the block
 // cycles the theme's header-colors list (wrapping), a non-header line
-// resets the run, and an empty list falls back to hdrdefault. The
-// default theme carries the four onedark header colors.
+// resets the run, and an empty list falls back to hdrdefault.
 func TestPagerHeaderRotation(t *testing.T) {
 	st := DefaultStyles()
 	st.Pager.HdrDefault = st.Pager.HdrDefault.Foreground(lipgloss.Color("#101010"))
@@ -325,8 +314,7 @@ func TestPagerHeaderRotation(t *testing.T) {
 	if got := st2.sgr.pagerHdrColor(0); got != st2.sgr.pagerDef {
 		t.Fatalf("an empty list must fall back to hdrdefault")
 	}
-	// the run resets after a non-header line: message 2's block
-	// restarts the cycle
+	// the run resets after a non-header line: message 2's block restarts the cycle
 	p := newPager("", "", []core.Line{
 		{Kind: core.LineHeader, Text: "h0"},
 		{Kind: core.LineHeader, Text: "h1"},

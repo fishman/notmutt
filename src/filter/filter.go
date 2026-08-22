@@ -3,8 +3,7 @@
 
 // Package filter is the classification engine (R2): it turns the
 // lastmod delta (the changed messages between two revisions) into tag
-// ops through the declarative rule set. The muttrc post-new hook and
-// afew are reference shapes, not backends - the engine is the pipeline.
+// ops through the declarative rule set.
 package filter
 
 import (
@@ -32,23 +31,18 @@ type Engine struct {
 	cfg    config.Config
 	groups []core.TagGroup
 	// emissions is the per-group tag emission order: the folder group
-	// follows folderEmission (the reference priority ascending), so the
-	// last member-add wins the exclusive resolution; other groups keep
-	// their config order.
+	// follows folderEmission (priority ascending, last add wins the
+	// exclusive resolution); other groups keep their config order.
 	emissions [][]string
 	accs      []accountRule
 	root      string // the mail root, for file stats (paths are relative to it)
 }
 
 // folderEmission is the folder-group emission order, lowest priority
-// first: the reference chain (muttrc/notmuch/tags - "Priority:
-// archive > deleted > sent > draft > pending > spam", inbox removed by
-// any other member). The last member-add wins the exclusive
-// resolution, so a message with copies in several folders (the fcc
-// copy in Sent plus the delivered copy in INBOX - one message id, two
-// paths) resolves to the highest-priority folder: sent beats inbox,
-// archive beats sent. Members outside the list (custom folder tags)
-// emit first, in group order.
+// first (reference "Priority: archive > deleted > sent > draft >
+// pending > spam", inbox removed by any other member). The last
+// member-add wins the exclusive resolution (sent beats inbox, archive
+// beats sent); custom folder tags emit first, in group order.
 var folderEmission = []string{"inbox", "spam", "pending", "draft", "sent", "deleted", "archive"}
 
 type accountRule struct {
@@ -96,9 +90,8 @@ func New(w Worker, cfg config.Config, root string) *Engine {
 }
 
 // Candidates resolves a hard tag's folder candidates for an account:
-// the per-account moves override, else the preset, else the detected
-// folders map (afew folder_priorities as data, R2). Shared by the
-// engine, the mover, and the sent-folder derivation.
+// moves override, else preset, else the detected folders map (afew
+// folder_priorities as data, R2).
 func Candidates(a config.Account, tag string) []string {
 	if cs, ok := a.Moves[tag]; ok {
 		return cs
@@ -134,12 +127,10 @@ type Report struct {
 	Entries []Entry
 }
 
-// Run classifies the (pre, cur] lastmod delta: the changed message ids
-// (QueryMsgs), their snapshots (tags + paths), and the rule set -
-// account tags, folder rules, header rules, and the delivery-gated
-// untag-reversal - into per-message resolved ops, one ActTag per
-// message (id:<id>). Dry-run (the config [filter] dry-run) computes the
-// report and writes nothing.
+// Run classifies the (pre, cur] lastmod delta into per-message ops
+// (one ActTag per message id): account tags, folder rules, header
+// rules, and the delivery-gated untag-reversal. Dry-run ([filter]
+// dry-run) computes the report and writes nothing.
 func (e *Engine) Run(pre, cur uint64) (*Report, error) {
 	ids, err := e.delta(pre, cur)
 	if err != nil {
@@ -198,15 +189,13 @@ func (e *Engine) delta(pre, cur uint64) ([]string, error) {
 	return ids, nil
 }
 
-// idChunk bounds one header-rule OR query: the delta ids join an OR
-// query, and notmuch chokes on unbounded queries (a mass change can
-// touch thousands of messages at once).
+// idChunk bounds one header-rule OR query: notmuch chokes on
+// unbounded queries (a mass change can touch thousands of messages).
 const idChunk = 1000
 
 // headerMatches evaluates the header rules against the delta: each
-// rule's query scoped to a chunk of ids, the matched set per rule. The
-// engine-enforced guard is the snapshot check in classify - the rule
-// files carry no NOT guards of their own.
+// rule's query scoped to a chunk of ids. The guard is the snapshot
+// check in classify - rule files carry no NOT guards of their own.
 func (e *Engine) headerMatches(ids []string) ([]map[string]bool, error) {
 	hits := make([]map[string]bool, len(e.cfg.Filter.HeaderRules))
 	for i, r := range e.cfg.Filter.HeaderRules {
@@ -245,37 +234,26 @@ func (e *Engine) headerMatches(ids []string) ([]map[string]bool, error) {
 }
 
 // classify runs the rule set over one message snapshot: account tag
-// (path prefix), folder rules (path match - the location IS the home,
-// a member emits whenever the file sits in its folders, present tags
-// and inbox included), header rules (delta scope, guard = absent),
-// then the exclusive-group resolution (R2: applying any member removes
-// the other members present, inbox included - a stale folder tag from
-// a previous location drops with the member that owns the file now).
+// (path prefix), folder rules (location IS the home - a member emits
+// when the file sits in its folders), header rules, then the
+// exclusive-group resolution (R2: applying a member removes the
+// others present, inbox included).
 func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	var ops []core.TagOp
 	paths := e.norm(m.Paths)
 	ar := e.accountOf(paths)
 	if ar != nil && ar.acc.ReadOnly {
 		// readonly accounts (dead accounts like toptal) are never
-		// classified: no folder tags, no account tag, no header tags -
-		// the client writes nothing to their mail. The bare entry drops
-		// out of the report (no ops, no move).
+		// classified: the client writes nothing to their mail.
 		return Entry{ID: m.ID}
 	}
 	if ar != nil {
 		if !hasTag(m.Tags, ar.folder) {
 			ops = append(ops, core.TagOp{Tag: ar.folder, Add: true})
 		}
-		// folder rules in the group's emission order (folderEmission
-		// ascending - muttrc/notmuch/tags "Priority: archive > deleted >
-		// sent > draft > pending > spam", inbox removed by any other
-		// member): the last member-add wins, so a message with copies in
-		// several folders (the fcc copy in Sent plus the delivered copy
-		// in INBOX - one message id, two paths) resolves to the
-		// highest-priority folder: sent beats inbox, archive beats sent.
-		// A member without folder candidates for this account never
-		// emits: it cannot be a home here ("tag-groups.folder matches
-		// the account folders").
+		// folder rules, emitted in folderEmission order: the last
+		// member-add wins the exclusive resolution. A member without
+		// folder candidates never emits: it cannot be a home here.
 		for gi := range e.groups {
 			for _, tag := range e.emissions[gi] {
 				cs := ar.rules[tag]
@@ -304,9 +282,8 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 			}
 		}
 	}
-	// one op per tag: several rules can add the same tag (two matching
-	// header rules) - the resolved set is what the report and the
-	// apply must carry, not the raw rule emissions.
+	// one op per tag: the report and apply carry the resolved set, not
+	// the raw rule emissions.
 	seen := map[string]bool{}
 	uniq := ops[:0]
 	for _, op := range ops {
@@ -336,9 +313,8 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	folder := ""
 	if ar != nil {
 		acc = ar.name
-		// the move tag: the resolved winner among the folder tags with
-		// candidates (inbox has no rule and never moves - the location
-		// pass delivers it, the mover would no-op).
+		// the move tag: the resolved winner among folder tags with
+		// candidates (inbox has none and never moves).
 		for _, op := range resolved {
 			if op.Add {
 				if _, ok := ar.rules[op.Tag]; ok {
@@ -349,10 +325,8 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 		}
 		if folder == "" {
 			// already-tagged mail moves too: a hard tag the message
-			// carries after this pass (manual apply, an external tool)
-			// must physically follow its folder. The inFolder guard
-			// keeps already-home rows out of the mover's report - a
-			// move only when the file is not where the tag lives.
+			// carries must physically follow its folder. The inFolder
+			// guard keeps already-home rows out of the report.
 			for _, t := range final {
 				if cs := ar.rules[t]; len(cs) > 0 && !inFolder(paths, ar.folder, cs) {
 					folder = t
@@ -367,10 +341,9 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	return Entry{ID: m.ID, Sender: m.Author, Subject: m.Subject, Timestamp: m.Timestamp, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
-// RelPath strips the mail root prefix: the path rules match relative
-// paths (notmuch reports them relative to the database path; absolute
-// only for files outside it). The root join leaves a leading slash
-// that would break the folder prefix match.
+// RelPath strips the mail root prefix for the path rules: the root
+// join leaves a leading slash that would break the folder prefix
+// match.
 func RelPath(root, p string) string {
 	if root != "" && strings.HasPrefix(p, root) {
 		return strings.Trim(strings.TrimPrefix(p, root), "/")
@@ -396,8 +369,7 @@ func (e *Engine) norm(paths []string) []string {
 }
 
 // accountOf resolves the message's account by path: the first path
-// under an account's folder space wins (the reference folder:/^<acc>\//
-// pattern).
+// under an account's folder space wins (reference folder:/^<acc>\//).
 func (e *Engine) accountOf(paths []string) *accountRule {
 	for _, p := range paths {
 		for i := range e.accs {
@@ -409,9 +381,8 @@ func (e *Engine) accountOf(paths []string) *accountRule {
 	return nil
 }
 
-// AccountOf is accountOf as a standalone: the apply path resolves the
-// account of an applied message the same way the engine does (the
-// paths come from a snapshot, normalized like the engine's).
+// AccountOf is accountOf as a standalone for the apply path: resolves
+// an applied message's account the same way the engine does.
 func AccountOf(cfg config.Config, paths []string) string {
 	for _, p := range paths {
 		for name, a := range cfg.Accounts {
@@ -429,9 +400,8 @@ func (e *Engine) abs(p string) string {
 }
 
 // inFolder reports whether the path sits under the account's folder
-// space in one of the candidates: the candidate matches a subfolder of
-// itself, and a glob candidate matches the first folder segment (afew
-// '*' globs, R2).
+// space in one of the candidates (a candidate, its subfolders, or a
+// glob on the first segment - afew '*' globs, R2).
 func inFolder(paths []string, folder string, candidates []string) bool {
 	for _, p := range paths {
 		rel, ok := strings.CutPrefix(p, folder+"/")

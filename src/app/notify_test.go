@@ -89,9 +89,9 @@ func TestNotifyHeadlines(t *testing.T) {
 	}
 }
 
-// TestNotifyTitleAndRows pins the notification formatting: the title
-// is the deduped sender list ellipsized (never a static app name),
-// the rows the aligned sender/subject/time 3-part table.
+// TestNotifyTitleAndRows: the title is the deduped sender list
+// ellipsized (never a static app name), the rows the aligned
+// sender/subject/time 3-part table.
 func TestNotifyTitleAndRows(t *testing.T) {
 	head := []core.NotifyHeadline{
 		{Sender: "Ann", Subject: "hello"},

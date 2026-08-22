@@ -12,11 +12,10 @@ import (
 	"notmutt/core"
 )
 
-// frame renders the model at a fixed window size - the render path
-// that the row cache and the region layers serve. It arms the paint:
-// the gate (View returns the last painted frame while paint is false)
-// would otherwise keep the stale frame for these direct renders - a
-// real message arms it at Update entry.
+// frame renders the model at a fixed window size - the render path the
+// row cache and region layers serve. It arms the paint: the gate (View
+// returns the last painted frame while paint is false) would otherwise
+// keep the stale frame - a real message arms it at Update entry.
 func frame(m Model) string {
 	m = sized(m)
 	m.paint = true
@@ -26,7 +25,6 @@ func frame(m Model) string {
 // TestRowCacheReflectsSetTags pins the invalidation half of the row
 // cache: SetTags marks the view dirty, the next Rows() reflattens and
 // churns row addresses, and the cache (keyed by address) must miss.
-// The unread flag glyph is the only "N" in the frame.
 func TestRowCacheReflectsSetTags(t *testing.T) {
 	m := model()
 	if out := frame(m); !strings.Contains(out, "N") {
@@ -41,8 +39,7 @@ func TestRowCacheReflectsSetTags(t *testing.T) {
 
 // TestRowCacheReflectsSetAtts pins the key half of the cache: SetAtts
 // mutates the shared message WITHOUT a reflatten (addresses stable),
-// so only the atts bool in the key covers it - a stale cached line
-// would miss the attachment marker.
+// so only the atts bool in the key covers it.
 func TestRowCacheReflectsSetAtts(t *testing.T) {
 	m := model()
 	if out := frame(m); strings.Contains(out, "📎") {
@@ -55,8 +52,7 @@ func TestRowCacheReflectsSetAtts(t *testing.T) {
 	}
 }
 
-// TestRowCacheEqualsFresh drops the warm cache and re-renders: the
-// miss path must rebuild byte-identical lines.
+// TestRowCacheEqualsFresh drops the warm cache and re-renders: the miss path must rebuild byte-identical lines.
 func TestRowCacheEqualsFresh(t *testing.T) {
 	m := model()
 	warm := frame(m)
@@ -66,8 +62,7 @@ func TestRowCacheEqualsFresh(t *testing.T) {
 	}
 }
 
-// TestLayerCacheEqualsFresh resets the region layers and re-renders:
-// each layer's rebuild must equal its cached string.
+// TestLayerCacheEqualsFresh resets the region layers and re-renders: each layer's rebuild must equal its cached string.
 func TestLayerCacheEqualsFresh(t *testing.T) {
 	m := model()
 	warm := frame(m)
@@ -77,9 +72,7 @@ func TestLayerCacheEqualsFresh(t *testing.T) {
 	}
 }
 
-// diffLine is a t.Fatalf-style first-difference locator for frame
-// equality failures: the index of the first differing byte and the
-// surrounding lines.
+// diffLine is a first-difference locator for frame equality failures: the first differing byte and the surrounding lines.
 func diffLine(a, b string) string {
 	n := len(a)
 	if len(b) < n {
@@ -103,8 +96,7 @@ func diffLine(a, b string) string {
 
 // BenchmarkIndexRender times the steady-state frame build on a large
 // list: every visible row and both region layers hit their caches, so
-// the loop measures the concatenation path a cursor move pays between
-// paint windows.
+// the loop measures the concatenation path a cursor move pays.
 func BenchmarkIndexRender(b *testing.B) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
@@ -119,8 +111,7 @@ func BenchmarkIndexRender(b *testing.B) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 120, 40
 	// one real move arms the cursor-id scan (the never-moved fallback
-	// resolves via the view's flattening CursorRow - the documented
-	// page-key stall, not the steady-state path this benchmark times)
+	// resolves via the view's flattening CursorRow - the documented page-key stall, not the steady-state path this benchmark times)
 	next, _ := m.Update(KeyPressMsg{Text: "j", Code: 'j'})
 	m = next
 	m.View() // warm the row cache and the layers
@@ -130,9 +121,7 @@ func BenchmarkIndexRender(b *testing.B) {
 	}
 }
 
-// BenchmarkIndexRenderMiss times the uncached frame build on the same
-// workload (the cache cleared per iteration) - the README's before/
-// after pairing for the row cache.
+// BenchmarkIndexRenderMiss times the uncached frame build (the cache cleared per iteration) - the README's before/after pairing for the row cache.
 func BenchmarkIndexRenderMiss(b *testing.B) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})

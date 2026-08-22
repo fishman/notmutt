@@ -152,11 +152,8 @@ const mcpAttachmentsChunk = `return function(ctx, args) return ctx.attachments(a
 
 // mcpTools builds the tool registry for a worker and mail root: one
 // ServerTool per spec, the handler closing over the worker. A gated
-// spec is served only when allow names it (the [mcp] allow list);
-// the scope is the data boundary every handler enforces. The
-// tool-level description is the WithDescription option (Description
-// is the property-level one); it prefixes the property schema
-// options.
+// spec is served only when allow names it (the [mcp] allow list); the
+// scope is the data boundary every handler enforces.
 func mcpTools(worker workerAPI, root string, allow map[string]bool, scope *mcpScope) []server.ServerTool {
 	tools := make([]server.ServerTool, 0, len(mcpToolSpecs))
 	for _, spec := range mcpToolSpecs {
@@ -342,11 +339,11 @@ func resolveMCPScope(cfg *config.Config) (*mcpScope, error) {
 	return scope, nil
 }
 
-// serveMCP runs the MCP stdio server: the config's [mcp] allow list
-// decides which gated tools are served and the scope decides which
-// mail the server may see, the read-only worker opens the DB, and
-// ServeStdio owns stdin/stdout until the client closes the pipe.
-// Nothing else may write stdout.
+// serveMCP runs the MCP stdio server: the [mcp] allow list decides
+// which gated tools are served, the scope which mail the server may
+// see, the read-only worker opens the DB, and ServeStdio owns
+// stdin/stdout until the client closes the pipe. Nothing else may
+// write stdout.
 func serveMCP() error {
 	cfg, err := config.Load(configDir())
 	if err != nil {

@@ -14,16 +14,14 @@ import (
 
 // statusSegment is one composable cell of the status line: content,
 // style, and a drop priority (powerline-go Segment, cut to notmutt).
-// The lower the priority, the earlier the segment drops when the row
-// exceeds the terminal width.
+// Lower priority drops earlier when the row exceeds the terminal width.
 type statusSegment struct {
 	content  string
 	style    lipgloss.Style // zero value inherits the status style
 	priority int
 }
 
-// statusData is the status line's input state; the model builds it
-// from the view and progress state.
+// statusData is the status line's input state, built from the view and progress state.
 type statusData struct {
 	view    string
 	visible int
@@ -42,14 +40,12 @@ func statusLine(st Styles, ui config.UI, d statusData) string {
 }
 
 // statusLineWidth composes the status row at a given width: the left
-// group (view name, visible count - future segments append the same
-// way) and the right group (the progress region, R15) on the shared
-// status background. Width fitting follows powerline-go's truncateRow:
-// when the composed row exceeds the width, the lowest-priority
-// segments drop first - progress region (0), then the visible count
-// (5); the view name (10) always survives. The row always covers the
-// full width: the right group right-aligns, trailing gaps pad with
-// the status background (R11 slot reservation).
+// group (view name, visible count) and the right group (the progress
+// region, R15) on the shared status background. Fitting follows
+// powerline-go's truncateRow: lowest-priority segments drop first -
+// progress (0), then the count (5); the view name (10) always
+// survives. The row always covers the full width (R11 slot
+// reservation).
 func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 	left := []statusSegment{viewSegment(d.view, st), countSegment(d.visible, st)}
 	if d.account != "" {
@@ -114,8 +110,7 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 }
 
 // pickLowest finds the lowest-priority droppable segment across the
-// left (0) and right (1) groups; priorities >= 10 (the view name)
-// never drop.
+// left (0) and right (1) groups; priorities >= 10 never drop.
 func pickLowest(left, right []statusSegment) (from, idx int) {
 	from, idx = -1, -1
 	lowest := 1 << 30
@@ -134,9 +129,7 @@ func pickLowest(left, right []statusSegment) (from, idx int) {
 	return from, idx
 }
 
-// groupWidth is a pill run's visible width: each segment's content
-// plus its two inner gaps, and a bar gap between pills (measured by
-// lipgloss, SGR-aware).
+// groupWidth is a pill run's visible width: each segment's content plus its two inner gaps, and a bar gap between pills (lipgloss, SGR-aware).
 func groupWidth(segs []statusSegment) int {
 	if len(segs) == 0 {
 		return 0
@@ -150,9 +143,7 @@ func groupWidth(segs []statusSegment) int {
 
 const pillGap = " "
 
-// composeGroup renders a run of segments as pills: each segment is a
-// colored block with a gap of padding inside, separated from the next
-// by a whitespace on the bar - never connected.
+// composeGroup renders a run of segments as pills: each segment is a colored block with inner padding, separated by whitespace on the bar - never connected.
 func composeGroup(segs []statusSegment, st Styles) (string, int) {
 	if len(segs) == 0 {
 		return "", 0
@@ -176,11 +167,10 @@ func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
 	return s.style
 }
 
-// progressBar builds the fill and empty glyph runs for the job's
-// done/total at the given cell budget. The glyphs are config data
-// (R11), so the bar comes back as two runs and the caller styles each
-// separately - no glyph is hardcoded and multi-byte glyphs split
-// correctly. Empty runs for a clamped or zero-total job.
+// progressBar builds the fill and empty glyph runs for done/total at
+// the given cell budget. The glyphs are config data (R11), so the bar
+// comes back as two runs styled separately. Empty runs for a clamped
+// or zero-total job.
 func progressBar(ui config.UI, p core.Progress, cells int) (string, string) {
 	if cells < 0 {
 		return "", ""
@@ -192,8 +182,7 @@ func progressBar(ui config.UI, p core.Progress, cells int) (string, string) {
 	return strings.Repeat(ui.Glyphs.ProgressFill, fill), strings.Repeat(ui.Glyphs.ProgressEmpty, cells-fill)
 }
 
-// styleBar applies the progress style to the fill run and the base
-// style to the empty run.
+// styleBar applies the progress style to the fill run and the base style to the empty run.
 func styleBar(fill, empty string, st Styles) string {
 	if empty == "" {
 		return st.Progress.Render(fill)
@@ -203,9 +192,8 @@ func styleBar(fill, empty string, st Styles) string {
 
 // tabBar renders the tab strip: the mail surface tab and every open
 // dialogue, the active one highlighted. Trailing tabs drop to fit the
-// width and the active tab always survives (it trades places with the
-// dropped tail); the row pads to the full width (R11 slot
-// reservation - the strip never shifts with content).
+// width, the active tab always survives (it trades places with the
+// dropped tail); the row pads to the full width (R11).
 func (m Model) tabBar() string {
 	if m.width <= 0 {
 		return ""
@@ -218,8 +206,7 @@ func (m Model) tabBar() string {
 	for len(names) > 1 && tabStripWidth(names, active, m.styles) > m.width {
 		last := len(names) - 1
 		if last == active {
-			// the tail is the active tab: drop the one before it so
-			// the active keeps the tail slot
+			// the tail is the active tab: drop the one before it so the active keeps the tail slot
 			names = append(names[:last-1], names[last:]...)
 			active = len(names) - 1
 		} else {
@@ -245,10 +232,9 @@ func (m Model) tabBar() string {
 }
 
 // tabNames is the strip's labels in session order: the mail surface
-// first (the view name), then every open dialogue (the subject,
-// "compose" when none - the subject is mail-derived, F1 sanitize
-// applies). Names cap at a third of the strip so one long subject
-// cannot crowd the rest.
+// first (the view name), then every open dialogue (the subject, or
+// "compose" when none - mail-derived, F1 sanitize applies). Names cap
+// at a third of the strip so one subject cannot crowd the rest.
 func (m Model) tabNames() []string {
 	capName := func(n string) string {
 		if c := m.width / 3; c > 0 && lipgloss.Width(n) > c {
@@ -271,8 +257,7 @@ func (m Model) tabNames() []string {
 	return names
 }
 
-// tabStripWidth is the pill run's visible width (groupWidth for the
-// tab strip, gaps included).
+// tabStripWidth is the pill run's visible width (groupWidth for the tab strip, gaps included).
 func tabStripWidth(names []string, active int, st Styles) int {
 	w := 0
 	for i, n := range names {

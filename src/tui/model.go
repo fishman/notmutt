@@ -28,15 +28,12 @@ import (
 )
 
 // chainTimeout expires an armed multi-key prefix: a stray first key
-// never mis-sequences a later press. Tests shrink it to 0.
+// never mis-sequences a later press.
 var chainTimeout = time.Second
 
 // frameInterval is the fixed paint cadence: a navigation defers its
-// paint (ShouldRender false) and the frame tick lands it one interval
-// later, so a hold paints at most once per interval no matter how
-// fast the terminal repeats. 8ms (120 paints/sec) - the per-paint
-// cost after the SGR precompute is ~1ms, so the cadence stays
-// comfortably under the render budget.
+// paint and the frame tick lands it one interval later, so a hold
+// paints at most once per interval. 8ms (120 paints/sec).
 var frameInterval = 8 * time.Millisecond
 
 // scrollStep is the horizontal pan step in cells (the h/l keys). The
@@ -44,14 +41,11 @@ var frameInterval = 8 * time.Millisecond
 // not a fixed cap - a full title must always be reachable.
 const scrollStep = 8
 
-// Actions is the BUILTIN action vocabulary per context (R9): the index
-// context carries navigation (including the gg/G edge jumps), open, the
-// buffer/apply ops, the compose/reply/forward entry points, and the tab
-// keys; the pager context the scroll and back/quit surface plus the tab
-// keys; the compose context the dialogue keys (R4); the fuzzy context
-// the picker keys. Tag actions are NOT in here - they come from the
-// [tag-actions] config map; the app validates every binding value
-// against its context's map at startup (unknown action = load error).
+// Actions is the BUILTIN action vocabulary per context (R9): index =
+// navigation/open/buffer/compose/tab keys, pager = scroll/back/quit/
+// tabs, compose = dialogue keys (R4), fuzzy = picker keys. Tag actions
+// are NOT here - they come from [tag-actions]; the app validates every
+// binding against its context at startup (unknown = load error).
 var Actions = map[string]map[string]bool{
 	"index": {
 		"cursor-down": true, "cursor-up": true,
@@ -133,55 +127,43 @@ type Model struct {
 	pan   *panState
 	mode  string // "index" default; "pager" while a thread is open
 	pager *pager
-	// renderMode is the pager's requested view (the toggle-render and
-	// source keys): the plain parts, the rendered html part, or the raw
-	// html source. renderMime is the last reply's mime label for the
-	// status bar - what actually rendered, resolved against the
-	// message's parts. showHeaders is the h key: the full header block
-	// renders at the top of the plain view. linkMode is the F key: the
-	// html view carries the "[N]" link labels and linkList holds the
-	// targets (label N opens linkList[N-1]). The mode/headers/links
-	// mirrors the last ThreadLoaded - a same-thread reload with another
-	// view replaces the pager content.
+	// renderMode is the pager's requested view (toggle-render/source
+	// keys): plain parts, rendered html, or raw source. renderMime is the
+	// last reply's mime label for the status bar; showHeaders the h key's
+	// header block; linkMode the F key's "[N]" labels with linkList
+	// targets (label N opens linkList[N-1]). These mirror the last
+	// ThreadLoaded - a reload with another view replaces the pager
+	// content.
 	renderMode core.RenderMode
-	// prevRenderMode is the view saved by the source toggle (ctrl+u):
-	// the second press restores it, so the source view is a toggle,
-	// not a one-way door.
+	// prevRenderMode is the view the source toggle (ctrl+u) restores.
 	prevRenderMode core.RenderMode
 	renderMime     string
 	linkMode       bool
 	linkList       []string
 	// linkInput is the easyjump number under entry: digits extend it,
-	// backspace drops it (no prompt - the selection is the live
-	// highlight). A complete number opens the link on the spot.
+	// backspace drops it, a complete number opens on the spot.
 	linkInput   string
 	showHeaders bool
-	// searchQuery is the index search pattern (the / key): rows whose
-	// author or subject contains it render the match highlighted, and
-	// the n key jumps to the next match. Empty means no active search.
+	// searchQuery is the / key's pattern: matching rows highlight, n
+	// jumps to the next match. Empty = no active search.
 	searchQuery string
-	// pendingCollapse is the thread the C key collapsed last: the
-	// collapse is a cursor-scoped view (its summary row), so moving the
-	// cursor off the thread expands it again - the index never leaves a
-	// thread hidden after the cursor moved past it. Empty = no pending
-	// escape (ctrl+v's global flat mode is persistent, not scoped).
+	// pendingCollapse is the C-collapsed thread: the collapse is
+	// cursor-scoped, so moving off it expands again. Empty = no pending
+	// escape (ctrl+v's flat mode is persistent, not scoped).
 	pendingCollapse string
-	// imgProto is the terminal's image protocol ("" = unsupported:
-	// images stay collapsed); imgCache holds the decoded+scaled window
-	// images; painted the rects the terminal currently holds (the
-	// paint-diff source). imgMode is the render-images cycle (0 off,
-	// 1 local - cid:/data: bytes only, 2 remote - http(s) srcs fetch
-	// on the key); imgFetching single-flights the in-flight fetches.
+	// imgProto is the terminal's image protocol ("" = unsupported);
+	// imgCache the decoded+scaled images; painted the terminal's rects
+	// (paint-diff source). imgMode cycles render-images (0 off, 1
+	// local bytes only, 2 remote fetch on the key); imgFetching
+	// single-flights in-flight fetches.
 	imgProto    string
 	imgCache    map[*core.Image]image.Image
 	painted     map[*core.Image]cellRect
 	imgMode     int
 	imgFetching map[string]bool
 	// attView is the pager's active attachment view (the v dialog's
-	// enter): the message's lines are replaced by the attachment's
-	// render, and back re-opens the message to restore. The viewed
-	// attachment's identity rides here for the s key (the save prompt
-	// prefills its name). nil = the pager shows the message.
+	// enter): back re-opens the message to restore; s prefills the
+	// save prompt from it. nil = the pager shows the message.
 	attView *attView
 	// summary is the AI summary view state (R8): the streaming job that
 	// owns the pager and the mail lines it displaced - back restores
@@ -190,161 +172,134 @@ type Model struct {
 	job        string
 	progress   core.Progress
 	progressOn bool
-	// statusMsg is the status line's last log entry (the R4 send
-	// results, the R8 lua results, job errors, lock timeouts):
-	// logEntry is the single write path, an entry survives until the
-	// next one replaces it. msgErr styles it with the error style.
+	// statusMsg is the status line's last log entry (R4 send results,
+	// R8 lua results, job errors, lock timeouts); msgErr styles it.
 	statusMsg    string
 	statusMsgErr bool
-	// log is the session log ring (logEntry appends, logCap caps);
-	// logOpen is the ~ overlay flag, logView its viewport (the pager
-	// widget, same as the help overlay).
+	// log is the session log ring; logOpen the ~ overlay flag, logView
+	// its viewport (the pager widget).
 	log     []logLine
 	logOpen bool
 	logView viewport
 	// spin is the send dialogue spinner's frame index (sendTick
 	// advances it while a send is in flight).
 	spin int
-	// sendTickOn gates the spinner tick to a single one in flight (the
-	// legendTickOn pattern): armed when a send starts, dies when the
-	// last send completes.
+	// sendTickOn gates the spinner tick to one in flight (the
+	// legendTickOn pattern).
 	sendTickOn bool
 	// addrs is the harvested sender corpus for the compose Tab address
-	// completion (lazy, debounced harvest - loaded once per session,
-	// never at startup).
+	// completion (lazy, debounced, loaded once per session).
 	addrs []core.AddressEntry
 	// addrPending marks a harvest request in flight (single-flight):
 	// cleared when the AddressIndex result lands.
 	addrPending bool
-	// addrSeen dedupes the bus snapshot rescue: the corpus applies
-	// once, never re-opens the picker on every keypress.
+	// addrSeen dedupes the bus snapshot rescue: the corpus applies once.
 	addrSeen bool
 	// addrReqAt is the last Tab trigger time; the debounce settle
 	// guard fires the harvest only when no trigger arrived since the
 	// tick was armed (the legendDebounce pattern).
 	addrReqAt time.Time
 	// indexOffset is the index window's anchored top row (the
-	// read-position model): the window holds
-	// still while the cursor moves within it; only when the cursor
-	// crosses a page edge does the window jump a full page.
+	// read-position model): the window holds still while the cursor
+	// moves; only a page-edge crossing jumps it a full page.
 	indexOffset int
-	// legend is the debounced status-line icon library (the current
-	// message's tag icons): every cursor move clears it and arms the
-	// debounce, so it only resolves after the cursor rests - never
-	// during movement or inside a render. Resolution itself is cheap
-	// (a scan over the cached rows, no view flatten); the debounce is
-	// what keeps the row still while the cursor walks. account resolves
-	// in the same settle: the account tag of the rested-on message
-	// (R2), shown as the status-bar account segment.
+	// legend is the debounced status-line tag-icon library: every
+	// cursor move clears it and arms the debounce, so it resolves only
+	// after the cursor rests (a scan over cached rows, no flatten).
+	// account resolves in the same settle: the rested-on message's
+	// account tag (R2), the status-bar account segment.
 	legend        string
 	account       string
 	legendPending bool
-	// legendTickOn gates the debounce to a single tick in flight: a
-	// keypress arms one only when none is scheduled, and the tick's
-	// own re-arm keeps the chain alive while the cursor keeps moving -
+	// legendTickOn gates the debounce to a single tick in flight:
 	// holding a key never piles timers up.
 	legendTickOn bool
-	// keyReleases records whether the terminal answers the
-	// ReportEventTypes request with release reporting (the
-	// KeyboardEnhancementsMsg). While true, movement never arms the
-	// legend tick - the real KeyReleaseMsg resolves the legend, so the
-	// hold-time tick churn (80-100 extra render cycles/sec) is pure
-	// waste. False until the terminal answers, safe for tests.
+	// keyReleases records whether the terminal answers with release
+	// reporting (KeyboardEnhancementsMsg). While true, movement never
+	// arms the legend tick - KeyReleaseMsg resolves it. False until
+	// the terminal answers, safe for tests.
 	keyReleases bool
-	// paint is the ShouldRender gate's state: a navigation defers its
-	// paint (false) and the frame tick turns it back on one
-	// frameInterval later, so the loop skips every intermediate render
-	// (one paint per frame window, not one per keypress). Every other
-	// message paints immediately.
+	// paint is the ShouldRender gate: a navigation defers it (false)
+	// and the frame tick re-arms it one interval later, so a hold
+	// paints once per frame window, not per keypress.
 	paint bool
 	// renderDue is a deferred paint waiting on the frame tick.
 	renderDue bool
-	// frameTickOn gates the frame tick to a single one in flight:
-	// repeated navigations inside one interval never pile timers up
-	// (the legendTickOn pattern).
+	// frameTickOn gates the frame tick to one in flight (the
+	// legendTickOn pattern).
 	frameTickOn bool
-	// frameCache is the last painted frame (View): View's value
-	// receiver copies the model, so the cache lives behind a pointer
-	// - a deferred View returns it instead of rebuilding.
+	// frameCache is the last painted frame: View's value receiver
+	// copies the model, so the cache lives behind a pointer.
 	frameCache *frameCache
-	// legendMoves counts cursor moves: the tick carries the count from
-	// when it was armed and resolves only when it matches - a tick that
-	// finds newer moves re-arms, so the legend settles one debounce
-	// window after the last press (the keyup moment), never mid-hold.
+	// legendMoves counts cursor moves: the tick resolves only when the
+	// count matches - newer moves re-arm it, so the legend settles one
+	// debounce window after the last press.
 	legendMoves int
-	// accountTags is the account tag set (config.AccountTags): the row
-	// render skips these tags (the account lives in the status bar, not
-	// the mail title) and the account resolution scans against it.
+	// accountTags is the account tag set: rows skip these tags (the
+	// account lives in the status bar) and the account resolution scans
+	// against it.
 	accountTags map[string]bool
-	// vim-style prefixes (R9 data-first): digit keys accumulate into
-	// count (a bound digit wins), and an unbound key can arm a
-	// multi-key chain (space-joined data keys - "g g", "g r") that
-	// expires after chainTimeout. Both engage only when the active
-	// context does NOT bind the key.
+	// vim-style prefixes (R9 data-first): digits accumulate into
+	// count; an unbound key can arm a multi-key chain ("g g", "g r")
+	// that expires after chainTimeout. Both engage only when the
+	// context does not bind the key.
 	count         string
 	pendingPrefix string
 	pendingAt     time.Time
 	// compose tabs: the dialogue stack (R4). tabIdx 0 = the mail
-	// surface (index/pager); tabIdx > 0 = tabs[tabIdx-1] attached as
-	// the compose dialogue. Stepping off a dialogue parks it - state
-	// intact - while the mail surface keeps working; stepping back
-	// re-attaches it (spec section 5: the dialogue IS the tab).
+	// surface; tabIdx > 0 = tabs[tabIdx-1] attached as the compose
+	// dialogue. Stepping off a dialogue parks it - state intact -
+	// stepping back re-attaches it (spec section 5: the dialogue IS
+	// the tab).
 	tabs []compose.State
-	// searchTabs is the search-tab stack (the ctrl+f key): each entry is
-	// a view named by its raw notmuch query. The combined tab stack
-	// spans the mail surface (index 0), the compose tabs, then the
-	// search tabs; tabIdx beyond len(tabs) attaches a search tab, which
-	// reuses the index surface (activeView routes rows and cursor).
+	// searchTabs is the ctrl+f stack: each entry is a view named by
+	// its raw notmuch query. tabIdx beyond len(tabs) attaches a search
+	// tab, which reuses the index surface (activeView routes rows and
+	// cursor).
 	searchTabs []*core.View
-	// searchTabQuery is the last committed ctrl+f query (the prompt
-	// preloads it for a repeat).
+	// searchTabQuery is the last committed ctrl+f query (prompt
+	// preload).
 	searchTabQuery string
 	tabIdx         int
 	// formIdx is the compose form cursor slot: 8 the message-text row,
-	// 9+i attachment i. The
-	// settings rows are never focused - every field edits by hotkey.
+	// 9+i attachment i. Settings rows are never focused - every field
+	// edits by hotkey.
 	formIdx int
-	// formView scrolls the compose form (the pager widget): when the
-	// rows outgrow the frame, the window follows the cursor. A pointer
-	// like the layers - the program holds the model by value, so
-	// render-time writes persist only through reference fields.
+	// formView scrolls the compose form (the pager widget): the window
+	// follows the cursor when the rows outgrow the frame. A pointer
+	// like the layers - the model is held by value.
 	formView *viewport
-	// previewPager is the compose preview pane (the pager widget, the
-	// same component as the mail pager); previewContent is its rendered
-	// input cache - syncPreviewPager rebuilds only when the content
-	// changes, so scroll position survives edits and tab switches.
+	// previewPager is the compose preview pane (the pager widget);
+	// previewContent its rendered input cache - rebuilt only when the
+	// content changes, so scroll position survives edits and switches.
 	previewPager   *pager
 	previewContent string
-	// help is the ? overlay (a viewport over the binding rows - the
-	// pager widget): the pager scroll keys navigate it, any other
-	// keypress closes it (the check runs before dispatch, so the
-	// closing key never fires).
+	// help is the ? overlay (a viewport over the binding rows): the
+	// pager scroll keys navigate it, any other keypress closes it (the
+	// check runs before dispatch, so the key never fires).
 	help     bool
 	helpView viewport
-	// preview is the preview popup (the p key): the thread loads
-	// WITHOUT the read-marking, the box overlays the index, and the
-	// cursor stays put. previewThread is the load's guard - a stale
-	// preview reply (closed or re-targeted meanwhile) drops in
-	// onThreadLoaded; previewTitle is the popup title (the cursor
-	// row's subject, captured at press time).
+	// preview is the p key's popup: the thread loads WITHOUT the
+	// read-marking, the box overlays the index, the cursor stays put.
+	// previewThread guards the load - a stale reply drops in
+	// onThreadLoaded; previewTitle is the cursor row's subject.
 	preview       bool
 	previewThread string
 	previewTitle  string
-	// dialogue is the modal prompt box (R4); non-nil captures the
-	// dialogue keys in every mode. The concrete type decides the keys
-	// and the frame (a text/confirm/error box, a list/file chooser).
+	// dialogue is the modal prompt box (R4); non-nil captures the keys
+	// in every mode. The concrete type decides keys and frame.
 	dialogue dialogue
 	// fileDir is the built-in chooser's current directory (the file
 	// dialogue descends into directories and comes back up on esc)
 	fileDir string
-	// opened tracks every attached dialogue's TabID: the bus's
-	// ComposeOpened snapshot re-attaches only never-seen IDs, so a
-	// closed dialogue can never resurrect on a later keypress.
+	// opened tracks every attached dialogue's TabID: the bus snapshot
+	// re-attaches only never-seen IDs, so a closed dialogue never
+	// resurrects.
 	opened map[string]bool
-	// render caches: the row cache (styled index rows, content-addressed
-	// by rowKey) and the region layers (keyhint, status, help). The
-	// layers are pointers - the program holds the model by value, so
-	// render-time writes persist only through reference fields.
+	// render caches: the row cache (styled rows, content-addressed by
+	// rowKey) and the region layers. The layers are pointers - the
+	// model is held by value, so render-time writes persist only
+	// through reference fields.
 	rowCache    map[rowKey]string
 	hintLayer   *layer
 	statusLayer *layer
@@ -356,11 +311,9 @@ type Model struct {
 }
 
 // New builds the model. bus is the progress snapshot source (nil in
-// tests: the progress bar falls back to event payloads). bindings is
-// the per-context key table (R9); keys dispatch against the current
-// mode's table. The theme resolves into the render style set at
-// construction from the store's current config; a ConfigChanged{Section:
-// "theme"} event re-reads the store and re-resolves it (variant
+// tests: the bar falls back to event payloads). bindings is the
+// per-context key table (R9). The theme resolves at construction; a
+// ConfigChanged{Section: "theme"} event re-reads the store (variant
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
@@ -372,10 +325,9 @@ func (m Model) Init() Cmd {
 }
 
 func (m Model) Update(msg any) (Model, Cmd) {
-	// the bus keeps last-value snapshots of the compose events (the
-	// LatestProgress pattern, R15): a completion dropped from the
-	// channel under backpressure still resolves the dialogue on the
-	// next keypress instead of wedging it in PhaseSending
+	// the bus keeps last-value snapshots (the LatestProgress pattern,
+	// R15): a completion dropped under backpressure still resolves the
+	// dialogue on the next keypress
 	if m.bus != nil {
 		for i := range m.tabs {
 			if m.tabs[i].Phase == compose.PhaseSending {
@@ -396,9 +348,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 		}
 	}
-	// every message paints except the navigation deferrals below (they
-	// set paint false and let the frame tick re-arm it); the frameTick
-	// case itself overrides this after the fact
+	// every message paints except the navigation deferrals below (the
+	// frameTick case overrides this after the fact)
 	m.paint = true
 	switch msg := msg.(type) {
 	case WindowSizeMsg:
@@ -408,9 +359,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			// the keyhint bar (R9) and the status row sit below the
 			// pager window (height-2). Re-size and re-style even in
 			// index mode: a resize between close and re-open must not
-			// leave the window at the old width (the re-open guard
-			// skips the re-render). The preview popup sizes its pager
-			// to the box's content area instead (pagerSize).
+			// leave the old width (the re-open guard skips re-render).
 			w, h := m.pagerSize()
 			m.pager.setSize(w, h, m.styles)
 		}
@@ -430,24 +379,22 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 	case KeyPressMsg:
 		// the F key's label mode owns the keys (no dialogue - the
-		// selection is the live highlight): digits extend the number,
-		// backspace drops it, enter opens the highlighted link, esc/F
-		// exit, and the pager scroll keys stay live (the labels below
-		// the fold are reachable)
+		// selection is the live highlight): digits extend, backspace
+		// drops, enter opens, esc/F exit, the pager scroll keys stay
+		// live (labels below the fold are reachable)
 		if m.linkMode && m.mode == "pager" && m.pager != nil {
 			m.linkKey(msg)
 			return m, nil
 		}
 		// the active dialogue owns the keys (R4): it can close (nil),
-		// swap itself out (a chooser over its prompt), or hand back a
-		// Cmd (an attach command exec, the addr harvest tick)
+		// swap itself out (a chooser over its prompt), or return a Cmd
 		if m.dialogue != nil {
 			d, cmd := m.dialogue.handle(&m, msg)
 			m.dialogue = d
 			return m, cmd
 		}
 		if m.logOpen {
-			// the log overlay borrows the pager keys like the help: the
+			// the log overlay borrows the pager keys like the help:
 			// scroll keys drive the viewport, anything else closes
 			// without firing
 			switch actionForKey(msg, m.bindings["pager"]) {
@@ -475,8 +422,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		if m.help {
 			// the help surface borrows the pager keys (neomutt renders
-			// the help page in a pager): the scroll keys drive the
-			// help's viewport, anything else closes without firing
+			// help in a pager): scroll keys drive the viewport,
+			// anything else closes without firing
 			switch actionForKey(msg, m.bindings["pager"]) {
 			case "scroll-down":
 				m.helpView.scrollDown(1)
@@ -508,11 +455,9 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		km := m.activeBindings()
 		// vim-style prefixes (R9 data-first): digits accumulate a
-		// count; an unbound key can arm a multi-key chain (space-
-		// joined data keys) that expires after chainTimeout. A bound
-		// key wins over the prefix - the prefix only engages on keys
-		// the context leaves unbound. A counted "g" keeps its jump
-		// semantic (12g = row 12) - the chain data never sees it.
+		// count; an unbound key can arm a multi-key chain that expires
+		// after chainTimeout. A bound key wins over the prefix. A
+		// counted "g" keeps its jump semantic (12g = row 12).
 		r := msg.Text
 		cand := m.pendingPrefix + " " + r
 		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' &&
@@ -547,8 +492,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			if time.Since(m.pendingAt) >= chainTimeout {
 				m.pendingPrefix = ""
 				// a chain-starting key re-arms on the expired press
-				// (an unbound key must not waste it on a dead
-				// dispatch)
+				// (an unbound key must not waste a dead dispatch)
 				if r != "" && km[r] == "" && chainContinuation(km, r) {
 					m.pendingPrefix = r
 					m.pendingAt = time.Now()
@@ -584,26 +528,24 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		return m.dispatchAction(a, n)
 	case KeyReleaseMsg:
-		// the real keyup (kitty keyboard protocol release reporting):
-		// the legend resolves at the release, no debounce needed.
-		// Terminals without release reporting never send this; the
-		// legendTick fallback settles those the same way.
+		// the real keyup (kitty release reporting): the legend resolves
+		// at the release, no debounce. Terminals without it never send
+		// this; the legendTick fallback covers them.
 		if m.legendPending {
 			m.legend, m.account = m.resolveStatus()
 			m.legendPending = false
 			m.legendTickOn = false
 		}
-		// the release paints immediately; the press's deferred paint
-		// is settled by it, so the in-flight frame tick must not land
-		// a second paint
+		// the release paints immediately and settles the press's
+		// deferred paint - the in-flight frame tick must not land a
+		// second paint
 		m.renderDue = false
 		return m, nil
 	case KeyboardEnhancementsMsg:
-		// the terminal's answer to the ReportEventTypes request (model
-		// View): release reporting on means the KeyReleaseMsg handler
-		// resolves the legend, so movement must never arm the debounce
-		// tick. Terminals that do not answer keep keyReleases false and
-		// the tick fallback.
+		// the terminal's answer to the ReportEventTypes request:
+		// release reporting on means KeyReleaseMsg resolves the legend,
+		// so movement must never arm the debounce tick. Non-answering
+		// terminals keep keyReleases false and the tick fallback.
 		m.keyReleases = msg.SupportsEventTypes()
 		return m, nil
 	case editorDoneMsg:
@@ -650,9 +592,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 	case pickerCmdDoneMsg:
 		// the Lua picker's exec completed: the chooser file's paths
 		// ride PickerResult back to the app, which resumes the blocked
-		// action (R8). The re-arm is required: the resumed action's
-		// attach_add drain publishes AttachFiles, and no other reader
-		// is guaranteed after the exec consumed the picker request.
+		// action (R8). The re-arm is required: no other reader is
+		// guaranteed after the exec consumed the picker request.
 		if m.bus != nil {
 			var paths []string
 			if msg.err == nil {
@@ -672,8 +613,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		return m, EventCmd(m.ch)
 	case frameTick:
 		// the deferred paint lands here at the fixed cadence; a tick
-		// with nothing deferred (idle model) turns the gate off again
-		// and dies - an idle model never renders on a timer
+		// with nothing deferred dies - an idle model never renders on
+		// a timer
 		m.frameTickOn = false
 		if m.renderDue {
 			m.renderDue = false
@@ -683,9 +624,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		return m, nil
 	case chainTick:
-		// the armed prefix expires on its timer (an extended chain's
-		// stale tick no-ops on the age check); the continuation view
-		// resets to the base bindings
+		// the armed prefix expires on its timer (a stale tick no-ops on
+		// the age check); the continuation view resets to base bindings
 		if m.pendingPrefix != "" && time.Since(m.pendingAt) >= chainTimeout {
 			m.pendingPrefix = ""
 			m.paint = true
@@ -693,9 +633,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		return m, nil
 	case legendTick:
 		// fallback for terminals without release reporting: the tick
-		// carries the move count from when it was armed - newer moves
-		// re-arm the single in-flight tick, so the legend resolves one
-		// debounce window after the last press
+		// carries the armed-at move count - newer moves re-arm it, so
+		// the legend resolves one debounce window after the last press
 		if !m.legendPending {
 			// the release path already resolved: no re-arm, no
 			// duplicate work
@@ -734,26 +673,25 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		case core.PickerRequest:
 			// the Lua action's picker call: run the argv through the
 			// attach-command exec path and publish the selection back.
-			// The exec must NOT batch behind EventCmd: batch runs its
-			// children in sequence, so yazi would wait on the next bus
-			// event the blocked action can never produce (deadlock -
-			// pickerCmdDoneMsg re-arms the bus on completion).
+			// The exec must NOT batch behind EventCmd: batch sequences
+			// children, so yazi would wait on a bus event the blocked
+			// action can never produce (deadlock - pickerCmdDoneMsg
+			// re-arms the bus on completion).
 			if cmd := m.runPicker(e); cmd != nil {
 				return m, cmd
 			}
 			return m, EventCmd(m.ch)
 		case core.PromptRequest:
 			// the Lua action's prompt() call: the native text dialogue
-			// opens, the answer (or the esc cancel) rides PromptResult
-			// back to the blocked VM
+			// opens, the answer (or esc cancel) rides PromptResult back
+			// to the VM
 			d := &textDialogue{field: "luaprompt", label: e.Label, input: e.Prefill, promptID: e.ID}
 			d.cur = len(d.input) // the prefill edits at its end
 			m.dialogue = d
 			m.paint = true
 		case core.AttachFiles:
-			// the Lua action's attach_add drain: attach the paths to the
-			// active compose tab (no compose tab open = dropped - there
-			// is nowhere to attach)
+			// the Lua action's attach_add drain: attach to the active
+			// compose tab (none open = dropped)
 			if m.tabIdx > 0 {
 				for _, p := range e.Paths {
 					m.tabs[m.tabIdx-1].AddAttachment(p)
@@ -763,11 +701,10 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		case core.TagStaged:
 			// the Lua action's staged tag ops (R8, the AI-classification
 			// flow): staging is the ONLY tag surface a script gets - the
-			// ops land in the current folder's buffer exactly like a UI
-			// keypress (R14), the APPLY key flushes them, notmuch is
-			// never written from Lua. The op applies to the cursor
-			// message of the thread the script named; a moved cursor
-			// drops with a status entry.
+			// ops land in the buffer exactly like a UI keypress (R14),
+			// APPLY flushes them, notmuch is never written from Lua.
+			// Applies to the cursor message of the named thread; a
+			// moved cursor drops with a status entry.
 			if row, ok := m.activeView().CursorRow(); ok && row.Msg != nil && row.ThreadID == e.ThreadID {
 				identity := row.Msg.ID
 				if identity == "" {
@@ -782,9 +719,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				m.logEntry("lua: staged tags dropped: no cursor message for thread "+e.ThreadID, true)
 			}
 		case core.AttachmentSaved:
-			// the s key's write result (the app extracted + wrote the
-			// attachment): the path or the failure surfaces on the
-			// status line
+			// the s key's write result: the path or the failure
+			// surfaces on the status line
 			if e.Err != nil {
 				m.logEntry("save failed: "+e.Err.Error(), true)
 			} else {
@@ -792,8 +728,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 		case core.ImageFetched:
 			// a fetch reply for the remote images mode; stale replies
-			// (the mode cycled away meanwhile) drop - network data
-			// never feeds the decode outside the remote mode
+			// (the mode cycled away) drop - network data never feeds
+			// the decode outside the remote mode
 			if m.imgMode == 1 {
 				m.attachFetched(e)
 			}
@@ -805,8 +741,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.onAddressIndex(e)
 		case core.LuaResult:
 			// the :lua command or plugin action result: the output or
-			// the error goes into the session log and surfaces as the
-			// status line's last entry (R8 - never mail content)
+			// error goes to the session log and the status line (R8 -
+			// never mail content)
 			if e.Err != nil {
 				m.logEntry("lua: "+e.Err.Error(), true)
 			} else {
@@ -892,15 +828,12 @@ func (m *Model) anySending() bool {
 }
 
 // dispatchAction runs a bound action with its count, then the
-// legend-tick tail (the fall-through path). Actions with their own
-// cmds (quit, edit) return them directly. Multi-key chains resolve
-// here too - the chain machinery dispatches the completed chain's
-// action, and "?" opens the help overlay.
+// legend-tick tail. Actions with their own cmds (quit, edit) return
+// them directly. Multi-key chains resolve here too; "?" opens help.
 func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	// a view switch (goto-<view>, R9 data-first): the store is the
-	// single write path (R8); the refresher re-reads the active view
-	// and re-fetches. Unknown views are a no-op - load validation
-	// already rejected them at startup.
+	// single write path (R8); the refresher re-reads the active view.
+	// Unknown views are a no-op - load validation rejected them.
 	if strings.HasPrefix(action, "goto-") {
 		if m.st != nil {
 			m.st.SetActiveView(strings.TrimPrefix(action, "goto-"))
@@ -930,10 +863,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferPaint()
 		deferred = true
 	case "collapse-thread":
-		// the C key: the cursor thread collapses to its root row
-		// (re-anchored in the view) or expands back to its tree. A
-		// collapse arms the escape: the thread expands again when the
-		// cursor moves off it.
+		// the C key: the cursor thread collapses to its root row or
+		// expands back. A collapse arms the escape: the thread expands
+		// again when the cursor moves off it.
 		if m.mode == "index" {
 			rows := m.activeView().Rows()
 			m.rows = rows
@@ -967,9 +899,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
 			// enter in the pager: the next mail (mutt's next-message).
-			// The index cursor advances; a press that did not move the
-			// cursor is a no-op. The reload guard replaces the pager
-			// content on arrival.
+			// The index cursor advances; a press that did not move it
+			// is a no-op. The reload guard replaces the pager content.
 			m.moveCursor(1)
 			if tid, mid, _ := m.cursorThread(); tid != "" && (tid != pagerThreadID(m.pager) || mid != pagerMsgID(m.pager)) {
 				onOpen(tid, mid, false, m.showHeaders, m.width)
@@ -979,9 +910,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "open-headers":
 		// the h key: the index flips the flag and opens; in the pager
-		// the open thread re-renders with the header block toggled
-		// (the same seam as v - the reply flips the state, the
-		// onThreadLoaded guard decides the replace).
+		// the thread re-renders with the header block toggled (the
+		// same seam as v - the reply flips the state, the guard
+		// decides the replace).
 		if m.mode == "index" {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
@@ -996,9 +927,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "quit":
 		if m.tabIdx > len(m.tabs) {
-			// q on a search tab closes the tab, not the app (the mail
-			// surface quits); staged ops on the tab die with it, the
-			// same discard-with-confirm shape as the app quit
+			// q on a search tab closes the tab, not the app; staged ops
+			// die with it, the same discard-with-confirm shape as quit
 			if m.activeView().HasStaged() {
 				m.dialogue = &confirmDialogue{label: i18n.T("Discard staged changes and close the search tab?"), action: "close-search"}
 				return m, nil
@@ -1007,8 +937,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			return m, nil
 		}
 		// staged ops are session-local: quitting discards them, so a
-		// pending buffer asks first - the confirm re-dispatches
-		// quit-confirmed, which bypasses this gate
+		// pending buffer asks first - quit-confirmed bypasses this
 		if m.mode == "index" && m.activeView().HasStaged() {
 			m.dialogue = &confirmDialogue{label: i18n.T("Discard staged changes and quit?"), action: "quit-confirmed"}
 			return m, nil
@@ -1052,8 +981,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferPaint()
 		deferred = true
 	case "scroll-left":
-		// the h key: pan the view left by a step; the index offset is
-		// session state like the window, the pager owns its own
+		// the h key: pan left by a step; the index offset is session
+		// state like the window, the pager owns its own
 		if m.mode == "pager" && m.pager != nil {
 			m.pager.scrollLeft()
 		} else if m.mode == "index" {
@@ -1068,8 +997,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.pager.scrollRight()
 		} else if m.mode == "index" {
 			// the clamp is content-based (the render measured the page's
-			// widest row): the pan stops at the content end, and the
-			// offset stays bounded for the left pan
+			// widest row): the pan stops at the content end
 			m.indexX = min(m.indexX+scrollStep, max(0, m.pan.maxX-m.width))
 		} else {
 			break
@@ -1149,9 +1077,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			}
 			if m.summary != nil {
 				// the q key in the summary view restores the mail: the
-				// displaced lines replace the summary body (the
-				// attachment-view back affordance); a summary opened
-				// from the index has nothing to restore
+				// displaced lines replace the summary body; a summary
+				// opened from the index has nothing to restore
 				if m.summary.saved != nil {
 					m.pager = newPager(m.summary.threadID, m.summary.msgID, m.summary.saved)
 					w, h := m.pagerSize()
@@ -1172,9 +1099,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "attachments":
 		// the v key: the attachment picker (mutt's v dialog) lists the
-		// message's attachments from the pager's attachment lines;
-		// enter views the chosen one. A linkless attachment-less
-		// message reports instead of arming a dead picker.
+		// message's attachments from the pager's lines; enter views
+		// the chosen one. An attachment-less message reports instead
+		// of arming a dead picker.
 		if m.mode == "pager" && m.pager != nil {
 			if entries := attachmentEntries(m.pager.lines); len(entries) > 0 {
 				m.dialogue = &listDialogue{f: newFuzzy("attachments", "attachments:", entries)}
@@ -1195,8 +1122,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "load-remote-images":
 		// the privacy gate: images render ONLY on this key (no
 		// protocol - no unsupported terminal - keeps the Alt row). The
-		// alt+i toggle: off -> remote (embedded bytes render, http(s)
-		// srcs fetch, gated by this key) -> off.
+		// alt+i toggle: off -> remote -> off.
 		if m.mode == "pager" && m.pager != nil && m.imgProto != "" {
 			m.setImgMode((m.imgMode + 1) % 2)
 			deferPaint()
@@ -1204,11 +1130,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "toggle-render":
 		// the html/txt toggle: the app re-opens the thread with the
-		// other html-part view and publishes a fresh ThreadLoaded
-		// (the render always runs on the async open job, R13). The
-		// flag flips only when the reply lands - the reply's mode
-		// must differ from the CURRENT content's to replace it. The
-		// source view (ctrl+u) is not in the cycle - v leaves it.
+		// other html-part view (the render always runs on the async
+		// open job, R13). The flag flips only when the reply lands -
+		// the reply's mode must differ from the current content's to
+		// replace it. The source view (ctrl+u) is not in the cycle.
 		if m.mode == "pager" && m.pager != nil {
 			mode := core.RenderHTML
 			if m.renderMode == core.RenderHTML {
@@ -1220,9 +1145,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "show-source":
 		// the raw html source view (ctrl+u): a true toggle - the
-		// first press saves the current view and opens the source,
-		// the second restores it (v's html/plain cycle stays
-		// source-free; v from the source view leaves into plain).
+		// first press saves the current view, the second restores it
+		// (v's html/plain cycle stays source-free).
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderSource {
 				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, m.width, false)
@@ -1234,17 +1158,15 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			deferred = true
 		}
 	case "open-links":
-		// the F key (easyjump-style): the html view re-renders with the
-		// inline "[N]" link labels, and the key loop owns the digits
-		// (no prompt - the selection is the live highlight, linkKey
-		// handles the numbers and the scroll keys); a linkless mail
-		// reports instead of arming a dead loop (labels exist only at
-		// link sites). The plain/source views list the visible links in
-		// the picker - no labels exist there. F again (or esc) exits the
-		// label mode. The linkMode flag adopts only when the render
-		// reply lands (the onThreadLoaded guard) - a request never
-		// claims the state before the reply, or the reply would match
-		// the request and skip the replace.
+		// the F key (easyjump-style): the html view re-renders with
+		// inline "[N]" labels and the key loop owns the digits (no
+		// prompt - the selection is the live highlight, linkKey
+		// handles numbers and scroll keys); a linkless mail reports
+		// instead of arming a dead loop. The plain/source views list
+		// the visible links in the picker. F again (or esc) exits.
+		// linkMode adopts only when the render reply lands (the
+		// onThreadLoaded guard) - a request never claims the state
+		// before the reply, or the reply would match and skip replace.
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderHTML {
 				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.width, true)
@@ -1270,8 +1192,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.tabNext()
 	case "form-down":
 		// navigation lives in the message-text row and the attachment
-		// list only: the settings rows are edited by hotkey, never
-		// focused
+		// list only; settings rows are never focused
 		if m.formIdx < 8+len(m.composeTab().Attachments) {
 			m.formIdx++
 		}
@@ -1285,7 +1206,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferred = true
 	case "edit":
 		// the body editor is unconditional: every field edits by its
-		// own hotkey (t/s/f/x/b/r), the account by c, the security by S
+		// own hotkey (t/s/f/x/b/r), the account by c, security by S
 		if m.composeTab().Phase == compose.PhaseSending {
 			break
 		}
@@ -1353,10 +1274,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.composeTab().Security = m.composeTab().Security.Next()
 		}
 	case "send":
-		// PhaseSending gates duplicate presses: one job in flight
-		// (the detach/attach gates protect the shared Attachments
-		// slice while sendJob's Assemble reads it). A retry after a
-		// failure re-arms the gate on its first press.
+		// PhaseSending gates duplicate presses: one job in flight (the
+		// detach/attach gates protect the shared Attachments slice
+		// while Assemble reads it). A retry re-arms the gate.
 		if m.composeTab().Phase != compose.PhaseSending {
 			m.composeTab().Phase = compose.PhaseSending
 			if m.bus != nil {
@@ -1412,8 +1332,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "search":
 		// the mutt search prompt (/): enter commits the pattern and
-		// closes the prompt - the n key repeats the search from the
-		// cursor. The pattern preloads so a repeat-search can edit it.
+		// closes the prompt - n repeats from the cursor. The pattern
+		// preloads so a repeat can edit it.
 		if m.mode == "index" {
 			d := &textDialogue{field: "search", label: "/",
 				input: m.searchQuery, saved: m.searchQuery}
@@ -1430,9 +1350,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "search-tab":
 		// the ctrl+f prompt: a raw notmuch query opens in a new tab
 		// (the whole database, unlike / which searches the current
-		// rows); the last query preloads for a repeat. Bound in the
-		// index and pager contexts - the search starts from wherever
-		// the reading is.
+		// rows); the last query preloads. Bound in index and pager -
+		// the search starts from wherever the reading is.
 		if m.mode == "index" || m.mode == "pager" {
 			d := &textDialogue{field: "searchtab", label: "search: ",
 				input: m.searchTabQuery, saved: m.searchTabQuery}
@@ -1441,8 +1360,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 	case "categorize":
 		// the c key: the app runs the attachment-category pass over the
-		// cursor thread's messages; the save/skip lines arrive on
-		// CategorizeResult and go into the session log
+		// cursor thread's messages; the result lines go to the log
 		if m.mode == "index" {
 			if tid, _, _ := m.cursorThread(); tid != "" {
 				onCategorize(tid)
@@ -1458,10 +1376,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			onLuaAction(action, tid)
 			break
 		}
-		// staged tag ops (and undo) advance the cursor one row -
-		// the next keypress acts on the next message (mutt's
-		// auto-advance). A no-op action (ghost row, unknown action)
-		// does not move.
+		// staged tag ops (and undo) advance the cursor one row - the
+		// next keypress acts on the next message (mutt's auto-advance).
+		// A no-op action (ghost row, unknown action) does not move.
 		if m.stage(action) {
 			m.moveCursor(1)
 		}
@@ -1475,8 +1392,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
 	}
 	// a send press (or a retry) arms the spinner tick while the job is
-	// in flight - the single-in-flight gate keeps the 100ms re-arms
-	// from piling up across dispatches
+	// in flight - the single-in-flight gate keeps re-arms from piling up
 	if m.anySending() && !m.sendTickOn {
 		m.sendTickOn = true
 		cmds = append(cmds, sendTickCmd())
@@ -1509,12 +1425,10 @@ func chainContinuation(km map[string]string, prefix string) bool {
 	return false
 }
 
-// onConfig re-resolves the render styles when the theme section
-// changes. The event only names the section - the store owns the
-// config, so the model re-reads it: SetThemeVariant mutates the
-// store's internal config, and this re-read is what makes the switch
-// live. Events arrive wrapped in EventMsg by the bridge or as a
-// direct message.
+// onConfig re-resolves the render styles on a theme section change.
+// The event only names the section - the store owns the config, so
+// the model re-reads it (SetThemeVariant mutates the store's internal
+// config; this re-read makes the switch live).
 func (m *Model) onConfig(e core.ConfigChanged) {
 	if e.Section == "theme" {
 		cfg := m.st.Config()
@@ -1523,21 +1437,17 @@ func (m *Model) onConfig(e core.ConfigChanged) {
 		if m.pager != nil {
 			// the pager's render is cached - without re-styling here a
 			// variant switch keeps the old colors until the next
-			// resize or re-open (the preview box sizes the pager to
-			// its content area, pagerSize)
+			// resize or re-open (pagerSize)
 			w, h := m.pagerSize()
 			m.pager.setSize(w, h, m.styles)
 		}
 	}
 }
 
-// onThreadLoaded attaches the open job's render lines to the pager and
-// switches to pager mode. Rendering and the render transforms already
-// happened on the async open job - the model only attaches. A failed
 // exitLinkMode closes the F key's label mode: the selection clears and
-// the thread re-renders without the "[N]" labels. The linkMode flag
-// follows the unlabeled reply (exitLinkMode never claims it - the
-// onThreadLoaded guard decides the replace).
+// the thread re-renders without the "[N]" labels. linkMode follows the
+// unlabeled reply - exitLinkMode never claims it (the onThreadLoaded
+// guard decides the replace).
 func (m *Model) exitLinkMode() {
 	m.linkInput = ""
 	if m.pager != nil {
@@ -1547,9 +1457,8 @@ func (m *Model) exitLinkMode() {
 }
 
 // linkKey is the easyjump key loop (no prompt - the selection IS the
-// feedback): digits extend the number, backspace drops it, enter opens
-// the highlighted link, esc/F leave the label mode, and the pager
-// scroll keys stay live - the labels below the fold are reachable.
+// feedback): digits extend, backspace drops, enter opens, esc/F leave,
+// and the pager scroll keys stay live - labels below the fold reachable.
 func (m *Model) linkKey(msg KeyPressMsg) {
 	if t := msg.Text; len(t) == 1 && t[0] >= '0' && t[0] <= '9' {
 		m.linkDigit(t)
@@ -1591,10 +1500,8 @@ func (m *Model) linkKey(msg KeyPressMsg) {
 }
 
 // linkDigit extends the easyjump number: a digit that would overshoot
-// the label count is ignored (labels are 1..N - a number above N is a
-// prefix of nothing, a dead entry). The highlight follows the digits;
-// a complete number - one no further label extends (n*10 > N) - opens
-// the link immediately.
+// the label count is ignored (a dead entry). A complete number - one
+// no further label extends (n*10 > N) - opens the link immediately.
 func (m *Model) linkDigit(d string) {
 	n, err := strconv.Atoi(m.linkInput + d)
 	if err != nil || n < 1 || n > len(m.linkList) {
@@ -1608,9 +1515,9 @@ func (m *Model) linkDigit(d string) {
 	}
 }
 
-// openLinkSel opens the link the current digits select (the enter key;
-// linkDigit's auto-open path bypasses it). An empty or out-of-range
-// number is a no-op - enter only closes the mode.
+// openLinkSel opens the link the current digits select (enter; the
+// auto-open path bypasses it). An empty or out-of-range number is a
+// no-op - enter only closes the mode.
 func (m *Model) openLinkSel() {
 	n, err := strconv.Atoi(m.linkInput)
 	if err != nil || n < 1 || n > len(m.linkList) {
@@ -1620,8 +1527,8 @@ func (m *Model) openLinkSel() {
 }
 
 // syncLinkSel points the pager at the selected label's marker (the F
-// key's live highlight: the "[N]" of the number under entry renders
-// reversed). No digits = no highlight.
+// key's live highlight: the "[N]" under entry renders reversed). No
+// digits = no highlight.
 func (m *Model) syncLinkSel() {
 	sel := ""
 	if n, err := strconv.Atoi(m.linkInput); err == nil && n >= 1 && n <= len(m.linkList) {
@@ -1632,10 +1539,9 @@ func (m *Model) syncLinkSel() {
 	}
 }
 
-// linksOfLines extracts the visible links of a non-html render (the
-// F key fallback): the joined line texts scanned for URLs and
-// addresses. isHTML marks the source view - the raw html, where the
-// angle brackets delimit the links.
+// linksOfLines extracts the visible links of a non-html render (the F
+// key fallback). isHTML marks the source view - the raw html, where
+// the angle brackets delimit the links.
 func linksOfLines(lines []core.Line, isHTML bool) []string {
 	var b strings.Builder
 	for _, l := range lines {
@@ -1655,14 +1561,12 @@ func numberedLinks(links []string) []string {
 	return out
 }
 
-// load falls back to index and drops the pager (a stale pager would
-// serve old content on a later reload). The thread-id guard makes a
-// repeated load of the already-open thread a no-op (idempotent
-// handler): content and scroll position survive. A PREVIEW reply only
-// fills the box when the model still targets that thread - a stale
-// preview (closed or re-targeted meanwhile) drops silently - and the
-// index surface stays put (mode is re-forced to index in case a racing
-// full-open reply flipped it meanwhile).
+// onThreadLoaded attaches the open job's render lines to the pager and
+// switches to pager mode. The thread-id guard makes a repeated load of
+// the already-open thread a no-op (idempotent): content and scroll
+// survive. A PREVIEW reply fills the box only when the model still
+// targets that thread - a stale preview drops silently (mode re-forces
+// to index in case a racing full-open reply flipped it).
 func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	if e.Preview {
 		if m.preview && e.ThreadID == m.previewThread {
@@ -1684,8 +1588,8 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		return
 	}
 	// the attView term: any message render while an attachment view is
-	// active replaces it (the back key's restore) - the reply carries
-	// the message's own mode/headers, which alone never differ
+	// active replaces it (the back key's restore) - the reply's own
+	// mode/headers alone never differ
 	if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || m.attView != nil {
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
 		m.attView = nil // the attachment view ends with the restore
@@ -1694,9 +1598,9 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
 		m.pager.setSize(w, h, m.styles)
-		// the F key's label mode arms with the labeled reply: the digits
-		// start empty (the selection is the live highlight) and links
-		// exist or the mode reports - never a silent dead entry
+		// the F key's label mode arms with the labeled reply: digits
+		// start empty and links exist or the mode reports - never a
+		// silent dead entry
 		if e.LinkLabels {
 			m.linkInput = ""
 			m.syncLinkSel()
@@ -1708,17 +1612,14 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	m.renderMime = e.Mime
 	m.mode = "pager"
 	// the render-images toggle is per-pager: a fresh open starts
-	// collapsed, the next message's remote images never fetch without
-	// their own press (the old pager's pixels stale on the next frame)
+	// collapsed - remote images never fetch without their own press
 	m.imgMode = 0
 	m.legendPending = true
 }
 
 // onAttachmentLoaded swaps the pager into the attachment view (the v
-// dialog's enter): the message's lines are replaced by the chosen
-// attachment's render and the identity rides attView - back re-opens
-// the message to restore, s saves through the app. Stale replies (the
-// pager moved on) drop.
+// dialog's enter); back re-opens the message to restore, s saves.
+// Stale replies (the pager moved on) drop.
 func (m *Model) onAttachmentLoaded(e core.AttachmentLoaded) {
 	if e.Err != nil {
 		m.logEntry("attachment: "+e.Err.Error(), true)
@@ -1734,9 +1635,8 @@ func (m *Model) onAttachmentLoaded(e core.AttachmentLoaded) {
 }
 
 // attView is the pager's attachment view state: the viewed
-// attachment's thread + message (the back restore's identity),
-// ordinal (the save seam's re-extraction key) and name (the save
-// prompt's prefill).
+// attachment's thread + message (back restore), ordinal (the save
+// seam's re-extraction key) and name (the save prompt's prefill).
 type attView struct {
 	threadID string
 	msgID    string
@@ -1745,9 +1645,8 @@ type attView struct {
 }
 
 // summary is the pager's AI summary state (R8): the streaming job that
-// owns the pager and the mail lines it displaced (nil when the summary
-// opened from the index - back goes straight back). back restores
-// saved, ClearAiResult re-arms the snapshot.
+// owns the pager and the mail lines it displaced (nil when opened from
+// the index - back goes straight back).
 type summary struct {
 	jobID    string
 	threadID string
@@ -1757,9 +1656,8 @@ type summary struct {
 }
 
 // onAiStarted opens the summary view: the pager's lines are saved and
-// swapped for a placeholder, the streamed chunks append as they arrive
-// (the attachment-view swap precedent). A second job while one streams
-// is ignored - one summary at a time.
+// swapped for a placeholder, chunks append as they arrive. A second
+// job while one streams is ignored - one summary at a time.
 func (m *Model) onAiStarted(e core.AiStarted) {
 	if m.summary != nil {
 		return
@@ -1810,10 +1708,9 @@ func (m *Model) onAiResult(e core.AiResult) {
 
 // attachmentEntries maps the pager's attachment lines to the v
 // dialog's entries: "N. name (size)" - the leading number is the
-// attachment's ordinal (1-based), the display name drops the size
-// suffix the line carries. Line order equals parse order (renderMessage
-// emits one line per parsed attachment in order), so the picker's
-// numbering is the extraction index.
+// ordinal (1-based), the name drops the size suffix. Line order
+// equals parse order, so the picker's numbering is the extraction
+// index.
 func attachmentEntries(lines []core.Line) []string {
 	var entries []string
 	n := 0
@@ -1840,12 +1737,11 @@ func attachmentEntries(lines []core.Line) []string {
 	return entries
 }
 
-// onSendResult applies a send result to its dialogue: OK closes the
-// tab with the "sent to ..." log entry on the status line (the fcc
-// note rides along); a failure keeps the tab open, opens the error
-// dialogue with Output for review, and logs "send failed". Addressed
-// by tab ID, so a closed tab's ID is a no-op (idempotent - the same
-// result may arrive via the channel and the bus snapshot).
+// onSendResult applies a send result to its tab: OK closes it with
+// the "sent to ..." log entry (the fcc note rides along); a failure
+// keeps the tab open with the error dialogue for review. Addressed by
+// tab ID, so a closed tab's ID is a no-op (idempotent - the result
+// may arrive via the channel and the bus snapshot).
 func (m *Model) onSendResult(e core.SendResult) {
 	for i := range m.tabs {
 		if m.tabs[i].ID == e.TabID {
@@ -1889,9 +1785,8 @@ func (m *Model) activateTab(id string) {
 }
 
 // addrLookup resolves a Tab completion trigger: a loaded corpus swaps
-// the completion picker over the prompt; otherwise the lazy harvest
-// fires after the debounce (single-flight - repeated triggers never
-// pile up requests). The prompt stays when the picker is gated.
+// the picker over the prompt; otherwise the lazy harvest fires after
+// the debounce (single-flight - triggers never pile up requests).
 func (m *Model) addrLookup() (dialogue, Cmd) {
 	if len(m.addrs) > 0 {
 		if p := m.addrPicker(); p != nil {
@@ -1907,10 +1802,9 @@ func (m *Model) addrLookup() (dialogue, Cmd) {
 	return m.dialogue, addrReqTickCmd()
 }
 
-// onAddressIndex stores the harvested sender corpus and resolves a
-// pending trigger: if an address field is still open, the picker swaps
-// over it now with the corpus (the lazy trigger's pickup; addrPicker
-// owns the completion gate).
+// onAddressIndex stores the harvested corpus and resolves a pending
+// trigger: if an address field is still open, the picker swaps over
+// it now (addrPicker owns the completion gate).
 func (m *Model) onAddressIndex(e core.AddressIndex) {
 	m.addrs = e.Addrs
 	m.addrPending = false
@@ -1921,12 +1815,10 @@ func (m *Model) onAddressIndex(e core.AddressIndex) {
 }
 
 // addrSection splits an address field's input at the edit cursor into
-// the fixed head, the section under completion, and the fixed tail:
-// the section is the text between the surrounding commas (the field
-// holds several senders, one per comma - SplitAddrs; the picker
-// completes only the section the cursor is in, never the whole line).
-// head keeps the leading "..., " prefix, tail the trailing ", ..."
-// suffix; both empty when absent.
+// head, the section under completion, and tail: the section is the
+// text between the surrounding commas (one sender per comma -
+// SplitAddrs; the picker completes only the cursor's section). head
+// keeps the leading "..., " prefix, tail the trailing ", ..." suffix.
 func addrSection(input string, cur int) (head, section, tail string) {
 	if cur > len(input) {
 		cur = len(input)
@@ -1948,12 +1840,10 @@ func addrSection(input string, cur int) (head, section, tail string) {
 }
 
 // addrPicker builds the address completion picker over the current
-// text dialogue (its back reference), or nil when gated: the active
-// dialogue must be an address field, and the section under completion
-// at least 4 characters. The corpus entries are pre-filtered by the
-// section (one pass - the picker then narrows as the user keeps
-// typing), and the picker query starts at the section so the filter
-// bar reads it back.
+// text dialogue, or nil when gated: the active dialogue must be an
+// address field and the section under completion at least 4
+// characters. The corpus is pre-filtered by the section (the picker
+// then narrows as the user types).
 func (m *Model) addrPicker() dialogue {
 	d, ok := m.dialogue.(*textDialogue)
 	if !ok || !isAddrField(d.field) {
@@ -1993,10 +1883,9 @@ func isAddrField(f string) bool {
 
 // onComposeOpened attaches a dialogue tab (R4). The opened set makes
 // it idempotent per TabID: the bus snapshot re-attaches a dropped
-// open event exactly once, never a closed dialogue. The attach paints:
-// the event arrives async (a mailto link, a reply prefill) after the
-// triggering frame already painted, so without the flag the compose
-// tab stays invisible behind the previous view.
+// open event exactly once, never a closed dialogue. The attach paints
+// - the event arrives async (a mailto link, a reply prefill) after
+// the frame already painted.
 func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	if m.opened[e.TabID] {
 		return
@@ -2018,9 +1907,8 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 
 // cursorThread resolves the cursor row's thread + message ids and
 // subject (the preview title source); empty tid means no openable
-// thread. Ghost and stub rows carry the thread id in the row itself;
-// the message fallback covers rows built before the thread id landed
-// on them.
+// thread. Ghost and stub rows carry the tid in the row itself; the
+// message fallback covers rows built before the tid landed.
 func (m *Model) cursorThread() (tid, msgID, subject string) {
 	row, ok := m.activeView().CursorRow()
 	if !ok {
@@ -2038,9 +1926,8 @@ func (m *Model) cursorThread() (tid, msgID, subject string) {
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the
-// app loads it, marks it read, and publishes ThreadLoaded). The
-// headers flag is the h toggle: the open renders the full header
-// block.
+// app loads it, marks it read, publishes ThreadLoaded). headers is
+// the h toggle: the open renders the full header block.
 func (m *Model) openCursorThread() {
 	tid, msgID, _ := m.cursorThread()
 	if tid != "" {
@@ -2050,11 +1937,10 @@ func (m *Model) openCursorThread() {
 
 // previewCursorThread opens the cursor thread in the preview popup
 // instead: the same seam with preview=true (the app skips the
-// read-marking), the popup armed immediately (the empty pager renders
-// the title until the load lands), and any stale open pager dropped -
-// the box must never show another thread's content. The pre-load pager
-// carries an EMPTY threadID: the load's idempotent guard must rebuild,
-// not mistake the empty box for the loaded thread.
+// read-marking), the popup armed immediately, any stale open pager
+// dropped. The pre-load pager carries an EMPTY threadID: the load's
+// idempotent guard must rebuild, not mistake the empty box for the
+// loaded thread.
 func (m *Model) previewCursorThread() {
 	tid, msgID, subject := m.cursorThread()
 	if tid == "" {
@@ -2075,9 +1961,8 @@ func (m *Model) previewCursorThread() {
 // previewKey drives the popup: the pager scroll actions scroll the
 // box, the index open key promotes to a full open, anything else
 // closes. Scrolls defer their paint like pager navigation. The
-// promotion keeps the loaded pager (content and scroll position
-// survive via the reload guard); an in-flight load rebuilds fresh
-// instead.
+// promotion keeps the loaded pager (content and scroll survive via
+// the reload guard); an in-flight load rebuilds fresh.
 func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 	if actionForKey(msg, m.bindings["index"]) == "open" {
 		tid := m.previewThread
@@ -2128,9 +2013,8 @@ func (m *Model) closePreview() {
 }
 
 // pagerSize resolves the pager window: the preview box's content area
-// while previewing (the box grows and shrinks with the terminal), the
-// full frame otherwise. Every pager resize goes through this so the
-// two surfaces never disagree on the window.
+// while previewing, the full frame otherwise. Every pager resize goes
+// through this so the two surfaces never disagree.
 func (m Model) pagerSize() (int, int) {
 	if m.preview {
 		return m.previewContentSize()
@@ -2139,8 +2023,8 @@ func (m Model) pagerSize() (int, int) {
 }
 
 // previewContentSize is the popup box's content area: the box spans
-// the width minus 4, starts 2 rows down, and its title and hint rows
-// take 2 of the box's inner rows.
+// the width minus 4, starts 2 rows down, title and hint take 2 inner
+// rows.
 func (m Model) previewContentSize() (int, int) {
 	boxW, boxH := m.width-4, m.height-6
 	if boxW < 2 {
@@ -2177,11 +2061,9 @@ func pagerMsgID(p *pager) string {
 }
 
 // refreshProgress re-reads the bus snapshot for the current job and
-// virtual folder - progress is scoped per view, so switching views
-// shows that view's bar (or none when it is idle). The snapshot write
-// never drops, so a completion event dropped from the channel still
-// clears the bar on the next tick/event (the stuck-bar failure mode:
-// backpressure swallowed the tail of a burst).
+// virtual folder - progress is scoped per view. The snapshot write
+// never drops, so a completion dropped from the channel still clears
+// the bar on the next tick/event (the stuck-bar failure mode).
 func (m *Model) refreshProgress() {
 	if m.bus == nil {
 		return
@@ -2197,10 +2079,9 @@ func (m *Model) refreshProgress() {
 type WindowSizeMsg struct{ Width, Height int }
 
 // KeyboardEnhancementsMsg mirrors the tea v2 shape (the release path
-// stays wired and tested): SupportsEventTypes reports release
-// reporting on. tcell delivers no such message - no kitty keyboard
-// protocol (verified at implementation time, record 23) - the
-// legendTick fallback covers terminals without it.
+// stays wired and tested). tcell delivers no such message - no kitty
+// keyboard protocol (verified at implementation time, record 23) -
+// the legendTick fallback covers terminals without it.
 type KeyboardEnhancementsMsg struct {
 	Flags uint32
 }
@@ -2244,18 +2125,16 @@ func legendTickCmd(moves int) Cmd {
 }
 
 // frameTick lands one frameInterval after a navigation defers its
-// paint; the handler re-arms the ShouldRender gate for that one
-// update, so the paint lands at the fixed cadence.
+// paint; the handler re-arms the render gate for that one update.
 type frameTick struct{}
 
 func frameTickCmd() Cmd {
 	return tickCmd(frameInterval, func(time.Time) any { return frameTick{} })
 }
 
-// chainTick lands chainTimeout after a chain is armed; the handler
-// expires the prefix on the timer, not only on the next keypress, so
-// the keyhint's continuation view resets to the base bindings when
-// the chain times out.
+// chainTick expires an armed chain on its timer, so the keyhint's
+// continuation view resets to the base bindings when the chain times
+// out.
 type chainTick struct{}
 
 func chainTickCmd() Cmd {
@@ -2277,9 +2156,8 @@ func (m Model) resolveStatus() (legend, account string) {
 }
 
 // cursorTags resolves the cursor message's tag list - an O(1) read of
-// the row at the view's stored cursor index (moves write it, merges
-// re-anchor it). In pager mode the fallback is the open thread's first
-// real message.
+// the row at the view's stored cursor index. In pager mode the
+// fallback is the open thread's first real message.
 func (m Model) cursorTags() []string {
 	rows := m.rows
 	if len(rows) == 0 {
@@ -2303,11 +2181,10 @@ func (m Model) cursorTags() []string {
 }
 
 // moveCursor moves the index cursor n rows (a counted move loops
-// single steps so edge crossings page). The window holds still while
-// the cursor moves within the page; only at a page edge does it jump
-// a full page. All stepping is index-local against the cached row
-// list; the view records the cursor index on every move (O(1) paint
-// reads, no flatten, no scan).
+// single steps so edge crossings page). The window holds still within
+// the page; only at a page edge does it jump a full page. Stepping is
+// index-local against the cached rows; the view records the cursor on
+// every move (O(1) paint reads, no flatten).
 func (m *Model) moveCursor(delta int) {
 	rows := m.activeView().Rows()
 	m.rows = rows
@@ -2350,13 +2227,10 @@ func (m *Model) moveCursor(delta int) {
 }
 
 // windowSlideAt slides the cursor thread's tree window when the next
-// step would cross the thread's boundary in the emission: the cursor
-// sits on the thread's last emitted real row stepping down, or its
-// first emitted real row stepping up (ghost rows pass through,
-// cursorStepAt's rule). SlideWindow refuses at the edges - nothing
-// hidden in that direction - and the step then crosses into the next
-// thread normally. Stub and single-message threads (no window) never
-// slide: their rows are the whole thread.
+// step would cross the thread's boundary in the emission (ghost rows
+// pass through, cursorStepAt's rule). SlideWindow refuses at the
+// edges - nothing hidden there - and the step crosses into the next
+// thread normally. Stub and single-message threads never slide.
 func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 	r := rows[idx]
 	if r.Msg == nil || r.ThreadID == "" {
@@ -2379,12 +2253,11 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 }
 
 // collapseEscapeAt expands the pending C-collapsed thread when the
-// cursor stepped off it: the collapse is a cursor-scoped view (its
-// summary row), so leaving the thread restores its tree - otherwise
-// the collapsed rows stay hidden with no way to see where the thread
-// went. The previous real row in the move direction names the thread
-// the step left (ghosts pass through). Returns false when the cursor
-// still rests on the collapsed row or the step could not move.
+// cursor stepped off it: the collapse is a cursor-scoped view, so
+// leaving the thread restores its tree. The previous real row in the
+// move direction names the thread left (ghosts pass through). False
+// when the cursor still rests on the collapsed row or the step could
+// not move.
 func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
 	if m.pendingCollapse == "" {
 		return false
@@ -2413,9 +2286,8 @@ func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
 
 // searchNext jumps the cursor to the next search match at or after
 // the current row (the / prompt's enter and the n key). The scan
-// wraps; a miss logs the mutt "Pattern not found" notice and leaves
-// the cursor. The cursor move goes through moveCursor so the window
-// pages like any counted move.
+// wraps; a miss logs the notice and leaves the cursor. The move goes
+// through moveCursor so the window pages like any counted move.
 func (m *Model) searchNext() {
 	rows := m.activeView().Rows()
 	m.rows = rows
@@ -2473,14 +2345,12 @@ func cursorStepAt(rows []core.Row, idx, dir int) int {
 }
 
 // pageAtEdgeAt jumps the window a full page when the cursor crossed a
-// page edge (the read-position model): crossing
-// the bottom lands the cursor on the new page's first line, crossing
-// the top on its last line. A single down step crossing the bottom
-// inside a windowed thread snaps instead (pageSnapAt): the window
-// advances to the next chunk and the page re-anchors at the thread
-// head - the top of the page becomes beginning of thread -1. Returns
-// the possibly re-anchored cursor index. A single step crosses exactly
-// one edge.
+// page edge (the read-position model): crossing the bottom lands on
+// the new page's first line, the top on its last. A single down step
+// crossing the bottom inside a windowed thread snaps instead
+// (pageSnapAt): the window advances to the next chunk and the page
+// re-anchors at the thread head. Returns the possibly re-anchored
+// cursor index.
 func (m *Model) pageAtEdgeAt(rows []core.Row, idx int, snap bool) int {
 	if len(rows) == 0 {
 		return idx
@@ -2507,16 +2377,12 @@ func (m *Model) pageAtEdgeAt(rows []core.Row, idx int, snap bool) int {
 }
 
 // pageSnapAt snaps a bottom-edge crossing to the cursor thread's head:
-// the page change advances the thread window to the next chunk
-// boundary and re-anchors the page at the thread's head (its leading
-// "+N more" ghost when the window is cut - the top of the page
-// becomes beginning of thread -1). The boundary arithmetic absorbs
-// the one-row window walk that preceded the crossing, so the walk
-// reveals the next message and the snap jumps the page, never past
-// it. Refuses when the thread has no hidden tail (nothing to advance
-// to - the crossing walks into the next thread normally) or the
-// window cannot advance. Returns the re-anchored cursor index, -1 on
-// refuse.
+// the window advances to the next chunk boundary and the page re-
+// anchors at the thread's head (its leading "+N more" ghost when the
+// window is cut). The boundary arithmetic absorbs the one-row walk
+// before the crossing, so the snap jumps the page, never past it.
+// Refuses when the thread has no hidden tail or the window cannot
+// advance. Returns the re-anchored cursor index, -1 on refuse.
 func (m *Model) pageSnapAt(rows []core.Row, idx int) int {
 	r := rows[idx]
 	if r.Msg == nil || r.ThreadID == "" {
@@ -2578,10 +2444,8 @@ func cursorLandAt(rows []core.Row, idx, dir int) int {
 }
 
 // setCursorAt anchors the view cursor on row idx and mirrors the id:
-// stub rows (no message id) anchor by index - the viewport hydrate
-// replaces the stub with the real message and re-anchors by id. A
-// ghost row leaves the cursor untouched (cursorLandAt's all-ghost
-// fallback).
+// stub rows anchor by index - the viewport hydrate replaces the stub
+// and re-anchors by id. A ghost row leaves the cursor untouched.
 func (m *Model) setCursorAt(rows []core.Row, idx int) {
 	// any move blanks the legend and account and arms the debounce -
 	// the status row only shows what the cursor rested on
@@ -2624,10 +2488,9 @@ func (m *Model) clampIndexOffset() {
 }
 
 // cursorTop/cursorBottom jump the index cursor to the first/last real
-// row (gg / G) and pin the window to the matching edge. moveCursor's
-// boundary walk cannot reach backward past a leading ghost row, so the
-// edge walk is direction-aware: ghosts and stubs are skipped in the
-// jump direction.
+// row (gg / G) and pin the window to the matching edge. The edge walk
+// is direction-aware: ghosts and stubs are skipped in the jump
+// direction (moveCursor's walk cannot reach past a leading ghost).
 func (m *Model) cursorTop() {
 	m.cursorEdge(1)
 	m.indexOffset = 0
@@ -2673,13 +2536,11 @@ func (m *Model) cursorEdge(dir int) {
 
 // stage runs a tag action on the cursor row (R14) and reports whether
 // it staged anything - the caller advances the cursor only on an
-// effect. A tag in any tag group is a folder tag and stages +tag -
-// exclusive-group resolution dedups at render/apply; a tag in no group
-// is soft (unread is canonical) and toggles from the applied state.
-// Ghost rows are guarded like the M1 cursor keys. The staged identity
-// is the row's message id, or the thread identity for summary rows
-// (search summaries carry no message id): a tag op on a summary is a
-// thread-level op - apply emits thread:<id>, notmuch's natural unit.
+// effect. A tag in any group is a folder tag and stages +tag; a tag
+// in no group is soft (unread is canonical) and toggles from the
+// applied state. Ghost rows are guarded like the M1 cursor keys. The
+// staged identity is the row's message id, or the thread identity for
+// summary rows: apply emits thread:<id>, notmuch's natural unit.
 func (m *Model) stage(action string) bool {
 	tag, ok := m.tagActions[action]
 	if !ok {
@@ -2711,10 +2572,10 @@ func inGroup(tag string, groups []core.TagGroup) bool {
 	return false
 }
 
-// undo discards the cursor row's staged ops (R14): pure buffer
-// drop, no DB traffic. Reports whether anything was staged, so a
-// no-op undo does not advance the cursor. Ghost rows are guarded like
-// the M1 cursor keys.
+// undo discards the cursor row's staged ops (R14): pure buffer drop,
+// no DB traffic. Reports whether anything was staged, so a no-op undo
+// does not advance the cursor. Ghost rows are guarded like the M1
+// cursor keys.
 func (m *Model) undo() bool {
 	row, ok := m.activeView().CursorRow()
 	if !ok || row.Msg == nil {
@@ -2734,17 +2595,10 @@ func (m *Model) undo() bool {
 	return true
 }
 
-// CursorIndex resolves the cursor's row index against the cached row
-// list - one scan, never a view flatten (CursorRow rebuilds the whole
-// row model; at 33k rows that is the movement stall). A stale mirror
-// (cursor set on the view directly) falls back to the view's own
-// resolution, which flattens once - the model-set cursor path never
-// does. Stub rows carry no message id: the view's last row index is
-// the anchor.
 // CursorIndex is the cursor's row index - an O(1) read of the view's
-// stored index. Moves write it (setCursorAt), merges re-anchor it by
-// id at materialization (rowsLocked); the paint path never scans or
-// flattens the row list.
+// stored index (moves write it via setCursorAt, merges re-anchor it
+// by id). A stale mirror falls back to the view's own resolution; the
+// paint path never scans or flattens the row list.
 func (m Model) CursorIndex() int {
 	if len(m.rows) == 0 {
 		return 0
@@ -2758,20 +2612,17 @@ func (m Model) CursorIndex() int {
 
 // frameCache holds the last painted frame. The vendored tea loop
 // renders after every update and never consults ShouldRender - the
-// coalescing gate lives here instead (a vendor patch was lost once to
-// a re-vendor; the model owns it now). The loop calls View on a copy
-// of the model, so the cache must sit behind a pointer to survive the
-// copy.
+// coalescing gate lives here (a vendor patch was lost once to a
+// re-vendor; the model owns it now). View runs on a model copy, so
+// the cache sits behind a pointer to survive it.
 type frameCache struct{ s string }
 
 // View returns the rendered frame. The loop owns the screen (tcell,
-// record 23): the alt-screen flag and the keyboard-enhancement request
-// were declarative View fields in tea v2 - tcell covers the alt screen
-// at init, and has no kitty keyboard protocol (verified at
-// implementation time), so the release path's types survive only for
-// the legendTick fallback's tests. A deferred paint (navigation
-// between frame ticks) returns the last painted frame: one build per
-// paint, not per keypress.
+// record 23): the alt-screen flag and keyboard-enhancement request
+// were tea v2 View fields - tcell covers the alt screen at init and
+// has no kitty keyboard protocol, so the release path's types survive
+// only for the legendTick fallback's tests. A deferred paint returns
+// the last painted frame: one build per paint, not per keypress.
 func (m Model) View() string {
 	if m.paint || m.frameCache.s == "" {
 		m.frameCache.s = m.render()
@@ -2781,11 +2632,9 @@ func (m Model) View() string {
 
 // textCursor reports the live text-input cell (x, y) when the active
 // dialogue has an editable text row: the list chooser's matcher row
-// (the query is the input while the picker is open), else the prompt's
-// input row. The v2 renderer shows the terminal cursor only when the
-// view declares it; the prompt box splices 3 rows above the keyhint
-// bar (the input row is the box's content row) and the matcher row is
-// the second frame line.
+// (the query is the input while open), else the prompt's input row.
+// The v2 renderer shows the terminal cursor only when the view
+// declares it.
 func (m Model) textCursor() (int, int, bool) {
 	if m.dialogue == nil {
 		return 0, 0, false
@@ -2793,11 +2642,11 @@ func (m Model) textCursor() (int, int, bool) {
 	return m.dialogue.cursor(&m)
 }
 
-// render builds the full frame. The frame must NOT end with a newline: the
-// vendored renderer splits the frame on "\n" and a trailing empty element
-// makes the split longer than the window height, which drops the first row
-// and shifts every line - the diff then matches nothing and the whole page
-// repaints on every keypress.
+// render builds the full frame. The frame must NOT end with a newline:
+// the vendored renderer splits on "\n" and a trailing empty element
+// makes the split longer than the window height, dropping the first
+// row and shifting every line (the diff matches nothing, the whole
+// page repaints).
 func (m Model) render() string {
 	if m.dialogue != nil {
 		// the dialogue renders its own frame: a box spliced over the
@@ -2836,12 +2685,10 @@ func (m Model) renderBase() string {
 	rows := m.rows
 	if len(rows) == 0 {
 		// an empty view renders like a filled one: blank rows fill the
-		// list area (the cursor marker sits on the first, cursor-style),
-		// and the keyhint bar and status row always render - "empty" is
-		// a data state, never a surface state. The list area is the same
-		// height as the filled path: tabBar + list + keyhint + status
-		// must equal the frame height, one line over and the renderer
-		// writes out of bounds.
+		// list area (the cursor marker sits on the first) and the
+		// keyhint/status rows always render - "empty" is a data state,
+		// never a surface state. The list area matches the filled path
+		// exactly; one line over and the renderer writes out of bounds.
 		listHeight := m.listHeight()
 		var b strings.Builder
 		b.WriteString(m.tabBar())
@@ -2863,11 +2710,10 @@ func (m Model) renderBase() string {
 	}
 	cur := m.CursorIndex()
 	// the window is ANCHORED at indexOffset (the read-position model):
-	// the cursor moves within the window, and
-	// only a page-edge crossing moves it. The clamp handles resizes and
-	// refreshes that shrank the rows; the write-back keeps the movement
-	// math in sync. The bottom two rows are the keyhint bar (R9) and
-	// the status line (R15); the list window is height-3.
+	// the cursor moves within the window; only a page-edge crossing
+	// moves it. The clamp handles resizes and refreshes that shrank the
+	// rows; the write-back keeps the movement math in sync. The bottom
+	// two rows are the keyhint bar (R9) and the status line (R15).
 	listHeight := m.listHeight()
 	top := m.indexOffset
 	bottom := top + listHeight
@@ -2880,8 +2726,8 @@ func (m Model) renderBase() string {
 	// per-render and shared by every row - alignment never shifts)
 	numWidth := len(strconv.Itoa(len(rows)))
 	// the tag slot is sized the same way, per page: the widest tag run
-	// among the visible rows sets the width every row pads to, so the
-	// subject column aligns within the page (the next page re-aligns)
+	// among the visible rows sets the width every row pads to (the
+	// next page re-aligns)
 	tagWidth := 0
 	for _, r := range rows[top:bottom] {
 		if w := tagRunWidth(rowTagList(r), m.ui.Tags.Max, m.ui.Tags, m.accountTags); w > tagWidth {
@@ -2895,35 +2741,30 @@ func (m Model) renderBase() string {
 	b.WriteString(m.tabBar())
 	b.WriteByte('\n')
 	// the pan clamps in the dispatch against this measure (the widest
-	// row of the last-rendered page); the clamp is loose after a
-	// refresh that narrowed the content - the rows render blank past
-	// the end, never the head again
+	// row of the last-rendered page); after a refresh that narrowed
+	// the content the rows render blank past the end
 	for i := top; i < bottom; i++ {
 		// the row cache: a cursor move restyles only the two rows whose
 		// selected flag flips; the rest concatenate from the cache. The
 		// key carries the row address (reflattens churn it - auto-miss)
-		// plus every style-affecting parameter; the outer row style is
-		// a function of the row's own fields and selected, so the
-		// rendered line is fully keyed.
+		// plus every style-affecting parameter, so the line is fully
+		// keyed.
 		key := rowKey{row: &rows[i], numWidth: numWidth, tagWidth: tagWidth, pad: m.width + m.indexX, styles: m.styleVer, selected: i == cur, query: m.searchQuery}
 		if rows[i].Msg != nil {
 			key.atts = len(rows[i].Msg.Atts) > 0
 		}
 		// the thread-position mark key: the row carries its own mark
-		// (the flatten derived it - the thread's tail, no open needed),
-		// so the key follows the rows and the cache holds the rest
+		// (the flatten derived it), so the key follows the rows
 		key.mark = rows[i].Mark
-		// the outer row style is a function of the row's own fields and
-		// selected; it lives outside the cache so the pan clip at the
-		// write site can re-pad with it
+		// the outer row style lives outside the cache so the pan clip
+		// at the write site can re-pad with it
 		outer := sg.normal
 		if rows[i].Ghost {
 			outer = sg.ghost
 		}
 		if rows[i].Staged {
 			// staged rows keep the row style and gain the staged look
-			// ([index.staged] default: bold + muted fg); the slot
-			// styles only override fg, so bold carries through
+			// ([index.staged] default: bold + muted fg)
 			if rows[i].Ghost {
 				outer = sg.stagedGhost
 			} else {
@@ -2941,28 +2782,25 @@ func (m Model) renderBase() string {
 			}
 			if m.width > 0 {
 				// the loop's first View() runs before the resize lands:
-				// width 0 must not blank the rows (padRow would truncate
-				// them away). The style boundary is the view width plus
-				// the pan offset: a panned row carries the cells the
-				// clip will show (the pager pad rule)
+				// width 0 must not blank the rows. The style boundary is
+				// the view width plus the pan offset (the pager pad
+				// rule)
 				line = padRowSGR(line, m.width+m.indexX, outer)
 			}
 			m.rowCache[key] = line
 		}
 		if m.indexX > 0 && m.width > 0 {
-			// the horizontal pan: the cache holds the unclipped line, the
-			// offset clips at the write site - scrolling never churns the
-			// row cache (the pager styleKey lesson)
+			// the horizontal pan: the cache holds the unclipped line,
+			// the offset clips at the write site - scrolling never
+			// churns the cache
 			line = padRowSGR(skipStyled(line, m.indexX), m.width, outer)
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
 	// pad a short list to the full window: the renderer diffs cells and
-	// never erases past the last frame line, so a frame shorter than the
-	// screen leaves the previous paint's rows on screen and the next
-	// diff misaligns. The list area is always listHeight rows - the
-	// empty view pads the same way.
+	// never erases past the last frame line, so a short frame leaves
+	// the previous paint's rows on screen and the next diff misaligns.
 	for i := bottom; i < top+listHeight; i++ {
 		if m.width > 0 {
 			b.WriteString(padRow("", m.width, st.Normal))
@@ -2977,12 +2815,10 @@ func (m Model) renderBase() string {
 
 // listFrame renders the list-choose dialogue (the fuzzy picker
 // surface): the matcher row on top (title + filter input - the title
-// doubles as the prompt, no standalone title line), then the ranked
-// matches, then the fuzzy keyhint and status rows. Exactly m.height
-// lines - the frame replaces the underlying frame (a clean diff,
-// never an overlay). The matcher row always renders - the user's
-// filter input stays visible mid-type - and the match list clips to
-// fill the frame (large lists scroll later).
+// doubles as the prompt), then the ranked matches, then the fuzzy
+// keyhint and status rows. Exactly m.height lines - the frame replaces
+// the underlying frame (a clean diff, never an overlay). The matcher
+// row always renders; the match list clips to fill the frame.
 func (m Model) listFrame(f *fuzzy) string {
 	rows := m.height - 3
 	if rows < 1 {
@@ -3000,8 +2836,7 @@ func (m Model) listFrame(f *fuzzy) string {
 			outer = m.styles.Indicator
 		}
 		// the file chooser's mark column: the cursor glyph (config
-		// data) at a reserved leading width - a marked row shows the
-		// glyph, rows never shift (the R11 slot rule)
+		// data) at a reserved leading width - rows never shift (R11)
 		g := m.ui.Glyphs.Cursor
 		mark := strings.Repeat(" ", runewidth.StringWidth(g))
 		if f.marks != nil && f.marks[f.entries[matches[i]]] {
@@ -3023,12 +2858,9 @@ func (m Model) listFrame(f *fuzzy) string {
 }
 
 // dialogueBox splices the prompt dialogue box over the base frame: a
-// lipgloss-bordered box (border, content rows, border) whose rows
-// replace whole frame lines above the keyhint bar, so the splice never
-// cuts an SGR sequence and the hotkey row survives the overlay. The
-// derivation is the preview popup's: config border glyphs (R11), the
-// indicator's background as the border color, the content rows
-// indicator-styled. The content is the dialogue type's own frame. A
+// lipgloss-bordered box whose rows replace whole frame lines above the
+// keyhint bar, so the splice never cuts an SGR sequence. Config border
+// glyphs (R11), the indicator's background as the border color. A
 // terminal too small (height < 5, width < 3) leaves the frame
 // untouched.
 func (m Model) dialogueBox(content []string) string {
@@ -3041,10 +2873,9 @@ func (m Model) dialogueBox(content []string) string {
 }
 
 // spliceBox replaces whole frame rows above the keyhint bar with the
-// lipgloss-bordered box (border + content rows), so the splice never
-// cuts an SGR sequence and the hotkey row stays visible. Config
-// border glyphs (R11), the indicator's background as the border
-// color, the content rows on the normal background.
+// lipgloss-bordered box, so the splice never cuts an SGR sequence.
+// Config border glyphs (R11), the indicator's background as the
+// border color.
 func spliceBox(lines []string, width int, ui config.UI, st Styles, content []string) []string {
 	g := ui.Glyphs
 	inner := width - 2
@@ -3076,11 +2907,9 @@ func spliceBox(lines []string, width int, ui config.UI, st Styles, content []str
 // lipgloss-bordered box (title, pager content, hint) whose rows
 // replace WHOLE frame lines, so the splice never cuts an SGR
 // sequence. The pager is sized to the box's content area (pagerSize),
-// so its lines fit the box exactly; before the load lands the empty
-// pager renders blank content rows. The border glyphs are config data
-// (R11); the border colors derive from the theme - the indicator's fg
-// on the frame background, the border style the sgr set precomputes.
-// A terminal too small for the box (height < 10) leaves the frame
+// so its lines fit exactly; before the load lands it renders blank
+// rows. Border glyphs are config data (R11); the border colors derive
+// from the theme. A terminal too small (height < 10) leaves the frame
 // untouched.
 func (m Model) overlayPreview(frame string) string {
 	if !m.preview {
@@ -3095,9 +2924,8 @@ func (m Model) overlayPreview(frame string) string {
 		return frame
 	}
 	top := 3 // below the tab bar and the first two list rows
-	// index mode renders short lists shorter than the window (only the
-	// empty view pads to height); the popup must splice a full-height
-	// frame - pad the list section before the keyhint/status tail
+	// index mode can render short lists; the popup must splice a
+	// full-height frame - pad the list section before the tail
 	lines = padFrameTail(lines, m.height)
 	if top+boxH > len(lines) {
 		boxH = len(lines) - top
@@ -3113,11 +2941,10 @@ func (m Model) overlayPreview(frame string) string {
 		copy(content, strings.Split(m.pager.render(), "\n"))
 	}
 	// the box is one lipgloss style: config border glyphs, the
-	// indicator's fg on the frame background, the box's content width.
-	// The title and hint are interior lines, pre-styled (the box's own
-	// styling never touches the pager lines - they carry their SGR
-	// already); both truncate to the inner width, so no line exceeds it
-	// and the box never word-wraps to a different height.
+	// indicator's fg on the frame background. The title and hint are
+	// interior lines, pre-styled (the box's styling never touches the
+	// pager lines - they carry their SGR); both truncate to the inner
+	// width, so the box never word-wraps to a different height.
 	inner := boxW - 2
 	body := sg.border.render(truncCells(m.previewTitle, inner)) + "\n" +
 		strings.Join(content, "\n") + "\n" +
@@ -3159,8 +2986,8 @@ func boxBorder(g config.Glyphs) lipgloss.Border {
 
 // statusLineWith builds the status data from the model's view and
 // progress state and renders the row at the window width. The layer
-// cache rebuilds the row only when its inputs change - a cursor move
-// repaints the status from the cache, not from a re-render.
+// cache rebuilds only when its inputs change - a cursor move repaints
+// from the cache, not from a re-render.
 func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	d := m.statusData()
 	sig := m.mode + "|" + d.view + "|" + strconv.Itoa(d.visible) + "|" + strconv.FormatBool(d.on)
@@ -3172,10 +2999,10 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
 
-// statusData builds the status row's input: the cursor row's tags feed
-// the icon library (in pager mode the open thread's first message -
-// the index cursor is hidden). The cursor resolution is the cached-row
-// scan, never a view flatten.
+// statusData builds the status row's input: the cursor row's tags
+// feed the icon library (in pager mode the open thread's first
+// message). The cursor resolution is the cached-row scan, never a
+// flatten.
 func (m Model) statusData() statusData {
 	if m.mode == "compose" {
 		st := m.tabs[m.tabIdx-1]
@@ -3189,7 +3016,7 @@ func (m Model) statusData() statusData {
 	}
 	// the legend and account are pre-resolved by the debounced
 	// legendTick - the render path never touches the view's cursor
-	// resolution (the flattening CursorRow at 33k rows)
+	// resolution
 	d.legend = m.legend
 	d.account = m.account
 	if m.mode == "pager" {
@@ -3202,11 +3029,10 @@ func (m Model) statusData() statusData {
 
 // dialogue is a modal compose dialogue (R4): a concrete type owns its
 // state and handles keys until it closes (handle returns nil) or
-// swaps itself out (the attach text prompt opens the file chooser on
-// Tab; a chooser selection or cancel swaps back to the prompt it came
-// from). The Model routes keys through the active dialogue and asks
-// it for its frame and cursor; a new dialogue type implements the
-// interface and the Model switches no further.
+// swaps itself out (the attach prompt opens the file chooser on Tab;
+// a selection or cancel swaps back). The Model routes keys through
+// the active dialogue and asks it for its frame and cursor; a new
+// type implements the interface and the Model switches no further.
 type dialogue interface {
 	// handle processes one key press; the returned dialogue replaces
 	// the current one (nil closes), the Cmd runs after the update.
@@ -3222,14 +3048,11 @@ type dialogue interface {
 
 // textDialogue is the form-entry prompt (R4): a label, an editable
 // line with mutt-style cursor editing, and a field-determined commit.
-// The editor keys live here: left/right move, c-w kills the word
-// before the cursor, c-u clears the line, alt-f/alt-b jump by words,
-// backspace deletes before the cursor, typing inserts at it. enter
-// resolves per field (attach: a path or @command; a field commit: the
-// value replaces the dialogue field; filter: closes - applied live;
-// command: the Lua layer), esc and ctrl+g cancel (the filter restores
-// its pre-open text). tab opens the field's chooser (the address
-// completion picker, the attach command/file chooser).
+// Editor keys: left/right move, c-w kills the word, c-u clears,
+// alt-f/alt-b jump by words, backspace deletes, typing inserts. enter
+// resolves per field (attach: a path or @command; filter: closes -
+// applied live; command: the Lua layer); esc/ctrl+g cancel (the
+// filter restores its pre-open text). tab opens the field's chooser.
 type textDialogue struct {
 	field string
 	label string
@@ -3272,27 +3095,26 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	case "tab":
 		if isAddrField(d.field) {
 			// address completion: the picker opens over the harvested
-			// sender corpus for the section under completion (gated on
-			// its length); the corpus loads lazily on the first trigger
+			// corpus for the section under completion (gated on its
+			// length); the corpus loads lazily on the first trigger
 			return m.addrLookup()
 		}
 		if d.field == "attach" {
 			// Tab runs the plugin's attach chooser when one is
 			// registered (the script IS the preference - the action
-			// owns the whole selection flow), else the default chooser
-			// (yazi, ranger, else any command - attach commands are all
-			// file choosers), and the built-in directory chooser
-			// otherwise
+			// owns the whole flow), else the default chooser (yazi,
+			// ranger, else any command - all are file choosers), else
+			// the built-in directory chooser
 			if pluginActions()["attach-choose"] {
 				tid, _, _ := m.cursorThread()
 				onLuaAction("attach-choose", tid)
 				// the action runs async and the picker request rides the
 				// bus: re-arm the event channel or the request sits in
-				// the buffer until the next keypress (the loop only
-				// reads it through EventCmd). The dialogue stays open:
-				// closing it drops the next Tab into the compose keymap
-				// (tab=attach reopens the prompt) instead of re-running
-				// the chooser - the followup pick appears to hang.
+				// the buffer until the next keypress. The dialogue
+				// stays open: closing it drops the next Tab into the
+				// compose keymap (tab=attach reopens the prompt)
+				// instead of re-running the chooser - the followup pick
+				// appears to hang.
 				return d, EventCmd(m.ch)
 			}
 			if name := defaultChooser(attachCommands()); name != "" {
@@ -3399,11 +3221,10 @@ func (d *textDialogue) forwardWord() {
 }
 
 // listDialogue is the list-choose dialogue (R4): a fuzzy-filtered
-// entry list (account, signature, the address completion, the attach
-// command picker). back is the dialogue to return to on select or
-// cancel (the address/attach-command pickers swap back to the prompt
-// they came from; the account/signature pickers open from the form,
-// back is nil and a cancel closes). kind decides the select behavior.
+// entry list (account, signature, address completion, attach
+// commands). back is the dialogue to return to on select or cancel
+// (the address/attach pickers swap back to the prompt they came from;
+// the account/signature pickers open from the form, back is nil).
 type listDialogue struct {
 	f    *fuzzy
 	back dialogue
@@ -3445,10 +3266,10 @@ func (d *listDialogue) typeKey(msg KeyPressMsg) bool {
 	return true
 }
 
-// selectEntry applies the selection (kind decides): an account switch
-// sets Account and From; a signature switch loads the file; the
-// address picker merges the selection into the prompt it came from;
-// the attach-command picker arms the prompt with "@name".
+// selectEntry applies the selection: an account switch sets Account
+// and From; a signature switch loads the file; the address picker
+// merges into the prompt it came from; the attach-command picker arms
+// the prompt with "@name".
 func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 	entry, ok := d.f.selected()
 	if !ok {
@@ -3487,9 +3308,8 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		return back, nil
 	case "attachments":
 		// the v dialog's enter: view the chosen attachment - the app
-		// re-opens the message, extracts + renders the part, and the
-		// reply swaps the pager (back restores). The entry's leading
-		// number is the attachment's ordinal.
+		// re-opens the message, renders the part, the reply swaps the
+		// pager (back restores). The leading number is the ordinal.
 		if i := strings.Index(entry, ". "); i > 0 {
 			if n, err := strconv.Atoi(entry[:i]); err == nil && n > 0 && m.mode == "pager" && m.pager != nil {
 				onAttachmentView(pagerThreadID(m.pager), pagerMsgID(m.pager), n-1)
@@ -3513,12 +3333,11 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 
 // fileDialogue is the built-in file-choose dialogue (the chooser
 // fallback when no attach command is registered): a fuzzy listing of
-// the current directory - a directory entry descends, a file attaches
-// and closes, right enters like select and left walks up one layer;
-// esc closes at the root. The typed query doubles as a path prompt
-// (~/Downloads navigates). t marks files for attachment: the marked
-// set attaches together with the commit selection. back is the attach
-// prompt the dialogue returns to.
+// the current directory - a directory descends, a file attaches and
+// closes, right enters like select, left walks up; esc closes at the
+// root. The typed query doubles as a path prompt (~/Downloads
+// navigates). t marks files: the marked set attaches with the commit
+// selection. back is the attach prompt it returns to.
 type fileDialogue struct {
 	listDialogue
 }
@@ -3557,9 +3376,8 @@ func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 }
 
 // mark toggles the attachment mark on the cursor entry (files only -
-// a folder marks nothing, it is entered) and advances one line: a
-// t-t-t run marks a run of files. The marked set survives until the
-// dialogue closes.
+// a folder marks nothing, it is entered) and advances one line. The
+// marked set survives until the dialogue closes.
 func (d *fileDialogue) mark(m *Model) {
 	entry, ok := d.f.selected()
 	if !ok || strings.HasSuffix(entry, "/") {
@@ -3641,8 +3459,8 @@ type confirmDialogue struct {
 func (d *confirmDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	switch msg.String() {
 	case "enter":
-		// the abort phase must survive to dispatchAction: it was armed
-		// by the q that opened the box, and the confirm lands it
+		// the abort phase must survive to dispatchAction: the q that
+		// opened the box armed it, the confirm lands it
 		m.dialogue = nil
 		mm, cmd := m.dispatchAction(d.action, 1)
 		*m = mm
@@ -3655,8 +3473,7 @@ func (d *confirmDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			break
 		}
 		// save as draft and quit: the write is local (no transport),
-		// it runs inline - an error keeps the composition open, the
-		// tab's phase resets so the user can fix or abort again
+		// so it runs inline - an error keeps the composition open
 		if err := onDraft(*m.composeTab()); err != nil {
 			m.composeTab().Phase = compose.PhaseEditing
 			return &errorDialogue{label: i18n.T("draft failed"), output: err.Error()}, nil
@@ -3688,8 +3505,8 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 	case "attach":
 		if strings.HasPrefix(input, "@") {
 			// the exec takes over; the chooser result re-opens the
-			// error box on failure. An unknown command arms no exec
-			// - the prompt keeps the text for correction.
+			// error box on failure. An unknown command arms no exec -
+			// the prompt keeps the text for correction.
 			cmd := m.runAttachCommand(strings.TrimPrefix(input, "@"))
 			if cmd == nil {
 				return d, nil
@@ -3718,10 +3535,9 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 		// the filter applied live per key - enter only closes
 		return nil, nil
 	case "search":
-		// enter commits the pattern and closes the prompt - the
-		// saved state drives the n key from the new cursor. The
-		// update's default paint stays: the box must vanish
-		// immediately, not on the next armed tick.
+		// enter commits the pattern and closes the prompt - the saved
+		// state drives the n key from the new cursor. The default
+		// paint stays: the box must vanish immediately.
 		if input != "" {
 			m.searchQuery = core.SanitizeControls(input)
 			m.searchNext()
@@ -3791,17 +3607,16 @@ func (d *errorDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 }
 
 // The render surface: a boxed dialogue splices its content over the
-// base frame (dialogueBox), the list choosers replace the frame with
-// the matcher + matches frame (listFrame). Sanitize runs on the label
-// and entry here - dialogue text is user-typed, not the pre-sanitized
-// mail path (F1).
+// base frame (dialogueBox), the list choosers replace it (listFrame).
+// Sanitize runs on the label and entry - dialogue text is user-typed,
+// not the pre-sanitized mail path (F1).
 func (d *textDialogue) render(m *Model) string {
 	inner := m.width - 2
 	label := core.SanitizeControls(d.label)
 	entry := core.SanitizeControls(d.input)
 	// labels are ASCII constants, so byte length is cell width; the
-	// entry truncates to the remaining inner width - the line never
-	// exceeds it and the box never word-wraps to a different height
+	// entry truncates to the remaining inner width, so the box never
+	// word-wraps
 	budget := inner - len(label)
 	if budget < 0 {
 		budget = 0
@@ -3821,8 +3636,7 @@ func (d *confirmDialogue) render(m *Model) string {
 func (d *errorDialogue) render(m *Model) string {
 	inner := m.width - 2
 	// the box grows upward: the output is capped only by the frame
-	// rows above the keyhint/status lines, never a fixed count (the
-	// failed tab's preview keeps the full text)
+	// rows above the keyhint/status lines, never a fixed count
 	outRows := m.height - 7 // label + hint + the two border rows
 	if outRows < 1 {
 		outRows = 1
@@ -3884,10 +3698,9 @@ func (d *confirmDialogue) cursor(m *Model) (int, int, bool) { return 0, 0, false
 func (d *errorDialogue) cursor(m *Model) (int, int, bool)   { return 0, 0, false }
 
 // runAttachCommand arms the command exec (the $EDITOR pattern): the
-// chooser temp file is appended to the command's argv (F4 - argv only,
-// never a shell string), the command runs as a foreground TUI
-// subprocess, the result handler reads the selected paths back. An
-// unknown command keeps the prompt open (no exec, no error).
+// chooser temp file is appended to the command's argv (F4 - argv
+// only, never a shell string), the command runs as a foreground TUI
+// subprocess. An unknown command keeps the prompt open (no exec).
 func (m *Model) runAttachCommand(name string) Cmd {
 	if m.composeTab().Phase == compose.PhaseSending {
 		return nil
@@ -3917,8 +3730,8 @@ func (m *Model) runAttachCommand(name string) Cmd {
 
 // runPicker serves the Lua picker round trip (R8): the request's argv
 // (by attach-command name or inline - F4, argv only) runs through the
-// attach-command exec path, the chooser file's paths ride the result
-// back to the app, which resumes the blocked action.
+// attach-command exec path; the chooser file's paths ride the result
+// back, which resumes the blocked action.
 func (m *Model) runPicker(req core.PickerRequest) Cmd {
 	argv := req.Argv
 	if len(argv) == 0 {
@@ -3972,9 +3785,8 @@ func attachCommandNames() []string {
 
 // defaultChooser is the attach command Tab runs: the first registered
 // command. Registration order is the preference - the Lua plugin
-// script that registers the choosers controls Tab by call order (the
-// script is data, never compiled). Empty when none are registered:
-// Tab falls back to the built-in directory picker.
+// script that registers the choosers controls Tab by call order.
+// Empty: Tab falls back to the built-in directory picker.
 func defaultChooser(cmds []AttachCommand) string {
 	if len(cmds) == 0 {
 		return ""
@@ -4020,8 +3832,7 @@ func saveChooserDir(m Model) {
 // over the directory listing (directories carry a trailing "/" and
 // descend on select, esc walks up; at the root it closes and returns
 // to back). Empty dir resumes the last position, else the working
-// directory. The attach prompt is the back reference the chooser
-// returns to.
+// directory.
 func (m *Model) filePicker(back dialogue) dialogue {
 	dir := m.fileDir
 	if dir == "" {
@@ -4107,8 +3918,7 @@ func (m *Model) openReply(mode string) {
 // tabNext/tabPrev cycle the combined tab stack: the mail surface
 // (index 0), every open dialogue, every search tab. Stepping off a
 // dialogue parks it; stepping back re-attaches it. The pager state
-// survives in m.pager - the mail surface restores to "pager" when a
-// thread was open.
+// survives in m.pager.
 func (m *Model) tabNext() {
 	if m.tabCount() <= 1 {
 		return
@@ -4138,10 +3948,9 @@ func (m *Model) tabCount() int {
 }
 
 // openSearchTab opens a raw notmuch query in a new search tab (the
-// ctrl+f key): the view is named by the query (the tab label, the
-// event scope), the app loads it through the onSearch seam, and the
-// activation follows [ui] search-open - "active" attaches the tab,
-// "background" runs the query while the current surface stays.
+// ctrl+f key): the view is named by the query, the app loads it
+// through the onSearch seam, and activation follows [ui] search-open
+// - "active" attaches the tab, "background" keeps the current surface.
 func (m *Model) openSearchTab(query string) {
 	v := core.NewView(query, query)
 	m.searchTabs = append(m.searchTabs, v)
@@ -4165,9 +3974,8 @@ func (m *Model) activeSearchIdx() int {
 }
 
 // activeView is the view the cursor and rows act on: the attached
-// search tab's view when the tab stack sits on one, the mail
-// surface's view otherwise (the pager over a search tab keeps the tab
-// attached - its prev/next walk the search rows).
+// search tab's view when the stack sits on one, the mail surface's
+// view otherwise (a pager over a search tab keeps the tab attached).
 func (m *Model) activeView() *core.View {
 	if i := m.activeSearchIdx(); i >= 0 {
 		return m.searchTabs[i]
@@ -4185,9 +3993,9 @@ func (m *Model) composeTab() *compose.State {
 func (m *Model) attachTab() {
 	m.dialogue = nil
 	if m.activeSearchIdx() >= 0 {
-		// the search tabs reuse the index surface: the activeView
-		// routing renders the query's rows under the index bindings
-		// (q on them closes the tab, / and F filter the results)
+		// the search tabs reuse the index surface: activeView routes
+		// the query's rows under the index bindings (q closes the tab,
+		// / and F filter the results)
 		m.mode = "index"
 		return
 	}
@@ -4204,9 +4012,9 @@ func (m *Model) attachTab() {
 
 // closeTab removes the tab at stack position i: search=true splices
 // the search stack (i offset to the combined stack inside), search=
-// false the compose stack (the tab's buffer file dies with it). The
-// landing follows attachTab - closing the active tab leaves the one
-// that slides into its place, any other keeps the surface.
+// false the compose stack (the buffer file dies with it). The landing
+// follows attachTab - closing the active tab leaves the one that
+// slides into its place.
 func (m *Model) closeTab(i int, search bool) {
 	if search {
 		m.searchTabs = append(m.searchTabs[:i], m.searchTabs[i+1:]...)
@@ -4225,9 +4033,9 @@ func (m *Model) closeTab(i int, search bool) {
 }
 
 // editorDoneMsg reports the $EDITOR run: the buffer path is read back
-// (applyEditorResult) and removed. The result is addressed by tab ID
-// (not position): a tab closed or replaced while the editor runs must
-// never receive a stale buffer.
+// (applyEditorResult) and removed. Addressed by tab ID (not position)
+// so a tab closed or replaced while the editor runs never receives a
+// stale buffer.
 type editorDoneMsg struct {
 	err   error
 	path  string

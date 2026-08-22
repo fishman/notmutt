@@ -8,13 +8,12 @@ import (
 	"testing"
 )
 
-// TestClassifyRows pins the thread-tail marks: among the five rows
-// with the latest Timestamp MarkRecent, the latest row not authored by
-// me (sent tag or a From matching the me addresses) MarkOther,
-// prominent winning when it is also recent. The classification is
-// timestamp-based, never fetch-order based; rows without a message
-// (ghosts) stay unmarked. The windowed-thread gate lives in the view's
-// flatten (the caller), not here.
+// TestClassifyRows pins the thread-tail marks: the five latest
+// Timestamp rows get MarkRecent; the latest row not authored by me
+// (sent tag or a From matching the me addresses) gets MarkOther,
+// winning when it is also recent. Timestamp-based, never fetch-order
+// based; ghost rows stay unmarked. The windowed-thread gate lives in
+// the view's flatten, not here.
 func TestClassifyRows(t *testing.T) {
 	me := []string{"alpha@example.com"}
 	rows := func(n int) []Row {

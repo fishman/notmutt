@@ -52,8 +52,7 @@ func TestPadRow(t *testing.T) {
 // TestRowCollapsedMarker pins the collapsed-thread indicator: the
 // C-collapsed row renders the tree glyph plus the hidden-row count in
 // the [index.collapsed] style (bold yellow), so a collapsed thread is
-// never mistaken for a plain thread root - the pre-fix row was
-// indistinguishable from an expanded root.
+// never mistaken for a plain thread root.
 func TestRowCollapsedMarker(t *testing.T) {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
@@ -88,8 +87,7 @@ func styledRow() string {
 
 // TestRowMarkTintsSubject pins the thread-position mark on the row:
 // the marked message's subject run (and its tree indicator) opens
-// with the tint style, the fixed slots keep their own colors - the
-// mark paints the subject line, never the whole row.
+// with the tint style, the fixed slots keep their own colors.
 func TestRowMarkTintsSubject(t *testing.T) {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
@@ -113,8 +111,7 @@ func TestRowMarkTintsSubject(t *testing.T) {
 
 // TestRowSelectedMarker pins the cursor row look: the row keeps its
 // slot styles, and the selection is the cursor marker cell (config
-// glyph, indicator-styled) at the line start - the indicator style
-// never leaks past the marker.
+// glyph, indicator-styled) at the line start.
 func TestRowSelectedMarker(t *testing.T) {
 	row := core.Row{Msg: &core.Message{
 		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
@@ -127,16 +124,14 @@ func TestRowSelectedMarker(t *testing.T) {
 	if !strings.Contains(out, "38;2;97;175;239") { // author blue #61afef
 		t.Fatalf("slot colors must survive on the selected row: %q", out)
 	}
-	// the marker cell reserves its column on unselected rows, so the
-	// line never shifts when the cursor moves
+	// the marker cell reserves its column on unselected rows, so the line never shifts when the cursor moves
 	plain := renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone)
 	if !strings.HasPrefix(stripANSI(plain), " ") {
 		t.Fatalf("the marker cell must reserve its column on unselected rows: %q", plain)
 	}
 }
 
-// TestRowTagIconDisabled pins show-icons = false: mapped tags render their
-// names, and the attachment marker falls back to the plain text marker.
+// TestRowTagIconDisabled pins show-icons = false: mapped tags render their names, the attachment marker falls back to the plain text marker.
 func TestRowTagIconDisabled(t *testing.T) {
 	ui := config.Default().UI
 	ui.Tags.ShowIcons = false
@@ -148,9 +143,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 	if !strings.HasPrefix(out, " 1    A ") {
 		t.Fatalf("attachment marker must fall back to text when icons are off: %q", out)
 	}
-	// tag names render in full next to the sender, never truncated to a
-	// glyph-slot width; the tag slot pads the row without tags to the
-	// page width, so the subject column holds its place
+	// tag names render in full next to the sender, never truncated to a glyph-slot width; the tag slot pads tagless rows to the page width
 	if !strings.Contains(out, "inbox") || strings.Contains(out, "📥") || strings.Index(out, "inbox") > strings.Index(out, "hello") {
 		t.Fatalf("tag names must render in full before the subject when icons are off: %q", out)
 	}
@@ -159,7 +152,7 @@ func TestRowTagIconDisabled(t *testing.T) {
 // TestRowFlagSlot pins the row-start marker slots: replied owns a flag
 // letter (R, mutt's index flags) and never repeats in the tag slot;
 // signed renders the lock icon in its own slot right after the
-// attachment slot, and the slot reserves its cells on rows without it.
+// attachment slot, the slot reserving its cells on rows without it.
 func TestRowFlagSlot(t *testing.T) {
 	if got := flagChars([]string{"unread", "replied", "signed", "forwarded", "deleted"}); got != "NRFD" {
 		t.Fatalf("flag letters: %q", got)
@@ -181,8 +174,7 @@ func TestRowFlagSlot(t *testing.T) {
 	if strings.Contains(out, "replied") || strings.Contains(out, "signed") {
 		t.Fatalf("marker tags must not repeat in the tag slot: %q", out)
 	}
-	// the signed slot reserves its cells: a row without the tag keeps
-	// the date column in place
+	// the signed slot reserves its cells: a row without the tag keeps the date column in place
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"work"},
@@ -193,9 +185,7 @@ func TestRowFlagSlot(t *testing.T) {
 	}
 }
 
-// TestRowTagIcon pins the icons dict (ui.tags.icons): a mapped tag renders
-// its icon instead of its name, and the attachment marker tag renders only
-// in the row-start attachment slot - never repeated in the tag slot.
+// TestRowTagIcon pins the icons dict (ui.tags.icons): a mapped tag renders its icon instead of its name, and the attachment marker renders only in the row-start attachment slot - never repeated in the tag slot.
 func TestRowTagIcon(t *testing.T) {
 	ui := config.Default().UI
 	ui.Tags.Icons = map[string]string{"attachment": "x", "inbox": "y", "newsletter": "z"}
@@ -204,29 +194,24 @@ func TestRowTagIcon(t *testing.T) {
 		Author: "Ann", Subject: "hello", Tags: []string{"attachment", "inbox"},
 	}}
 	out := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 1, false, config.Default().AccountTags(), "", core.MarkNone))
-	// number + blank flags slot precede the attachment slot; the icon must
-	// sit before the date column, not in the tag slot
+	// number + blank flags slot precede the attachment slot; the icon must sit before the date column, not in the tag slot
 	if !strings.HasPrefix(out, " 1    x ") {
 		t.Fatalf("attachment icon must open the row (row-start slot): %q", out)
 	}
 	if strings.Contains(out, "attachment") {
 		t.Fatalf("attachment tag must not repeat in the tag slot: %q", out)
 	}
-	// the mapped icon sits in the tag slot right after the sender and
-	// before the subject
+	// the mapped icon sits in the tag slot right after the sender and before the subject
 	if !strings.Contains(out, "y") || strings.Index(out, "y") > strings.Index(out, "hello") {
 		t.Fatalf("mapped tag icon missing from the tag slot: %q", out)
 	}
-	// two mapped icons: natural width, one separator space - neither
-	// icons nor names carry fixed padding (a padded cell would leave
-	// gaps between glyphs)
+	// two mapped icons: natural width, one separator space - neither icons nor names carry fixed padding (a padded cell would leave gaps between glyphs)
 	row.Msg.Tags = []string{"inbox", "newsletter"}
 	glyphs := stripANSI(renderRow(1, row, DefaultStyles(), ui, 1, 3, false, config.Default().AccountTags(), "", core.MarkNone))
 	if !strings.Contains(glyphs, "y z") || strings.Contains(glyphs, "y  z") {
 		t.Fatalf("icons must join with a single space: %q", glyphs)
 	}
-	// the attachment slot reserves 2 cells: a double-width icon (the
-	// paperclip) must not shift the date column vs a row without one
+	// the attachment slot reserves 2 cells: a double-width icon (the paperclip) must not shift the date column vs a row without one
 	plain := stripANSI(renderRow(1, core.Row{Msg: &core.Message{
 		ID: "m2", ThreadID: "t1", Timestamp: 1755150000,
 		Author: "Ann", Subject: "hello", Tags: []string{"inbox"},
@@ -239,7 +224,7 @@ func TestRowTagIcon(t *testing.T) {
 // TestRowTagSlotAlignsPage pins the per-page tag slot (the number-slot
 // pattern): the widest tag run on the page sets the slot width; rows
 // without tags reserve it, so the subject column aligns across the
-// page. The width recomputes per render - the next page re-aligns.
+// page.
 func TestRowTagSlotAlignsPage(t *testing.T) {
 	ui := config.Default().UI
 	ui.Tags.ShowIcons = false // names only: "inbox work" is 10 cells wide
@@ -276,17 +261,15 @@ func TestPadRowTruncates(t *testing.T) {
 	if w := runewidth.StringWidth(stripANSI(out)); w != 40 {
 		t.Fatalf("padRow truncated to %d cells, want 40: %q", w, out)
 	}
-	// the trailing cells of the truncated row must carry the indicator
-	// background, not the terminal default
+	// the trailing cells of the truncated row must carry the indicator background, not the terminal default
 	if !strings.Contains(out, "48;2;229;192;123") {
 		t.Fatalf("indicator background missing from truncated row: %q", out)
 	}
 }
 
-// TestPadRowTruncatesWellFormed pins a cut that lands right after a slot
-// reset at 5 cells: a broken cut (partial SGR sequence on the wire)
-// would corrupt the terminal state, and a dangling open sequence must
-// never appear.
+// TestPadRowTruncatesWellFormed pins a cut that lands right after a
+// slot reset at 5 cells: a broken cut (partial SGR sequence on the
+// wire) would corrupt the terminal state.
 func TestPadRowTruncatesWellFormed(t *testing.T) {
 	st := DefaultStyles()
 	out := padRow(styledRow(), 5, st.Indicator)
@@ -309,8 +292,7 @@ func TestPadRowTruncatesWellFormed(t *testing.T) {
 // TestRenderTreeGlyphs pins the tree run (R3): the root marker on a
 // thread with children, the branch/leaf markers below the root, the
 // conditional indent (a vertical only under a sibling), and zero-width
-// prefixes for stubs and single messages - the flat layout stays
-// byte-identical.
+// prefixes for stubs and single messages.
 func TestRenderTreeGlyphs(t *testing.T) {
 	base := func() core.Row {
 		return core.Row{Msg: &core.Message{ID: "m1", ThreadID: "t1", Timestamp: 1755150000, Author: "Ann", Subject: "hello"}}
@@ -354,18 +336,13 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	if got := render(last); strings.Contains(got, "|") {
 		t.Fatalf("a row under a last child drops the vertical indent: %q", got)
 	}
-	// neomutt's pfx order: the verticals fill from the nearest ancestor -
-	// the depth-3 row under a last child of a siblinged node keeps its
-	// vertical at column 0 (the grandparent's level), not under the leaf
+	// neomutt's pfx order: the verticals fill from the nearest ancestor - the depth-3 row under a last child of a siblinged node keeps its vertical at column 0 (the grandparent's level), not under the leaf
 	deep := base()
 	deep.Depth, deep.Count, deep.Siblings = 3, 4, []bool{false, false, true}
 	if got := render(deep); !strings.Contains(got, "|   `-hello") {
 		t.Fatalf("depth-3 ancestors must draw nearest-outward: %q", got)
 	}
-	// a depth-9 row must draw its verticals from the shallow ancestors -
-	// the ones displayed at those columns, never the deep ones: the
-	// depth-1 node (chain tail) has a next sibling, so the vertical sits
-	// at column 0, not under a deep branch
+	// a depth-9 row must draw its verticals from the shallow ancestors - the ones displayed at those columns, never the deep ones: the depth-1 node (chain tail) has a next sibling, so the vertical sits at column 0, not under a deep branch
 	deep9 := base()
 	deep9.Depth, deep9.Count = 9, 10
 	deep9.Siblings = []bool{false, false, false, false, false, false, false, false, true}
@@ -377,9 +354,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 	if got := render(stub); strings.Contains(got, "+ ") {
 		t.Fatalf("a single-row thread renders no tree glyph: %q", got)
 	}
-	// the tree run is prepended in the subject slot: the prefix flows
-	// directly into the title, and the subject moves with the indent -
-	// no column alignment involved
+	// the tree run is prepended in the subject slot: the prefix flows directly into the title, and the subject moves with the indent - no column alignment involved
 	if got := render(under); !strings.Contains(got, "| `-hello") {
 		t.Fatalf("the tree run must sit inside the subject slot: %q", got)
 	}
@@ -394,7 +369,7 @@ func TestRenderTreeGlyphs(t *testing.T) {
 // TestRowMoreIndicator pins the overflow row (the page move scrolls
 // through a windowed thread's hidden tail): the ghost row renders the
 // hidden count in the subject slot, and a real windowed row keeps its
-// count off the line - the indicator row owns the number.
+// count off the line.
 func TestRowMoreIndicator(t *testing.T) {
 	render := func(r core.Row) string {
 		return stripANSI(renderRow(1, r, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone))

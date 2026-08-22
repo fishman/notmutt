@@ -15,12 +15,11 @@ import (
 	"github.com/emersion/go-message/mail"
 )
 
-// DropBcc returns the message with the Bcc header removed - the mutt
-// delivery shape: Bcc rides the envelope only, the wire message never
-// carries it (write_bcc defaults off); the fcc copy keeps it (mutt's
-// FCC mode always writes Bcc). Header-block only: the scan stops at
-// the first blank line (LF or CRLF), so a body line reading "Bcc: ..."
-// never matches. Folded continuations go with the header.
+// DropBcc removes the Bcc header (mutt delivery shape): Bcc rides the
+// envelope only, never the wire (write_bcc off); the fcc copy keeps it
+// (FCC mode always writes Bcc). Header-block only - the scan stops at
+// the first blank line (LF/CRLF), so a body "Bcc:" never matches;
+// folded continuations go with the header.
 func DropBcc(data []byte) []byte {
 	end := len(data)
 	for i := 0; i+1 < len(data); i++ {
@@ -55,22 +54,18 @@ func DropBcc(data []byte) []byte {
 }
 
 // Assemble writes the message bytes: headers (From/To/Cc/Subject/Date/
-// Message-ID, In-Reply-To and References for replies), one text/plain
-// body part (signature attached), one part per attachment. Pure bytes
-// - the send job writes the same buffer to transport and fcc. The
-// body is the user's own text; nothing here sanitizes (sanitize is
-// render-only, F1). References is written verbatim - the prefill
-// already carries the full chain including the original's own
-// message-id (spec section 6).
+// Message-ID, In-Reply-To/References for replies), one text/plain body
+// part (signature attached), one part per attachment. Pure bytes - the
+// send job writes the same buffer to transport and fcc. Nothing here
+// sanitizes (sanitize is render-only, F1); References is written
+// verbatim - the prefill carries the full chain (spec section 6).
 //
-// The wire shape follows neomutt (send/send.c, send/multipart.c,
-// send/header.c): a bare body is a SINGLE text/plain part - no
-// multipart wrapper, no Content-Disposition; attachments wrap the
-// message in multipart/mixed and only the attachment parts carry
-// Content-Disposition: attachment. The mail package's Writer would
-// force multipart/mixed plus a Content-Disposition: inline on the
-// body part on every message - clients (Betterbird) read that as an
-// attached body file.
+// Wire shape per neomutt (send/send.c, send/multipart.c, send/header.c):
+// a bare body is ONE text/plain part, no multipart or Content-Disposition;
+// attachments wrap in multipart/mixed, only they carry Content-Disposition.
+// The mail package's Writer would force multipart/mixed + inline
+// Content-Disposition on every message - clients (Betterbird) read that
+// as an attached body file.
 func (s *State) Assemble(w io.Writer) error {
 	hdr := mail.Header{}
 	setAddrs := func(name string, addrs []string) error {

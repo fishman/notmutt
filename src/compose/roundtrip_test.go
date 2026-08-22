@@ -12,11 +12,10 @@ import (
 	"notmutt/mail"
 )
 
-// TestAssembleRoundTripParse pins the wire format's re-parseability:
-// a sent message is the reply prefill's parse source (the newest
-// message of a thread is often the sender's own copy), so the
-// assembled bytes must round-trip through mail.ParseMessage. The
-// raw-byte wire tests pin the shapes; this pins the parser contract.
+// TestAssembleRoundTripParse pins re-parseability: the assembled bytes
+// must round-trip through mail.ParseMessage - a sent message is the
+// reply prefill's parse source (the newest thread message is often the
+// sender's own copy). The wire tests pin shapes; this pins the parser.
 func TestAssembleRoundTripParse(t *testing.T) {
 	st := NewCompose("alpha", "alpha@example.com", "", "")
 	st.Subject = "round trip"

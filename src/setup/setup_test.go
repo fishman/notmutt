@@ -56,13 +56,10 @@ func TestDetectGmail(t *testing.T) {
 	}
 }
 
-// TestDetectFlatImap pins the gmail discriminator and the flat layout
-// (the flat shape): system folders at the account root, no top-level
-// [Gmail] - not gmail, it falls to the generic shape whose Match names
-// resolve (INBOX + Sent). Every hard tag resolves from the flat names
-// (Trash, Pending), and the priority lists pick the standard name when
-// both exist (Archives over Archive, Spam over Junk). A plain file is
-// never an account.
+// TestDetectFlatImap pins the gmail discriminator and flat layout:
+// system folders at the account root, no top-level [Gmail] - not
+// gmail, it falls to the generic shape; priority lists pick the
+// standard name when both exist. A plain file is never an account.
 func TestDetectFlatImap(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
@@ -120,10 +117,9 @@ func TestDetectGmailVariant(t *testing.T) {
 	}
 }
 
-// TestDetectGmailFlatFallbacks pins the [Gmail]-marked flat account
-// (the flat gmail shape): the [Gmail] marker is present but the system
-// subfolders were never synced - sent/deleted resolve to the flat
-// names at the account root instead of staying unmapped.
+// TestDetectGmailFlatFallbacks pins the [Gmail]-marked flat account:
+// the marker is present but system subfolders were never synced -
+// sent/deleted resolve to the flat names at the root.
 func TestDetectGmailFlatFallbacks(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
@@ -146,9 +142,8 @@ func TestDetectGmailFlatFallbacks(t *testing.T) {
 }
 
 // TestDetectZoho pins the zoho template: the Snoozed system folder
-// discriminates zoho from the flat outlook shape, the hard-tag map
-// resolves, and the account carries no_fcc (zoho stores sent copies
-// server-side).
+// discriminates it from the flat outlook shape, and the account
+// carries no_fcc (zoho stores sent copies server-side).
 func TestDetectZoho(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
@@ -223,10 +218,9 @@ func TestDetectTemplateSet(t *testing.T) {
 }
 
 // TestDetectTopLevelOnly pins the match rule: only TOP-LEVEL folders
-// gate a template. A [Gmail] dir nested below another folder never
-// counts, while an account whose top-level [Gmail] carries just one
-// subfolder still matches (the sync may skip system folders - the
-// presence of [Gmail] itself says gmail).
+// gate a template; a nested [Gmail] never counts, while a top-level
+// [Gmail] with one subfolder still matches (sync may skip system
+// folders - its presence says gmail).
 func TestDetectTopLevelOnly(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root,
@@ -255,8 +249,7 @@ func TestDetectTopLevelOnly(t *testing.T) {
 }
 
 // TestDetectSkipsEmptyDir pins the drafts case: an empty directory is
-// not an account - no detection noise from a stray maildir under
-// construction.
+// not an account - no noise from a stray maildir under construction.
 func TestDetectSkipsEmptyDir(t *testing.T) {
 	root := t.TempDir()
 	mkdirs(t, root, "drafts")
@@ -276,9 +269,8 @@ func TestDetectMissingRoot(t *testing.T) {
 }
 
 // TestGenerateValid pins the generated file: valid TOML, quoted
-// folder names, sorted tags, and no entries for unmatched accounts.
-// A no_fcc account (gmail) generates the flag with the reason
-// comment; a plain account generates no flag.
+// folder names, sorted tags, no entries for unmatched accounts; a
+// no_fcc account emits the flag with its reason comment.
 func TestGenerateValid(t *testing.T) {
 	accs := []Account{
 		{Name: "zeta", Template: "gmail", NoFcc: true, Folders: map[string]string{

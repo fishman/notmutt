@@ -5,6 +5,5 @@
 
 package tui
 
-// probeCellSize is a no-op on windows: the console has no TIOCGWINSZ
-// pixel semantics, the 10x20 defaults stay.
+// probeCellSize is a no-op on windows: the console has no TIOCGWINSZ pixel semantics, the 10x20 defaults stay.
 func probeCellSize() {}

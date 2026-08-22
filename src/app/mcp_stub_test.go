@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-// TestMCPStub pins the default-build behavior: the mcp subcommand
-// exists (dispatch compiles) but reports not-built-in instead of
-// silently serving nothing.
+// TestMCPStub: in a default build the mcp subcommand exists (dispatch
+// compiles) but reports not-built-in instead of silently serving
+// nothing.
 func TestMCPStub(t *testing.T) {
 	err := serveMCP()
 	if err == nil {

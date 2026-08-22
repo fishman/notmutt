@@ -19,59 +19,45 @@ type Message = core.Message
 // TagOp is the core type; the alias keeps the Backend interface text short.
 type TagOp = core.TagOp
 
-// firstChunk is the initial fill chunk: 100 threads land fast so the
-// first paint is near-instant, then the fill continues in steadyChunk
-// batches (big merges, few paints). The cadence is a backend contract -
-// the refresh merges and paints whatever chunk arrives (the
-// render-batching requirement: a full-result first chunk stalls the
-// first paint).
+// firstChunk: 100 threads land fast for a near-instant first paint,
+// then steadyChunk batches (big merges, few paints). The refresh merges
+// and paints whatever chunk arrives (a full-result first chunk stalls
+// the first paint) - backend contract.
 const (
 	firstChunk  = 100
 	steadyChunk = 5000
 )
 
-// Backend is the notmuch access boundary. cgo is the runtime backend;
-// the CLI backend is the -tags cli escape hatch (decision record 3).
+// Backend is the notmuch access boundary: cgo is the runtime backend,
+// the CLI backend the -tags cli escape hatch (decision record 3).
 //
 // Query is THE ingestion interface: one call walks the whole query
-// result and hands it to emit in bounded chunks (the page cadence:
-// firstChunk, then steadyChunk - the refresh merges and paints whatever
-// chunk arrives). Both backends serve it content-free - the index is
-// DB-only, no mail file is ever opened in the load path:
-//
-//   - CLI: one `notmuch search` subprocess per call, one summary per
-//     thread (DB-side thread fields; the CLI has no content-free
-//     per-message dump - show opens files, so it exists only for the
-//     open path);
-//   - cgo: one native batch per chunk - the in-process threads
-//     iterator packs per-thread summaries (thread id, date, authors,
-//     subject, tags from the Xapian header cache) into one buffer per
-//     crossing, zero subprocesses, zero file opens.
-//
-// limit stops the walk after N threads (0 = all; the startup validation
-// probes each view query with 1). emit returning false stops the walk
-// early; nil emit collects nothing.
+// result and hands it to emit in bounded chunks (firstChunk, then
+// steadyChunk - the refresh merges and paints whatever chunk arrives).
+// Both backends serve it content-free - the index is DB-only, no mail
+// file is opened in the load path (CLI: one `notmuch search` subprocess,
+// one summary per thread; cgo: one native batch per chunk from the
+// Xapian header cache, zero subprocesses, zero file opens). limit stops
+// the walk after N threads (0 = all; startup validation probes each view
+// query with 1); emit false stops early; nil emit collects nothing.
 //
 // There is no offset: paged offset calls each re-walk the notmuch mset
-// (measured: 0.2s for the first page, 2.3s at offset 120000 - 33 pages
-// of a 33k-thread inbox take ~40s, one full call takes ~5s), and
-// `notmuch search --format=json` emits nothing until the mset is
-// computed, so a single call is strictly faster.
+// (measured 0.2s first page, 2.3s at offset 120000), and json emits
+// nothing until the mset is computed, so one full call is strictly
+// faster.
 type Backend interface {
 	Open(ctx context.Context, dbPath string) error
 	Close(ctx context.Context) error
-	// Query walks the query result: flat=false walks the matched
-	// THREADS (threaded views - inbox, archive), flat=true walks the
-	// matched MESSAGES (the flat views: unread, deleted, search - one
-	// row per match, no thread drag). The rows carry ThreadID either
-	// way. limit stops the walk after N threads / N messages.
+	// Query walks matched THREADS (flat=false; inbox, archive) or matched
+	// MESSAGES (flat=true; unread, deleted, search - one row per match).
+	// Rows carry ThreadID either way; limit stops after N threads/messages.
 	Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error
 	// CountMsgs returns the number of MESSAGES matching the query -
 	// the flat fill's progress total (Count counts threads).
 	CountMsgs(ctx context.Context, query string) (int, error)
-	// QueryMsgs walks a message-level query (the filter engine's delta
-	// scans - lastmod ranges): bare message ids (no "id:" prefix; the
-	// engine prefixes when it builds query terms), chunked like Query.
+	// QueryMsgs walks a message-level query (delta scans - lastmod
+	// ranges): bare message ids (no "id:" prefix; the engine prefixes
+	// when it builds query terms), chunked like Query.
 	QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error
 	Count(ctx context.Context, query string) (int, error)
 	Thread(ctx context.Context, threadID string) ([]Message, error)
@@ -88,17 +74,15 @@ type Backend interface {
 	RemovePaths(ctx context.Context, paths []string) error
 	Revision(ctx context.Context) (uuid string, rev uint64, err error)
 	// New runs `notmuch new` and returns the lastmod bracket around it
-	// (pre before, cur after) - the poll's classification window.
-	// The bracket is captured in one call because a revision read
-	// through a stale handle reports the value cached at open; the
-	// cgo backend reopens its read handle around the run so the
-	// bracket reads and every later read see the commit.
+	// (pre before, cur after) - the poll's classification window. The
+	// bracket is captured in one call: a stale handle reports the
+	// revision cached at open, so the cgo backend reopens its read
+	// handle around the run and every later read sees the commit.
 	New(ctx context.Context) (pre, cur uint64, err error)
 }
 
-// runFn abstracts one CLI invocation: the cgo backend runs `notmuch
-// new` through it, the CLI backend everything. argv only, never a
-// shell (F4).
+// runFn abstracts one CLI invocation: `notmuch new` for cgo, everything
+// for the CLI backend. argv only, never a shell (F4).
 type runFn func(ctx context.Context, name string, args []string) ([]byte, error)
 
 func defaultRun(ctx context.Context, name string, args []string) ([]byte, error) {

@@ -23,10 +23,10 @@ import (
 // (Task 14) sets it from the config path; the tests set it directly.
 var sigDir string
 
-// resolveAccount is the detection chain (spec section 6): the
-// message's account tag, the view cursor's account tag, the first
-// configured account (sorted - deterministic). The same account-tag
-// machinery as the status bar (core.AccountTag, DRY).
+// resolveAccount is the detection chain (spec section 6): the message's
+// account tag, the view cursor's, else the first configured account
+// (sorted - deterministic). Same machinery as the status bar
+// (core.AccountTag).
 func resolveAccount(cfg config.Config, msgTags, cursorTags []string) string {
 	set := cfg.AccountTags()
 	if t := core.AccountTag(msgTags, set); t != "" {
@@ -46,9 +46,9 @@ func resolveAccount(cfg config.Config, msgTags, cursorTags []string) string {
 	return ""
 }
 
-// defaultSig loads the account's default signature file (the
-// configured name in the account's signatures dir); a missing file or
-// an unset name resolves to no signature.
+// defaultSig loads the account's default signature file (the configured
+// name in the account's signatures dir); a missing file or unset name
+// resolves to no signature.
 func defaultSig(cfg config.Config, account string) (name, body string) {
 	file := cfg.Accounts[account].DefaultSignature
 	if file == "" {
@@ -62,10 +62,9 @@ func defaultSig(cfg config.Config, account string) (name, body string) {
 }
 
 // accountFrom resolves the dialogue's sender identity: the account
-// (the message tags, the view cursor, else the first configured -
-// resolveAccount), its from address, and the default signature. One
-// derivation for every dialogue builder (compose, reply/forward,
-// mailto - DRY).
+// (message tags, cursor tags, else the first configured - resolveAccount),
+// its from address, and the default signature. One derivation for every
+// dialogue builder (compose, reply/forward, mailto).
 func accountFrom(cfg config.Config, msgTags, cursorTags []string) (account, from, sigName, sigBody string) {
 	account = resolveAccount(cfg, msgTags, cursorTags)
 	from = cfg.Accounts[account].From
@@ -74,9 +73,9 @@ func accountFrom(cfg config.Config, msgTags, cursorTags []string) (account, from
 }
 
 // newCompose builds the compose-mode dialogue shell: the sender
-// identity (accountFrom) and the fcc path. The one builder for
-// compose-mode dialogues - the compose key and the mailto link share
-// it; reply/forward layer the parsed original on top (buildCompose).
+// identity (accountFrom) and the fcc path. Shared by the compose key
+// and the mailto link; reply/forward layer the parsed original on top
+// (buildCompose).
 func newCompose(cfg config.Config, root string, msgTags, cursorTags []string) *compose.State {
 	account, from, sigName, sigBody := accountFrom(cfg, msgTags, cursorTags)
 	st := compose.NewCompose(account, from, sigName, sigBody)
@@ -86,8 +85,8 @@ func newCompose(cfg config.Config, root string, msgTags, cursorTags []string) *c
 
 // buildCompose prefills a dialogue for mode ("compose" | "reply" |
 // "reply-all" | "forward"): account detection, the parsed original
-// (reply/forward), the default signature. Nil when the original
-// cannot be parsed - the open key then no-ops.
+// (reply/forward), the default signature. Nil when the original cannot
+// be parsed - the open key then no-ops.
 func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, root string) *compose.State {
 	var st *compose.State
 	if mode == "compose" {
@@ -116,16 +115,13 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 	return st
 }
 
-// replyPrefill builds the dialogue state for a reply-mode request:
-// buildCompose on the cursor message, falling back to a thread fetch
-// when the row carries no paths (index rows are thread summaries -
-// paths load with Thread, on open, R1). The thread's newest message is
-// the reply original: the overview line shows the newest date, and the
-// pager path always carries the real message. Messages are tried in
-// recency order - a broken newest (unreadable file, a path that
-// vanished) falls through to the next parseable one. A non-nil error
-// means nothing could be built and the caller surfaces it (session
-// log + JobError) - a reply must never fail silently.
+// replyPrefill builds the reply dialogue: buildCompose on the cursor
+// message, falling back to a thread fetch when the row carries no
+// paths (index rows are thread summaries - paths load on open, R1).
+// Newest message is the reply original; messages are tried in recency
+// order so a broken newest falls through to the next parseable one. A
+// non-nil error means nothing could be built - a reply must never
+// fail silently.
 func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode, root string) (*compose.State, error) {
 	if st := buildCompose(cfg, view, msg, mode, root); st != nil {
 		return st, nil
@@ -147,10 +143,9 @@ func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, ms
 }
 
 // mailtoCompose opens a dialogue from a mailto: link (the pager F key
-// seam): the To list from the URL path, subject/cc/bcc/body from the
-// query (RFC 6068, x-www-form-urlencoded). The sender identity comes
-// from the account chain, never the link - same derivation as
-// buildCompose.
+// seam): To from the URL path, subject/cc/bcc/body from the query
+// (RFC 6068, x-www-form-urlencoded). The sender identity comes from
+// the account chain, never the link.
 func mailtoCompose(cfg config.Config, root, rawURL string) (*compose.State, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil || !strings.EqualFold(u.Scheme, "mailto") {
@@ -205,8 +200,7 @@ func tagsOf(msg *core.Message) []string {
 }
 
 // cursorTags resolves the view cursor message's tags - the view's
-// active account context (spec section 6). One flatten per dialogue
-// open, not per keystroke.
+// active account context (spec section 6).
 func cursorTags(view *core.View) []string {
 	row, ok := view.CursorRow()
 	if !ok || row.Msg == nil {

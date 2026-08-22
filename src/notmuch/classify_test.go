@@ -15,11 +15,10 @@ import (
 )
 
 // TestRealThreadClassifies pins the production fetch -> classify path:
-// the real cgo thread fetch fills the fields the index highlight needs
-// (id, timestamp, author, tags) and the rows built from it classify the
-// thread's tail - the recent-5 window, the other side, the sent-tag
-// identity, and the old messages staying unmarked. notmuch reports
-// message ids bare (no angle brackets).
+// the cgo thread fetch fills the fields the index highlight needs (id,
+// timestamp, author, tags), and the rows classify the thread's tail -
+// the recent-5 window, the other side, the sent-tag identity, old
+// messages unmarked. notmuch reports ids bare (no angle brackets).
 func TestRealThreadClassifies(t *testing.T) {
 	e := testutil.Setup(t)
 	// one thread of 9 fabricated messages; mine are alpha (the scratch

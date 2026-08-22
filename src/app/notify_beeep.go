@@ -12,12 +12,11 @@ import (
 )
 
 // notifyBeeep shows the platform notification (beeep: dbus, falling
-// back to notify-send and kdialog per show on linux; osascript on
-// darwin): the title is the deduped sender list, the body the count
-// plus the aligned sender/subject/time rows - the same payload as the
-// command backend's {count}/{subjects}, never bodies or ids (F6).
-// beeep.AppName is the notification daemon's source label: it defaults
-// to "DefaultAppName" and must be set explicitly.
+// back to notify-send and kdialog on linux; osascript on darwin): the
+// deduped sender title, the count plus the aligned rows - the same
+// payload as the command backend's {count}/{subjects}, never bodies or
+// ids (F6). beeep.AppName is the daemon's source label; it defaults to
+// "DefaultAppName" and must be set explicitly.
 func notifyBeeep(entries int, head []core.NotifyHeadline) {
 	beeep.AppName = AppName
 	body := strconv.Itoa(entries) + " new messages"

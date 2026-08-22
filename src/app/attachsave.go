@@ -48,14 +48,13 @@ type AttachMeta struct {
 	Date    int64
 }
 
-// CategorizeHook decides one message's attachment destinations. The
-// hook receives the mail handle - the message's parsed attachment list,
-// fetched through it by the plugin - plus the metadata projection, and
-// returns a map of 1-based attachment ordinal to a relative path: a
-// bare category (single segment, slotted into the config layout) or a
-// full folder/filename path (multi segment, used verbatim). Attachments
-// without an entry are skipped. The Lua layer registers its adapter
-// here (the R2 filter interface shape).
+// CategorizeHook decides one message's attachment destinations: the
+// mail handle (the message's parsed attachment list), the metadata
+// projection, and a map of 1-based attachment ordinal to a relative
+// path - a bare category (slotted into the config layout) or a full
+// folder/filename path (used verbatim). Attachments without an entry
+// are skipped. The Lua layer registers its adapter here (the R2 filter
+// interface shape).
 type CategorizeHook func(handle string, m AttachMeta) (map[int]string, error)
 
 var categorizeHooks []CategorizeHook
@@ -68,8 +67,7 @@ func RegisterCategorizeHook(fn CategorizeHook) {
 // The handle registry: the save pass registers each message's parsed
 // attachment list under an opaque handle before invoking the hooks and
 // unregisters after. The sandboxed plugin cannot open files - the list
-// is what the client parsed (the get_attachments Lua binding is this
-// table's read side).
+// is what the client parsed (get_attachments reads this table).
 var (
 	attListMu sync.Mutex
 	attLists  = map[string][]mail.Attachment{}
@@ -100,10 +98,9 @@ func unregisterAttachments(handle string) {
 }
 
 // runCategorize asks the hooks in registration order; the first hook
-// with a non-empty category map wins. A hook error falls through to
-// the next hook, and when nothing categorized, the last error
-// surfaces - an undecidable message is a review-surface entry, never a
-// silent skip.
+// with a non-empty category map wins. A hook error falls through, and
+// when nothing categorized the last error surfaces - an undecidable
+// message is a review-surface entry, never a silent skip.
 func runCategorize(handle string, m AttachMeta) (map[int]string, error) {
 	var lastErr error
 	for _, h := range categorizeHooks {
@@ -121,9 +118,8 @@ func runCategorize(handle string, m AttachMeta) (map[int]string, error) {
 
 // sanitizeSegment makes a mail- or plugin-derived name safe as a
 // single path segment: separators become underscores, control runes
-// are dropped (the SanitizeControls rule), and a name that collapses
-// to "", "." or ".." is rejected. Shared by the filename and the
-// category - after the separator replacement a segment cannot traverse.
+// dropped (the SanitizeControls rule), and a name collapsing to "",
+// "." or ".." is rejected.
 func sanitizeSegment(s string) string {
 	s = core.SanitizeControls(strings.ReplaceAll(strings.ReplaceAll(s, "/", "_"), "\\", "_"))
 	if s == "" || s == "." || s == ".." {
@@ -135,8 +131,8 @@ func sanitizeSegment(s string) string {
 // attachmentTarget resolves one save's target from the hook's relative
 // path. A multi-segment value (travel/flights/london.pdf) is the full
 // destination below the [attachments] folder - the plugin owns the
-// structure and the filename, and the date layout is bypassed. A single
-// segment (travel) is a legacy category slotted into the config layout
+// structure, the date layout is bypassed. A single segment (travel) is
+// a legacy category slotted into the config layout
 // (<YYYY-MM>/<category>/<filename>). Every segment passes the
 // sanitizer; an empty or collapsed path means nothing to save.
 func attachmentTarget(folder, layout string, meta AttachMeta, rel, name string) string {
@@ -188,13 +184,11 @@ type AttachSave struct {
 
 // saveMessageAttachments runs the categorize hooks over one message
 // file and saves each categorized attachment (0600 files, 0700 dirs,
-// F5): the message's attachment list is registered under a fresh
-// handle, the hooks decide ordinals -> categories, and each decided
-// attachment is saved. Idempotent: an existing target is skipped,
-// never overwritten - the skip check precedes the extract, so re-runs
-// never re-read already-saved attachments. Dry-run reports the plan
-// without writing. Failures are recorded per attachment, never
-// aborting the message or the pass.
+// F5). Idempotent: an existing target is skipped, never overwritten -
+// the skip check precedes the extract, so re-runs never re-read
+// already-saved attachments. Dry-run reports the plan without writing.
+// Failures are recorded per attachment, never aborting the message or
+// the pass.
 func saveMessageAttachments(file string, meta AttachMeta, folder, layout string, dryRun bool) []AttachSave {
 	msg, err := mail.ParseMessage(file)
 	if err != nil {
@@ -278,8 +272,8 @@ func parseAttachmentsSpec(args []string) (dryRun bool, query string, err error) 
 // attachmentsOnce is the headless backfill (`notmutt attachments
 // [--dry-run] [query]`): categorize and download the query's message
 // attachments into the [attachments] folder. The Lua plugins must load
-// for the hooks to exist - a build or config without a categorize
-// plugin saves nothing and says so.
+// for the hooks to exist - a build without a categorize plugin saves
+// nothing and says so.
 func attachmentsOnce() error {
 	dryRun, query, err := parseAttachmentsSpec(os.Args[2:])
 	if err != nil {
@@ -324,11 +318,9 @@ func absMailPath(root, p string) string {
 }
 
 // attachmentPass is the shared pass body (the headless command and the
-// hotkey action): the query's message ids (ActQueryMsgs), their
-// snapshots (paths), and saveMessageAttachments per message - the
-// filter engine's two-step. Returns one save/skip line per attachment
-// plus the tallies; the callers decide the sink (stdout for the
-// command, the session log for the hotkey).
+// hotkey action): the query's message ids, their snapshots (paths), and
+// saveMessageAttachments per message. Returns one save/skip line per
+// attachment plus the tallies; the callers decide the sink.
 func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun bool) (lines []string, saved, skipped int, err error) {
 	var ids []string
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQueryMsgs, Query: query,
@@ -350,9 +342,9 @@ func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun
 		for _, p := range m.Paths {
 			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, layout, dryRun) {
 				if s.Err != nil {
-					// one stale path (an external maildir rename
-					// between notmuch new runs) must not abort the
-					// pass - the line is the review surface
+					// a stale path (an external maildir rename between notmuch
+					// new runs) must not abort the pass - the line is the
+					// review surface
 					lines = append(lines, fmt.Sprintf("skip %s (%v)", s.Name, s.Err))
 					continue
 				}

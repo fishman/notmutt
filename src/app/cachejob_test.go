@@ -54,8 +54,8 @@ func TestScanVisible(t *testing.T) {
 	readProgress(t, ch) // the scan publishes progress after its CacheResult
 
 	// A filled row is skipped by scanVisible, so reset the message to the
-	// fresh state a re-fetched thread has (empty Atts, same path); the
-	// second pass then exercises the cache-hit Get branch.
+	// fresh re-fetch state (empty Atts, same path); the second pass then
+	// exercises the cache-hit Get branch.
 	view.SetAtts("m1", nil)
 	cj.scanVisible(make(chan struct{}, 2))
 	r = readResult(t, ch)
@@ -91,8 +91,8 @@ func TestScanVisibleGhost(t *testing.T) {
 	}
 
 	// Two unreferenced messages form two roots: buildTree emits a
-	// synthetic ghost root (nil Msg) above them. scanVisible must skip it,
-	// not deref nil (the 2026-08-14 segfault on a real mailbox).
+	// synthetic ghost root (nil Msg); scanVisible must skip it, not deref
+	// nil (the 2026-08-14 real-mailbox segfault).
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "m1", Paths: []string{file}},
@@ -177,8 +177,7 @@ func readProgress(t *testing.T, ch <-chan core.Event) core.Progress {
 			if p, ok := e.(core.Progress); ok {
 				return p
 			}
-			// skip other events: multi-row scans interleave CacheResults
-			// between Progress events
+			// skip other events: multi-row scans interleave CacheResults between Progress events
 		case <-time.After(2 * time.Second):
 			t.Fatal("no Progress within timeout")
 			return core.Progress{}
@@ -215,9 +214,9 @@ func TestScanVisibleProgressMonotonic(t *testing.T) {
 		threads = append(threads, core.NewThread(fmt.Sprintf("t%d", i),
 			[]*core.Message{{ID: fmt.Sprintf("m%d", i), Paths: []string{file}}}))
 	}
-	// Filler rows (no paths) are skipped by the scan: the bar totals
-	// eligible rows, not page rows. One merge: MergeThreads replaces the
-	// view's thread set with its input.
+	// Filler rows (no paths) are skipped: the bar totals eligible rows,
+	// not page rows. MergeThreads replaces the view's thread set with
+	// its input.
 	var filler []*core.Thread
 	for i := 4; i <= 12; i++ {
 		filler = append(filler, core.NewThread(fmt.Sprintf("t%d", i),
@@ -227,8 +226,8 @@ func TestScanVisibleProgressMonotonic(t *testing.T) {
 	cj := newCacheJob(bus, &fakeWorker{}, view, filepath.Join(t.TempDir(), "cache.db"))
 
 	cj.scanVisible(make(chan struct{}, 2))
-	// done increments once per completed scan: the sequence must be
-	// strictly 1,2,3 - never a regression or an early 100%.
+	// done increments once per completed scan: strictly 1,2,3 - never a
+	// regression or an early 100%.
 	seen := map[int]bool{}
 	var prev int
 	for i := 0; i < 3; i++ {

@@ -13,9 +13,8 @@ import (
 )
 
 // Styles is the full style surface the TUI renders with. ResolveStyles
-// builds it from config data; the hardcoded onedark values in
-// DefaultStyles are the reference port (muttrc/theme/onedark.muttrc)
-// fallback.
+// builds it from config data; DefaultStyles' hardcoded onedark values
+// are the reference port (muttrc/theme/onedark.muttrc) fallback.
 type Styles struct {
 	Normal         lipgloss.Style
 	Indicator      lipgloss.Style
@@ -52,21 +51,18 @@ type IndexStyles struct {
 type PagerStyles struct {
 	Header     lipgloss.Style
 	HdrDefault lipgloss.Style
-	// HeaderColors are the resolved header rotation (config order):
-	// a header block cycles the list, wrapping at the end.
+	// HeaderColors are the resolved header rotation (config order): a header block cycles the list, wrapping at the end.
 	HeaderColors []config.Style
 	Quoted       [6]lipgloss.Style
 	Signature    lipgloss.Style
 	Attachment   lipgloss.Style
 	// Recent and OtherSide are the thread-position tints: the recent-5
-	// messages and the last other-side message of the thread (the
-	// index row highlight of the opened message).
+	// messages and the last other-side message of the thread.
 	Recent    lipgloss.Style
 	OtherSide lipgloss.Style
 }
 
-// styleOf converts a resolved config style to a lipgloss style
-// (fg/bg/attrs; resolved styles are concrete, no inheritance left).
+// styleOf converts a resolved config style to a lipgloss style (fg/bg/attrs; resolved styles are concrete, no inheritance left).
 func styleOf(s config.Style) lipgloss.Style {
 	base := lipgloss.NewStyle()
 	if s.Fg != "" {
@@ -91,11 +87,9 @@ func styleOf(s config.Style) lipgloss.Style {
 }
 
 // sgr is a style's precomputed render fragments: the SGR open sequence
-// and its reset. sgrSetOf computes them once at style resolution time;
-// the render hot paths (index rows, pager lines) join open + text +
-// close with string ops instead of calling Style.Render per slot (the
-// measured 58% of the frame build: per-call hex parse, border
-// pipeline, and grapheme splits).
+// and its reset, computed once at style resolution time. The render
+// hot paths join open + text + close with string ops instead of
+// Style.Render per slot (the measured 58% of the frame build).
 type sgr struct {
 	open  string
 	close string
@@ -113,10 +107,9 @@ func sgrOf(st lipgloss.Style) sgr {
 
 // render joins the SGR open, the text, and the reset - byte-identical
 // to Style.Render for the single-line, unpadded styles the hot paths
-// use (lipgloss styles each line of a multi-line input separately, so
-// this stays single-line; mail content is sanitized and line-split
-// before it gets here). Tabs expand to 4 spaces like lipgloss's
-// Render, so direct constructions match too.
+// use (mail content is sanitized and line-split before it gets here).
+// Tabs expand to 4 spaces like lipgloss's Render, so direct
+// constructions match too.
 func (g sgr) render(text string) string {
 	if strings.ContainsRune(text, '\t') {
 		text = strings.ReplaceAll(text, "\t", "    ")
@@ -147,9 +140,7 @@ type sgrSet struct {
 	pagerKey                                     string // fingerprint of the pager-relevant opens (styleKey)
 }
 
-// pagerHdrColor picks the header rotation color for the n-th line of a
-// header block (n starts at 0), wrapping at the end of the list; an
-// empty list falls back to the hdrdefault style.
+// pagerHdrColor picks the header rotation color for the n-th line of a header block (n starts at 0), wrapping at the end; an empty list falls back to hdrdefault.
 func (sg sgrSet) pagerHdrColor(n int) sgr {
 	if len(sg.pagerHdrColors) == 0 {
 		return sg.pagerDef
@@ -203,8 +194,7 @@ func sgrSetOf(st Styles) sgrSet {
 	for i, g := range opens {
 		key[i] = g.open
 	}
-	// the join separator is a byte that can never appear in an SGR
-	// sequence, so keys cannot collide
+	// the join separator is a byte that can never appear in an SGR sequence, so keys cannot collide
 	sg.pagerKey = strings.Join(key, "\x00")
 	return sg
 }
@@ -224,8 +214,7 @@ func DefaultStyles() Styles {
 		Tabbar:    lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#3e4451")),
 		TabActive: lipgloss.NewStyle().Foreground(c("#21252b")).Background(c("#61afef")),
 		// the background must be set - the label cell's width padding
-		// fills with it (colorWhitespace), so the column seam never
-		// leaks the terminal default background
+		// fills with it (colorWhitespace), so the column seam never leaks the terminal default
 		ComposeLabel:   lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
 		ComposeDivider: lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#5c6370")),
 		Index: IndexStyles{
@@ -265,9 +254,8 @@ func DefaultStyles() Styles {
 }
 
 // ResolveStyles converts the config theme data into the render style
-// set. Style ids the config does not define resolve to normal. An
-// empty theme (no config file provided one) falls back to the
-// hardcoded onedark defaults - the reference port.
+// set. Undefined ids resolve to normal; an empty theme falls back to
+// the hardcoded onedark defaults - the reference port.
 func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 	if theme.Default == "" || len(theme.Variants) == 0 {
 		return DefaultStyles()

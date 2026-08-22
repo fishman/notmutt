@@ -34,9 +34,9 @@ import (
 )
 
 // actionDeadline bounds one action run: the script's budget covers a
-// picker round trip and an AI stream (the 180s provider default) with
-// headroom. A script that outlives it is killed by SetContext; a
-// parked Go call (picker wait, stream read) aborts on its context.
+// picker round trip and an AI stream with headroom. A script that
+// outlives it is killed by SetContext; a parked Go call (picker wait,
+// stream read) aborts on its context.
 const actionDeadline = 5 * time.Minute
 
 // luaBind is one bind_key registration: the plugin file whose fn the
@@ -64,7 +64,7 @@ func pluginActionNames() map[string]bool {
 	return out
 }
 
-// luaKeyBound answers the dispatch fallback: a plugin bind_key for the
+// luaKeyBound answers the dispatch fallback: a plugin bind_key for a
 // key/area with no core binding (record 20 point 7: core wins, the
 // plugin fills the rest).
 func luaKeyBound(key, area string) bool {
@@ -74,9 +74,9 @@ func luaKeyBound(key, area string) bool {
 	return ok
 }
 
-// registerAction records a load-time register_action call: the registry
-// maps name to the plugin file, and an invocation re-runs that file in
-// a fresh VM (a plugin file edited since load is what the call sees).
+// registerAction records a load-time register_action call: name ->
+// plugin file; an invocation re-runs that file in a fresh VM, so an
+// edit since load is what the call sees.
 func registerAction(name, path string) {
 	regMu.Lock()
 	defer regMu.Unlock()
@@ -107,8 +107,8 @@ type actionCtx struct {
 }
 
 // drain publishes the invocation's queued effects after the action
-// returns: attach paths and the staged tag ops. The script never
-// touches notmuch itself - the R14 apply boundary holds from Lua too.
+// returns: attach paths and staged tag ops. The script never touches
+// notmuch itself - the R14 apply boundary holds from Lua too.
 func (ac *actionCtx) drain() {
 	if len(ac.attach) > 0 {
 		ac.bus.Publish(core.AttachFiles{Paths: ac.attach})
@@ -141,9 +141,9 @@ func (ac *actionCtx) mailLines() ([]core.Line, error) {
 }
 
 // runLuaAction runs a registered action (the seam handler wraps it in
-// a goroutine): the registry resolves the plugin file, the invocation
-// runs it, the attach effects drain, and LuaResult always publishes -
-// the TUI surfaces the outcome even when the call fails.
+// a goroutine): resolve the plugin file, run it, drain the attach
+// effects, and always publish LuaResult - the TUI surfaces the outcome
+// even when the call fails.
 func runLuaAction(action, threadID string, bus *core.Bus, cfg *config.Config, worker workerAPI) {
 	regMu.Lock()
 	path, ok := actions[action]
@@ -189,11 +189,10 @@ func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lu
 	}
 	defer cancel()
 	defer vm.Close()
-	// the plugin's sandbox json/http modules: http only when the file
-	// has a [lua.network] section (the deny-by-default gate). The same
-	// section downgrades the ctx to the metadata surface (no
-	// mail_lines): the data policy - content never enters a VM that can
-	// reach the network
+	// the sandbox json/http modules: http only when the file has a
+	// [lua.network] section (the deny-by-default gate). The same section
+	// downgrades the ctx to the metadata surface (no mail_lines): the
+	// data policy - content never enters a VM that can reach the network
 	rules := networkFor(ac.cfg.Lua.Network, path)
 	setPluginNet(vm, rules)
 	if err := vm.DoFile(path); err != nil {
@@ -274,8 +273,8 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 		return nil, nil, nil, err
 	}
 	ac.ctx = dctx
-	// the invocation-scoped registry: what THIS run of the file
-	// registered, not the load-time index.
+	// the invocation-scoped registry: what THIS run registered, not the
+	// load-time index
 	reg := map[string]*lua.LFunction{}
 	vm.SetGlobal("register_action", vm.NewFunction(func(L *lua.LState) int {
 		name := L.CheckString(1)
@@ -348,9 +347,9 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 
 // ctxTable is the invocation context the chunk or action receives: the
 // thread id and the lazy full-thread plain text (mail_lines). For a
-// network-enabled plugin (net) the data policy kicks in: mail_lines
-// is absent and only the metadata surface (metadataCtxTable) is
-// registered, so bodies cannot cross the network allowlist.
+// network-enabled plugin (net) mail_lines is absent and only the
+// metadata surface (metadataCtxTable) is registered - bodies cannot
+// cross the network allowlist.
 func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_id", lua.LString(ac.tid))
@@ -379,7 +378,7 @@ func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 // selection back, the waiter resolves. The wait selects on the action
 // deadline - a stalled chooser cannot wedge the plugin past its budget.
 // The tool wrappers (picker_yazi, picker_ranger) live in the bundled
-// Lua library (pickers.lua) - the core only exposes the argv primitive.
+// pickers.lua - the core only exposes the argv primitive.
 func (ac *actionCtx) picker(L *lua.LState, argv []string) int {
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	ch := make(chan pickerReply, 1)
@@ -412,8 +411,7 @@ func (ac *actionCtx) picker(L *lua.LState, argv []string) int {
 // aiChat streams one completion to a configured provider: the streamed
 // deltas publish as AiChunk (the pager-inline summary), the full text
 // returns to the script. AiResult publishes on the way out - success,
-// failure, or a deadline kill (the deferred publish survives the VM
-// unwinding) - so the summary view always resolves.
+// failure, or a deadline kill - so the summary view always resolves.
 func (ac *actionCtx) aiChat(L *lua.LState) int {
 	name := L.CheckString(1)
 	p, ok := ac.cfg.AI[name]
@@ -462,7 +460,7 @@ var (
 
 // deliverPickerResult resolves one blocked picker call. The buffered
 // channel keeps a reply whose waiter died (deadline kill) from
-// blocking the deliverer; the map entry is gone either way.
+// blocking the deliverer.
 func deliverPickerResult(e core.PickerResult) {
 	pickersMu.Lock()
 	ch, ok := pickers[e.ID]
@@ -475,10 +473,9 @@ func deliverPickerResult(e core.PickerResult) {
 
 // promptDialog blocks the VM on the prompt round trip: the request
 // rides the bus to the TUI (the native text dialogue), the answer (or
-// the esc cancel) publishes back, the waiter resolves - committed text
-// returns as the string, a cancel as Lua nil. The wait selects on the
-// action deadline - a never-answered prompt cannot wedge the plugin
-// past its budget.
+// the esc cancel) publishes back. Committed text returns as the
+// string, a cancel as Lua nil. The wait selects on the action deadline
+// - a never-answered prompt cannot wedge the plugin past its budget.
 func (ac *actionCtx) promptDialog(L *lua.LState) int {
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	ch := make(chan promptReply, 1)

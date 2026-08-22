@@ -16,12 +16,11 @@ import (
 	"notmutt/mail"
 )
 
-// composeForm is one form line: the settings rows carry a label +
-// value (rendered as a two-column table, never highlighted), the
-// attachment-list rows carry a cursor slot (8 the message-text row,
-// 9+i attachment i), the static rows (dividers) carry plain text.
-// Every non-focusable row carries the sentinel slot -1 (the settings
-// rows included - only the attachment-list slots are ever focused).
+// composeForm is one form line: settings rows carry a label + value
+// (two-column table, never highlighted), attachment rows carry a
+// cursor slot (8 the message-text row, 9+i attachment i), static rows
+// (dividers) plain text. Every non-focusable row carries the sentinel
+// slot -1 - only attachment-list slots are ever focused.
 type composeForm struct {
 	slot    int
 	label   string // settings row label, rendered right-aligned in compose.label
@@ -31,8 +30,7 @@ type composeForm struct {
 }
 
 // partCell renders one part's wire facts (compose.PartFacts - what
-// Assemble writes, never hardcoded here) as the row's mime column:
-// [type, encoding, charset?, size].
+// Assemble writes, never hardcoded here) as the mime column: [type, encoding, charset?, size].
 func partCell(f compose.PartFacts, size int64) string {
 	s := fmt.Sprintf("[%s, %s", f.Type, f.Encoding)
 	if f.Charset != "" {
@@ -41,14 +39,11 @@ func partCell(f compose.PartFacts, size int64) string {
 	return fmt.Sprintf("%s, %s]", s, sizeStr(size))
 }
 
-// renderCompose builds the attached dialogue frame (spec section 5,
-// the mutt layout): the tab bar on the first line, the keyhint on the
-// second, the form rows (the sender info, the Security divider, the
-// content-type entry and the attachments), the preview pane (the
-// pager widget) filling the rest, the status line on the last. The
-// prompt dialogue splices as a boxed overlay above the status when
-// open. The frame is ALWAYS exactly m.height lines - the frame
-// discipline applies to the compose surface like everywhere else.
+// renderCompose builds the compose frame (spec section 5, the mutt
+// layout): tab bar, keyhint, form rows (sender info, Security divider,
+// content-type, attachments), the preview pane (the pager widget),
+// status line last. The prompt splices as a boxed overlay above the
+// status when open. The frame is ALWAYS exactly m.height lines.
 func (m *Model) renderCompose() string {
 	st := m.tabs[m.tabIdx-1]
 	rows := m.height - 3
@@ -61,16 +56,12 @@ func (m *Model) renderCompose() string {
 	b.WriteString(m.keyhint())
 	b.WriteByte('\n')
 	// the cursor marker column: the index's selection marker cell is
-	// reserved on every row (the R11 slot rule), so the marker never
-	// shifts content - the cursor row shows the glyph, the others a
-	// blank cell, and a constant gap space follows the mark on every
-	// row. The row content is laid out for the frame minus the column
-	// and the gap, so the mime info stays right-aligned to the edge.
+	// reserved on every row (R11), so the marker never shifts content;
+	// the row content is laid out for the frame minus the column and gap.
 	colW := runewidth.StringWidth(m.ui.Glyphs.Cursor)
 	form := m.composeForm(st, m.width-colW-1, m.formIdx)
-	// the form is a viewport (the pager widget): when the rows outgrow
-	// the frame, the window scrolls with the cursor (formIdx). The
-	// frame discipline holds - the keyhint/status rows stay anchored.
+	// the form is a viewport: when the rows outgrow the frame, the
+	// window scrolls with the cursor (formIdx).
 	texts := make([]string, len(form))
 	for i, f := range form {
 		texts[i] = f.text
@@ -106,9 +97,8 @@ func (m *Model) renderCompose() string {
 		}
 		mark := strings.Repeat(" ", colW)
 		if f.slot == m.formIdx {
-			// the cursor is the index's selection marker: the glyph in
-			// the indicator style in the reserved column (the same
-			// style as the index rows), never a full-line highlight
+			// the cursor is the index's selection marker glyph in the
+			// reserved column (indicator style), never a full-line highlight
 			mark = m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor)
 		}
 		b.WriteString(padRow(mark+" "+line, m.width, outer))
@@ -129,11 +119,9 @@ func (m *Model) renderCompose() string {
 }
 
 // sendOverlay replaces the compose frame's body rows with the send box
-// while the delivery is in flight (R4): the spinner frame (advanced by
-// sendTick) and the note that tab switching stays live - the send runs
-// on its own goroutine, the dialogue waits. The splice is compose-
-// surface only: switching tabs parks the box with the dialogue, the
-// mail surface shows nothing while the job runs.
+// while the delivery is in flight (R4): the spinner frame and the note
+// that tab switching stays live - the send runs on its own goroutine,
+// the dialogue waits. The splice is compose-surface only.
 func (m Model) sendOverlay(frame string) string {
 	lines := strings.Split(frame, "\n")
 	if m.height < 6 || m.width < 3 || len(lines) < 5 {
@@ -146,21 +134,19 @@ func (m Model) sendOverlay(frame string) string {
 	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
 }
 
-// spinnerChar is the send spinner's current frame - ASCII frames, a
-// presentation constant (the R15 glyphs are config data; the spinner
-// is animation state, not a themed glyph).
+// spinnerChar is the send spinner's current frame - ASCII animation
+// state (the R15 glyphs are config data, the spinner is not themed).
 const spinFrames = "|/-\\"
 
 func spinnerChar(i int) string {
 	return string(spinFrames[i%len(spinFrames)])
 }
 
-// syncPreviewPager rebuilds the preview pager only when the rendered
-// content changes (body/signature edits, a send failure); the scroll
-// position survives otherwise. The pager INSTANCE is stable - render
-// runs on a value copy of the model, so a reassignment here would be
-// lost; the in-place rebuild (lines + styled + offset) survives, and
-// the next setSize re-styles the window.
+// syncPreviewPager rebuilds the preview pager only when the content
+// changes (body/signature edits, a send failure); the scroll position
+// survives otherwise. The pager INSTANCE is stable - render runs on a
+// value copy, so a reassignment would be lost; the in-place rebuild
+// survives and the next setSize re-styles the window.
 func (m *Model) syncPreviewPager(st compose.State) {
 	content := compose.BodyWithSig(st.Body, st.SignatureBody)
 	if st.Phase == compose.PhaseFailed {
@@ -173,11 +159,9 @@ func (m *Model) syncPreviewPager(st compose.State) {
 }
 
 // previewLinesOf converts the compose content to pager lines: body
-// lines, the "-- " marker and everything after it as signature. Quote
-// depth follows the mail renderer's ">" rule, so the quoted original
-// highlights in the quotedN colors like the mail pager. The F1
-// sanitize runs here - the compose body is editor text, not the mail
-// path's pre-sanitized lines.
+// lines, "-- " and after as signature. Quote depth follows the mail
+// renderer's ">" rule (quotedN colors). The F1 sanitize runs here -
+// the compose body is editor text, not pre-sanitized mail lines.
 func previewLinesOf(content string) []core.Line {
 	var lines []core.Line
 	sig := false
@@ -195,16 +179,12 @@ func previewLinesOf(content string) []core.Line {
 }
 
 // composeForm renders the form rows: the sender info (account, From,
-// To, Cc, Bcc, Subject, Reply-To, Fcc - Fcc static, set from the
-// account), the Security row, then the attachment list with mutt's
-// markers: the message-text row (marker I, entry 1, its mime type,
-// the buffer file path) and the attached files (marker A, deletable),
-// separators. Address lists cap at two display rows (alignment never
-// shifts; "+N more" names the overflow). The attachment list is a
-// three-row window around the cursor slot (cursor): the selected
-// attachment is always visible, "+N more" rows above and below name
-// the hidden count, and the window slides with the selection. w is
-// the row content width (the frame minus the reserved cursor column).
+// To, Cc, Bcc, Subject, Reply-To, Fcc - Fcc static, from the account),
+// the Security row, then the attachment list with mutt's markers (I
+// message-text row, A attached files, deletable). Address lists cap at
+// two rows ("+N more" names the overflow). The attachment list is a
+// three-row window around the cursor slot; w is the row content width
+// (frame minus the reserved cursor column).
 func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 	capList := func(addrs []string) string {
 		if len(addrs) == 0 {
@@ -227,8 +207,7 @@ func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 		{slot: -1, label: "Security", value: st.Security.String()},
 		{slot: -1, text: "--- Attachments", divider: true},
 	}
-	// the message-text row: marker I (mutt's inline part), entry 1,
-	// the buffer file path, its wire facts
+	// the message-text row: marker I (mutt's inline part), entry 1, the buffer path, its wire facts
 	rows = append(rows, composeForm{slot: 8, text: attachRow("I", 1, st.BodyPath,
 		partCell(compose.InlineFacts(&st), int64(len(compose.BodyWithSig(st.Body, st.SignatureBody)))), w)})
 	n := len(st.Attachments)
@@ -237,7 +216,7 @@ func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 		sel = 0
 	}
 	// the 3-row window clamps to [0, n) with the cursor at its third
-	// row; a short list (n-3 < 0) pins the top
+	// row; a short list pins the top
 	lo := max(0, min(sel-2, n-3))
 	hi := min(lo+3, n)
 	if lo > 0 {
@@ -251,10 +230,9 @@ func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 		rows = append(rows, composeForm{slot: -1, text: fmt.Sprintf("... +%d more", n-hi)})
 	}
 	rows = append(rows, composeForm{slot: -1, text: "--- Preview", divider: true})
-	// the form rows render mail-derived text (Subject/To/Cc from the
-	// replied-to message's headers) - same sanitizer as the index rows
-	// and the preview pane (F1). The labels are constants, never
-	// sanitized.
+	// mail-derived text (Subject/To/Cc from the replied-to headers)
+	// gets the same sanitizer as the index and preview (F1); labels
+	// are constants, never sanitized.
 	for i := range rows {
 		rows[i].text = core.SanitizeControls(rows[i].text)
 		rows[i].value = core.SanitizeControls(rows[i].value)
@@ -263,11 +241,10 @@ func (m *Model) composeForm(st compose.State, w, cursor int) []composeForm {
 }
 
 // attachRow lays one attachment-list row out as a 4-column table
-// (mutt's attach-menu shape): the type marker (I message text, A
-// attachment), the entry number right-aligned in a fixed column, the
-// name/path left-aligned, the mime info right-aligned to the row
-// edge. Column widths never shift with content (R11 slot discipline);
-// a long name truncates.
+// (mutt's attach-menu shape): the type marker (I/A), the entry number
+// right-aligned in a fixed column, the name left-aligned, the mime
+// info right-aligned to the row edge. Column widths never shift with
+// content (R11); a long name truncates.
 func attachRow(marker string, num int, name, mime string, w int) string {
 	prefix := fmt.Sprintf("%s %*d ", marker, attachNumW, num)
 	fileW := w - len(prefix) - runewidth.StringWidth(mime)
@@ -280,12 +257,10 @@ func attachRow(marker string, num int, name, mime string, w int) string {
 	return prefix + truncCells(name, fileW) + mime
 }
 
-// attachNumW is the entry-number column width: right-aligned and
-// fixed, room to 9999 entries before the column ever shifts.
+// attachNumW: the entry-number column width - fixed, room to 9999 entries before it shifts.
 const attachNumW = 4
 
-// sizeStr formats a part size the way mutt's attach menu does: K and
-// M with one decimal, a trailing .0 dropped (0.1K, 40K, 1.2M).
+// sizeStr formats a part size mutt's attach-menu way: K/M with one decimal, a trailing .0 dropped (0.1K, 40K, 1.2M).
 func sizeStr(n int64) string {
 	switch {
 	case n < 1<<10:
@@ -299,18 +274,17 @@ func sizeStr(n int64) string {
 
 // composeLabel renders one settings row as a two-column table: the
 // label right-aligned in a fixed column (the colons align at the
-// seam), the value truncated to the remaining row width. The label
-// carries the compose.label style (theme blue); the value cell keeps
-// the normal style, so the caller's row padding never restyles it.
+// seam), the value truncated to the remaining width. The label carries
+// the compose.label style; the value keeps the normal style, so the
+// caller's row padding never restyles it.
 func composeLabel(label, value string, labelW, w int, st Styles) string {
 	lbl := st.ComposeLabel.Width(labelW).Align(lipgloss.Right).Render(label + ":")
 	val := st.Normal.Render(truncCells(value, w-labelW-1))
 	return lbl + " " + val
 }
 
-// formRowOf is the row index of the cursor slot (-1 when the slot has
-// no row, e.g. a hidden attachment past the "+N more" cap): the form
-// viewport's follow-cursor target.
+// formRowOf is the cursor slot's row index (-1 when the slot has no
+// row, e.g. a hidden attachment past the "+N more" cap).
 func formRowOf(form []composeForm, slot int) int {
 	for i, f := range form {
 		if f.slot == slot {

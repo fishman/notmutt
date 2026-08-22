@@ -11,10 +11,9 @@ import (
 	"notmutt/core"
 )
 
-// ErrUnsupported marks a backend action the build cannot run: the CLI
-// backend's path updates (there is no add/remove-file command; its own
-// `notmuch new` reconciles moved files one poll later). Callers treat
-// it as a silent no-op, never as a failure to report.
+// ErrUnsupported marks an action the build cannot run: the CLI
+// backend's path updates (its own `notmuch new` reconciles moved files
+// one poll later). Callers treat it as a silent no-op, never a failure.
 var ErrUnsupported = errors.New("not supported by this backend")
 
 type ActionKind int
@@ -63,10 +62,10 @@ type Reply struct {
 	Addrs []core.AddressEntry
 }
 
-// Worker owns backend access. Actions are handled serially; every op runs
-// under a lock budget - a timeout becomes ErrLockTimeout plus a
-// WorkerLockTimeout event, never a blocked UI. Start must run before
-// any Call; Call waits on ready so the ctx install is synchronized.
+// Worker owns backend access, actions handled serially. The lock
+// budget applies to writers only - a timeout becomes ErrLockTimeout
+// plus a WorkerLockTimeout event, never a blocked UI. Start must run
+// before any Call; Call waits on ready so the ctx install is synced.
 type Worker struct {
 	bus     *core.Bus
 	backend Backend
@@ -115,10 +114,9 @@ func (w *Worker) Call(a Action) (Reply, error) {
 }
 
 func (w *Worker) handle(a Action) {
-	// The lock budget applies to WRITERS only: tag/new hold notmuch's
-	// write lock; reads (query, count, thread, revision) run on the
-	// read handle and are MVCC-safe, so the fill must never be cut off
-	// mid-walk by the budget.
+	// The lock budget applies to WRITERS only: tag/new hold the write
+	// lock; reads run on the read handle, MVCC-safe - the fill must
+	// never be cut off mid-walk by the budget.
 	ctx, cancel := context.WithCancel(w.ctx)
 	if a.Kind == ActTag || a.Kind == ActNew || a.Kind == ActAddPaths || a.Kind == ActRemovePaths {
 		ctx, cancel = context.WithTimeout(w.ctx, w.timeout)

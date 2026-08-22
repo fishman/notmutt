@@ -13,10 +13,8 @@ import (
 )
 
 // attachcmds is the attach-command registry (R8): config tables and Lua
-// plugins both register here; the TUI reads a snapshot per invocation
-// via SetAttachCommandSource. attachcmdsOrder preserves the registration
-// order - the Tab default-chooser preference (the Lua script's call
-// order decides which chooser Tab runs).
+// plugins register here; attachcmdsOrder preserves registration order -
+// the Tab default-chooser preference (the Lua script's call order).
 var (
 	attachcmdsMu    sync.Mutex
 	attachcmds      = map[string][]string{}
@@ -36,8 +34,7 @@ func registerAttachCommand(name string, argv []string) {
 }
 
 func loadConfigAttachCommands(cfg config.Config) {
-	// sorted names: the TOML table is unordered, registration order
-	// must stay deterministic
+	// sorted: the TOML table is unordered, registration must stay deterministic
 	names := make([]string, 0, len(cfg.AttachCommands))
 	for name := range cfg.AttachCommands {
 		names = append(names, name)
@@ -48,8 +45,8 @@ func loadConfigAttachCommands(cfg config.Config) {
 	}
 }
 
-// attachCommandSnapshot returns a copied snapshot in registration
-// order - the TUI seam contract (hooks.go); nil when none registered.
+// attachCommandSnapshot returns a copied snapshot in registration order
+// (the TUI seam contract); nil when none registered.
 func attachCommandSnapshot() []tui.AttachCommand {
 	attachcmdsMu.Lock()
 	defer attachcmdsMu.Unlock()

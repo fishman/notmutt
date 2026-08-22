@@ -5,9 +5,9 @@
 
 // The sandbox json module (plugin scripts) and the Lua<->JSON
 // conversions shared with the MCP server (mcp.go). The depth/node caps
-// bound a runaway table in both directions: a cyclic Lua table hits
-// the depth cap instead of a stack overflow, a fan-out table cannot
-// build a JSON bomb, a deep response cannot hang the conversion.
+// bound a runaway table in both directions: a cyclic table hits the
+// depth cap instead of a stack overflow, a fan-out table cannot build
+// a JSON bomb, a deep response cannot hang the conversion.
 
 package app
 

@@ -12,13 +12,11 @@ import (
 	"notmutt/core"
 )
 
-// diag is the persistent diagnostic log (slog, stdlib): app-side
-// errors and warnings that survive the session ring, appended to
-// <cachedir>/notmutt/notmutt.log (0600, F5). F6 applies to the file as
-// to everything else: no bodies, headers, or passphrases - the ring's
-// screen-only entries ("sent to <addresses>") never reach it. The
-// package default discards; Run() swaps in the file handler, so tests
-// and callers get no log churn.
+// diag is the persistent diagnostic log (slog, stdlib): app-side errors
+// and warnings appended to <cachedir>/notmutt/notmutt.log (0600, F5).
+// F6 applies as everywhere: no bodies, headers, or passphrases - the
+// ring's screen-only entries never reach it. The package default
+// discards; Run() swaps in the file handler, so tests get no log churn.
 var diag = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 // diagLogMax caps the diagnostic log: at the cap the file rotates to
@@ -46,10 +44,10 @@ func openDiagLog() {
 	diag = slog.New(slog.NewTextHandler(&cappedFile{f: f, path: filepath.Join(dir, "notmutt.log"), cap: diagLogMax}, nil))
 }
 
-// cappedFile is a size-capped log file: when a write would push the
-// size past the cap, the file rotates to <path>.1 (one generation kept,
-// overwriting the old one) and the write starts fresh. slog serializes
-// handler calls, so the rotate/check never races.
+// cappedFile is a size-capped log file: when a write would push past
+// the cap, the file rotates to <path>.1 (one generation kept) and the
+// write starts fresh. slog serializes handler calls, so rotate never
+// races.
 type cappedFile struct {
 	f    *os.File
 	path string
@@ -79,8 +77,8 @@ func (c *cappedFile) rotate() {
 }
 
 // runDiagBus routes the diagnostic bus events into the file log: job
-// failures and lock timeouts. The message is job kind and error text
-// only (F6); the TUI ring stays the content-adjacent surface.
+// failures and lock timeouts. Job kind and error text only (F6); the
+// TUI ring stays the content-adjacent surface.
 func runDiagBus(bus *core.Bus) {
 	ch := bus.Subscribe()
 	for e := range ch {

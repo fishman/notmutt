@@ -25,8 +25,8 @@ import (
 
 func mcpFixture() *fakeWorker {
 	// alpha carries two messages (thread_info), beta one (search rows);
-	// the Paths field on alpha-m1 pins the privacy projection - a path
-	// must never cross into a tool result
+	// alpha-m1's Paths field pins the privacy projection - a path must
+	// never cross into a tool result
 	fw := &fakeWorker{}
 	fw.setStubs([]core.Message{
 		{ID: "m1", ThreadID: "alpha", Timestamp: 1755400000, Author: "sender@example.com",
@@ -48,9 +48,8 @@ func mcpFixture() *fakeWorker {
 	return fw
 }
 
-// callTool runs the named tool's handler directly with the given args
-// (the registry handler is the seam; the stdio framing is exercised by
-// TestMCPServerStdio).
+// callTool runs the named tool's handler directly (the registry handler
+// is the seam; the stdio framing is exercised by TestMCPServerStdio).
 func callTool(t *testing.T, tools []server.ServerTool, name string, args map[string]any) *mcp.CallToolResult {
 	t.Helper()
 	for _, st := range tools {
@@ -69,9 +68,8 @@ func callTool(t *testing.T, tools []server.ServerTool, name string, args map[str
 	return nil
 }
 
-// TestMCPToolExecution pins the three tools against the fake worker:
-// thread_info carries the per-message metadata, search returns one row
-// per thread summary, count the thread total. Every result must also
+// TestMCPToolExecution: thread_info carries per-message metadata, search
+// one row per thread summary, count the thread total. Every result must
 // pass the privacy pin - no paths, no bodies, no header text beyond the
 // projected fields.
 func TestMCPToolExecution(t *testing.T) {
@@ -101,9 +99,8 @@ func TestMCPToolExecution(t *testing.T) {
 		t.Errorf("count result = %v, want 2", cnt.StructuredContent)
 	}
 
-	// the privacy pin: the Paths field and the path value set on the
-	// fixture messages must never reach a result (the projection is the
-	// boundary)
+	// the privacy pin: the Paths field and path values must never reach a
+	// result (the projection is the boundary)
 	for name, res := range map[string]*mcp.CallToolResult{
 		"thread_info": info,
 		"search":      res,
@@ -124,15 +121,15 @@ func TestMCPToolExecution(t *testing.T) {
 	}
 }
 
-// TestMCPRestrictedSurface pins the "not all of them" restriction: the
-// MCP VM has only the read bindings, so the write/interactive globals
-// and mail_lines are absent - a chunk touching any of them fails, and
-// the ctx table exposes exactly thread_info/search/count.
+// TestMCPRestrictedSurface: the MCP VM has only the read bindings - the
+// write/interactive globals and mail_lines are absent, a chunk touching
+// any of them fails, and the ctx table exposes exactly
+// thread_info/search/count.
 func TestMCPRestrictedSurface(t *testing.T) {
 	fw := mcpFixture()
-	// the chunks parse (return function(...)) and must fail at CALL
-	// time: the write/interactive globals and mail_lines are absent
-	// from the MCP sandbox
+	// the chunks parse (return function(...)) and must fail at CALL time -
+	// the write/interactive globals and mail_lines are absent from the
+	// MCP sandbox
 	for _, chunk := range []string{
 		`return function(ctx, args) tag_add("work") end`,
 		`return function(ctx, args) tag_remove("unread") end`,
@@ -164,10 +161,10 @@ func TestMCPRestrictedSurface(t *testing.T) {
 	}
 }
 
-// TestMCPAttachmentsGate pins the whitelist gate: the attachments tool
-// is absent from the default registry and served only when [mcp] allow
-// names it. Served, it lists a real message's attachments (name, mime,
-// size - never bytes) with the mail-root join for relative paths.
+// TestMCPAttachmentsGate: the attachments tool is absent from the
+// default registry and served only when [mcp] allow names it. Served,
+// it lists a real message's attachments (name, mime, size - never
+// bytes) with the mail-root join for relative paths.
 func TestMCPAttachmentsGate(t *testing.T) {
 	root := t.TempDir()
 	fixtureMail(t, root, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local))
@@ -206,10 +203,9 @@ func TestMCPAttachmentsGate(t *testing.T) {
 	}
 }
 
-// scopeFixture is the [mcp] boundary fixture: a gmail account (the
-// allowed one) plus the readonly atlas account (which must be
-// rejected as allowed), messages across both folder spaces, and a
-// thread mixing in-scope and out-of-scope messages.
+// scopeFixture is the [mcp] boundary fixture: a gmail account (allowed)
+// plus the readonly atlas account (rejected as allowed), messages across
+// both folder spaces, and a thread mixing in- and out-of-scope messages.
 func scopeFixture() *fakeWorker {
 	fw := &fakeWorker{}
 	fw.setStubs([]core.Message{
@@ -240,19 +236,18 @@ func scopeConfig() *config.Config {
 }
 
 // TestMCPScopeEnforcement is the LOCKED correctness test for the MCP
-// data boundary ([mcp] accounts + tags). It pins, in order: the
-// resolver's deny-by-default and validation errors; the query
-// intersection on search/count; the per-message projection gate on
-// thread_info; and the file-read gate on attachments. AGENTS.md
-// forbids loosening or removing this test without explicit user
-// approval - it is the enforcement proof of the boundary.
+// data boundary ([mcp] accounts + tags): the resolver's deny-by-default
+// and validation errors; the query intersection on search/count; the
+// per-message projection gate on thread_info; the file-read gate on
+// attachments. AGENTS.md forbids loosening or removing it without
+// explicit user approval - it is the enforcement proof of the boundary.
 func TestMCPScopeEnforcement(t *testing.T) {
 	cfg := scopeConfig()
 
 	// the resolver: empty lists deny everything (the default posture),
-	// unknown and readonly accounts are errors, a query-breaking tag is
-	// an error, and the granted scope carries the folder space AND the
-	// account tag AND the soft tags as one intersection
+	// unknown and readonly accounts error, a query-breaking tag errors;
+	// the granted scope carries the folder space AND the account tag AND
+	// the soft tags as one intersection
 	if _, err := resolveMCPScope(cfg); err != nil {
 		t.Fatalf("empty scope config must be legal (deny-all), got %v", err)
 	}
@@ -289,9 +284,9 @@ func TestMCPScopeEnforcement(t *testing.T) {
 	fw := scopeFixture()
 	tools := mcpTools(fw, "", nil, s)
 
-	// search and count: the user query alone may match any folder and
-	// any tag - the binding must intersect it with the scope before it
-	// reaches the worker
+	// search and count: the user query may match any folder and any tag -
+	// the binding must intersect it with the scope before it reaches the
+	// worker
 	callTool(t, tools, "search", map[string]any{"query": "tag:inbox", "limit": 5})
 	if q, _ := fw.lastQuery.Load().(string); !strings.Contains(q, wantQuery) || !strings.HasPrefix(q, "(tag:inbox) AND ") {
 		t.Errorf("search query not intersected with the scope: %q", q)
@@ -301,9 +296,9 @@ func TestMCPScopeEnforcement(t *testing.T) {
 		t.Errorf("count query not intersected with the scope: %q", q)
 	}
 
-	// thread_info: the thread fetch returns the whole thread - the
-	// projection must drop every out-of-scope message, so an
-	// out-of-scope tail cannot ride a visible thread id
+	// thread_info: the fetch returns the whole thread - the projection
+	// must drop every out-of-scope message, so a tail cannot ride a
+	// visible thread id
 	info := callTool(t, tools, "thread_info", map[string]any{"thread_id": "gt"})
 	got, _ := json.Marshal(info.StructuredContent)
 	for _, want := range []string{`"count":1`, `"gmail inbox report"`} {
@@ -317,8 +312,8 @@ func TestMCPScopeEnforcement(t *testing.T) {
 		}
 	}
 
-	// attachments: the in-scope message's file is read, the out-of-scope
-	// id is refused before any file open
+	// attachments: the in-scope file is read, the out-of-scope id is
+	// refused before any file open
 	root := t.TempDir()
 	maildir := filepath.Join(root, "gmail", "Inbox", "cur")
 	if err := os.MkdirAll(maildir, 0o700); err != nil {
@@ -341,7 +336,7 @@ func TestMCPScopeEnforcement(t *testing.T) {
 	}
 
 	// deny-all: the default scope serves nothing - no query reaches the
-	// worker, no thread row and no attachment file crosses
+	// worker, no thread row or attachment file crosses
 	deny, _ := resolveMCPScope(&config.Config{})
 	denyTools := mcpTools(fw, root, map[string]bool{"attachments": true}, deny)
 	denyRes := callTool(t, denyTools, "search", map[string]any{"query": "tag:inbox"})
@@ -365,9 +360,9 @@ func TestMCPScopeEnforcement(t *testing.T) {
 	}
 }
 
-// TestMCPServerStdio drives the full MCP round trip through the
-// mcp-go stdio server (io.Pipe, real JSON-RPC framing): initialize,
-// tools/list, and a tools/call over the client.
+// TestMCPServerStdio drives the full MCP round trip through the mcp-go
+// stdio server (io.Pipe, real JSON-RPC framing): initialize, tools/list,
+// and a tools/call.
 func TestMCPServerStdio(t *testing.T) {
 	fw := mcpFixture()
 	s, err := mcptest.NewServer(t, mcpTools(fw, "", nil, nil)...)

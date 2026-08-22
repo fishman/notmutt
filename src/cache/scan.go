@@ -15,8 +15,8 @@ import (
 	"notmutt/core"
 )
 
-// ScanAttachments parses a message file and returns its attachment list.
-// Content never leaves this function; the result feeds the row slot only.
+// ScanAttachments parses a message file; content never leaves this
+// function, the result feeds the row slot only.
 func ScanAttachments(path string) ([]core.Attachment, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -68,8 +68,7 @@ func filename(p *message.Entity) string {
 	if err == nil && params["filename"] != "" {
 		return params["filename"]
 	}
-	// Exchange-era mail and list archives identify attachments by the
-	// Content-Type name= param instead of Content-Disposition.
+	// Legacy mail uses Content-Type name= instead of Content-Disposition.
 	if _, params, err := p.Header.ContentType(); err == nil && params != nil {
 		return params["name"]
 	}

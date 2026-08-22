@@ -156,11 +156,10 @@ func TestApplyContinuesPastFailure(t *testing.T) {
 	}
 }
 
-// TestApplyThreadIdentity pins the summary-row apply: a thread identity
-// (t:<id>) resolves against the stub's tags and emits thread:<id> - the
-// whole thread, notmuch's natural unit. The baseline write goes to the
-// thread (SetThreadTags), so the render flips without waiting for a
-// refresh.
+// TestApplyThreadIdentity: a thread identity (t:<id>) resolves to
+// thread:<id> - the whole thread, notmuch's natural unit. The baseline
+// write goes to the thread (SetThreadTags), so the render flips without
+// a refresh.
 func TestApplyThreadIdentity(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	view := core.NewView("inbox", "tag:inbox")
@@ -189,8 +188,8 @@ func TestApplyThreadIdentity(t *testing.T) {
 	}
 }
 
-// TestApplyStaleThreadClears pins the thread-identity stale path: a
-// thread that left the view clears its entry without an ActTag.
+// TestApplyStaleThreadClears: a thread that left the view clears its
+// entry without an ActTag.
 func TestApplyStaleThreadClears(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	view := core.NewView("inbox", "tag:inbox")
@@ -231,9 +230,9 @@ func TestApplyStaleMessageSkipped(t *testing.T) {
 	}
 }
 
-// TestApplyKeepsMatchingRow pins the other half of the eviction check:
-// a soft-tag apply (unread toggle, no group) leaves the message in the
-// view query - the row stays and the baseline renders.
+// TestApplyKeepsMatchingRow: a soft-tag apply (unread toggle, no group)
+// leaves the message in the view query - the row stays and the baseline
+// renders.
 func TestApplyKeepsMatchingRow(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}}})
@@ -257,10 +256,9 @@ func TestApplyKeepsMatchingRow(t *testing.T) {
 	}
 }
 
-// TestApplyEvictsMessageKeepsThread pins the tree-rebuild path: one
-// message of a multi-message thread leaves the query, the thread stays
-// with its remaining messages. The snapshot carries resolvable paths -
-// the folder guard (moveEntries) refuses pathless fakes.
+// TestApplyEvictsMessageKeepsThread: one message of a multi-message
+// thread leaves the query, the thread keeps its remaining messages; the
+// snapshot paths must be resolvable (moveEntries refuses pathless fakes).
 func TestApplyEvictsMessageKeepsThread(t *testing.T) {
 	root := t.TempDir()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
@@ -291,12 +289,10 @@ func hasTag(tags []string, tag string) bool {
 	return slices.Contains(tags, tag)
 }
 
-// TestApplyGuardRefusesUnmovableFolderTags pins the folder guard: a
-// folder-tag apply whose move cannot resolve must fail BEFORE the tag
-// lands (no ActTag), name the config fix, and leave the entry staged.
-// The three failure shapes: the message's paths match no account
-// folder space, the account has no candidates for the tag, and the
-// account is readonly (R2: the client writes nothing to their mail).
+// TestApplyGuardRefusesUnmovableFolderTags: an unresolvable folder
+// move fails BEFORE the tag lands (no ActTag), names the config fix,
+// stays staged. Shapes: no account folder space, no candidates,
+// readonly (R2: the client writes nothing to their mail).
 func TestApplyGuardRefusesUnmovableFolderTags(t *testing.T) {
 	root := t.TempDir()
 	cases := []struct {
@@ -353,10 +349,9 @@ func TestApplyGuardRefusesUnmovableFolderTags(t *testing.T) {
 	}
 }
 
-// TestApplyMovesToFolderTag: applying a folder tag moves the file the
-// same way the poll does - the tag lands and the file follows (the
-// next poll's location-wins resolution would eat an applied tag whose
-// file still sits in another folder).
+// TestApplyMovesToFolderTag: a folder tag moves the file like the poll
+// does - otherwise the next poll's location-wins resolution would eat
+// the applied tag while its file sits in another folder.
 func TestApplyMovesToFolderTag(t *testing.T) {
 	root := testutil.MaildirTree(t, map[string]string{"INBOX": "1"})
 	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")

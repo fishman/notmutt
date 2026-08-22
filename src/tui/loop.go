@@ -9,11 +9,10 @@ import (
 	"github.com/gdamore/tcell/v3"
 )
 
-// Run starts the loop: the real screen, then runLoop (the test entry
-// point drives runLoop with a simulation screen). The image paint
-// sink is /dev/tty - the tcell screen cannot emit raw image
-// protocols, and the direct fd writes after a frame flush are ordered
-// and safe (the draw clobbers the cursor position on the next frame).
+// Run starts the loop: the real screen, then runLoop (tests drive
+// runLoop with a simulation screen). The image paint sink is /dev/tty
+// - the tcell screen cannot emit raw image protocols; the direct fd
+// writes after a frame flush are ordered and safe.
 func Run(model Model, quitCh <-chan struct{}) error {
 	probeCellSize()
 	s, err := tcell.NewScreen(tcell.OptAdvancedKeys(true))
@@ -37,16 +36,14 @@ func Run(model Model, quitCh <-chan struct{}) error {
 
 // runLoop is the event loop (decision record 23 - the tea runtime is
 // gone): events come from the screen, the model's cmds run on
-// goroutines and their messages come back on cmdCh, quitCh is the
-// app's cancellation, quitMsg is the model's own quit (the bound q
-// action). After every batch the paint gate decides whether the frame
-// rebuilds - the model's frameTick cadence IS the render cadence now
-// (no renderer tick to align, the WithFPS machinery dies with tea).
+// goroutines with their messages back on cmdCh, quitCh is the app's
+// cancellation, quitMsg the model's own quit (the bound q action).
+// After every batch the paint gate decides whether the frame rebuilds
+// - the frameTick cadence IS the render cadence now.
 func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	loopScreen = s
 	defer func() { loopScreen = nil }()
-	// the quit path persists the chooser's last directory: the defer
-	// sees the loop's final model
+	// the quit path persists the chooser's last directory: the defer sees the loop's final model
 	defer saveChooserDir(m)
 	cmdCh := make(chan []any, 64)
 	run := func(c Cmd) {
@@ -60,9 +57,7 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	run(cmd)
 	x, y, show := m.textCursor()
 	pushFrame(s, m.View(), x, y, show)
-	// tcell v3's event pump: the Screen owns the EventQ channel (the
-	// ChannelEvents forwarder is gone in v3); it stays open until Fini,
-	// so quitting still comes from quitCh or the model's quitMsg.
+	// tcell v3's event pump: the Screen owns the EventQ channel (the ChannelEvents forwarder is gone in v3); it stays open until Fini, so quitting still comes from quitCh or the model's quitMsg.
 	evCh := s.EventQ()
 	for {
 		var msgs []any
@@ -74,8 +69,7 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			var msg any
 			switch e := ev.(type) {
 			case *tcell.EventKey:
-				// v3 delivers key releases (kitty protocol); the
-				// release path is not wired, so drop them.
+				// v3 delivers key releases (kitty protocol); the release path is not wired, so drop them.
 				if e.Pressed() {
 					if press, _, ok := keyPressOf(e); ok {
 						msg = press

@@ -237,10 +237,8 @@ func TestSplitBodyCRLF(t *testing.T) {
 	}
 }
 
-// TestExpandTabs pins the 8-column tab stop: a report aligned with
-// tabs renders column-aligned - tabs expand to spaces (the sanitize
-// pass drops C0 controls, tab included, so an unexpanded tab would
-// vanish entirely), one rune per column like coreutils expand.
+// TestExpandTabs pins the 8-column tab stop: tabs expand to spaces
+// (one rune per column), since the sanitize pass would drop them.
 func TestExpandTabs(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"a\tb", "a       b"},             // col 1 -> stop 8
@@ -391,9 +389,9 @@ func TestRenderThreadAlternative(t *testing.T) {
 }
 
 // TestRenderThreadSourceView pins the ctrl+u view: the raw html source
-// renders as plain lines, and the mime label says what is on screen.
-// The three views of an html-only mail are distinct: plain shows the
-// html as unstyled text, html styled, source raw.
+// renders as plain lines and the mime label says what is on screen.
+// The three views of an html-only mail are distinct: plain unstyled,
+// html styled, source raw.
 func TestRenderThreadSourceView(t *testing.T) {
 	alt := "From: a@example.com\nTo: b@example.com\n" +
 		"Subject: alt\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
@@ -460,9 +458,8 @@ func TestRenderThreadSourceView(t *testing.T) {
 }
 
 // TestExtractAttachment pins the attachment demand path (the v
-// dialog's view/save): the ordinal-th attachment's bytes come back
-// with its name, an out-of-range ordinal errors, and the render
-// sanitizes the bytes into body lines (F1).
+// dialog's view/save): the ordinal-th bytes + name come back,
+// out-of-range errors, and the render sanitizes into body lines (F1).
 func TestExtractAttachment(t *testing.T) {
 	msg := "From: a@example.com\nTo: b@example.com\nSubject: atts\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
@@ -492,8 +489,7 @@ func TestExtractAttachment(t *testing.T) {
 	if _, _, _, err := ExtractAttachment(p, 9); err == nil {
 		t.Fatal("an out-of-range ordinal must error")
 	}
-	// F1: the ESC byte is stripped (the sequence text stays - the
-	// terminal can never see a raw control byte)
+	// F1: the ESC byte is stripped; the sequence text stays
 	lines := RenderAttachment([]byte("a\x1b[31mb\nc"))
 	if len(lines) != 2 || lines[0].Text != "a[31mb" || lines[1].Text != "c" {
 		t.Fatalf("the render must sanitize into body lines: %+v", lines)
@@ -524,11 +520,9 @@ func TestRenderThreadMimeLabel(t *testing.T) {
 	}
 }
 
-// TestRenderThreadHeaders pins the h toggle: the full raw header
-// block replaces the envelope in the plain view - every field in file
-// order, delivery headers included, verbatim (an encoded-word subject
-// renders encoded here - the block is the true header, not a
-// summary).
+// TestRenderThreadHeaders pins the h toggle: the full raw header block
+// replaces the envelope in the plain view - every field in file order,
+// delivery headers included, verbatim.
 func TestRenderThreadHeaders(t *testing.T) {
 	msg := "Return-Path: <bounce@example.com>\n" +
 		"Received: from mx.example.com by mail.example.com\n\tfor <alpha@example.com>\n" +
@@ -549,11 +543,9 @@ func TestRenderThreadHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := joinText(lines)
-	// the block is file-ordered and verbatim - the delivery headers
-	// included, the folded Received unfolded, the encoded subject as
-	// stored
-	// go-message canonicalizes the field names (DKIM-Signature renders
-	// as Dkim-Signature, Message-ID as Message-Id)
+	// file-ordered and verbatim: delivery headers included, the folded
+	// Received unfolded, the encoded subject as stored; go-message
+	// canonicalizes field names (DKIM-Signature -> Dkim-Signature)
 	block := []string{
 		"Return-Path: <bounce@example.com>",
 		"Received: from mx.example.com by mail.example.com for <alpha@example.com>",
@@ -580,8 +572,7 @@ func TestRenderThreadHeaders(t *testing.T) {
 		t.Fatalf("the body must follow the header block:\n%s", out)
 	}
 
-	// without the toggle the envelope renders and carries no Reply-To
-	// row (it is not part of the envelope)
+	// without the toggle the envelope carries no Reply-To row
 	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false)
 	if err != nil {
 		t.Fatal(err)
@@ -592,9 +583,8 @@ func TestRenderThreadHeaders(t *testing.T) {
 }
 
 // TestHTMLPartListsAsAttachment pins the html part as a download entry:
-// the parse walk lists it, and the demand walk (ExtractAttachment) counts
-// it with the same ordinal - the v dialog's "N. html" entry and the
-// extract/save seams index the same part stream.
+// both walks count it with the same ordinal, so the v dialog's "N.
+// html" and the extract/save seams index the same part stream.
 func TestHTMLPartListsAsAttachment(t *testing.T) {
 	msg := "From: a@example.com\nTo: b@example.com\nSubject: html\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
@@ -625,10 +615,9 @@ func TestHTMLPartListsAsAttachment(t *testing.T) {
 }
 
 // TestParseMessageMimeType pins the content type on every attachment
-// entry: attachment headers carry their declared type and the html part
-// of an alternative pair carries text/html - the categorize hooks
-// match on it (attachsave.go). The entries stay ordinal-aligned with
-// ExtractAttachment.
+// entry: attachment headers carry their declared type, the html part
+// of an alternative pair text/html (the categorize hooks match on it);
+// entries stay ordinal-aligned with ExtractAttachment.
 func TestParseMessageMimeType(t *testing.T) {
 	msg := "From: a@example.com\nSubject: atts\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +

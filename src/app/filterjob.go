@@ -17,10 +17,8 @@ import (
 // filterJob is the classification pipeline on the poll (R2): run
 // `notmuch new` (the backend's wrapper returns the (pre, cur]
 // bracket) and classify the delta through the filter engine and the
-// mover. The
-// running guard makes overlapping polls no-ops - a backfill takes
-// minutes and the cadence must not pile jobs. ActNew's WorkerDone
-// cycles the view; the engine's own tag bumps land in later cycles.
+// mover. The running guard makes overlapping polls no-ops - a
+// backfill takes minutes and the cadence must not pile jobs.
 // Disabled by [filter] enabled=false (the poll then runs a plain
 // `notmuch new` in the refresher).
 type filterJob struct {
@@ -76,9 +74,9 @@ func moveCounts(mr *filter.MoveReport) (moved, skipped int) {
 	return
 }
 
-// runFilterPipeline is the in-client poll body: the shared window
-// capture of pollDiff with the bus progress callback, reported as a
-// change boolean (the filter job's revision-stability gate).
+// runFilterPipeline is the in-client poll body: pollDiff's shared
+// window capture with the bus progress callback, reported as a change
+// boolean (the filter job's revision-stability gate).
 func runFilterPipeline(worker workerAPI, cfg config.Config, root string, progress func(done, total int)) (bool, *filter.Report, *filter.MoveReport, error) {
 	rep, mr, win, err := pollDiff(worker, cfg, root, pollSpec{}, progress)
 	if err != nil || win == "" {
@@ -88,9 +86,9 @@ func runFilterPipeline(worker workerAPI, cfg config.Config, root string, progres
 }
 
 // classifyDelta runs the engine and the mover over the (pre, cur]
-// lastmod bracket - the shared body of the fresh-capture poll and the
-// fixed-window replay (the reproducibility harness reclassifies the
-// SAME bracket, so the same rules must produce the same diff).
+// lastmod bracket - shared by the fresh-capture poll and the
+// fixed-window replay (reclassifying the SAME bracket must produce
+// the same diff).
 func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur uint64, progress func(done, total int)) (*filter.Report, *filter.MoveReport, error) {
 	rep, err := filter.New(worker, cfg, root).Run(pre, cur)
 	if err != nil {
@@ -105,11 +103,10 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	return rep, mr, nil
 }
 
-// notifyHeadlines builds the [notify] summary payload: the headline
-// rows (sender, subject, timestamp) of entries carrying a priority
-// tag first, the rest of the batch filling the cap - the count line
-// never ships alone (F6: no ids, no bodies). max <= 0 disables the
-// rows, the count stays.
+// notifyHeadlines builds the [notify] summary payload: priority-tagged
+// entries first, the rest filling the cap - the count line never ships
+// alone (F6: no ids, no bodies). max <= 0 disables the rows, the count
+// stays.
 func notifyHeadlines(cfg config.Config, rep *filter.Report) []core.NotifyHeadline {
 	if cfg.Notify.Max <= 0 {
 		return nil
@@ -134,8 +131,8 @@ func (j *filterJob) fail(err error) {
 }
 
 // filterReportLines caps the per-file report lines on diag: a backfill
-// moves thousands of files and the log must not replay them all. The
-// lines carry paths only, never message ids or headers (F6).
+// moves thousands of files and the log must not replay them all. Lines
+// carry paths only, never ids or headers (F6).
 const filterReportLines = 100
 
 func reportFilterDiag(rep *filter.Report, mr *filter.MoveReport) {
@@ -148,8 +145,7 @@ func reportFilterDiag(rep *filter.Report, mr *filter.MoveReport) {
 
 // reportMoveDiag logs a MoveReport's per-file outcomes (paths only,
 // never ids or headers, F6): the poll caps a backfill replay (cap > 0),
-// the apply path logs every file. Shared by the filter run and the
-// staged apply - a skipped move is an issue the user must see.
+// the apply path logs every file.
 func reportMoveDiag(prefix string, mr *filter.MoveReport, cap int) {
 	for i, m := range mr.Moves {
 		if m.Skip != "" {
@@ -165,10 +161,9 @@ func reportMoveDiag(prefix string, mr *filter.MoveReport, cap int) {
 }
 
 // mailRoot resolves the notmuch mail root (argv-only, F4 - never
-// interpolated): setup detection and the filter job share it. The
-// engine's file stats and the mover's copies need it; a failure
-// disables the filter job - the client still works, the poll degrades
-// to the refresher's plain new.
+// interpolated): setup detection and the filter job share it. A
+// failure disables the filter job - the client still works, the poll
+// degrades to the refresher's plain new.
 func mailRoot() (string, error) {
 	out, err := exec.CommandContext(context.Background(), "notmuch", "config", "get", "database.path").Output()
 	if err != nil {

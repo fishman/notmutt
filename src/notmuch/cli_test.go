@@ -86,10 +86,9 @@ func searchItemsJSON(n int) string {
 	return sb.String()
 }
 
-// TestCLIQueryChunks pins the chunk cadence: the whole result arrives in
-// one call (no offset paging) and is emitted as 100, then 5000s - the
-// render-batching contract: the first paint shows up after 100 threads,
-// the rest lands in big batches.
+// TestCLIQueryChunks pins the chunk cadence: one call (no offset
+// paging) emits 100, then 5000s - the render-batching contract: first
+// paint after 100 threads, the rest in big batches.
 func TestCLIQueryChunks(t *testing.T) {
 	b := NewCLI()
 	fakeRun(b, func(name string, args []string) ([]byte, error) {
@@ -187,9 +186,8 @@ func TestCLIRevision(t *testing.T) {
 	}
 }
 
-// TestCLINewBracket pins the wrapper's subprocess ordering: the pre
-// revision is captured before `new`, the post revision after - the
-// poll's classification window.
+// TestCLINewBracket pins the subprocess ordering: pre revision before
+// `new`, post revision after - the poll's classification window.
 func TestCLINewBracket(t *testing.T) {
 	b := NewCLI()
 	var calls []string

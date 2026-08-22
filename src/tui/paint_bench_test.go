@@ -89,8 +89,7 @@ func benchPaint(b *testing.B, rows int) {
 
 func BenchmarkPaint5000(b *testing.B) { benchPaint(b, 5000) }
 
-// pushFrameNoShow is pushFrame minus the Show: the SetContent sweep
-// alone (the Show moves into the ShowOnly measurement).
+// pushFrameNoShow is pushFrame minus the Show: the SetContent sweep alone (the Show moves into the ShowOnly measurement).
 func pushFrameNoShow(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bool) {
 	style := tcell.StyleDefault
 	w, h := s.Size()

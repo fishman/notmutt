@@ -10,10 +10,9 @@ import (
 	"notmutt/core"
 )
 
-// ToEvent/FromEvent map the dialogue across the bus: the app opens a
-// dialogue (builds the State) and publishes core.ComposeOpened; the
-// TUI rebuilds the State from the event. The bus contract is core
-// types only (core cannot import compose) - compose owns the mapping.
+// ToEvent/FromEvent map the dialogue across the bus: the app publishes
+// core.ComposeOpened, the TUI rebuilds the State from it. Core types
+// only on the bus (core cannot import compose) - compose owns the mapping.
 func ToEvent(s *State) core.ComposeOpened {
 	e := core.ComposeOpened{
 		TabID: s.ID, Mode: s.Mode.String(), Account: s.Account, From: s.From,
@@ -60,9 +59,8 @@ func parseSecurity(s string) Security {
 	return SecurityNone
 }
 
-// ExpandHome expands a leading ~ to the user's home dir (config path
-// style; the derived fcc paths are already absolute, a hand-set
-// dialogue Fcc may still be ~-shaped).
+// ExpandHome expands a leading ~ to the home dir (config path style;
+// derived fcc paths are already absolute, a hand-set one may be ~-shaped).
 func ExpandHome(p string) string {
 	if !strings.HasPrefix(p, "~") {
 		return p

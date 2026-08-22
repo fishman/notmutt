@@ -11,12 +11,10 @@ import (
 )
 
 // newTestBackend opens the cgo backend against the env's scratch DB
-// with the scratch config passed explicitly (OpenConfig - no
-// environment resolution; Setup validated the isolation) and closes it
-// at teardown. Call it AFTER indexing: the read-only handle's Xapian
-// snapshot is taken at open, so a CLI `notmuch new` after the open
-// would be invisible until a reopen (TestCGONewBracket pins that
-// behavior - it alone opens before its own new).
+// with the config passed explicitly (OpenConfig - no environment
+// resolution), closed at teardown. Call AFTER indexing: the read
+// handle's Xapian snapshot is taken at open, so a later CLI `notmuch
+// new` is invisible until a reopen (TestCGONewBracket pins that).
 func newTestBackend(t *testing.T, e *testutil.Env) *CGOBackend {
 	t.Helper()
 	b := NewCGO()

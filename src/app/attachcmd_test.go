@@ -47,8 +47,7 @@ func TestLoadConfigAttachCommands(t *testing.T) {
 	resetAttachcmds()
 
 	cfg := config.Default()
-	// the TOML table is unordered; registration order is the sorted
-	// name order - deterministic
+	// the TOML table is unordered; registration order is sorted by name - deterministic
 	cfg.AttachCommands = map[string][]string{"yazi": {"yazi"}, "ranger": {"ranger"}}
 	loadConfigAttachCommands(cfg)
 

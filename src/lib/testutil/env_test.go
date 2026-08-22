@@ -10,11 +10,9 @@ import (
 	"notmutt/notmuch"
 )
 
-// TestEnv pins the self-contained env: Setup validates the isolation
-// guarantee (the effective notmuch config resolves to the scratch
-// DB), the notmutt config resolves the account tag, seeded mail lands
-// in the notmuch DB with the account tag (the folder-prefix rule),
-// the default new tags, and explicit classification tags.
+// TestEnv pins the self-contained env: isolation (config resolves to
+// the scratch DB), the account tag from the notmutt config, seeded
+// mail tagged (folder-prefix rule), default new tags, explicit tags.
 func TestEnv(t *testing.T) {
 	e := Setup(t)
 	id1 := e.WriteMail("hello alpha")
@@ -51,11 +49,9 @@ func TestEnv(t *testing.T) {
 	_ = id2
 }
 
-// TestEnvBackendOpenConfig pins the explicit folder/config init: the
-// cgo backend opens the scratch DB with the scratch config passed
-// directly (OpenConfig) - no environment resolution anywhere in the
-// path, so the live mailbox is unreachable even if the env pointed at
-// it.
+// TestEnvBackendOpenConfig pins the explicit OpenConfig init: the cgo
+// backend opens the scratch DB directly - no env resolution, so the
+// live mailbox stays unreachable.
 func TestEnvBackendOpenConfig(t *testing.T) {
 	e := Setup(t)
 	e.WriteMail("one")

@@ -12,16 +12,13 @@ import (
 	"notmutt/mail"
 )
 
-// quoteDepth is the quoted-depth cap; it must match mail.splitBody's
-// strip cap - bodies arrive with depth stored in Part.Quoted, never
-// deeper.
+// quoteDepth is the quoted-depth cap; must match mail.splitBody's strip
+// cap - bodies arrive with depth in Part.Quoted, never deeper.
 const quoteDepth = 5
 
 // Quote builds the mutt-style quoted reply body (spec section 6): the
-// attribution line and the original body with one extra quote level
-// per line (capped at quoteDepth). Lines already quoted keep their
-// depth plus one; the bare text re-prefixes so levels stay canonical.
-// The original's signature is never quoted.
+// attribution line and the original with one extra quote level per
+// line (capped at quoteDepth). The original's signature is never quoted.
 func Quote(orig core.Message, parts []mail.Part) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "On %s, %s wrote:\n", time.Unix(orig.Timestamp, 0).Format("Mon, Jan 2 2006"), orig.Author)
@@ -37,11 +34,10 @@ func Quote(orig core.Message, parts []mail.Part) string {
 	return b.String()
 }
 
-// quoteLine counts the line's quote markers, then re-prefixes one
-// level deeper. The markers are the text itself (splitBody stores the
-// raw line, never a stripped copy). The true depth clamps at
-// quoteDepth: a line deeper than the cap re-prefixes at cap+1 - never
-// deeper.
+// quoteLine counts quote markers, then re-prefixes one level deeper.
+// The markers are the text itself (splitBody stores the raw line, never
+// a stripped copy); true depth clamps at quoteDepth - a deeper line
+// re-prefixes at cap+1, never deeper.
 func quoteLine(line string) string {
 	depth := 0
 	for {
@@ -58,9 +54,9 @@ func quoteLine(line string) string {
 	return strings.Repeat(">", depth+1) + " " + line
 }
 
-// subjectPrefix strips repeated Re:/Fwd:/Fw: prefixes and returns the
+// subjectPrefix strips repeated Re:/Fwd:/Fw: prefixes, returns the
 // subject with one prefix of p (mutt's rule: "Re: " replies, "Fwd: "
-// forwards). An empty subject after stripping gets the prefix alone.
+// forwards); empty after stripping -> the prefix alone.
 func subjectPrefix(subject, p string) string {
 	for {
 		t := strings.TrimSpace(subject)
@@ -84,10 +80,9 @@ func subjectPrefix(subject, p string) string {
 	return p + subject
 }
 
-// Reply prefills a reply (spec section 6): To from the original's
-// From, the quoted original as the body, one "Re: " prefix, the reply
-// headers (In-Reply-To = original message-id, References = the
-// original chain plus its own message-id).
+// Reply prefills a reply (spec section 6): To = original's From, the
+// quoted original as the body, one "Re: " prefix, reply headers
+// (In-Reply-To = original message-id, References = chain + own message-id).
 func Reply(orig core.Message, parsed *mail.Message, account, from, sigName, sigBody string) *State {
 	refs := orig.References
 	if parsed.MessageID != "" {
@@ -109,18 +104,16 @@ func Reply(orig core.Message, parsed *mail.Message, account, from, sigName, sigB
 }
 
 // ReplyAll builds the recipients per neomutt's mutt_fetch_recips /
-// mutt_fix_reply_recipients: the original's From stays the To; the
-// original's To+Cc minus the account's own address becomes the Cc
-// (mailbox-part compare, case-insensitive - a case variant of the own
-// address is still the own address), deduped, with entries already in
-// the To dropped. When the To ends up empty the Cc becomes the To
+// mutt_fix_reply_recipients: the original's From stays the To; To+Cc
+// minus the account's own address becomes the Cc (mailbox-part compare,
+// case-insensitive - a case variant of the own address is still the own
+// address), deduped, To entries dropped. An empty To takes the Cc
 // (neomutt's swap).
 func ReplyAll(orig core.Message, parsed *mail.Message, account, from, own string, sigName, sigBody string) *State {
 	s := Reply(orig, parsed, account, from, sigName, sigBody)
 	s.Mode = ModeReplyAll
 	s.Cc = replyAllCc(parsed.To, parsed.Cc, own, s.To)
-	// a failed From parse leaves To = [""] - treat it as empty, the Cc
-	// becomes the To (neomutt's swap)
+	// a failed From parse leaves To = [""] - the Cc becomes the To (neomutt's swap)
 	empty := true
 	for _, t := range s.To {
 		if t != "" {
@@ -135,10 +128,9 @@ func ReplyAll(orig core.Message, parsed *mail.Message, account, from, own string
 	return s
 }
 
-// replyAllCc is the Cc build above: the own address (EqualFold on the
-// mailbox part - addresses arrive as bare addr-specs from the parse)
-// never lands in the Cc, entries appear once, and entries already in
-// the To are not repeated in the Cc.
+// replyAllCc builds the Cc: the own address (EqualFold on the mailbox
+// part - addresses arrive as bare addr-specs) never lands in it,
+// entries appear once, and To entries are not repeated.
 func replyAllCc(to, cc []string, own string, inTo []string) []string {
 	var out []string
 	for _, a := range append(append([]string{}, to...), cc...) {

@@ -42,21 +42,17 @@ type searchItem struct {
 }
 
 // Query walks the whole result in one call: one `notmuch search`
-// subprocess, one summary per thread (thread id, date, authors,
-// subject, tags - DB-side, zero file opens). `--format=json` emits
-// nothing until the mset is computed (write-at-end, measured 4.8s for a
-// 33k-thread inbox - json0 is unsupported here), so the parse is
-// buffered and chunks are sliced from the result; streaming buys
-// nothing until a notmuch with progressive output exists. limit is
-// passed through as `--limit=` (the startup validation probes with 1);
-// emit returning false stops the walk early; nil emit collects
-// nothing. The refresh cycle groups by ThreadID, so the stub's ID
+// subprocess, one summary per thread (DB-side fields, zero file
+// opens). json emits nothing until the mset is computed (write-at-end,
+// measured 4.8s for a 33k-thread inbox; json0 unsupported), so the
+// parse is buffered and chunks are sliced from the result. limit
+// passes through as `--limit=`; emit false stops early; nil emit
+// collects nothing. The refresh groups by ThreadID, so the stub's ID
 // stays empty - per-message data comes from Thread, on open only.
 func (b *CLIBackend) Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error {
-	// The flat views' shape under the escape hatch: one bare id per
-	// matched message (--output=messages). The summary data needs show
-	// (file opens) - degraded by design; the cgo backend serves full
-	// rows.
+	// The flat views under the escape hatch: one bare id per matched
+	// message (--output=messages). Summary data needs show (file opens) -
+	// degraded by design; cgo serves full rows.
 	if flat {
 		args := []string{"search", "--format=json", "--output=messages"}
 		if limit > 0 {
@@ -139,10 +135,9 @@ func (b *CLIBackend) CountMsgs(ctx context.Context, query string) (int, error) {
 	return n, nil
 }
 
-// QueryMsgs walks a message-level query (the filter engine's delta
-// scans): one `notmuch search --output=messages` subprocess, bare
-// message ids - the json emits "id:"-prefixed strings, the prefix is
-// stripped (the engine re-adds it when it builds query terms).
+// QueryMsgs walks a message-level query (delta scans): one
+// `notmuch search --output=messages` subprocess. The json "id:"
+// prefix is stripped (the engine re-adds it for query terms).
 func (b *CLIBackend) QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error {
 	out, err := b.run(ctx, "notmuch", []string{"search", "--format=json", "--output=messages", query})
 	if err != nil {
@@ -169,9 +164,9 @@ func (b *CLIBackend) QueryMsgs(ctx context.Context, query string, emit func([]co
 }
 
 // Snapshots fetches per-message tags and paths via `notmuch show
-// --format=json --body=false` - the escape-hatch implementation (the
-// cgo backend reads the header cache in-process). The show tree walk
-// is Thread's; the thread id is unknown here and never needed.
+// --format=json --body=false` - the escape-hatch implementation (cgo
+// reads the header cache in-process). Thread id is unknown here and
+// never needed.
 func (b *CLIBackend) Snapshots(ctx context.Context, ids []string) ([]Message, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -357,10 +352,10 @@ func (b *CLIBackend) New(ctx context.Context) (uint64, uint64, error) {
 	return pre, cur, nil
 }
 
-// AddPaths/RemovePaths are unsupported on the CLI backend: there is no
-// add/remove-file command (`notmuch insert` runs the post-new hooks -
-// not the mover's shape). The poll's own `notmuch new` reconciles
-// moved files one cycle later (the cgo backend updates in-process).
+// AddPaths/RemovePaths are unsupported on the CLI backend: no
+// add/remove-file command exists (`notmuch insert` runs post-new hooks,
+// not the mover's shape); the poll's own `notmuch new` reconciles
+// moved files one cycle later.
 func (b *CLIBackend) AddPaths(ctx context.Context, paths []string) error {
 	return fmt.Errorf("notmuch add: unsupported by the cli backend: %w", ErrUnsupported)
 }

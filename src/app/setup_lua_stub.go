@@ -11,7 +11,7 @@ import "notmutt/setup"
 // Lua layer and its gopher-lua dependency exist only under the lua
 // build tag (the R12 build-gating pattern), so default binaries carry
 // no Lua runtime and setup detects with the Go fallback in
-// setup.Templates only.
+// setup.Templates.
 func builtinTemplates() []setup.Template {
 	return nil
 }

@@ -4,9 +4,9 @@
 //go:build lua
 
 // The sandbox network boundary: plugins call REST APIs through a Go
-// binding over net/http, so vendor API code (HubSpot and friends)
-// lives as plugin files in a future plugins repo, never in the client.
-// Deny-by-default twice over:
+// binding over net/http, so vendor API code lives as plugin files in
+// a future plugins repo, never in the client. Deny-by-default twice
+// over:
 //   - the http global exists on a plugin VM only when the plugin has a
 //     [lua.network.<plugin>] section, and every request (redirect hops
 //     included) must match the configured hosts AND one "METHOD /path"
@@ -38,12 +38,11 @@ import (
 
 const (
 	// luaHTTPMaxBody caps one response body (256 KiB: a REST page, not
-	// a transfer - there is no reason a plugin needs a MiB from one
-	// call); a bigger payload fails instead of ballooning memory.
+	// a transfer); a bigger payload fails instead of ballooning memory.
 	luaHTTPMaxBody = 1 << 18
-	// luaHTTPTimeout is the per-request backstop. The plugin VM
-	// deadline (actionDeadline) is the usual killer; this catches the
-	// load-time VM, which has no deadline.
+	// luaHTTPTimeout is the per-request backstop. The plugin VM deadline
+	// (actionDeadline) is the usual killer; this catches the load-time VM,
+	// which has no deadline.
 	luaHTTPTimeout = 30 * time.Second
 	// the shared search caps (metadataCtxTable; MCP spec references
 	// them too - the mcp build compiles this file)
@@ -227,11 +226,10 @@ type mcpScope struct {
 	query   string   // the scope as a notmuch term, for query intersection
 }
 
-// allowed reports whether the scope admits anything at all. Both
-// lists must be non-empty: the account space and the tag list are
-// each an explicit grant. The nil scope (plugin VMs) is unscoped -
-// the bindings pass through when scope is nil, deny-all short-circuits
-// only a non-nil scope.
+// allowed reports whether the scope admits anything at all: both lists
+// must be non-empty - each is an explicit grant. The nil scope
+// (plugin VMs) is unscoped; deny-all short-circuits only a non-nil
+// scope.
 func (s *mcpScope) allowed() bool {
 	return len(s.folders) > 0 && len(s.tags) > 0
 }
@@ -291,12 +289,12 @@ func underFolder(paths []string, folder string) bool {
 }
 
 // metadataCtxTable builds the metadata-only ctx table over the worker:
-// thread_info, search, count - nothing that projects mail content
-// (no mail_lines, no ai_chat). The MCP server (mcp.go) and
-// network-enabled plugin VMs share this surface: the data policy says
-// what may cross the network is exactly what this table can see. The
-// scope is the MCP boundary - the id-addressed bindings per-message
-// check it, the query bindings intersect the user query with it.
+// thread_info, search, count - nothing that projects mail content (no
+// mail_lines, no ai_chat). The MCP server (mcp.go) and network-enabled
+// plugin VMs share this surface: what may cross the network is exactly
+// what this table can see. The scope is the MCP boundary - the
+// id-addressed bindings per-message check it, the query bindings
+// intersect the user query with it.
 func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_info", vm.NewFunction(func(L *lua.LState) int {
@@ -305,9 +303,8 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LT
 		if err != nil || rpl.Err != nil {
 			L.RaiseError("thread_info: %v %v", err, rpl.Err)
 		}
-		// the thread fetch returns the whole thread; only in-scope
-		// messages cross into the projection, so an out-of-scope tail
-		// cannot ride a visible thread id
+		// only in-scope messages cross into the projection - an
+		// out-of-scope tail cannot ride a visible thread id
 		var rows []core.Message
 		for _, m := range rpl.Msgs {
 			if scope.inScope(m) {
@@ -343,9 +340,9 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LT
 			Kind:  notmuch.ActQuery,
 			Query: scope.and(q),
 			Limit: limit,
-			// the Emit closure only appends to an invocation-local slice
-			// (the refresher.changed pattern); it runs on the worker
-			// goroutine and never touches the Lua state
+			// the Emit closure appends to an invocation-local slice (the
+			// refresher.changed pattern); it runs on the worker goroutine,
+			// never touching the Lua state
 			Emit: func(chunk []core.Message) bool {
 				rows = append(rows, chunk...)
 				return true

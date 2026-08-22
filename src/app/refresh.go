@@ -62,8 +62,8 @@ func (r *refresher) cycle() {
 	msgs, err := r.changed(r.rPrev, rpl.Rev)
 	if err != nil {
 		// Swallow is deliberate: a lock timeout already surfaced as
-		// WorkerLockTimeout on the bus; the view self-heals next cycle.
-		// rPrev stays stale, so the next cycle retries the same range.
+		// WorkerLockTimeout; rPrev stays stale, so the next cycle
+		// retries the same range.
 		diag.Warn("refresh: changed", "err", err.Error())
 		return
 	}
@@ -76,22 +76,19 @@ func (r *refresher) cycle() {
 	if len(page) > 0 {
 		kept, err := r.prune(page)
 		if err != nil {
-			// A failed prune must not advance rPrev: the un-pruned
-			// changed set would merge threads back that the apply path
-			// removed, and with rPrev advanced their lastmods are
-			// consumed - the resurrection would be permanent.
+			// A failed prune must not advance rPrev: with rPrev advanced
+			// the changed set's lastmods are consumed and the
+			// apply-removed threads would be resurrected permanently.
 			diag.Warn("refresh: prune", "err", err.Error())
 			return
 		}
 		// a hydrated thread's changed stub carries summaries only: the
 		// tree must show the new messages, so the content re-fetches
-		// (R3 diff-and-insert - the stub guard in MergeThreads kept the
-		// old tree until here). A fetch failure keeps rPrev stale like
-		// the prune failure: the consumed lastmod would lose the new
-		// messages, and the next cycle retries the same range. Flat
-		// views skip the re-fetch entirely: a synthetic thread IS its
-		// message, and re-fetching `thread:<msgid>` would merge the
-		// whole conversation back into the flat list.
+		// (R3 diff-and-insert - MergeThreads' stub guard kept the old
+		// tree until here). A fetch failure keeps rPrev stale like the
+		// prune failure. Flat views skip the re-fetch: a synthetic
+		// thread IS its message, and re-fetching `thread:<msgid>` would
+		// merge the whole conversation back.
 		for i, t := range kept {
 			if r.view.ViewFlat() || !r.view.Hydrated(t.ID) {
 				continue
@@ -125,22 +122,21 @@ func (r *refresher) fetchThread(id string) (*core.Thread, error) {
 // prune answers view-query membership for the changed threads: a
 // message retagged out of the view query still bumps lastmod, so the
 // changed set can carry threads that no longer belong. The apply path
-// removes them from the view at apply time; the refresh must not re-add
-// them - and once their lastmod is consumed, no later changed set names
-// them again, so the carry-over must forget them too. One batched
-// intersect query over the changed thread ids - notmuch answers
-// membership (R1), chunked so a mass retag cannot build an unbounded OR
-// query. Survivors are the merge input; the pruned ids leave the
-// snapshot now (a full reload reconciles any drift). A query failure
-// surfaces as an error - the caller keeps rPrev stale and retries.
+// removes them at apply time; the refresh must not re-add them - and
+// once their lastmod is consumed, no later changed set names them
+// again, so the carry-over must forget them too. One batched intersect
+// query over the changed thread ids (R1), chunked so a mass retag
+// cannot build an unbounded OR query. Survivors are the merge input;
+// the pruned ids leave the snapshot now (a full reload reconciles any
+// drift). A query failure surfaces as an error - the caller keeps
+// rPrev stale and retries.
 func (r *refresher) prune(changed []*core.Thread) ([]*core.Thread, error) {
 	if len(changed) == 0 {
 		return changed, nil
 	}
-	// the flat prune is a message-level intersect: membership is decided
-	// per MESSAGE id (the flat changed set names messages, and a read
-	// sibling must not drag its conversation back in), the threaded
-	// prune per thread id.
+	// the flat prune is a message-level intersect: membership per MESSAGE
+	// id (a read sibling must not drag its conversation back in), the
+	// threaded prune per thread id.
 	flat := r.view.ViewFlat()
 	alive := make(map[string]bool, len(changed))
 	for lo := 0; lo < len(changed); lo += pruneChunk {
@@ -234,12 +230,12 @@ func (r *refresher) onConfig(st *config.Store, e core.ConfigChanged) {
 }
 
 // merge carries unchanged threads over from the last snapshot: the
-// incremental feed names only changed threads, and MergeThreads replaces
-// the view's thread set with its input, so a partial feed would evict
-// every thread it does not mention. Full reloads bypass this path - they
-// replace the snapshot with the fresh query page, which is how removals
-// reconcile. The snapshot is content-only; cursor and collapse state
-// live on the view's own thread objects.
+// incremental feed names only changed threads, and MergeThreads
+// replaces the view's thread set with its input, so a partial feed
+// would evict every thread it does not mention. Full reloads bypass
+// this path - they replace the snapshot with the fresh query page,
+// which is how removals reconcile. The snapshot is content-only;
+// cursor and collapse state live on the view's own thread objects.
 func (r *refresher) merge(changed []*core.Thread) {
 	snapshot := make([]*core.Thread, 0, len(r.snapshot)+len(changed))
 	byID := make(map[string]bool, len(changed))
@@ -276,36 +272,29 @@ func (r *refresher) changed(prev, cur uint64) ([]core.Message, error) {
 }
 
 // firstLoadRows is the fast pre-query size: enough threads for a
-// meaningful first paint. The CLI writes the whole JSON write-at-end
-// (measured 1.4s for a 33k-thread inbox), so chunk slicing alone cannot
-// make the first paint early - every chunk still waits for the
-// subprocess. A limit query lands in ~20ms.
+// meaningful first paint. A limit query lands in ~20ms, while the CLI
+// writes the whole JSON write-at-end (measured 1.4s for a 33k-thread
+// inbox), so the pre-query paints before the full walk.
 const firstLoadRows = 100
 
 // fullReload re-fetches the whole view query in TWO calls. Phase 1 is
-// the fast pre-query (limit=firstLoadRows): the first 100 threads paint
-// in milliseconds, so the UI shows content before the full walk
-// finishes. Phase 2 is the full walk in ONE call (Backend.Query walks
-// the result and emits chunks - no offset paging: every paged offset
-// call re-walks the notmuch mset, measured ~40s for 33 pages of a
-// 33k-thread inbox against ~5s for one call). The chunk IS the index
-// read: content-free, DB-side data (thread summaries, the same shape
-// from both backends), zero file opens - the whole list loads in
-// seconds (per-thread show round trips were the load wall).
-// Message content is step two, on open only (R13). Each chunk merges
-// in as it lands (R3 progressive fill): progress then ViewDiff, so the
-// paint tracks the walk (the backend emits the first 100 fast, then
-// 5000s - the render-batching requirement). The walk's snapshot starts
-// empty, so the re-walked head replaces the pre-query instead of
-// duplicating it; the view then holds exactly the full result. The
-// bar's total comes from a count query up front, so Done (threads
-// accumulated) tracks the real result size instead of resetting per
-// chunk; a count failure degrades to per-chunk totals. A chunkless
-// result still merges once (empty query = empty view - removals
-// reconcile via the full snapshot replacement). The emit closure runs
-// on the worker goroutine inside the Call, which cycle() is blocked on,
-// so the refresher state it touches is race-free. The cursor survives
-// via the merge walk.
+// the fast pre-query (limit=firstLoadRows): the first rows paint in
+// milliseconds. Phase 2 is the full walk in ONE call (Backend.Query
+// walks the result and emits chunks - no offset paging: every paged
+// offset call re-walks the notmuch mset, measured ~40s for 33 pages of
+// a 33k-thread inbox against ~5s for one call). The chunk IS the index
+// read: content-free, DB-side data (thread summaries), zero file
+// opens; message content loads on open only (R13). Each chunk merges
+// as it lands (R3 progressive fill): progress then ViewDiff, so the
+// paint tracks the walk. The walk's snapshot starts empty, so the
+// re-walked head replaces the pre-query; the view holds exactly the
+// full result. The bar's total comes from a count query up front, so
+// Done tracks the real result size; a count failure degrades to
+// per-chunk totals. A chunkless result still merges once (empty query
+// = empty view - removals reconcile via the full snapshot
+// replacement). The emit closure runs on the worker goroutine inside
+// the Call, which cycle() is blocked on, so the refresher state it
+// touches is race-free. The cursor survives via the merge walk.
 func (r *refresher) fullReload() {
 	flat := r.view.ViewFlat()
 	total := 0
@@ -313,9 +302,8 @@ func (r *refresher) fullReload() {
 		total = rpl.Count
 	}
 	var snapshot []*core.Thread
-	// phase 1: the fast pre-query paints the first rows immediately.
-	// Failure degrades to the walk alone - the first paint just stays
-	// empty for another second.
+	// phase 1: the fast pre-query paints the first rows immediately;
+	// failure degrades to the walk alone
 	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: r.view.Query, Limit: firstLoadRows, Flat: flat, Emit: func(msgs []core.Message) bool {
 		snapshot = groupThreads(msgs, flat)
 		sortThreads(snapshot)
@@ -340,16 +328,15 @@ func (r *refresher) fullReload() {
 }
 
 // mergeWalk merges a query's emitted chunks into the view: each chunk
-// groups and sorts, merges into the accumulated snapshot, publishes
-// the fill progress, then runs onChunk with the snapshot (the merge
-// and the diff) - the chunk is reported as soon as it lands. An empty
-// chunk publishes nothing: a count/catalog race that empties the
-// result must not leave a stuck bar at Done 0. An empty result still
-// merges once (empty query = empty view - removals reconcile via the
-// full snapshot replacement). The emit closure runs on the worker
-// goroutine inside the Call, so the view state it touches is
-// race-free. fullReload's phase 2 and the search tab (runSearchQuery)
-// share this shape.
+// groups and sorts, merges into the accumulated snapshot, publishes the
+// fill progress, then runs onChunk with the snapshot (the merge and the
+// diff) - the chunk is reported as soon as it lands. An empty chunk
+// publishes nothing: a count/catalog race that empties the result must
+// not leave a stuck bar at Done 0. An empty result still merges once
+// (empty query = empty view - removals reconcile via the full snapshot
+// replacement). The emit closure runs on the worker goroutine inside
+// the Call, so the view state it touches is race-free. fullReload's
+// phase 2 and the search tab (runSearchQuery) share this shape.
 func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job string, onChunk func(snapshot []*core.Thread, done int)) {
 	var snapshot []*core.Thread
 	flat := view.ViewFlat()
@@ -416,12 +403,11 @@ func mergeInto(bus *core.Bus, view *core.View, snapshot []*core.Thread) {
 
 // groupThreads groups a page into one thread per thread id: the full
 // walk emits per-message rows, so each group becomes a thread tree.
-// The flat views (unread, deleted, search) get one SYNTHETIC thread
-// per message - keyed by the message id - so the list stays a plain
-// chronological message list: every row is its own thread, merges
-// reconcile per message, and the tree machinery never builds a
-// hierarchy (the message keeps its real thread id in Msg.ThreadID, so
-// open still finds the conversation).
+// Flat views (unread, deleted, search) get one SYNTHETIC thread per
+// message - keyed by the message id - so the list stays a plain
+// chronological message list: every row is its own thread and merges
+// reconcile per message. The message keeps its real thread id in
+// Msg.ThreadID, so open still finds the conversation.
 func groupThreads(msgs []core.Message, flat bool) []*core.Thread {
 	if flat {
 		threads := make([]*core.Thread, 0, len(msgs))

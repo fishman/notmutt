@@ -13,12 +13,10 @@ import (
 
 // log.go: the session log. Every surfaced event (send results, lua
 // results, job errors, lock timeouts) appends through logEntry - the
-// single write path - and the status line always shows the last entry.
-// The ~ overlay scrolls the ring like the help dialog.
+// single write path - and the status line shows the last entry; the ~
+// overlay scrolls the ring like the help dialog.
 
-// logLine is one session log entry: the text, its wall-clock stamp,
-// and whether it is an error (the error style renders it on the
-// status line).
+// logLine is one session log entry: the text, its wall-clock stamp, and whether it is an error (rendered in the error style).
 type logLine struct {
 	text string
 	at   string
@@ -26,9 +24,8 @@ type logLine struct {
 }
 
 // logEntry is the single log write path: the entry appends to the
-// ring (logCap caps it, the oldest drop first) and becomes the status
-// line's last entry. Empty text is a no-op - a silent success logs
-// nothing.
+// ring (logCap caps it, oldest drops first) and becomes the status
+// line's last entry. Empty text logs nothing (a silent success).
 func (m *Model) logEntry(text string, err bool) {
 	if text == "" {
 		return
@@ -44,8 +41,7 @@ func (m *Model) logEntry(text string, err bool) {
 // renderLog is the ~ overlay: the session log rows through a viewport
 // - the same surface the help dialog uses. The pager scroll keys
 // navigate it, any other keypress closes it (the check runs before
-// dispatch, so the closing key never fires). The frame is exactly
-// m.height lines, assembled like renderHelp.
+// dispatch, so the closing key never fires). The frame is exactly m.height lines.
 func (m Model) renderLog() string {
 	sig := strconv.Itoa(m.width) + "|" + strconv.Itoa(m.logView.height) + "|" + strconv.Itoa(m.logView.offset) + "|" + strconv.Itoa(m.styleVer) +
 		"|" + strconv.Itoa(len(m.log)) + "|" + m.statusMsg
@@ -65,9 +61,7 @@ func (m Model) logBuild() string {
 	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
 }
 
-// logRows renders the ring as viewport lines, oldest first: the entry's
-// wall-clock stamp in the log.stamp style, the text truncated to the
-// leftover width (R11 slot reservation - the stamp never shifts the row).
+// logRows renders the ring as viewport lines, oldest first: the stamp in the log.stamp style, the text truncated to the leftover width (R11 - the stamp never shifts the row).
 func (m Model) logRows() []string {
 	rows := make([]string, 0, len(m.log))
 	for _, l := range m.log {
@@ -77,9 +71,7 @@ func (m Model) logRows() []string {
 	return rows
 }
 
-// logFooter mirrors the help footer: the scroll keys and the close key
-// derive from the pager binding data (the surface borrows the pager
-// keys, R9 - the data answers).
+// logFooter mirrors the help footer: the scroll and close keys derive from the pager binding data (the surface borrows the pager keys, R9 - the data answers).
 func (m Model) logFooter() string {
 	pm := m.bindings["pager"]
 	var parts []string

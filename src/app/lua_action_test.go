@@ -19,7 +19,7 @@ import (
 	"notmutt/core"
 )
 
-// writePlugin creates one plugin file in dir (the load path reads
+// writePlugin writes one plugin file into dir (the load path reads
 // <configdir>/lua/*.lua sorted; unique action names keep the package
 // registry clean across tests).
 func writePlugin(t *testing.T, dir, name, body string) {

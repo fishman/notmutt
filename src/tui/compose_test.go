@@ -12,11 +12,10 @@ import (
 	"notmutt/core"
 )
 
-// TestAttachRowTable pins the 4-column table (mutt's attach-menu
-// shape): the type marker column (I / A) lines up, entry numbers
-// right-align in their fixed column, names stay left-aligned, the
-// mime info right-aligns to the row edge. Column widths never shift
-// with content (R11 slot discipline); a long name truncates.
+// TestAttachRowTable pins the 4-column attach-menu table: the marker
+// column (I / A) lines up, entry numbers right-align in their fixed
+// column, names stay left-aligned, the mime info right-aligns to the
+// row edge. Column widths never shift (R11); a long name truncates.
 func TestAttachRowTable(t *testing.T) {
 	w := 80
 	body := attachRow("I", 1, "/tmp/body.txt", "[text/plain, quoted-printable, utf-8, 0.1K]", w)
@@ -24,18 +23,15 @@ func TestAttachRowTable(t *testing.T) {
 	if !strings.HasPrefix(body, "I ") || !strings.HasPrefix(att, "A ") {
 		t.Fatalf("the marker column must line up:\n%q\n%q", body, att)
 	}
-	// the number column (cells 2-5, attachNumW): right-aligned, so the
-	// last digit of 1 and 12 sits at the same cell
+	// the number column (cells 2-5, attachNumW): right-aligned, so the last digit of 1 and 12 sits at the same cell
 	if body[2:6] != "   1" || att[2:6] != "  12" {
 		t.Fatalf("numbers must right-align in the fixed column:\n%q\n%q", body, att)
 	}
-	// the name starts at cell 7 in both rows (the marker + the number
-	// field)
+	// the name starts at cell 7 in both rows (the marker + the number field)
 	if !strings.HasPrefix(body[7:], "/tmp/body.txt") || !strings.HasPrefix(att[7:], "notes.md") {
 		t.Fatalf("the name column must start at the same cell:\n%q\n%q", body, att)
 	}
-	// the mime info right-aligns: both rows end at the same width with
-	// the closing bracket on the row edge
+	// the mime info right-aligns: both rows end at the same width with the closing bracket on the row edge
 	if !strings.HasSuffix(body, "[text/plain, quoted-printable, utf-8, 0.1K]") ||
 		!strings.HasSuffix(att, "[text/markdown, base64, 40K]") {
 		t.Fatalf("the mime column must right-align to the row edge:\n%q\n%q", body, att)
@@ -69,9 +65,8 @@ func TestSizeStr(t *testing.T) {
 }
 
 // TestPreviewQuoteHighlight pins the preview pager's quote coloring:
-// the quoted original in a reply body carries the mail renderer's
-// quote depth (the pager styles those lines quotedN), and the
-// signature marker stays the signature kind.
+// the quoted original carries the mail renderer's quote depth (quotedN
+// styles), the signature marker stays the signature kind.
 func TestPreviewQuoteHighlight(t *testing.T) {
 	lines := previewLinesOf("plain\n> quoted\n> > nested\n-- \nsig\n")
 	if len(lines) != 5 {

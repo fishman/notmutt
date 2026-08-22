@@ -14,10 +14,10 @@ func msg(id string, ts int64, refs ...string) *Message {
 	return &Message{ID: id, Timestamp: ts, References: refs}
 }
 
-// TestFlattenSkipsDeletedLeaves pins the threaded-view rule: a
-// deleted message vanishes only when it has no response (a deleted
-// leaf); a deleted message with children keeps its row so the
-// subtree stays attached. The flat mode skips nothing.
+// TestFlattenSkipsDeletedLeaves pins the threaded-view rule: a deleted
+// message vanishes only when it has no response (a deleted leaf); one
+// with children keeps its row so the subtree stays attached. Flat mode
+// skips nothing.
 func TestFlattenSkipsDeletedLeaves(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	root := msg("a", 1)
@@ -72,8 +72,7 @@ func TestRowsFlattenThreadTree(t *testing.T) {
 }
 
 // TestFlattenSortOrder pins the [index.thread] sort config: asc is
-// the notmuch-native oldest-first order, desc reverses the flattened
-// rows so the thread reads newest-first like the index.
+// the notmuch-native oldest-first order, desc reads newest-first.
 func TestFlattenSortOrder(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	th := NewThread("t1", []*Message{msg("a", 1), msg("b", 2, "a"), msg("c", 3, "b")})
@@ -99,8 +98,8 @@ func TestFlattenSortOrder(t *testing.T) {
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})
-	// a reply arrives, sorts after its parent in the message list under
-	// date-asc; the tree still renders the parent above the child
+	// a reply arrives: sorted after its parent (date-asc), but the tree
+	// still renders the parent above the child
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100), msg("reply", 200, "root")})})
 	rows := v.Rows()
 	if len(rows) != 2 {
@@ -553,10 +552,9 @@ func TestStagedGhostRowsNeverStaged(t *testing.T) {
 	}
 }
 
-// TestRowsMemoized pins the damage tracking: content-only updates (SetAtts)
-// return the cached row slice unchanged - the cache scan and progress ticks
-// never rebuild the flatten - while structure or staged-state changes
-// (MergeThreads, Stage, SetTags) rebuild it.
+// TestRowsMemoized pins the damage tracking: content-only updates
+// (SetAtts) return the cached slice unchanged; structure or staged
+// changes (MergeThreads, Stage, SetTags) rebuild it.
 func TestMergeManyThreadsInBatches(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	// the refresher's full-snapshot merge: every chunk re-merges the
@@ -636,10 +634,8 @@ func TestRowsMemoized(t *testing.T) {
 }
 
 // TestMergeBatchDefersDirty pins the FIX3 batching contract: merges
-// inside an open BeginMerge window do not mark the view dirty, so the
-// row model stays stable across the intermediate keypresses of a
-// refresh fill; EndMerge marks dirty once, so the flatten rebuilds
-// exactly once per batch end with the merged content.
+// inside an open BeginMerge window do not mark the view dirty; EndMerge
+// marks dirty once, so the flatten rebuilds exactly once per batch end.
 func TestMergeBatchDefersDirty(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("a", 100)})})
@@ -746,10 +742,10 @@ func TestRemoveUnknownIdentity(t *testing.T) {
 	}
 }
 
-// TestMergeThreadReplacesStub pins the hydrator path: a stub thread in
-// the view (no message id - the refresh feed shape) gets replaced by the
-// fetched content WITHOUT losing the collapse state (MergeThread keeps
-// the thread object; SetCollapsed survives).
+// TestMergeThreadReplacesStub pins the hydrator path: a stub thread
+// (no message id - the refresh feed shape) gets replaced by the fetched
+// content WITHOUT losing the collapse state (MergeThread keeps the
+// thread object).
 func TestMergeThreadReplacesStub(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{{ID: "", Timestamp: 100}})})

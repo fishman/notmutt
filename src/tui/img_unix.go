@@ -12,10 +12,10 @@ import (
 )
 
 // probeCellSize reads the pty's pixel dimensions from the TIOCGWINSZ
-// ioctl - the kernel reports the real window pixels (foot and tmux
-// 3.7 propagate them into the pty), so no terminal query is involved
-// and tmux can never fabricate a reply. Pixels of 0 (ssh, old tmux)
-// keep the 10x20 defaults. Runs at startup and on every resize.
+// ioctl - the kernel reports the real window pixels (foot and tmux 3.7
+// propagate them), so no terminal query is involved and tmux can never
+// fabricate a reply. Pixels of 0 (ssh, old tmux) keep the 10x20
+// defaults. Runs at startup and on every resize.
 func probeCellSize() {
 	f, err := os.OpenFile("/dev/tty", os.O_RDONLY, 0)
 	if err != nil {

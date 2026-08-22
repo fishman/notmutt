@@ -24,8 +24,8 @@ import (
 var baseTOML []byte
 
 // baseConfig is the embedded base parsed once: the validation ground
-// truth for schemes (a keymap and its contexts are code surfaces, R9 -
-// the file overlays keys, never the schema).
+// truth for schemes (keymaps and contexts are code surfaces, R9 - the
+// file overlays keys, never the schema).
 var baseConfig = mustBase()
 
 func mustBase() Config {
@@ -37,21 +37,18 @@ func mustBase() Config {
 }
 
 // bindingContexts is the dispatch surface (the tui switches on these
-// names): a scheme table for any other context is dead data, rejected
-// at load (strict, R8). Context names are code surfaces - the keys,
-// actions, and descriptions are the translatable data.
+// names): any other context is dead data, rejected at load (strict,
+// R8). Context names are code surfaces; the rest is translatable data.
 var bindingContexts = map[string]bool{
 	"index": true, "pager": true, "compose": true, "fuzzy": true,
 }
 
 // Binding is one keybinding entry: a plain string (the action), a
 // two-element array ["action", "description"], or a table
-// { fun = "...", desc = "...", show = true }. The description travels
-// with the binding - there is no separate descriptions block; the
+// { fun, desc, show }. Descriptions travel with the binding - the
 // help vocabulary derives from these entries (R8). Visibility is
-// opt-in: every binding is hidden from the keyhint row by default,
-// only entries marked show = true appear there (the help dialog lists
-// every binding regardless).
+// opt-in: only show = true entries appear in the keyhint row (the
+// help dialog lists every binding).
 type Binding struct {
 	Fun  string
 	Desc string
@@ -105,17 +102,15 @@ type Config struct {
 	// Index is the [index] section: the index surface budgets (R11).
 	Index IndexSection `toml:"index"`
 	// DerivedGKeys tracks the per-account goto keys deriveAccountViews
-	// added (key -> tag): the next derivation run removes them first,
-	// so re-numbering over the merged accounts never collides with
-	// stale Default-time entries (toml:"-": session state, not config)
+	// added (key -> tag): removed first on the next run so re-numbering
+	// never collides with Default-time entries (toml:"-": session state)
 	DerivedGKeys map[string]string            `toml:"-"`
 	TagGroups    map[string]core.TagGroup     `toml:"tag-groups"`
 	Setup        Setup                        `toml:"setup"`
 	Lua          Lua                          `toml:"lua"`
 	Bindings     map[string]map[string]string `toml:"-"`
-	// Shown is the per-context key set the keyhint row shows (the
-	// help dialog shows every binding): derived from the scheme
-	// entries' show flag - visibility is opt-in, never a config block
+	// Shown is the per-context key set the keyhint row shows (help
+	// shows every binding): derived from the entries' show flag
 	Shown          map[string]map[string]bool `toml:"-"`
 	TagActions     map[string]string          `toml:"tag-actions"`
 	Accounts       map[string]Account         `toml:"accounts"`
@@ -127,9 +122,9 @@ type Config struct {
 	MCP            MCP                        `toml:"mcp"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
 	AI             map[string]AIProvider      `toml:"ai"`
-	// Opener is the link opener argv (the pager F key): the url is
-	// appended as the final argv element (F4 - argv only, never
-	// shell-interpolated). Empty = xdg-open.
+	// Opener is the link opener argv (pager F key): the url is appended
+	// as the final argv element (F4 - argv only, never a shell string).
+	// Empty = xdg-open.
 	Opener  []string                                 `toml:"opener"`
 	Pager   Pager                                    `toml:"pager"`
 	Palette Palette                                  `toml:"palette"`
@@ -140,22 +135,20 @@ type Config struct {
 	Descriptions map[string]string `toml:"-"`
 }
 
-// Setup configures the `notmutt setup` subcommand: Templates names the
+// Setup configures the `notmutt setup` subcommand: Templates lists the
 // OPT-IN contributed detection templates in <configdir>/lua/templates
-// that load (not all templates are autoloaded - the seeded examples
-// stay inert until listed). Empty = built-in templates only.
+// that load - the seeded examples stay inert until listed.
+// Empty = built-in templates only.
 type Setup struct {
 	Templates []string `toml:"templates"`
 }
 
-// Pager is the [pager] table: per-sender-domain default views. The
-// open key resolves the thread's sender domain against DefaultViews
-// and opens in the mapped view; unmapped domains keep the plain
-// default. The v toggle and the F/ctrl+u keys always request explicit
-// views, never the map. ImageProtocol picks the terminal image
-// protocol: sixel (the default - most terminals support it) or kitty
-// (opt-in - kitty/wezterm/ghostty and friends). AllowTrackingImages
-// lifts the 1x1 tracking-pixel block on fetched remote images.
+// Pager is the [pager] table: the open key resolves the thread's
+// sender domain against DefaultViews (unmapped = plain default); the v
+// toggle and F/ctrl+u always request explicit views. ImageProtocol
+// picks the terminal image protocol: sixel (default) or kitty.
+// AllowTrackingImages lifts the 1x1 tracking-pixel block on fetched
+// remote images.
 type Pager struct {
 	DefaultViews        map[string]string `toml:"default-views"`
 	ImageProtocol       string            `toml:"image-protocol"`
@@ -163,34 +156,30 @@ type Pager struct {
 }
 
 // Lua configures the Lua plugin layer (R8): Tags is the config-level
-// tag list the plugins reference (cfg.tags) - the ai-tags example
-// restricts its proposals to these names.
+// tag list plugins reference (cfg.tags) - ai-tags proposes only these.
 type Lua struct {
 	Tags    []string              `toml:"tags"`
 	Network map[string]LuaNetwork `toml:"network"`
 }
 
 // LuaNetwork is one plugin's network gate ([lua.network.<plugin>], key
-// = plugin file base name). Network is deny-by-default: the sandbox
-// http module exists for a plugin only when this section does, and
-// every request (redirect hops included) must match Targets - exact
-// hosts or "*.suffix" - AND one Paths rule. A Paths entry is a verb
-// plus a path glob ("METHOD /path", case-insensitive verb): "GET
-// /crm/v3/objects/contacts*" allows that GET (prefix match), nothing
-// else. A verb without its path is meaningless, so the two are one
-// rule unit; empty Paths = no request ever matches.
+// = plugin file base name). Deny-by-default: the sandbox http module
+// exists only when this section does, and every request (redirect hops
+// included) must match Targets (exact hosts or "*.suffix") AND one
+// Paths rule. A Paths entry is "METHOD /path" (case-insensitive verb,
+// prefix match) - a verb without a path is meaningless, so they are
+// one rule unit; empty Paths = no request ever matches.
 type LuaNetwork struct {
 	Targets []string `toml:"targets"`
 	Paths   []string `toml:"paths"`
 }
 
 // AIProvider is one named AI backend ([ai.<name>], R8): Type selects
-// the wire protocol - "anthropic" (api.anthropic.com/v1/messages) or
-// "openai" (any OpenAI-compatible /chat/completions endpoint via
-// BaseURL - ollama, llama.cpp, groq, ...). PassCmd is the argv that
-// prints the API key on stdout (F4: tokenized at load, never a shell
-// string); empty = no auth header. The key is fetched per request,
-// held only for that request, never logged (F6).
+// the wire protocol - "anthropic" or "openai" (any OpenAI-compatible
+// endpoint via BaseURL - ollama, llama.cpp, groq, ...). PassCmd is
+// the argv that prints the API key on stdout (F4: tokenized at load,
+// never a shell string); empty = no auth header. The key is fetched
+// per request, held only for that request, never logged (F6).
 type AIProvider struct {
 	Type      string   `toml:"type"`
 	Model     string   `toml:"model"`
@@ -211,28 +200,26 @@ type UI struct {
 	// the preset.
 	GlyphSet string `toml:"glyph-set"`
 	Glyphs   Glyphs `toml:"glyphs"`
-	// SearchOpen is how the ctrl+f search tab activates: "active" (the
-	// default) attaches the new tab and shows its results, "background"
-	// runs the query while the current surface stays (the tab bar shows
-	// it, the [ / ] keys cycle to it).
+	// SearchOpen is how the ctrl+f search tab activates: "active"
+	// (default) shows results; "background" runs the query while the
+	// current surface stays (the [ / ] keys cycle to it).
 	SearchOpen string `toml:"search-open"`
 }
 
-// Refresh is the [refresh] section: the periodic new-mail poll (R2/R3).
-// The poll runs `notmuch new` and refreshes the view at the cadence
-// (default 20 min - the refresh key checks manually in between).
+// Refresh is the [refresh] section (R2/R3): the periodic new-mail poll
+// runs `notmuch new` and refreshes the view at Interval (default 20
+// min - the refresh key checks manually in between).
 type Refresh struct {
 	// Interval is the poll cadence in minutes (default 20; 0 disables
 	// the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
 }
 
-// Filter configures the classification pipeline (R2): Enabled turns the
-// post-new engine on, DryRun reports what-would-change without writing
-// (the first runs against a real mailbox are always dry), HeaderRules
-// are the content-based soft-tag rules - the engine evaluates each
-// rule's query over the delta and enforces the NOT guards itself
-// (muttrc/notmuch/post-new as data).
+// Filter configures the classification pipeline (R2): Enabled turns
+// the post-new engine on, DryRun reports without writing (first runs
+// against a real mailbox are always dry), HeaderRules are the
+// content-based soft-tag rules - the engine evaluates each query over
+// the delta and enforces the NOT guards itself (post-new as data).
 type Filter struct {
 	Enabled     bool         `toml:"enabled"`
 	DryRun      bool         `toml:"dry-run"`
@@ -240,15 +227,13 @@ type Filter struct {
 }
 
 // Notify configures the new-mail notification side effect (R2): the
-// argv command backend or the platform backend ("beeep"). The backend
-// is auto-detected when empty (the default): the platform backend
-// when the session can show notifications, the command otherwise -
-// explicit config always wins. {count} in the argv is the processed
-// entry count, {subjects} the summary as aligned sender/subject/time
-// rows (priority entries first, the batch filling the cap at max).
-// No command = disabled; the beeep title is the deduped sender list,
-// its body the count plus the same rows. The payload never carries
-// bodies or ids (F6).
+// argv command backend or the platform backend ("beeep"). Empty =
+// auto-detect: platform when the session can show notifications,
+// command otherwise - explicit config always wins. {count} is the
+// processed entry count, {subjects} the aligned sender/subject/time
+// summary (priority first, capped at max). No command = disabled; the
+// beeep title is the deduped sender list, its body the count plus the
+// same rows. The payload never carries bodies or ids (F6).
 type Notify struct {
 	Backend  string   `toml:"backend" enum:"command,beeep"` // empty = auto-detect
 	Command  []string `toml:"command"`
@@ -257,10 +242,9 @@ type Notify struct {
 }
 
 // Attachments configures the local attachment download pass
-// ([attachments]): the destination folder for categorized attachments
-// and the date layout for a bare-category return (a plugin that returns
-// a full relative path owns the structure and bypasses it). Empty
-// folder = the default.
+// ([attachments]): the destination folder and the date layout for a
+// bare-category return (a full relative path from a plugin owns the
+// structure and bypasses it). Empty folder = the default.
 type Attachments struct {
 	Folder string `toml:"folder"`
 	// Layout is the date pattern for a bare-category return: YYYY/MM/DD
@@ -274,12 +258,11 @@ const DefaultAttachFolder = "~/Downloads/Attachments"
 
 // MCP is the [mcp] section: the whitelist of extra tools the stdio
 // server may expose beyond the metadata-only defaults (thread_info,
-// search, count). Accounts and Tags are the server's data boundary:
-// the account folder spaces it may see and the soft tags whose mail
-// is reachable. Both are deny-by-default - an empty accounts or tags
-// list serves nothing. The mcp+lua build reads it; other builds
-// ignore it. An unknown method name is a startup error in that build,
-// so a typo fails loudly instead of silently serving fewer tools.
+// search, count). Accounts and Tags are the server's data boundary -
+// the folder spaces it may see and the soft tags whose mail is
+// reachable; both deny-by-default (empty list serves nothing). Only
+// the mcp+lua build reads it; an unknown method name is a startup
+// error there, so a typo fails loudly.
 type MCP struct {
 	Allow    []string `toml:"allow"`
 	Accounts []string `toml:"accounts"`
@@ -295,7 +278,7 @@ type HeaderRule struct {
 
 type UITags struct {
 	Max       int               `toml:"max"`
-	Attach    string            `toml:"attach"`     // the tag that marks attachments (renders in the row's attachment slot)
+	Attach    string            `toml:"attach"`     // tag marking attachments (renders in the row's attachment slot)
 	ShowIcons bool              `toml:"show-icons"` // false renders tag names instead of icons (R11)
 	Icons     map[string]string `toml:"icons"`      // tag name -> display icon (muttrc tag-transforms, R11)
 }
@@ -313,11 +296,10 @@ type Glyphs struct {
 	BorderBR      string `toml:"border_br"`
 	BorderH       string `toml:"border_h"`
 	BorderV       string `toml:"border_v"`
-	// the tree glyphs: the thread root marker, one level of indentation,
-	// and the branch/leaf markers. ASCII defaults ([ui] glyph-set swaps
-	// in box-drawing): ambiguous-width box-drawing glyphs drift the slot
-	// math on wide terminals, so the 2-cells-per-level invariant must
-	// hold in any font.
+	// the tree glyphs: root marker, one indentation level, and the
+	// branch/leaf markers. ASCII defaults (glyph-set swaps in
+	// box-drawing): the 2-cells-per-level invariant must hold - wide
+	// box-drawing glyphs drift the slot math.
 	Tree       string `toml:"tree"`
 	TreeChild  string `toml:"tree_child"`
 	TreeBranch string `toml:"tree_branch"`
@@ -429,16 +411,15 @@ type StyleTable struct {
 }
 
 // TabbarStyleTable: the tab strip's bar style at the table's own
-// level, the active-tab pill in the nested "active" table (the
-// index.tag nested-table shape).
+// level, the active-tab pill in the nested "active" table.
 type TabbarStyleTable struct {
 	Default Style
 	Active  Style
 }
 
 // ComposeStyleTable: the compose form's style surface; label is the
-// two-column settings label, shared with the prompt dialogue's label,
-// divider is the section bar (--- Attachments / --- Preview).
+// two-column settings label (shared with the prompt), divider the
+// section bar (--- Attachments / --- Preview).
 type ComposeStyleTable struct {
 	Label   Style
 	Divider Style
@@ -458,9 +439,9 @@ type IndexStyleTable struct {
 	Tag       TagStyleTable
 }
 
-// TagStyleTable: the spec shape is mixed - fg/bg/attrs at the tag
-// table's own level are the DEFAULT tag glyph style, other keys are
-// per-tag overrides:
+// TagStyleTable: mixed shape - fg/bg/attrs at the tag table's own
+// level are the DEFAULT tag glyph style, other keys are per-tag
+// overrides:
 //
 //	[theme.dark.index.tag]        # default tag glyph style
 //	fg = "base0E"
@@ -535,12 +516,10 @@ func rawStyle(v any) (Style, error) {
 	return s, nil
 }
 
-// rawStyleTable decodes a full style table (normal/status/index/...)
-// as an overlay over base: Load merges file values over defaults (R8),
-// so a file naming one style in a variant keeps the variant's other
-// styles. Every style key merges individually - a [theme.dark.index]
-// naming only subject keeps the variant's number/date/... - and
-// unknown keys are load errors.
+// rawStyleTable decodes a full style table as an overlay over base
+// (Load merges file values over defaults, R8): a file naming one style
+// keeps the variant's other styles - every style key merges
+// individually - and unknown keys are load errors.
 func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 	raw, ok := v.(map[string]any)
 	if !ok {
@@ -621,8 +600,8 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 					if !ok {
 						return StyleTable{}, fmt.Errorf("index.tag: expected a table")
 					}
-					// mixed shape: fg/bg/attrs strings at this level are the
-					// default glyph style; tables are per-tag overrides
+					// mixed shape: strings = default glyph style,
+					// tables = per-tag overrides
 					for tn, tv := range tm {
 						if s, ok := tv.(string); ok {
 							switch tn {
@@ -744,8 +723,7 @@ func (t *Theme) UnmarshalTOML(v any) error {
 		return fmt.Errorf("theme: expected a table")
 	}
 	// Load merges file values over defaults (R8): a named variant is an
-	// overlay over the existing one (defaults included), variants the
-	// file does not name survive untouched.
+	// overlay over the existing one; unnamed variants survive.
 	variants := t.Variants
 	if variants == nil {
 		variants = map[string]StyleTable{}
@@ -770,9 +748,8 @@ func (t *Theme) UnmarshalTOML(v any) error {
 }
 
 // Resolved returns the variant's styles with normal-inheritance and
-// palette resolution applied: the id-keyed map (normal, indicator,
-// status, progress, error, index.number, index.tag.<name>, ...) plus
-// the resolved pager header rotation (list order preserved).
+// palette resolution applied: the id-keyed map plus the resolved pager
+// header rotation (list order preserved).
 func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 	table, ok := t.Variants[variant]
 	if !ok {
@@ -840,17 +817,14 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 type View struct {
 	Query   string `toml:"query"`
 	Threads bool   `toml:"threads"`
-	// Flat renders the threaded views' rows at the same level - the
-	// thread grouping stays, the tree glyphs go (the z key toggles
-	// the live view the same way).
+	// Flat renders threaded views' rows at the same level - grouping
+	// stays, tree glyphs go (the z key toggles it live).
 	Flat bool `toml:"flat"`
 }
 
-// IndexSection is the [index] table (R11): the index surface budgets.
-// Thread is the threaded views' tree window (R3): a deep thread renders
-// at most MaxRows rows; navigating through the thread slides the window
-// under the cursor. Zero MaxRows disables the window (the full tree
-// renders).
+// IndexSection is the [index] table (R11). Thread is the threaded
+// views' tree window (R3): a deep thread renders at most MaxRows rows,
+// navigation slides the window under the cursor; zero disables it.
 type IndexSection struct {
 	Thread ThreadBudget `toml:"thread"`
 }
@@ -858,38 +832,33 @@ type IndexSection struct {
 type ThreadBudget struct {
 	MaxRows int `toml:"max-rows"`
 	// Sort is the flatten's message order inside a thread: "desc"
-	// (the default) reads newest-first like the index, "asc" the
-	// notmuch-native oldest-first order.
+	// (default) newest-first, "asc" the notmuch-native oldest-first.
 	Sort string `toml:"sort"`
 }
 
 // Send is the send transport argv (R4): ONE configurable command,
 // tokenized at load, exec'd as argv (F4). The default reads the
-// envelope sender from the message's own From header, so msmtp's
-// account table resolves per message - the client never sees it.
+// envelope sender from the message's From header, so msmtp resolves
+// per message - the client never sees it.
 type Send struct {
 	Command string   `toml:"command"`
 	Args    []string `toml:"args"`
 }
 
-// Account is one mail account: the section key is the account name, the
-// folder prefix is its folder space in the maildir (R2). The account
-// tag in notmuch is the folder prefix - the muttrc folder:/^<folder>\//
-// pattern as data. Folder defaults to the account name (the common
-// case: [accounts.atlas] maps to the "atlas" tag directly); the
-// pointer distinguishes unset from an explicitly empty value, which is
-// a load error. Folders is the detected hard-tag folder map (the
-// `notmutt setup` output) - per-account tag -> folder-name for the
-// mover's folder resolution. Preset names a built-in provider folder
-// map (gmail, generic-imap; unknown names are load errors); Moves
-// overrides the preset per tag (tag -> folder candidates, first
-// existing wins, '*' globs - afew folder_priorities). ReadOnly
-// accounts get folder tags but never physical moves (atlas);
-// ReturnInbox enables the trash return-to-inbox rule (the non-standard
-// rule in muttrc/afew/config). NoFcc skips the client's sent copy:
-// the server keeps one itself (Gmail-family providers), and the
-// mbsync-fetched copy is the sent record - writing a fcc would
-// duplicate the Message-ID record (one message, two paths).
+// Account is one mail account: the section key is the account name,
+// the folder prefix its folder space in the maildir (R2) - the notmuch
+// account tag is that prefix, the muttrc folder:/^<folder>\// pattern
+// as data. Folder defaults to the account name; the pointer
+// distinguishes unset from an explicitly empty value (a load error).
+// Folders is the detected hard-tag folder map (`notmutt setup` output)
+// for the mover's folder resolution. Preset names a built-in provider
+// folder map (gmail, generic-imap; unknown = load error); Moves
+// overrides it per tag (candidates, first existing wins, '*' globs -
+// afew folder_priorities). ReadOnly accounts get folder tags but never
+// physical moves; ReturnInbox enables the trash return-to-inbox rule
+// (non-standard in muttrc/afew/config). NoFcc skips the client's sent
+// copy - the server keeps one (Gmail-family), the mbsync copy is the
+// sent record, and a fcc would duplicate the Message-ID record.
 type Account struct {
 	Folder           *string             `toml:"folder"`
 	From             string              `toml:"from"`
@@ -911,9 +880,8 @@ func (a Account) Tag(name string) string {
 
 // Preset is a provider's tag -> folder-name candidates (R2): the
 // default move rule is universal (tag:<t> moves to t's folder), only
-// the folder names vary per provider (afew folder_priorities as data).
-// Candidates are tried in order, first existing folder wins, '*' is a
-// glob. The gmail names are the muttrc afew config reference.
+// the names vary per provider. Candidates are tried in order, first
+// existing wins, '*' is a glob.
 type Preset map[string][]string
 
 // Presets are the built-in provider folder maps. An account's preset
@@ -940,9 +908,8 @@ var Presets = map[string]Preset{
 }
 
 // AccountTags derives the account tag set: one tag per account (the
-// folder prefix, R2). A message's account is the account tag it
-// carries; the row render skips these tags and the status bar resolves
-// against the set.
+// folder prefix, R2). The row render skips these tags and the status
+// bar resolves against the set.
 func (c Config) AccountTags() map[string]bool {
 	set := make(map[string]bool, len(c.Accounts))
 	for name, a := range c.Accounts {
@@ -952,10 +919,9 @@ func (c Config) AccountTags() map[string]bool {
 }
 
 // MyAddrs is the identity set: the bare lowercased address of every
-// account's from field. A message whose From matches one is authored
-// by the user (the pager's other-side highlight); the sent tag is the
-// other "me" signal, this catches web-sent mail that never saw the
-// client's Sent folder.
+// account's from field. A matching From marks the user's own mail
+// (pager's other-side highlight) - it catches web-sent mail that never
+// saw the client's Sent folder, unlike the sent tag.
 func (c Config) MyAddrs() []string {
 	var out []string
 	for _, a := range c.Accounts {
@@ -970,10 +936,10 @@ func (c Config) MyAddrs() []string {
 }
 
 // mergeSchemes overlays file scheme tables over the embedded base per
-// key. BurntSushi merges only the top-level map field; a
+// key: BurntSushi merges only the top-level map field - a
 // [schemes.vim.index] table replaces the whole context table when
-// decoded into the nested map, so the R9 file overlay is applied
-// explicitly here (context and key levels merge).
+// decoded into the nested map, so the R9 overlay is applied explicitly
+// (context and key levels merge).
 func mergeSchemes(base, over map[string]map[string]map[string]Binding) map[string]map[string]map[string]Binding {
 	out := make(map[string]map[string]map[string]Binding, len(base))
 	for km, ctxs := range base {
@@ -997,10 +963,10 @@ func mergeSchemes(base, over map[string]map[string]map[string]Binding) map[strin
 }
 
 // deriveDescriptions is the help vocabulary from the binding entries:
-// the first non-empty desc per action wins - the selected scheme's
-// entries first (a user desc on a rebound key overrides the scheme
-// default), then the other schemes sorted. Actions are shared
-// vocabulary: a desc defined once describes the action everywhere.
+// first non-empty desc per action wins - the selected scheme's entries
+// first (a user desc on a rebound key overrides the scheme default),
+// then the others sorted. A desc defined once describes the action
+// everywhere.
 func deriveDescriptions(schemes map[string]map[string]map[string]Binding, keymap string) map[string]string {
 	out := map[string]string{}
 	var others []string
@@ -1030,14 +996,12 @@ func deriveDescriptions(schemes map[string]map[string]map[string]Binding, keymap
 // from the accounts table (R1: virtual views are tag queries; the
 // muttrc folder:/^<folder>\// account-tag pattern as data). Every
 // account owns a view over its account tag, numbered by sorted account
-// name (g1..gN in the vim index scheme). A user [view] entry with the
-// same name wins; a key the user already bound wins. Read-only
-// accounts are included - a view is a query, never a write (R2's
-// classification rules govern writes only). Runs in Default() (the
-// placeholder accounts) and again in Load() over the merged accounts:
-// the keys it added last run are removed first, so the numbering
-// re-derives from the merged set instead of colliding with the
-// Default-time entries.
+// name (g1..gN in the vim index scheme). A user view or bound key
+// wins. Read-only accounts are included - a view is a query, never a
+// write (R2's classification rules govern writes only). Runs in
+// Default() and again in Load() over the merged accounts: the keys it
+// added last run are removed first, so numbering re-derives from the
+// merged set instead of colliding with Default-time entries.
 func deriveAccountViews(cfg *Config) {
 	if cfg.DerivedGKeys == nil {
 		cfg.DerivedGKeys = map[string]string{}
@@ -1093,13 +1057,12 @@ func sortedKeys[V any](m map[string]V) []string {
 	return keys
 }
 
-// bindingsFromScheme flattens a scheme's entries to key -> action
-// plus the per-context shown-key set (the keyhint row shows them,
-// the help dialog shows every binding): the dispatch surface (the
-// tui switches on the action strings). Visibility is opt-in - an
-// entry without show = true is hidden from the keyhint. The result
-// is always a fresh map set - a caller's rebind never touches the
-// store or the next Default.
+// bindingsFromScheme flattens a scheme's entries to key -> action plus
+// the per-context shown-key set (keyhint row; the help dialog shows
+// every binding): the dispatch surface the tui switches on. Visibility
+// is opt-in - only show = true entries hit the keyhint. The result is
+// always a fresh map set - a caller's rebind never touches the store
+// or the next Default.
 func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[string]string, map[string]map[string]bool) {
 	out := make(map[string]map[string]string, len(scheme))
 	shown := make(map[string]map[string]bool, len(scheme))
@@ -1147,8 +1110,7 @@ func Default() Config {
 				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-",
 			},
 		},
-		// only inbox/archive are threaded (the rest are flat
-		// chronological lists: unread, deleted, search)
+		// only inbox/archive are threaded (the rest are flat lists)
 		Views: map[string]View{
 			"inbox":   {Query: "tag:inbox", Threads: true},
 			"unread":  {Query: "tag:unread"},
@@ -1165,9 +1127,8 @@ func Default() Config {
 		TagGroups: map[string]core.TagGroup{
 			"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}},
 		},
-		// the gmail placeholder keeps the default shape; the real
-		// accounts come from the user's accounts file (a table that
-		// merges over this map)
+		// the gmail placeholder keeps the default shape; the user's
+		// accounts file merges over this map
 		Accounts: map[string]Account{
 			"gmail": {},
 		},
@@ -1196,9 +1157,8 @@ func Default() Config {
 		Theme:   defaultTheme(),
 	}
 	// the embedded base (base.toml) overlays the Go defaults: the
-	// binding schemes, the tag actions, and the help descriptions are
-	// user data, ready for translation. Bindings is the derived view -
-	// the selected keymap's scheme, cloned per caller.
+	// binding schemes, tag actions, and descriptions are user data,
+	// ready for translation. Bindings is the derived keymap view.
 	if err := toml.Unmarshal(baseTOML, &cfg); err != nil {
 		panic(err)
 	}
@@ -1237,9 +1197,8 @@ func defaultTheme() Theme {
 		Variants: map[string]StyleTable{
 			"dark": {
 				// the onedark port (muttrc/theme/onedark.muttrc): bg
-				// base00, fg base05, the status bar on base01, the
-				// statusline pills base-on-accent (mutt's progress
-				// pattern)
+				// base00, fg base05, status bar on base01, pills
+				// base-on-accent (mutt's progress pattern)
 				Normal:    Style{Fg: "base05", Bg: "base00"},
 				Indicator: Style{Fg: "base00", Bg: "base0A"},
 				Status:    Style{Fg: "base05", Bg: "base01"},
@@ -1247,15 +1206,14 @@ func defaultTheme() Theme {
 				Count:     Style{Fg: "base00", Bg: "base0A"},
 				Account:   Style{Fg: "base00", Bg: "base0D"},
 				Progress:  Style{Fg: "base00", Bg: "base0D"},
-				// the tab strip (tmux2k window-list colors mapped onto
-				// onedark): the inactive pills sit on the gray bar, the
-				// active pill fills with the accent blue, dark text
+				// the tab strip (tmux2k colors on onedark): inactive
+				// pills on the gray bar, active pill accent blue
 				Tabbar: TabbarStyleTable{
 					Default: Style{Fg: "base05", Bg: "base01"},
 					Active:  Style{Fg: "base00", Bg: "base0D"},
 				},
 				Compose: ComposeStyleTable{
-					Label:   Style{Fg: "base0D"},               // the form's settings labels: onedark author blue
+					Label:   Style{Fg: "base0D"},               // settings labels: onedark author blue
 					Divider: Style{Fg: "base05", Bg: "base03"}, // section bar: text on the gray
 				},
 				Index: IndexStyleTable{
@@ -1265,9 +1223,8 @@ func defaultTheme() Theme {
 					Ghost: Style{Fg: "base03"}, Search: Style{Fg: "base0A", Attrs: []string{"bold"}},
 					Tree: Style{Fg: "base03"}, Collapsed: Style{Fg: "base0A", Attrs: []string{"bold"}},
 					Tag: TagStyleTable{
-						// the base.colors tag markers (muttrc/base.colors):
-						// a color per hard tag; inbox stays plain green -
-						// red is the deleted marker, not the inbox one
+						// the base.colors tag markers: a color per hard
+						// tag; inbox stays green, red marks deleted
 						Default: Style{Fg: "base0B"},
 						Tags: map[string]Style{
 							"deleted": {Fg: "base08"},
@@ -1281,10 +1238,9 @@ func defaultTheme() Theme {
 				},
 				Pager: PagerStyleTable{
 					Header: Style{Fg: "base0D"}, HdrDefault: Style{Fg: "base05"},
-					// the onedark quoted palette as the header
-					// rotation (neomutt's quoted_colors_get model: the
-					// block cycles the list, wrapping past the end -
-					// references/muttrc/theme/onedark.muttrc:46-51)
+					// the onedark quoted palette as the header rotation
+					// (quoted_colors_get model: the block cycles the
+					// list, wrapping past the end)
 					HeaderColors: []Style{
 						{Fg: "base0B"}, {Fg: "base0C"}, {Fg: "base0D"},
 						{Fg: "base0E"}, {Fg: "base0A"}, {Fg: "base08"},
@@ -1294,9 +1250,8 @@ func defaultTheme() Theme {
 						{Fg: "base0E"}, {Fg: "base0A"}, {Fg: "base08"},
 					},
 					Signature: Style{Fg: "base03"}, Attachment: Style{Fg: "base0E"},
-					// the thread-position highlight: the recent-5 tint
-					// (cyan) and the last other-side message (purple
-					// bold) - the index row landmark of the open message
+					// thread-position highlight: recent-5 tint (cyan)
+					// and the last other-side message (purple bold)
 					Recent: Style{Fg: "base0C"}, OtherSide: Style{Fg: "base0E", Attrs: []string{"bold"}},
 				},
 			},
@@ -1321,14 +1276,12 @@ func (c Config) TagGroupList() []core.TagGroup {
 
 // Load merges every *.toml file in dir over defaults: the optional
 // splits (accounts.toml, filters.toml, ...) merge in sorted name
-// order, then config.toml merges LAST and wins any conflict - the
-// main file is authoritative, the splits partition its sections, and
-// one file remains the degenerate case. Tables merge recursively;
-// arrays and scalars replace. Unknown keys are load errors naming
-// the file and key (strict load, R8). A missing dir means defaults.
-// The merged [schemes.*] tables overlay the embedded base per key
-// (mergeSchemes; BurntSushi replaces whole context tables in nested
-// maps), so a rebinding names the scheme, context, and key it touches.
+// order, then config.toml merges LAST and wins. Tables merge
+// recursively; arrays and scalars replace. Unknown keys are load
+// errors naming the file and key (strict load, R8). A missing dir
+// means defaults. Merged [schemes.*] tables overlay the embedded base
+// per key (mergeSchemes - BurntSushi replaces whole context tables in
+// nested maps), so a rebinding names the scheme, context, and key.
 func Load(dir string) (Config, error) {
 	cfg := Default()
 	files, err := filepath.Glob(filepath.Join(dir, "*.toml"))
@@ -1375,13 +1328,13 @@ func Load(dir string) (Config, error) {
 	return cfg, nil
 }
 
-// undecodedKeys runs the strict check: the keys the struct decode did
-// not consume. palette/theme decode through custom unmarshalers that
-// consume their whole subtree; BurntSushi does not mark Unmarshaler
-// subtrees as decoded, so their inner keys always land here. The
-// unmarshalers are strict themselves. A 4-level schemes key is a
-// table-form binding entry's field (schemes.<km>.<ctx>.<key>.<fun|desc>)
-// - consumed by Binding.UnmarshalTOML, which rejects unknown fields.
+// undecodedKeys runs the strict check: keys the struct decode did not
+// consume. palette/theme decode through custom unmarshalers that
+// consume their whole subtree, but BurntSushi does not mark Unmarshaler
+// subtrees decoded, so their inner keys land here (the unmarshalers
+// are strict themselves). A 4-level schemes key is a table-form binding
+// entry's field (schemes.<km>.<ctx>.<key>.<fun|desc>) - consumed by
+// Binding.UnmarshalTOML, which rejects unknown fields.
 func undecodedKeys(md toml.MetaData) []string {
 	var keys []string
 	for _, k := range md.Undecoded() {
@@ -1712,8 +1665,8 @@ func validateStyle(s Style, p Palette, path string) error {
 // enumOf is a struct field's enum tag split on commas; nil when the
 // field has none. The allowed values travel with the schema as data -
 // validate() consumes the tag, and a future config LSP completes from
-// the same one definition (keymap and preset stay data-derived: their
-// valid sets are the schemes and presets maps, not a tag).
+// the same definition (keymap/preset valid sets are the schemes and
+// presets maps, not a tag).
 func enumOf(typ reflect.Type, field string) []string {
 	f, ok := typ.FieldByName(field)
 	if !ok {

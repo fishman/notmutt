@@ -15,14 +15,12 @@ import (
 	"notmutt/lib/testutil"
 )
 
-// TestCGONewBracket: the new wrapper must capture the (pre, cur]
-// bracket around its own `notmuch new` through fresh snapshots. A
-// read handle is stale across an external commit - the revision is
-// cached at open and the Xapian snapshot hides the new messages - so
-// the wrapper reopens the handle around the run. This pins: an
-// external commit while the handle is open does not leak into the
-// window (the entry reopen makes the pre read fresh), the bracket
-// moves with the wrapper's own new, and the post-run handle sees
+// TestCGONewBracket pins the (pre, cur] bracket around the wrapper's
+// own `notmuch new` through fresh snapshots. A read handle is stale
+// across an external commit (revision cached at open, the Xapian
+// snapshot hides new messages), so the wrapper reopens around the run:
+// an external commit while open does not leak into the window, the
+// bracket moves with the wrapper's new, and the post-run handle sees
 // both the wrapper's message and the external one.
 func TestCGONewBracket(t *testing.T) {
 	e := testutil.Setup(t)
@@ -58,9 +56,8 @@ func TestCGONewBracket(t *testing.T) {
 	write("m1")
 	newRun(t)
 
-	// an external commit while the handle is open (a CLI new from a
-	// hook, another client) must not leak into the bracket: the entry
-	// reopen makes the pre read fresh.
+	// an external commit while the handle is open must not leak into the
+	// bracket: the entry reopen makes the pre read fresh.
 	write("m3")
 	newRun(t)
 	preCLI := revCLI()

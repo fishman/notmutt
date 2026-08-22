@@ -288,9 +288,9 @@ func TestReplyPrefillFetchesThreadFromIndexRow(t *testing.T) {
 	}
 }
 
-// TestReplyPrefillFallsThroughBrokenNewest pins the recency fallback:
-// the thread's newest message has a vanished file, so the reply must
-// build from the older parseable message instead of failing silently.
+// TestReplyPrefillFallsThroughBrokenNewest: the thread's newest message
+// has a vanished file, so the reply builds from the older parseable
+// message instead of failing silently.
 func TestReplyPrefillFallsThroughBrokenNewest(t *testing.T) {
 	dir := t.TempDir()
 	mroot := filepath.Join(dir, "mail")
@@ -340,9 +340,9 @@ func TestReplyPrefillFallsThroughBrokenNewest(t *testing.T) {
 	}
 }
 
-// TestReplyPrefillNoParseable pins the loud failure: when no thread
-// message parses the prefill returns an error (the handler logs it and
-// publishes JobError) - a reply never fails silently.
+// TestReplyPrefillNoParseable: when no thread message parses, the
+// prefill returns an error (the handler logs it and publishes JobError)
+// - a reply never fails silently.
 func TestReplyPrefillNoParseable(t *testing.T) {
 	bus := core.NewBus()
 	worker := notmuch.NewWorker(bus, &threadBackend{msgs: []core.Message{

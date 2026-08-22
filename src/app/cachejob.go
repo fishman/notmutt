@@ -32,8 +32,8 @@ func newCacheJob(bus *core.Bus, w workerAPI, view *core.View, dbPath string) *ca
 	}
 	c, err := cache.Open(dbPath)
 	if err != nil {
-		// the cache is an optimization: an open failure (another
-		// instance holds the file) degrades to cacheless, never a hang
+		// the cache is an optimization: an open failure degrades to
+		// cacheless, never a hang
 		log.Printf("mime cache disabled: %v", err)
 		return cj
 	}
@@ -91,8 +91,8 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// registered after wg.Done: LIFO runs the publish first, so
-			// wg.Wait() is a publish barrier
+			// deferred after wg.Done: LIFO runs the publish first, so wg.Wait()
+			// is a publish barrier
 			defer func() {
 				mu.Lock()
 				done++

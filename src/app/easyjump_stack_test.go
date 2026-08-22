@@ -17,13 +17,11 @@ import (
 	"notmutt/tui"
 )
 
-// TestEasyjumpFullStack drives the real wiring end to end: the app's
-// open/render handlers on a real bus, the worker round trip
-// (fakeWorker answers ActThread with the fixture message), and the
-// actual key sequence enter -> V -> F -> j -> 2 -> enter. Asserts the
-// [N] labels render and survive the scroll, and the digit entry still
-// opens (2 stays an incomplete prefix of 20..29 with 40 links, so the
-// enter key confirms it).
+// TestEasyjumpFullStack drives the real wiring end to end: open/render
+// handlers on a real bus, the ActThread round trip, and the key
+// sequence enter -> V -> F -> j -> 2 -> enter. Asserts the [N] labels
+// render and survive the scroll, and digit entry still opens (2 stays
+// an incomplete prefix of 20..29 with 40 links, so enter confirms it).
 func TestEasyjumpFullStack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -93,8 +91,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 		t.Fatalf("the labeled reply must carry the [N] labels:\n%s", out)
 	}
 	// the fixture is 40 paragraphs - taller than the 22-row window, so
-	// the scroll must move the viewport (the frame's second row is the
-	// pager's first visible line; the status bar is row one)
+	// the scroll must move the viewport
 	topBefore := secondLine(m.View())
 	press("j") // scroll while the key loop owns the keys
 	if out := strings.TrimSpace(m.View()); !strings.Contains(out, "[1]") {
@@ -113,8 +110,8 @@ func TestEasyjumpFullStack(t *testing.T) {
 	}
 }
 
-// secondLine strips the frame's status row and returns the first
-// pager row (the scroll assertion compares it across presses).
+// secondLine strips the frame's status row and returns the first pager
+// row (the scroll assertion compares it across presses).
 func secondLine(s string) string {
 	rest := s
 	if i := strings.IndexByte(rest, '\n'); i >= 0 {

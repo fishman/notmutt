@@ -6,9 +6,7 @@
 // The network deny-by-default fence: these tests fail if a regression
 // ever lets a plugin reach the network without an explicit
 // [lua.network.<plugin>] allowlist. Every "no error log" assertion
-// means the plugin file loaded cleanly - a plugin that was granted
-// access it should not have (or denied access it needs) errors out and
-// shows up in the captured log. The hit counters pin that a denied
+// means the plugin loaded cleanly; the hit counters pin that a denied
 // request never dials.
 
 package app
@@ -28,9 +26,8 @@ import (
 )
 
 // loadPluginsCaptured runs the plugin loader with the logger captured:
-// a plugin that fails to load (error() during DoFile) lands in the
-// buffer, and the returned string is empty exactly when every plugin
-// loaded cleanly.
+// a plugin failing to load (error() during DoFile) lands in the buffer;
+// the string is empty exactly when every plugin loaded cleanly.
 func loadPluginsCaptured(t *testing.T, dir string, network map[string]config.LuaNetwork) string {
 	t.Helper()
 	var buf bytes.Buffer
@@ -43,9 +40,9 @@ func loadPluginsCaptured(t *testing.T, dir string, network map[string]config.Lua
 
 func TestPluginHTTPDeniedByDefault(t *testing.T) {
 	dir := t.TempDir()
-	// no [lua.network] section at all: the http global must be absent
-	// and any attempt to call it must fail - both directions of the
-	// gate, in the same plugin file
+	// no [lua.network] section at all: the http global must be absent AND
+	// any attempt to call it must fail - both directions of the gate in
+	// the same plugin file
 	writePlugin(t, dir, "plug.lua", `
 if http ~= nil then error("http present without [lua.network]") end
 -- the call is wrapped in a function: http.request as an argument
@@ -64,8 +61,8 @@ func TestPluginHTTPEmptySectionFailClosed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
 	defer srv.Close()
 	// the section exists (http registered) but lists no targets: every
-	// request must fail closed, before the dial. request returns
-	// (nil, err) on denial - pcall would wrap a clean return, not a raise
+	// request fails closed, before the dial. Denial returns (nil, err) -
+	// pcall would wrap a clean return, not a raise
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
 if http == nil then error("http missing with [lua.network] section") end
 local resp, err = http.request("GET", %q, {})
@@ -89,9 +86,8 @@ func TestPluginHTTPAllowed(t *testing.T) {
 		fmt.Fprint(w, "pong")
 	}))
 	defer srv.Close()
-	// the positive control: with the allowlist in place the same
-	// request succeeds - without it the fence tests above would pass
-	// vacuously
+	// the positive control: with the allowlist the same request succeeds
+	// - without it the fence tests above would pass vacuously
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
 local resp, err = http.request("GET", %q, {})
 if resp == nil then error("request failed: " .. tostring(err)) end
@@ -113,8 +109,8 @@ func TestPluginHTTPDeniedHostNeverDialed(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits++ }))
 	defer srv.Close()
-	// the allowlist names a different host: the request to the test
-	// server must fail before any dial
+	// the allowlist names a different host: the request must fail before
+	// any dial
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
 local resp, err = http.request("GET", %q, {})
 if resp ~= nil or err == nil then error("non-allowlisted host reached the server") end
@@ -140,10 +136,9 @@ func TestPluginHTTPEndpointGate(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	// the endpoint rule is verb + path as one unit: "get /probe*"
-	// allows the GET on /probe and below, denies the POST on the same
-	// path and the GET on a different one - the verb alone means
-	// nothing without its path
+	// the endpoint rule is verb + path as one unit: "get /probe*" allows
+	// the GET on /probe and below, denies the POST on the same path and
+	// the GET on a different one - a verb alone means nothing
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
 local resp, err = http.request("POST", %q .. "/probe", {})
 if resp ~= nil or err == nil then error("POST /probe must be denied") end
@@ -175,8 +170,8 @@ func TestPluginHTTPRedirectPathChecked(t *testing.T) {
 		http.Redirect(w, r, "/no", http.StatusFound)
 	}))
 	defer srv.Close()
-	// /ok is allowlisted, the hop to /no is not: the hop must be
-	// refused before the dial
+	// /ok is allowlisted, the hop to /no is not: the hop must be refused
+	// before the dial
 	writePlugin(t, dir, "plug.lua", fmt.Sprintf(`
 local resp, err = http.request("GET", %q .. "/ok", {})
 if resp ~= nil or err == nil then error("redirect to a disallowed path must be denied") end
@@ -233,7 +228,7 @@ func TestPluginHTTPRedirectHopChecked(t *testing.T) {
 	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hitsB++ }))
 	defer srvB.Close()
 	// srvB.URL is rewritten to a foreign hostname (net.Listen would
-	// resolve "localhost" away). srvB stays dialable at 127.0.0.1, so a
+	// resolve "localhost" away); srvB stays dialable at 127.0.0.1, so a
 	// broken hop check would dial it and bump hitsB - the fence pins
 	// "refused", not merely "failed"
 	_, port, err := net.SplitHostPort(strings.TrimPrefix(srvB.URL, "http://"))

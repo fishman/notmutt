@@ -17,9 +17,9 @@ import (
 	"notmutt/notmuch"
 )
 
-// maildirNameRe is the DJB maildir filename shape: seconds since the
-// epoch, a unique part (pid here), the hostname - the shape the sync
-// tool's own deliveries carry.
+// maildirNameRe is the DJB maildir filename shape: seconds, a unique
+// part (pid here), the hostname - the shape the sync tool's own
+// deliveries carry.
 var maildirNameRe = regexp.MustCompile(`^\d+\.\d+\.[^,]+(,U=\d+)?$`)
 
 // stubWorker records the actions a send job issues (ActNew, ActTag).
@@ -68,11 +68,8 @@ func TestSendJobFccStateWins(t *testing.T) {
 	}
 }
 
-// TestSendJobNoFccSkipsCopy: an account with no_fcc (the server keeps
-// a sent copy itself - Gmail-family providers) writes no client fcc;
-// the send still delivers.
-// TestSaveDraft lands the composition in the account's draft folder
-// (the preset candidates, the muttrc $postponed path as data) in the
+// TestSaveDraft: the composition lands in the account's draft folder
+// (preset candidates, the muttrc $postponed path as data) in the
 // maildir new/ slot and reindexes; the assemble happens on the same
 // state the send would deliver.
 func TestSaveDraft(t *testing.T) {
@@ -140,6 +137,9 @@ func TestSaveDraftFailsKeepsBuffer(t *testing.T) {
 	}
 }
 
+// TestSendJobNoFccSkipsCopy: a no_fcc account (the server keeps its own
+// sent copy - Gmail-family providers) writes no client fcc; the send
+// still delivers.
 func TestSendJobNoFccSkipsCopy(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")
@@ -344,11 +344,10 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	}
 }
 
-// TestSendJobPassesEnvelopeRecipients pins the mutt sendmail
-// contract: the transport argv is the configured args plus the
-// envelope recipients (To + Cc + Bcc) - msmtp without them fails
-// with "no recipients found". The config's args slice is never
-// mutated.
+// TestSendJobPassesEnvelopeRecipients (the mutt sendmail contract):
+// the transport argv is the configured args plus the envelope
+// recipients (To + Cc + Bcc) - msmtp without them fails with "no
+// recipients found". The config's args slice is never mutated.
 func TestSendJobPassesEnvelopeRecipients(t *testing.T) {
 	dir := t.TempDir()
 	argv := filepath.Join(dir, "argv")
@@ -430,9 +429,9 @@ func TestSendJobFccErrorNotesButDelivers(t *testing.T) {
 	}
 }
 
-// TestSendJobBccEnvelopeOnly pins the mutt delivery shape end to end:
-// the wire message (transport stdin) carries no Bcc header - Bcc rides
-// the envelope only - while the fcc copy keeps it (mutt's FCC mode).
+// TestSendJobBccEnvelopeOnly: the wire message (transport stdin)
+// carries no Bcc header - Bcc rides the envelope only - while the fcc
+// copy keeps it (mutt's FCC mode).
 func TestSendJobBccEnvelopeOnly(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")

@@ -1,12 +1,10 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-// Package setup detects the accounts on disk by their folder
-// structure and generates the accounts config (the `notmutt setup`
-// subcommand). Detection is template-driven: a template names each
-// hard tag's candidate folder names; an account matches when every
-// required tag resolves to an existing folder. Only directory names
-// are read - never mail content.
+// Package setup detects accounts on disk by folder structure and
+// generates the accounts config (`notmutt setup`): template-driven,
+// an account matches when every required tag resolves to an existing
+// folder. Only directory names are read - never mail content.
 package setup
 
 import (
@@ -19,16 +17,12 @@ import (
 )
 
 // Template is a provider folder shape: Match names the TOP-LEVEL
-// folders that gate the template (an account matches when every one
-// is present - the match only ever applies to top-level folders), and
-// Folders maps each hard tag to its candidate folder paths in
-// priority order (the afew folder_priorities shape). A tag's folder
-// is its first present candidate - the gmail candidates nest
-// ("[Gmail]/Drafts") for the mover's real path - and tags with no
-// present candidate stay out of the account's folder map. NoFcc
-// marks providers that store sent copies server-side (gmail): the
-// generated account gets no_fcc = true so the client writes no fcc
-// copy.
+// folders that gate the template (never below the root); Folders
+// maps each hard tag to candidate paths in priority order (the afew
+// folder_priorities shape) - first present wins, nested paths like
+// "[Gmail]/Drafts" give the mover its real path, absent tags stay
+// out. NoFcc marks providers that store sent copies server-side
+// (gmail): the account gets no_fcc = true, no fcc copy is written.
 type Template struct {
 	Name    string
 	Match   []string
@@ -36,23 +30,17 @@ type Template struct {
 	NoFcc   bool
 }
 
-// Templates is the built-in detection set, tried in order: an account
-// matches the first template whose top-level Match names all resolve.
-// The gmail discriminator is the top-level [Gmail] folder (mbsync
-// syncs it as one dir; its presence says "gmail system folders", so
-// an account that carries it is a gmail account even when some
-// [Gmail] subfolders were never synced); flat IMAP layouts without it
-// (Drafts/Sent/Trash at the account root) fall to the generic
-// shapes. Candidate lists are priority-ordered: the standard name
-// first (Archives before Archive, Spam before Junk), the flat
-// fallback after the provider's system folders (a [Gmail]-marked
-// account synced flat, or a flat account with Trash instead of
-// Deleted Items, still resolves). The lua build evaluates the same templates from
-// app/lua/templates/*.lua (the shipped examples users copy from);
-// this Go set is the no-Lua fallback, pinned equal by
-// TestBuiltinTemplatesMatchGoData. The provider shapes are seeds -
-// contributed templates in <configdir>/lua/templates, enabled by name
-// in [setup] templates, override them.
+// Templates is the built-in detection set, tried in order: first
+// template whose top-level Match names all resolve wins. The gmail
+// discriminator is the top-level [Gmail] folder (mbsync syncs it as
+// one dir; its presence marks gmail system folders even when
+// subfolders were never synced); flat layouts without it fall to
+// generic shapes. Candidates are priority-ordered: standard name
+// first, flat fallback after system folders. The lua build evaluates
+// the same templates from app/lua/templates/*.lua - this Go set is
+// the no-Lua fallback, pinned equal by TestBuiltinTemplatesMatchGoData.
+// Contributed templates in <configdir>/lua/templates, enabled by name
+// in [setup] templates, override these seeds.
 var Templates = []Template{
 	{
 		Name:  "gmail",
@@ -95,10 +83,9 @@ var Templates = []Template{
 		},
 	},
 	{
-		// zoho discriminates by its Snoozed system folder; without it
-		// a flat zoho account falls to outlook (same shape, but no
-		// no_fcc - set the flag by hand). zoho stores sent copies
-		// server-side like gmail.
+		// zoho discriminates by its Snoozed folder; without it a flat
+		// account falls to outlook (no no_fcc - set by hand). Stores
+		// sent copies server-side like gmail.
 		Name:  "zoho",
 		Match: []string{"INBOX", "Sent", "Snoozed"},
 		NoFcc: true,
@@ -137,13 +124,10 @@ type Account struct {
 	NoFcc    bool
 }
 
-// Detect walks the notmuch mail root: every top-level directory with
-// at least one folder is an account candidate; a candidate whose
-// top-level folders resolve a template's Match names matches that
-// template (first match wins). Directory names only - never mail
-// content. Empty and unreadable directories are not accounts (a
-// stray maildir under construction is not a detection result).
-// Accounts sort by name.
+// Detect walks the notmuch mail root: top-level directories with at
+// least one folder are candidates; the first template whose Match
+// resolves wins. Only directory names are read - never mail content;
+// empty/unreadable dirs are not accounts; results sort by name.
 func Detect(root string, templates []Template) ([]Account, error) {
 	top, err := os.ReadDir(root)
 	if err != nil {
@@ -172,10 +156,9 @@ func Detect(root string, templates []Template) ([]Account, error) {
 	return out, nil
 }
 
-// folders is the account's folder set: directory paths relative to
-// the account root, at most two levels deep (the deepest pattern is
-// "[Gmail]/Drafts"). Maildir internals (cur/new/tmp) and dot
-// directories are not folders.
+// folders is the account's folder set: paths relative to the account
+// root, at most two levels deep; Maildir internals (cur/new/tmp) and
+// dot dirs are excluded.
 func folders(root string) (map[string]bool, error) {
 	set := map[string]bool{}
 	top, err := os.ReadDir(root)
@@ -206,11 +189,9 @@ func maildirInternal(name string) bool {
 }
 
 // resolve matches a template against the folder set: every Match name
-// must be a TOP-LEVEL folder (the match never looks below the account
-// root - a [Gmail] dir at the top level is the gmail discriminator).
-// The extracted folder map resolves each tag to its first present
-// candidate anywhere in the set (nested paths included - the mover
-// needs the real "[Gmail]/Drafts").
+// must be a TOP-LEVEL folder (the [Gmail] discriminator); each tag
+// resolves to its first present candidate anywhere, nested included -
+// the mover needs the real "[Gmail]/Drafts".
 func resolve(t *Template, set map[string]bool) (map[string]string, bool) {
 	for _, name := range t.Match {
 		if !set[name] {
@@ -229,11 +210,10 @@ func resolve(t *Template, set map[string]bool) (map[string]string, bool) {
 	return folders, true
 }
 
-// Generate renders the detected accounts as TOML: one [accounts.<name>]
-// entry per matched account with its hard-tag folder map. The file is
-// detection output - from/signature are not detectable
-// and stay out. Folders quote through strconv (valid TOML basic
-// strings), accounts and tags sort for a stable file.
+// Generate renders detected accounts as TOML: one [accounts.<name>]
+// entry per matched account with its hard-tag folder map;
+// from/signature are not detectable and stay out. Folders quote via
+// strconv (valid TOML); accounts and tags sort for a stable file.
 func Generate(accounts []Account) string {
 	var b strings.Builder
 	b.WriteString("# generated by notmutt setup - detection output.\n")

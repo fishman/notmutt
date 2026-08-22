@@ -50,8 +50,8 @@ func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return notmuch.Reply{}, nil
 }
 
-// drain collects FilterDone and JobError events until the timeout
-// (the bus channel is never closed; runs are synchronous).
+// drain collects FilterDone and JobError events until the timeout (the
+// bus channel is never closed; runs are synchronous).
 func drain(ch <-chan core.Event) (done []core.FilterDone, jerr []core.JobError) {
 	t := time.NewTimer(time.Second)
 	defer t.Stop()
@@ -77,8 +77,8 @@ func TestFilterJob(t *testing.T) {
 	bus := core.NewBus()
 
 	// the message sits in the archive folder: the folder rule fires
-	// (+archive, the move tag), and the mover reports the file as a
-	// source-gone skip (nothing on disk). Default config: dry-run.
+	// (+archive, the move tag) and the mover reports a source-gone skip
+	// (nothing on disk). Default config: dry-run.
 	w := &fjWorker{
 		delta: []core.Message{{ID: "m1"}},
 		snaps: []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}}},
@@ -112,10 +112,10 @@ func TestFilterJob(t *testing.T) {
 		t.Fatalf("no-delta poll published %v %v", done, jerr)
 	}
 
-	// guard: a run with the flag set declines and publishes nothing.
-	// The check-and-set under the mutex IS the overlap guarantee, so
-	// pin the state, not goroutine timing - a second run that starts
-	// after the first completes is correct, not a guard failure.
+	// guard: a run with the flag set declines and publishes nothing. The
+	// mutex check-and-set IS the overlap guarantee - pin the state, not
+	// goroutine timing (a run after the first completes is correct, not
+	// a failure).
 	w.rev.Store(5)
 	w.bump.Store(5)
 	ch3 := bus.Subscribe()
@@ -130,9 +130,9 @@ func TestFilterJob(t *testing.T) {
 	}
 }
 
-// TestRunFilterPipeline: the shared poll body - a revision bump after
-// ActNew classifies the delta and moves (the manual trigger's effect);
-// a quiet mailbox (no bump) produces no classification pass.
+// TestRunFilterPipeline: a revision bump after ActNew classifies the
+// delta and moves (the manual trigger's effect); a quiet mailbox (no
+// bump) produces no classification pass.
 func TestRunFilterPipeline(t *testing.T) {
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
@@ -179,10 +179,10 @@ func TestRunFilterPipeline(t *testing.T) {
 	}
 }
 
-// TestRunPoll: the headless poll command's contract - a successful run
-// touches the poll stamp (the cross-process wake-up for running
-// clients), a quiet poll leaves it alone, and a disabled filter
-// degrades to a plain new that still stamps.
+// TestRunPoll: a successful run touches the poll stamp (the
+// cross-process wake-up for running clients), a quiet poll leaves it
+// alone, and a disabled filter degrades to a plain new that still
+// stamps.
 func TestRunPoll(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
@@ -246,11 +246,11 @@ func TestRunPoll(t *testing.T) {
 	}
 }
 
-// TestRunPollWindow: the reproducibility contract - a fixed (from, to]
-// window skips the new run and the revision capture (the replay of a
-// stored diff), reclassifies the SAME bracket, and must produce
-// byte-identical output on every replay. --apply is the one-shot live
-// override of the dry-run config, the config untouched, and stamps.
+// TestRunPollWindow: a fixed (from, to] window skips the new run and
+// the revision capture (a stored diff's replay), reclassifies the SAME
+// bracket, and must produce byte-identical output on every replay.
+// --apply is the one-shot live override of the dry-run config, config
+// untouched, and stamps.
 func TestRunPollWindow(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
@@ -353,9 +353,8 @@ func TestParsePollSpec(t *testing.T) {
 
 // TestPollReproScript: the harness contract - diff stores the poll
 // output, check replays the stored window and must reproduce it, and
-// apply passes --apply. The notmutt binary is a stub that mirrors the
-// poll's deterministic output for any poll invocation, so the match
-// and mismatch paths are exercised against it.
+// apply passes --apply. The notmutt binary is a stub mirroring the
+// poll's deterministic output, so both paths are exercised.
 func TestPollReproScript(t *testing.T) {
 	cache := t.TempDir()
 	t.Setenv("XDG_CACHE_HOME", cache)
@@ -422,10 +421,10 @@ func TestPollReproScript(t *testing.T) {
 }
 
 // TestRunPollConfig: the dry-run uses the config files, not defaults -
-// a fixture config dir (the NOTMUTT_CONFIG path pollOnce takes) whose
-// filters.toml header rule and accounts.toml account with its hard-tag
-// folder map must show up in the replayed diff: +work from the rule,
-// +gmail from the account, +archive from the hard-tag folder map.
+// the fixture config dir (NOTMUTT_CONFIG) whose filters.toml rule and
+// accounts.toml account with its hard-tag folder map must show up in
+// the replayed diff: +work (rule), +gmail (account), +archive
+// (hard-tag map).
 func TestRunPollConfig(t *testing.T) {
 	conf := t.TempDir()
 	os.WriteFile(filepath.Join(conf, "filters.toml"), []byte(

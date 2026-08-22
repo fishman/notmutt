@@ -14,8 +14,7 @@ import (
 	"notmutt/notmuch"
 )
 
-// fakeWorker serves the engine's reads from canned data and records the
-// ActTag writes.
+// fakeWorker serves canned reads and records ActTag writes.
 type fakeWorker struct {
 	delta   []core.Message
 	snaps   []core.Message
@@ -27,8 +26,7 @@ type fakeWorker struct {
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	switch a.Kind {
 	case notmuch.ActQueryMsgs:
-		// the worker contract: QueryMsgs delivers via the emit closure,
-		// never the reply
+		// the worker contract: QueryMsgs delivers via the emit closure, never the reply
 		var msgs []core.Message
 		if strings.HasPrefix(a.Query, "lastmod:") {
 			msgs = f.delta
@@ -117,9 +115,7 @@ func TestEngineClassification(t *testing.T) {
 }
 
 // TestReadOnlyAccountNeverClassified: a readonly account's message is
-// not classified at all - no folder tags, no account tag, no header
-// tags, no writes. The entry drops out of the report even when the
-// message's tags contradict its folder.
+// not classified - no tags, no writes, no report entry.
 func TestReadOnlyAccountNeverClassified(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
@@ -150,11 +146,8 @@ func TestReadOnlyAccountNeverClassified(t *testing.T) {
 	}
 }
 
-// TestEntryPriority: an entry whose resolved tag set contains a
-// [notify] priority tag is flagged; one without is not.
 // TestHeaderRuleDedup: two matching header rules adding the same tag
-// resolve to one op - the report and the apply carry the set, not the
-// raw rule emissions (a dry-run digest rendered ++meeting).
+// resolve to one op.
 func TestHeaderRuleDedup(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
@@ -187,6 +180,8 @@ func TestHeaderRuleDedup(t *testing.T) {
 	}
 }
 
+// TestEntryPriority: an entry whose resolved tag set contains a
+// [notify] priority tag is flagged; one without is not.
 func TestEntryPriority(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
@@ -222,8 +217,7 @@ func TestMover(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
 	// the gmail account shape: INBOX and Archives exist (the resolved
-	// archive target - first candidate wins over "Archive"); AWS is an
-	// organizational folder the mover leaves alone.
+	// archive target); AWS is an organizational folder the mover leaves alone.
 	for _, d := range []string{"INBOX", "Archives", "AWS"} {
 		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
 			t.Fatal(err)
@@ -305,13 +299,10 @@ func TestMover(t *testing.T) {
 	}
 }
 
-// TestStaleFolderTagResolvesToLocation: a hard tag the message already
-// carries while the file sits in another folder is STALE - the location
-// is the home, the exclusive resolution drops the tag (the user's
-// model: tag-groups.folder members match the account folders, and the
-// member whose folder holds the file is the one that applies). Mail
-// already home produces no entry (no report noise on every read-marked
-// delta row).
+// TestStaleFolderTagResolvesToLocation: a hard tag the message carries
+// while the file sits in another folder is stale - the location is the
+// home, so the exclusive resolution drops the tag. Mail already home
+// produces no entry.
 func TestStaleFolderTagResolvesToLocation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
@@ -341,10 +332,9 @@ func TestStaleFolderTagResolvesToLocation(t *testing.T) {
 }
 
 // TestMoverStripsMbsyncUID: an mbsync filename (the IMAP UID embedded
-// as ,U=NNN) moves WITHOUT the UID - a copy keeping it would collide
-// with mbsync's UID tracking on the next sync ("duplicate UID 1234").
-// Plain maildir names pass through untouched; detection is the
-// marker's presence, never a config option (afew rename=auto).
+// as ,U=NNN) moves without the UID - keeping it collides with mbsync's
+// UID tracking on the next sync ("duplicate UID 1234"). Detection is
+// the marker's presence, never a config option (afew rename=auto).
 func TestMoverStripsMbsyncUID(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
@@ -389,9 +379,8 @@ func TestMoverStripsMbsyncUID(t *testing.T) {
 	}
 }
 
-// TestMoverReadOnlyAccount: a readonly account (R2 - toptal, a dead
-// account) never moves: no file ops, no path ops, the source stays.
-// Non-readonly accounts in the same report still move.
+// TestMoverReadOnlyAccount: a readonly account (R2 - toptal) never
+// moves: no file ops, no path ops; other accounts still move.
 func TestMoverReadOnlyAccount(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
@@ -448,12 +437,8 @@ func equalOps(a, b []core.TagOp) bool {
 }
 
 // TestTwoCopyResolvesToSent: a message with files in Sent and INBOX
-// (the self-send shape - the client's fcc copy in Sent plus the
-// mbsync-delivered copy in INBOX, one message id) resolves to sent:
-// the location pass emits both members and the last member-add wins
-// (the emission order is the reference priority ascending,
-// muttrc/notmuch/tags - sent beats inbox), so the stale inbox tag
-// drops while the message stays sent. Nothing moves.
+// (the self-send shape) resolves to sent - the last member-add wins,
+// so the stale inbox tag drops and the message stays sent.
 func TestTwoCopyResolvesToSent(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"jelveh": {Preset: "gmail"}}
@@ -481,12 +466,9 @@ func TestTwoCopyResolvesToSent(t *testing.T) {
 	}
 }
 
-// TestMoverSkipsMessageAlreadyHome: a message with one of its files
-// already in the resolved target tree (the self-send shape - the fcc
-// copy in Sent plus the delivered copy in INBOX) moves nothing: the
-// message is home, and the mbsync-owned delivered copy must never be
-// touched (a move breaks its UID bookkeeping and the next sync
-// re-downloads it).
+// TestMoverSkipsMessageAlreadyHome: a message with a file already in
+// the resolved target tree moves nothing - the mbsync-owned delivered
+// copy must never be touched (a move breaks its UID bookkeeping).
 func TestMoverSkipsMessageAlreadyHome(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")

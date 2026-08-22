@@ -118,10 +118,8 @@ func TestBboltEmptyListHit(t *testing.T) {
 }
 
 // TestOpenContendedReturnsError pins the startup-hang fix: the cache
-// is single-writer (flock), and a second open while the first holds
-// it must fail fast (bbolt's infinite retry would hang the second
-// notmutt instance at startup, the lock_timeout-style bound the app
-// relies on).
+// is single-writer (flock), so a second open must fail fast (bbolt's
+// infinite retry would hang the second instance at startup).
 func TestOpenContendedReturnsError(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cache.db")
 	c, err := Open(path)

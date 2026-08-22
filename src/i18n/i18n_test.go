@@ -39,9 +39,8 @@ func TestResolveLanguage(t *testing.T) {
 }
 
 // TestSetLanguageAndT pins the catalog lookup: a missing key returns
-// the key itself (the English string), a registered translation serves
-// the selected language, and the closest shipped catalog wins for a
-// requested language the bundle does not ship.
+// the key itself, a registered translation serves the selected
+// language, and the closest shipped catalog wins.
 func TestSetLanguageAndT(t *testing.T) {
 	t.Setenv("LC_ALL", "en_US.UTF-8")
 	if got := T("save attachment to: "); got != "save attachment to: " {

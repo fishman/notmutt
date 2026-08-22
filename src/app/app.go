@@ -37,8 +37,8 @@ const lockBudget = 10 * time.Second
 
 // pollWatchInterval is the external-poll stamp watch tick: how fast a
 // headless `notmutt poll` reaches running clients. A stat per tick is
-// cheap; the poll body itself is idempotent, so a stamp change across
-// N instances costs N no-op revision brackets at most.
+// cheap; the poll body is idempotent, so a stamp change costs N no-op
+// revision brackets at most.
 const pollWatchInterval = 5 * time.Second
 
 //go:embed lua/templates/*.lua
@@ -55,9 +55,8 @@ func Run() error {
 		return attachmentsOnce()
 	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
-		// the MCP stdio server (mcp.go): disabled by default - builds
-		// without the mcp+lua tags answer with the stub's not-built-in
-		// error
+		// the MCP stdio server (mcp.go): builds without the mcp+lua tags
+		// answer with the stub's not-built-in error
 		return serveMCP()
 	}
 	cfg, err := config.Load(configDir())
@@ -79,10 +78,10 @@ func Run() error {
 	defer cancel()
 	go worker.Start(ctx)
 
-	// DB open check plus per-view query validation (spec section 3:
-	// notmuch dry run for every view query). The empty path resolves
-	// inside the backend via `notmuch config get database.path`
-	// (argv-only, F4); the handle stays open for the process lifetime.
+	// DB open check plus per-view query validation (spec section 3). The
+	// empty path resolves inside the backend via `notmuch config get
+	// database.path` (argv-only, F4); the handle stays open for the
+	// process lifetime.
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
 		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
 	}
@@ -97,9 +96,9 @@ func Run() error {
 	view.SetThreaded(cfg.Views[cfg.ActiveView].Threads)
 	refresher := newRefresher(bus, worker, view, 0)
 
-	// views is the view registry: name -> view. The search tabs (the
-	// ctrl+f seam) register under their query; a closed tab's entry
-	// lingers until exit (bounded by the search-tab count, harmless).
+	// views is the view registry: name -> view. Search tabs (the ctrl+f
+	// seam) register under their query; a closed tab's entry lingers
+	// until exit (bounded by the search-tab count, harmless).
 	views := map[string]*core.View{view.ViewName(): view}
 
 	cjob := newCacheJob(bus, worker, view, cachePath())
@@ -111,7 +110,7 @@ func Run() error {
 	view.SetWindowBudget(b.MaxRows)
 	view.SetMsgDesc(b.Sort == "desc")
 	// the thread-tail marks derive from the view rows (never an open);
-	// the identity set is startup-captured like the seam closures above
+	// the identity set is startup-captured
 	view.SetMe(me)
 
 	// the search tab (the ctrl+f key): the app configures the fresh
@@ -134,10 +133,10 @@ func Run() error {
 		go runSearchQuery(worker, bus, v)
 	})
 
-	// the notmuch mail root (argv-only, F4 - the setupAccounts pattern):
-	// ONE resolution for the filter job, the fcc derivation, and the
-	// apply's move-after-tag. A failure disables the filter job and
-	// leaves the fcc empty (skipped on send) - the client still works.
+	// the notmuch mail root (argv-only, F4): ONE resolution for the
+	// filter job, the fcc derivation, and the apply's move-after-tag. A
+	// failure disables the filter job and leaves the fcc empty (skipped
+	// on send) - the client still works.
 	root, rootErr := mailRoot()
 	if rootErr != nil {
 		diag.Warn("filter: disabled", "err", rootErr.Error())
@@ -148,44 +147,41 @@ func Run() error {
 			if err := applyStaged(view, groups, worker, cfg, root); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
 			}
-			// the view changed either way (applied drops and baselines);
-			// a partial failure still renders the succeeded entries
+			// the view changed either way (applied drops and baselines); a
+			// partial failure still renders the succeeded entries
 			bus.Publish(core.ViewDiff{View: view.ViewName()})
 		}()
 	})
 
-	// open: the opened message's set resolves rows-first from the views
-	// (the full walk already loaded headers and paths - the open must
-	// not queue behind the walk that owns the worker); the worker fetch
-	// (ActThread) is the fallback for a thread in no view. The open job
-	// renders the files and runs the render transforms, and the TUI
-	// attaches the lines on ThreadLoaded (R13 two-step - content loads
-	// on open only). The preview variant (the p key) skips the
-	// read-marking; the TUI keeps the index surface for the popup. The
-	// headers flag is the h key: the render includes the full header
-	// block.
+	// open: the message set resolves rows-first from the views (the full
+	// walk already loaded headers and paths - the open must not queue
+	// behind the walk that owns the worker); the worker fetch (ActThread)
+	// is the fallback for a thread in no view. The open job renders the
+	// files and runs the render transforms; the TUI attaches the lines on
+	// ThreadLoaded (R13 two-step - content loads on open only). The
+	// preview variant (the p key) skips read-marking; the headers flag
+	// (the h key) includes the full header block.
 	tui.SetOpenHandler(func(threadID, msgID string, preview, headers bool, width int) {
-		// RenderAuto: the open default resolves per sender domain
-		// ([pager] default-views) once the message is in hand - the
-		// domain is message data, only the fetch has it
+		// RenderAuto resolves per sender domain ([pager] default-views)
+		// once the message is in hand - the domain is message data, only
+		// the fetch has it
 		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
 	})
 
-	// the render toggle (the v key in the pager), the source view
-	// (ctrl+u), and the link labels (the F key): the same open path
-	// with the other view - rows-first from the views, the worker
-	// re-fetches only when the thread left every view (the open job is
-	// the render owner, R13; the TUI never renders). labelLinks
-	// is the F key: the renderer prefixes every link with its "[N]"
-	// label and the target list rides the reply. The explicit modes
-	// never resolve against the domain map.
+	// the render toggle (the v key), the source view (ctrl+u), and the
+	// link labels (the F key): the same open path with another view -
+	// rows-first from the views, the worker re-fetches only when the
+	// thread left every view (the open job is the render owner, R13;
+	// the TUI never renders). labelLinks prefixes every link with its
+	// "[N]" label and the target list rides the reply. The explicit
+	// modes never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
 		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil)
 	})
 
-	// the attachment view (the v dialog's enter) and save (the s key
-	// in an attachment view): both re-extract the chosen attachment
-	// from the thread's message on demand - ParseMessage never keeps
+	// the attachment view (the v dialog's enter) and save (the s key in
+	// an attachment view): both re-extract the chosen attachment from
+	// the thread's message on demand - ParseMessage never keeps
 	// non-image part bytes, the demand path reads one part
 	tui.SetAttachmentViewHandler(func(threadID, msgID string, ordinal int) {
 		go viewAttachment(worker, bus, views, threadID, msgID, ordinal)
@@ -194,17 +190,16 @@ func Run() error {
 		go saveAttachment(worker, bus, views, threadID, msgID, ordinal, path)
 	})
 
-	// the categorize hotkey (the index c key): the app runs the
-	// attachment-category pass over the cursor thread's messages and
-	// publishes CategorizeResult (the save/skip lines for the log)
+	// the categorize hotkey (the index c key): the attachment-category
+	// pass over the cursor thread's messages, published as
+	// CategorizeResult (the save/skip lines for the log)
 	tui.SetCategorizeHandler(func(threadID string) {
 		go categorizeThread(worker, bus, threadID, &cfg)
 	})
 
 	// the remote image fetch (the load-remote-images mode): http(s)
 	// srcs fetch ONLY on the key, capped and off the render path
-	// (imgfetch.go); the TUI publishes the url through this seam. The
-	// tracking-pixel block travels with the config
+	// (imgfetch.go). The tracking-pixel block travels with the config
 	tui.SetImageFetchHandler(func(url string) {
 		go fetchImage(bus, url, cfg.Pager.AllowTrackingImages)
 	})
@@ -218,12 +213,12 @@ func Run() error {
 	// the Lua layer (R8): plugin files from <configdir>/lua, each
 	// registering its body_render as a render transform. The adapter
 	// compiles only under the lua build tag (the R12 pattern); default
-	// builds run the no-op stub. Loaded before any open can fire.
+	// builds run the no-op stub.
 	loadLuaPlugins(filepath.Join(configDir(), "lua"), cfg.Lua.Network)
 
 	// binding validation AFTER the plugin load: a binding may name a
-	// plugin-registered action (the lua build only - the stub registry
-	// is empty, so default builds reject them as unknown actions)
+	// plugin-registered action (default builds reject them - the stub
+	// registry is empty)
 	if err := validateBindings(&cfg); err != nil {
 		return err
 	}
@@ -244,17 +239,16 @@ func Run() error {
 	})
 
 	// attach commands: config tables register first, then Lua plugin
-	// registrations (later, per-plugin load order) - both land in the
-	// registry; the TUI reads it through the seam
+	// registrations (per-plugin load order) - both land in the registry;
+	// the TUI reads it through the seam
 	loadConfigAttachCommands(cfg)
 	tui.SetAttachCommandSource(func() []tui.AttachCommand { return attachCommandSnapshot() })
 
 	// the link opener (the pager F key): a mailto: link opens a compose
-	// dialogue (the same ComposeOpened path as reply - the TUI attaches
-	// the tab), everything else goes to the config's opener argv with
-	// the url appended (F4 - argv only, never shell-interpolated), a
-	// missing config opens with xdg-open. Fire-and-forget: the opener
-	// detaches its viewer and returns.
+	// dialogue (the TUI attaches the tab), everything else goes to the
+	// config's opener argv with the url appended (F4 - argv only, never
+	// shell-interpolated), a missing config opens with xdg-open.
+	// Fire-and-forget: the opener detaches its viewer and returns.
 	tui.SetOpenLinkHandler(func(url string) {
 		if strings.HasPrefix(strings.ToLower(url), "mailto:") {
 			st, err := mailtoCompose(cfg, root, url)
@@ -343,8 +337,8 @@ func Run() error {
 	}()
 
 	// the picker and prompt round trips (R8): the TUI publishes the
-	// results on the bus, this subscriber resumes the Lua action blocked
-	// on its waiter
+	// results, this subscriber resumes the Lua action blocked on its
+	// waiter
 	go func() {
 		ch := bus.Subscribe()
 		for e := range ch {
@@ -361,8 +355,7 @@ func Run() error {
 	// The loop owns the screen (tcell, record 23): keys and resizes
 	// come from its event channel, the model's EventCmd re-arms the
 	// bus. The loop paints on ShouldRender, so the model's 8ms frame
-	// tick IS the paint cadence - no renderer tick to align (the
-	// WithFPS machinery died with tea).
+	// tick IS the paint cadence.
 	quitCh := make(chan struct{})
 	go func() {
 		<-ctx.Done()
@@ -375,16 +368,15 @@ func Run() error {
 // BodyRenderHook is the render-transform boundary (R8's Lua layer
 // registers adapters here, decision record 20): a transform on the
 // thread's rendered lines, run on the async open job under the chain
-// deadline. It sees F1-clean plain text (pre-styling), never raw mail.
+// deadline, seeing F1-clean plain text (pre-styling), never raw mail.
 type BodyRenderHook func(ctx context.Context, lines []core.Line) ([]core.Line, error)
 
 var renderHooks []BodyRenderHook
 
 // renderHookBudget bounds one transform chain. A hook that exceeds it
 // drops its output and the render falls back to the un-hooked lines -
-// the pager never blocks on a plugin (the matcha freeze gap this
-// fixes). The context carries the deadline: a gopher-lua adapter can
-// wire it to SetContext as the kill switch.
+// the pager never blocks on a plugin. The context carries the deadline:
+// a gopher-lua adapter can wire it to SetContext as the kill switch.
 var renderHookBudget = time.Second
 
 // RegisterBodyRenderHook registers a thread-render transform. The
@@ -396,8 +388,8 @@ func RegisterBodyRenderHook(fn BodyRenderHook) {
 
 // applyBodyRenderHooks runs the registered transforms in order under
 // one chain deadline. A hook that errors or overruns the budget stops
-// the chain and falls back to the lines it received - the last good
-// render wins (F6: only the error is logged, never content).
+// the chain and falls back to the lines it received (F6: only the error
+// is logged, never content).
 func applyBodyRenderHooks(lines []core.Line) []core.Line {
 	if len(renderHooks) == 0 {
 		return lines
@@ -420,16 +412,13 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // render + transforms run here on the async job, never on the TUI's
 // event path). The message set resolves rows-first from the registered
 // views: the full walk already loaded headers and paths, and the walk
-// owns the worker for seconds, so an open must not queue behind it
-// (the walk still runs when the first rows are openable). The worker
-// fetch is the fallback when the thread is not in any view (a closed
-// tab's pager, a view reset race). The render narrows to the message
-// (msgID): the pager shows one message, never the whole thread - a
-// bare open (empty msgID) renders the thread's first. A full open
-// (preview=false) marks the opened message read with an ActTag -unread
-// (R1 - read is a tag; the refresh cycle reconciles it into the view).
-// The tag failure keeps the thread open - the render already succeeded
-// - and surfaces as a JobError.
+// owns the worker for seconds, so an open must not queue behind it. The
+// worker fetch is the fallback when the thread is in no view. The
+// render narrows to the message (msgID); a bare open renders the
+// thread's first. A full open (preview=false) marks the opened message
+// read with an ActTag -unread (R1 - read is a tag; the refresh cycle
+// reconciles it into the view). A tag failure keeps the thread open
+// (the render already succeeded) and surfaces as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
@@ -462,10 +451,10 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 	}
 	if mode == core.RenderAuto {
 		mode = openViewMode(defViews, msgs)
-		// an html-only message has no plain content: its plain render is
-		// the html structure with the colors stripped, so the open
-		// default upgrades it to the html view (an explicit default-views
-		// plain mapping cannot prefer content that does not exist)
+		// an html-only message's plain render is the html structure with
+		// colors stripped, so the open default upgrades it to the html
+		// view (an explicit plain mapping cannot prefer content that
+		// does not exist)
 		if mode == core.RenderPlain && len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 			if parsed, err := mail.ParseMessage(msgs[0].Paths[0]); err == nil && mail.ViewMime(parsed, core.RenderPlain) == "text/html" {
 				mode = core.RenderHTML
@@ -479,8 +468,7 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 	}
 	lines = applyBodyRenderHooks(lines)
 	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
-	// the read mark names the opened message, never the whole thread:
-	// the other messages in the thread keep their unread state
+	// the read mark names the opened message, never the whole thread
 	if !preview && msgID != "" {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,
@@ -494,10 +482,9 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 }
 
 // findMsg locates the opened message in the thread fetch by id; the
-// thread's first when no id rode the request (a bare open). The
-// request's id can be stale (the message moved between the index
-// fetch and the open): the fallback keeps the pager functional on the
-// first message.
+// thread's first when no id rode the request. A stale id (the message
+// moved between the index fetch and the open) keeps the pager
+// functional on the first message.
 func findMsg(msgs []core.Message, msgID string) (core.Message, bool) {
 	if msgID != "" {
 		for _, msg := range msgs {
@@ -536,9 +523,9 @@ func threadFromViews(views map[string]*core.View, threadID string) []core.Messag
 // extractAttachment reads the opened message's ordinal-th attachment
 // bytes and type - the shared demand path of the view and save seams
 // (one file open per demand, never held in memory). The message
-// resolves rows-first from the views; the worker fetch is the
-// fallback for a thread in no view (like openThread). foundID is the message actually used: the reply identity
-// must match the pager's.
+// resolves rows-first from the views; the worker fetch is the fallback
+// for a thread in no view (like openThread). foundID is the message
+// actually used: the reply identity must match the pager's.
 func extractAttachment(worker workerAPI, views map[string]*core.View, threadID, msgID string, ordinal int) (name, typ string, data []byte, foundID string, err error) {
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
@@ -563,8 +550,8 @@ func extractAttachment(worker workerAPI, views map[string]*core.View, threadID, 
 // chosen attachment to pager lines and publish AttachmentLoaded - the
 // TUI swaps the pager content until back re-opens the message. A
 // matching mailcap copiousoutput entry replaces the bytes with its
-// preview text (a pdf renders as pdftotext output, never as bytes);
-// a preview failure is an error, not a fallback to the raw dump.
+// preview text (a pdf renders as pdftotext, never as bytes); a preview
+// failure is an error, not a fallback to the raw dump.
 func viewAttachment(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, ordinal int) {
 	name, typ, data, foundID, err := extractAttachment(worker, views, threadID, msgID, ordinal)
 	if err != nil {
@@ -611,8 +598,7 @@ func saveAttachment(worker workerAPI, bus *core.Bus, views map[string]*core.View
 
 // openViewMode resolves the open key's default view for a thread: the
 // sender domain's configured default ([pager] default-views), plain
-// otherwise. The thread's first message is the thread identity - a
-// mapped domain's thread opens in that domain's view.
+// otherwise. The thread's first message is the thread identity.
 func openViewMode(defViews map[string]string, msgs []core.Message) core.RenderMode {
 	if len(msgs) > 0 && defViews != nil {
 		if d := senderDomain(msgs[0].Author); d != "" {
@@ -650,9 +636,8 @@ func senderDomain(from string) string {
 // the ticker; other sections reach onConfig.
 func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refresher, st *config.Store, fj *filterJob) {
 	ch := bus.Subscribe()
-	// interval 0 = the automatic poll is off (a nil channel never
-	// fires in the select); the refresh key still runs the poll body
-	// on demand.
+	// interval 0 = the automatic poll is off (a nil channel never fires
+	// in the select); the refresh key still polls on demand
 	var tickCh <-chan time.Time
 	var ticker *time.Ticker
 	if st.Config().Refresh.Interval > 0 {
@@ -663,15 +648,13 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 	poll := func() {
 		if fj != nil && st.Config().Filter.Enabled {
 			// the filter job owns `notmuch new`; the view cycle comes
-			// from its ActNew's WorkerDone (the refresher's own
-			// WorkerDone case below)
+			// from its ActNew's WorkerDone
 			go fj.run()
 			return
 		}
 		if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew}); err != nil || rpl.Err != nil {
-			// a backend without a New path (ErrUnsupported) is expected -
-			// the poll then degrades to the revision refresh, which picks
-			// up external new runs
+			// a backend without a New path (ErrUnsupported) degrades to
+			// the revision refresh, which picks up external new runs
 			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
 				diag.Warn("notmuch new", "err", fmt.Sprintf("%v %v", err, rpl.Err))
 			}
@@ -680,10 +663,9 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 	}
 	// the external-poll stamp: `notmutt poll` from another process
 	// touches it after a successful run; this watcher runs the poll
-	// body on change, so every open instance displays the update
-	// regardless of how many there are. A stat per tick is the
-	// cheapest wake-up signal - the revision work happens inside the
-	// poll body, and an unchanged stamp costs nothing.
+	// body on change, so every open instance displays the update. A
+	// stat per tick is the cheapest wake-up signal - an unchanged
+	// stamp costs nothing.
 	stamp := pollStampPath()
 	last, err := os.Stat(stamp)
 	var stampMtime time.Time
@@ -694,9 +676,7 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 	defer watch.Stop()
 	// the initial load runs in this event-loop goroutine: cycle and
 	// onConfig are serialized by construction - the store's first view
-	// change cannot race the startup walk (the startup caller used to
-	// launch cycle() unsynchronized; goto keys made the store a live
-	// writer, so the initial load moved in here)
+	// change cannot race the startup walk
 	r.cycle()
 	for {
 		select {
@@ -760,8 +740,7 @@ func setupAccounts() error {
 	// the physical resolution (the mover's own machinery): each matched
 	// account's hard-tag folders resolve against the real tree BEFORE
 	// anything is written - an account that resolves nothing fails
-	// setup, the generated config would promise moves that cannot
-	// happen.
+	// setup.
 	resolved, err := resolveSetupFolders(root, accs)
 	if err != nil {
 		return err
@@ -796,11 +775,10 @@ func setupAccounts() error {
 
 // resolveSetupFolders resolves each matched account's hard-tag folders
 // against the physical tree through the mover's own machinery
-// (Candidates + ResolveFolder - the account's folder space plus its
-// detected folder map; first existing wins, else the first candidate,
-// the sync tool creates the folder). An account whose folders resolve
-// to nothing fails setup. Returns per-account sorted "tag=path" lines
-// with absolute paths.
+// (Candidates + ResolveFolder - first existing wins, else the first
+// candidate, the sync tool creates the folder). An account whose
+// folders resolve to nothing fails setup. Returns per-account sorted
+// "tag=path" lines with absolute paths.
 func resolveSetupFolders(root string, accs []setup.Account) (map[string][]string, error) {
 	out := map[string][]string{}
 	for _, a := range accs {
@@ -867,11 +845,9 @@ func seedTemplates(dir string) {
 // mergedTemplates is the detection set: the built-ins (the lua build
 // evaluates the embedded template files, default builds the Go
 // fallback), then the OPT-IN contributed Lua templates from
-// <configdir>/lua/templates - only the names in active load (not all
-// templates are autoloaded; the seeded examples stay inert until
-// [setup] templates names them), sorted by name. A loaded Lua
-// template replaces the built-in of the same name (the R2 preset
-// override rule).
+// <configdir>/lua/templates - only the names in active load, sorted by
+// name. A loaded Lua template replaces the built-in of the same name
+// (the R2 preset override rule).
 func mergedTemplates(active []string) []setup.Template {
 	base := builtinTemplates()
 	if len(base) == 0 {
@@ -927,8 +903,8 @@ func cachePath() string {
 // pollSpec is the poll command's run mode: a fixed (from, to] window
 // replays a stored diff (the reproducibility harness - the revision
 // moves with every new run, so reruns pin the window instead of
-// recapturing it), and apply overrides the dry-run config for this
-// run only, the config file untouched.
+// recapturing it), and apply overrides the dry-run config for this run
+// only, the config file untouched.
 type pollSpec struct {
 	apply    bool
 	from, to uint64
@@ -1034,9 +1010,8 @@ func runPoll(worker workerAPI, cfg config.Config, root string, spec pollSpec) (s
 	if win == "" {
 		return "poll: no new mail", nil, nil
 	}
-	// the stamp means "state changed, wake the clients": a fresh
-	// capture saw the revision move; a windowed replay only writes
-	// when applying.
+	// the stamp means "state changed, wake the clients": a fresh capture
+	// saw the revision move; a windowed replay writes only when applying
 	if !spec.windowed || !rep.DryRun {
 		if err := touchPollStamp(); err != nil {
 			return "", nil, err
@@ -1065,8 +1040,8 @@ func pollDiff(worker workerAPI, cfg config.Config, root string, spec pollSpec, p
 			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
 				return nil, nil, "", fmt.Errorf("new: %v %v", err, rpl.Err)
 			}
-			// a backend without a New path (ErrUnsupported): no
-			// bracket, no classification - the poll reports no new mail
+			// a backend without a New path (ErrUnsupported): no bracket,
+			// no classification
 			return nil, nil, "", nil
 		}
 		pre, cur = rpl.Pre, rpl.Rev
@@ -1082,11 +1057,10 @@ func pollDiff(worker workerAPI, cfg config.Config, root string, spec pollSpec, p
 }
 
 // pollDiffLines renders the reviewable diff: per entry, the resolved
-// tag ops and the first path's move decision - the dry-run report's
-// review surface (what-would-happen; a live run reports the same).
-// Paths only, never message ids or subjects (F6). Capped like the
-// diag lines: a backfill must not drown the review, and the cap is
-// deterministic, so replayed outputs still compare byte-identical.
+// tag ops and the first path's move decision - what-would-happen (a
+// live run reports the same). Paths only, never ids or subjects (F6).
+// Capped deterministically like the diag lines, so replayed outputs
+// compare byte-identical.
 const pollDiffLineCap = 100
 
 func pollDiffLines(rep *filter.Report, mr *filter.MoveReport) []string {
@@ -1128,9 +1102,8 @@ func pollDiffLines(rep *filter.Report, mr *filter.MoveReport) []string {
 
 // pollStampPath is the cross-process poll signal: `notmutt poll`
 // touches the stamp after a successful run; every running client's
-// refresher watches its mtime and runs the poll body on change
-// (the delivery-gate mark pattern - a cache mtime as the signal).
-// Any number of instances pick the update up within one watch tick.
+// refresher watches its mtime and runs the poll body on change. Any
+// number of instances pick the update up within one watch tick.
 func pollStampPath() string {
 	base, err := os.UserCacheDir()
 	if err != nil {

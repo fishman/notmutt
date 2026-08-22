@@ -24,8 +24,8 @@ func TestStatusLineSegments(t *testing.T) {
 
 // TestStatusLineLegend pins the icon library: the selected message's
 // tags with icons render as "icon name" pairs in row order; unmapped
-// tags are skipped; account tags are skipped (they own the account
-// segment); icons off renders nothing.
+// tags and account tags (they own the account segment) are skipped;
+// icons off renders nothing.
 func TestStatusLineLegend(t *testing.T) {
 	ui := config.Default().UI
 	accounts := config.Default().AccountTags()
@@ -58,8 +58,7 @@ func TestStatusLineLegend(t *testing.T) {
 
 // TestStatusLineAccount pins the account segment: the cursor message's
 // account tag renders in the status row as its own colored pill, set
-// apart from the count by whitespace - never connected. The account
-// surface is the status bar, not the mail title.
+// apart from the count by whitespace - never connected.
 func TestStatusLineAccount(t *testing.T) {
 	ui := config.Default().UI
 	d := statusData{view: "inbox", visible: 2, account: "gmail"}
@@ -109,9 +108,8 @@ func TestStatusLineDropsLowPriorityOnNarrow(t *testing.T) {
 }
 
 // TestStatusLineMessage pins the reserved right slot: the transient
-// send status message renders rightmost in the row (the row never
-// shifts with it), the error form carries the error style, and no
-// message leaves the row exactly as before.
+// send status message renders rightmost (the row never shifts with
+// it), the error form carries the error style.
 func TestStatusLineMessage(t *testing.T) {
 	ui := config.Default().UI
 	st := DefaultStyles()
@@ -130,8 +128,7 @@ func TestStatusLineMessage(t *testing.T) {
 	if got := statusLine(st, ui, statusData{view: "inbox", visible: 2, msg: "sent to a@b.c"}); got == base {
 		t.Fatalf("the message must render: %q", got)
 	}
-	// truncation is pre-fitted: a message wider than the leftover drops
-	// cells, never the view pill
+	// truncation is pre-fitted: a message wider than the leftover drops cells, never the view pill
 	narrow := statusLineWidth(st, ui, statusData{view: "inbox", visible: 2, msg: "sent to a@b.c"}, 20)
 	if !strings.Contains(narrow, "inbox") {
 		t.Fatalf("the view must survive a narrow fit: %q", narrow)

@@ -16,9 +16,9 @@ import (
 	"notmutt/notmuch"
 )
 
-// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoak -v; Mutates the real DB
-// with a scratch tag, fully reversed. Prints counts and ids only - never
-// subjects or headers (privacy rule).
+// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoak -v; mutates the
+// real DB with a scratch tag, fully reversed. Prints counts and ids
+// only - never subjects or headers (privacy rule).
 func TestSoak(t *testing.T) {
 	if os.Getenv("NOTMUCH_SOAK") == "" {
 		t.Skip("soak runs against the real DB; set NOTMUCH_SOAK=1")
@@ -101,9 +101,10 @@ func TestSoak(t *testing.T) {
 	t.Logf("soak ok: %d inbox msgs, scratch tag applied and removed on %s", before, target)
 }
 
-// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoakStagedApply -v. Stages
-// and applies a folder move on one real message, verifies the DB state at
-// each step, then restores it exactly. Prints ids and tag names only.
+// Run: NOTMUCH_SOAK=1 go test ./app/ -run TestSoakStagedApply -v;
+// stages and applies a folder move on one real message, verifies the
+// DB state at each step, then restores it exactly. Prints ids and tag
+// names only.
 func TestSoakStagedApply(t *testing.T) {
 	if os.Getenv("NOTMUCH_SOAK") == "" {
 		t.Skip("soak runs against the real DB; set NOTMUCH_SOAK=1")
@@ -176,7 +177,7 @@ func TestSoakStagedApply(t *testing.T) {
 	}
 	t.Logf("soak apply ok: %s -> %v", target, got)
 
-	// restore now, so the end state is verified; the defer above stays as
+	// restore now so the end state is verified; the defer above stays as
 	// the failure-path backstop and is a no-op once the DB is back at
 	// `before` (the inverse ops only touch the diff)
 	worker.Call(notmuch.Action{Kind: notmuch.ActTag, Query: byID, TagOps: inverseOps(expected, before)})

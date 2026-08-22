@@ -55,18 +55,9 @@ func TestHTMLParseShapes(t *testing.T) {
 	}
 }
 
-// TestRenderHTMLLinks pins the F key's label render (easyjump style):
-// every link - an anchor href or a bare URL word - gets an inline
-// "[N]" label, and the labels' document order is the returned target
-// list (label N opens Links[N-1]). An anchor without an href is plain
-// text, never a label. The unlabeled render returns no links and
-// carries no labels - the labels are mode-scoped, never a permanent
-// decoration of the html view.
-// TestImageDeclaredSizes pins the email-declared display size (the
-// img width/height attrs or the style): the renderer carries it on
-// the image line and the decode targets it, so the mail's section
-// sizing and the rendered pixels agree. Percentages resolve against
-// the layout width; the style beats the presentation attributes.
+// TestImageDeclaredSizes pins the email-declared display size (img
+// width/height attrs or style): percentages resolve against the layout
+// width; the style beats the presentation attributes.
 func TestImageDeclaredSizes(t *testing.T) {
 	var buf bytes.Buffer
 	png.Encode(&buf, image.NewNRGBA(image.Rect(0, 0, 10, 10)))
@@ -92,6 +83,11 @@ func TestImageDeclaredSizes(t *testing.T) {
 	}
 }
 
+// TestRenderHTMLLinks pins the F key's label render (easyjump style):
+// every link - anchor href or bare URL word - gets an inline "[N]"
+// label in document order (label N opens Links[N-1]); an anchor
+// without an href is plain text, and the unlabeled render carries no
+// labels.
 func TestRenderHTMLLinks(t *testing.T) {
 	body := "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>" +
 		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n" +
@@ -141,12 +137,10 @@ func TestRenderHTMLLinks(t *testing.T) {
 	}
 }
 
-// TestBlockAnchorLinks pins the easyjump coverage of display:block
-// anchors (button links, responsive social modules): an anchor is a
-// link whatever its display value, so the block-split must not drop
-// its label - inline style, CSS rule, and cell content alike. The
-// pre-fix switch-order bug swallowed display:block anchors before the
-// 'a' case (10 of 24 anchors missing from the semicon fixture).
+// TestBlockAnchorLinks pins easyjump coverage of display:block anchors
+// (button links): an anchor is a link whatever its display value, so
+// the block-split must not drop its label - inline style, CSS rule,
+// and cell content alike.
 func TestBlockAnchorLinks(t *testing.T) {
 	body := "<p><a href=\"https://alpha.example.com/a\" style=\"display:block\">alpha button</a></p>\n" +
 		"<style>.btn{display:block}</style>\n" +
@@ -185,12 +179,10 @@ func TestBlockAnchorLinks(t *testing.T) {
 	}
 }
 
-// TestDisplayNotInheritedRender pins the img side of the same bug: an
-// img inside a display:block anchor in a cell must stay inline (its
-// row's word), not inherit block and render as a full-width cell
-// image - the semicon social icons regressed exactly this way. The
-// main flow's img is a block line by design; only the cell path
-// chooses by display.
+// TestDisplayNotInheritedRender pins the img side: an img inside a
+// display:block anchor in a cell stays inline (its row's word), never
+// a full-width cell image. The main flow's img is a block line by
+// design; only the cell path chooses by display.
 func TestDisplayNotInheritedRender(t *testing.T) {
 	body := "<table><tr><td><a href=\"https://alpha.example.com/a\" style=\"display:block\">" +
 		"<img src=\"https://x.example.com/icon.png\" width=\"24\" height=\"24\"> icon text</a></td></tr></table>\n"
@@ -207,11 +199,9 @@ func TestDisplayNotInheritedRender(t *testing.T) {
 	}
 }
 
-// TestTrackingPixelStripped pins the render-side beacon strip: an img
-// declaring 1x1 (width/height attrs or style declarations) is a read
-// receipt, not content - it drops at render, in the main flow and in
-// table cells alike, before the fetch path can ever see it. Real
-// images keep rendering.
+// TestTrackingPixelStripped pins the render-side beacon strip: a 1x1
+// img (attrs or style) is a read receipt, not content - it drops at
+// render, main flow and table cells alike. Real images keep rendering.
 func TestTrackingPixelStripped(t *testing.T) {
 	body := "<img src=\"https://x.example.com/pixel.gif\" width=\"1\" height=\"1\">\n" +
 		"<img src=\"https://x.example.com/pixel2.gif\" style=\"width:1px;height:1px\">\n" +
@@ -232,9 +222,8 @@ func TestTrackingPixelStripped(t *testing.T) {
 }
 
 // TestRenderHTMLBackground pins the html view's background contract: a
-// mail-declared background (CSS or the bgcolor attribute) becomes the
-// lines' default bg, a mail without one gets the light default - the
-// html view never renders on the theme's dark surface.
+// mail-declared background (CSS or bgcolor) becomes the lines' default
+// bg; without one, the light default - never the theme's dark surface.
 func TestRenderHTMLBackground(t *testing.T) {
 	lines := RenderHTML("<p>hi</p>", nil, 0)
 	if len(lines) == 0 || lines[0].Bg != "#ffffff" {
@@ -254,9 +243,8 @@ func TestRenderHTMLBackground(t *testing.T) {
 		}
 	}
 
-	// a dark background forces the contrast foreground: the unstyled
-	// text must read light on the dark page (the dark-bg mail bug was
-	// dark text derived against the white fallback)
+	// a dark background forces the contrast foreground: unstyled text
+	// must read light on the dark page
 	dark := RenderHTML(`<html><body style="background:#111111"><p>on dark</p></body></html>`, nil, 0)
 	if dark[0].Bg != "#111111" {
 		t.Fatalf("the dark background must be respected: %+v", dark[0])
@@ -290,8 +278,7 @@ func TestRenderHTMLBackground(t *testing.T) {
 		t.Fatal("the bg must be a hex color")
 	}
 
-	// the body background propagates to blank lines too (the block
-	// spacing row between paragraphs carries it)
+	// the body background propagates to blank lines too (block spacing)
 	lines = RenderHTML("<body style=\"background-color:#f0f0f0\"><p>a</p><p>b</p></body>", nil, 0)
 	blanks := 0
 	for _, l := range lines {

@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package compose is the send/reply dialogue state machine (R4): pure
-// Go - no UI code, no notmuch handle (R5). The tui renders it, the
-// app runs its sends; the state survives pauses (tab parking, editor
-// runs) because it lives here, not in a widget.
+// Go, no UI code, no notmuch handle (R5). The state survives pauses
+// (tab parking, editor runs) because it lives here, not in a widget.
 package compose
 
 import (
@@ -23,9 +22,8 @@ const (
 	ModeForward
 )
 
-// modeNames is the canonical Mode wire-name table: the dialogue's
-// event round trip parses names (parseMode) and renders them
-// (Mode.String) from one table - no drift between the directions.
+// modeNames is the canonical Mode wire-name table: the event round
+// trip parses (parseMode) and renders (Mode.String) from one table.
 var modeNames = map[Mode]string{
 	ModeCompose:  "compose",
 	ModeReply:    "reply",
@@ -53,9 +51,8 @@ const (
 )
 
 // Attachment is one composed attachment: the file path, its base name
-// on the wire, its size, and the MIME type its Content-Type will
-// carry (MimeTypeOf at attach time, application/octet-stream when the
-// extension is unknown).
+// on the wire, its size, and the MIME type its Content-Type will carry
+// (MimeTypeOf at attach time, octet-stream when the extension is unknown).
 type Attachment struct {
 	Name, Path string
 	Size       int64
@@ -64,8 +61,7 @@ type Attachment struct {
 
 // Security is the dialogue's crypto flag set (R10): none, sign,
 // encrypt, sign+encrypt. A dialogue flag only - the transport ignores
-// it (no crypto engine yet); it renders and survives the event round
-// trip.
+// it (no crypto engine yet) - but it renders and survives the round trip.
 type Security int
 
 const (
@@ -75,9 +71,8 @@ const (
 	SecuritySignEncrypt
 )
 
-// securityNames is the canonical Security wire-name table: the
-// dialogue's event round trip parses names (parseSecurity) and
-// renders them (Security.String) from one table.
+// securityNames is the canonical Security wire-name table: the round
+// trip parses (parseSecurity) and renders (Security.String) from one table.
 var securityNames = map[Security]string{
 	SecurityNone:        "none",
 	SecuritySign:        "sign",
@@ -98,11 +93,10 @@ func (s Security) Next() Security {
 
 // State is one dialogue (R4): fields, attachments, send progress,
 // error output. The signature is stored SEPARATELY from the body
-// (SignatureBody) - the body is the user's edited text, the signature
-// is re-attached at buffer build and assembly. A parsed-back buffer
-// whose tail no longer matches the attached signature detaches it
-// (the tail is the user's text now), so Body never carries an
-// attached block - the spec's exact-tail replace is structural.
+// (SignatureBody) - re-attached at buffer build and assembly. A
+// parsed-back buffer whose tail no longer matches detaches the
+// signature (the tail is the user's text now), so Body never carries
+// an attached block - the spec's exact-tail replace is structural.
 type State struct {
 	ID            string
 	Mode          Mode
@@ -133,15 +127,14 @@ func NewCompose(account, from, sigName, sigBody string) *State {
 	}
 }
 
-// SetSignature switches the signature (the fuzzy picker): the body is
-// untouched - the previous block, if still attached, is stored
-// separately, so replacing it is a field swap.
+// SetSignature switches the signature (the fuzzy picker): body
+// untouched - a field swap of the stored block.
 func (s *State) SetSignature(name, body string) {
 	s.Signature, s.SignatureBody = name, body
 }
 
-// AddAttachment stats path and appends it (name = base, size =
-// stat). Directories and missing paths error - the prompt stays open.
+// AddAttachment stats path and appends it (name = base, size = stat).
+// Directories and missing paths error - the prompt stays open.
 func (s *State) AddAttachment(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {

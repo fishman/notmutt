@@ -8,10 +8,10 @@ import (
 	"testing"
 )
 
-// TestDecodeSubject pins the RFC 2047 decode: a pure encoded-word, the
-// reply shape with an ASCII "Re: " prefix (the raw-header case - a
-// whole-string decode would fail it), a base64 word, a latin-1 word
-// via the charset reader, and the error paths keeping the raw text.
+// TestDecodeSubject pins the RFC 2047 decode: pure encoded-words, the
+// "Re: " prefix reply shape (a whole-string decode would fail it),
+// base64 and latin-1 words via the charset reader, and error paths
+// keeping the raw text.
 func TestDecodeSubject(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"hello", "hello"},

@@ -16,9 +16,8 @@ import (
 // SetCursor, CursorRow, SetCollapsed, SetAtts, SetTags, Tags,
 // SetGroups, Stage, StagedOps, Undo, ClearStaged, HasStaged,
 // IsStaged); touching Threads, message fields, or Collapsed from
-// another goroutine is a data race. The cache job's Atts writes are
-// T12 wiring and must also go through the view under its lock; UI tag
-// toggles go through SetTags the same way.
+// another goroutine is a data race. The cache job's Atts writes (T12
+// wiring) and UI tag toggles go through the view under its lock.
 type View struct {
 	Name      string
 	Query     string
@@ -32,48 +31,45 @@ type View struct {
 	rows      []Row // memoized flatten; rebuilt only when dirty
 	dirty     bool
 	// display filter (F): narrows the flattened rows at materialization.
-	// filterRows/filterIdx are parallel (filtered row -> full index);
-	// filterMap maps full index -> filtered index for the cursor. The
-	// filter is display-only: the thread set and the query are
-	// untouched, the maps re-derive on every dirty rebuild (R1 - the
-	// view stays a notmuch query).
+	// filterRows/filterIdx are parallel (filtered -> full index);
+	// filterMap maps full -> filtered index for the cursor. Display-only:
+	// the thread set and query are untouched, the maps re-derive on
+	// every dirty rebuild (R1 - the view stays a notmuch query).
 	filter     string
 	filterRows []Row
 	filterIdx  []int
 	filterMap  map[int]int
 	// mergeDepth/mergeDirty gate the dirty-mark during refresh fills
-	// (BeginMerge/EndMerge): merges inside an open batch never mark
-	// dirty individually, so the flatten stays stable across the
-	// intermediate keypresses and rebuilds once per batch end.
+	// (BeginMerge/EndMerge): merges in an open batch never mark dirty
+	// individually, so the flatten stays stable and rebuilds once per
+	// batch end.
 	mergeDepth int
 	mergeDirty bool
-	// gen is the view generation: bumped on Reset, so the hydrator can
-	// scope its dedupe, cursor, and merges to the view's current query
-	// (thread ids span folders - a wave started for one view must never
-	// land in another's rows).
+	// gen is the view generation: bumped on Reset, so the hydrator
+	// scopes its dedupe, cursor, and merges to the current query
+	// (thread ids span folders - a wave for one view must never land
+	// in another's rows).
 	gen uint64
-	// the tree window budget ([index.thread]): winRows rows per thread.
-	// Zero winRows = no window.
+	// the tree window budget ([index.thread]): winRows rows per thread;
+	// zero = no window.
 	winRows int
-	// msgDesc flips the flatten's per-thread row order (SetMsgDesc,
-	// the [index.thread] sort config): desc reverses the flattened
-	// rows so the thread reads newest-first.
+	// msgDesc flips the flatten's per-thread row order (SetMsgDesc, the
+	// [index.thread] sort config): desc reads the thread newest-first.
 	msgDesc bool
 	// me is the identity set for the thread-tail marks (SetMe, the
 	// account from fields): the sent-tag or address "me" detection in
 	// ClassifyRows. Zero = sent-tag identity only.
 	me []string
 	// threaded is the view's thread mode (the [view] threads config):
-	// threaded views (inbox, archive) render thread trees and hide
-	// deleted leaves; flat views (unread, deleted, search) are plain
-	// chronological message lists - one row per matched message, no
-	// tree. NewView defaults to threaded.
+	// threaded views (inbox, archive) render trees and hide deleted
+	// leaves; flat views (unread, deleted, search) are plain
+	// chronological lists - one row per message, no tree. NewView
+	// defaults to threaded.
 	threaded bool
 }
 
 // SetMe sets the identity set for the thread-tail marks (the account
-// from fields; MyAddrs). The app applies it at startup like the other
-// view configuration.
+// from fields; MyAddrs), applied at startup like the other config.
 func (v *View) SetMe(me []string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -81,18 +77,17 @@ func (v *View) SetMe(me []string) {
 	v.dirty = true
 }
 
-// SetWindowBudget bounds the tree window (the [index.thread] config):
-// each thread renders at most winRows rows starting at its WinStart.
-// Zero winRows disables the window.
+// SetWindowBudget bounds the tree window ([index.thread]): each thread
+// renders at most winRows rows from its WinStart; zero disables it.
 func (v *View) SetWindowBudget(winRows int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.winRows = winRows
 }
 
-// SetMsgDesc sets the flatten's message order inside a thread (the
-// [index.thread] sort config): desc reverses the flattened rows so the
-// thread reads newest-first like the index.
+// SetMsgDesc sets the flatten's message order inside a thread
+// ([index.thread] sort config): desc reads the thread newest-first
+// like the index.
 func (v *View) SetMsgDesc(desc bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -104,9 +99,9 @@ func NewView(name, query string) *View {
 	return &View{Name: name, Query: query, staged: map[string][]TagOp{}, threaded: true}
 }
 
-// SetThreaded sets the view's thread mode (the [view] threads config):
-// threaded views render trees and hide deleted leaves, flat views
-// (unread, deleted, search) are plain message lists.
+// SetThreaded sets the view's thread mode ([view] threads config):
+// threaded views render trees and hide deleted leaves; flat views are
+// plain message lists.
 func (v *View) SetThreaded(on bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -115,8 +110,7 @@ func (v *View) SetThreaded(on bool) {
 }
 
 // ViewFlat reports the flat mode: the refresher picks the
-// message-level walk, the per-message prune, and the per-message
-// refresh merge on it.
+// message-level walk, prune, and refresh merge on it.
 func (v *View) ViewFlat() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -125,8 +119,8 @@ func (v *View) ViewFlat() bool {
 
 // ViewName and ViewQuery are the locked identity reads: the refresher's
 // config switch rewrites the fields in place on its own goroutine
-// (SetIdentity), while the jobs read them for event labels and the
-// apply path builds identity queries - cross-goroutine by design.
+// (SetIdentity) while jobs read them for event labels - cross-goroutine
+// by design.
 func (v *View) ViewName() string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -139,8 +133,8 @@ func (v *View) ViewQuery() string {
 	return v.Query
 }
 
-// SetIdentity is the single write path for the view's name and query
-// (the refresher's onConfig switch).
+// SetIdentity is the single write path for the view's name and query (the
+// refresher's onConfig switch).
 func (v *View) SetIdentity(name, query string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -150,8 +144,8 @@ func (v *View) SetIdentity(name, query string) {
 
 // Reset drops the view's rows for a full re-load: a view switch renders
 // empty until the new query's first chunk lands, never the previous
-// view's rows. Staged ops survive - the buffer is keyed by message
-// identity, not position or view (R14).
+// view's rows. Staged ops survive - keyed by message identity, not
+// position or view (R14).
 func (v *View) Reset() {
 	v.mu.Lock()
 	v.Threads = nil
@@ -163,8 +157,8 @@ func (v *View) Reset() {
 	v.mu.Unlock()
 }
 
-// Gen is the view generation: the hydrator scopes its wave to it, so
-// a view switch neither suppresses nor misdirects in-flight fetches.
+// Gen is the view generation: the hydrator scopes its wave to it, so a
+// view switch neither suppresses nor misdirects in-flight fetches.
 func (v *View) Gen() uint64 {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -206,12 +200,11 @@ func (t *Thread) Count() int {
 	return n
 }
 
-// Rows flattens the thread forest depth-first. Collapsed threads render
-// only their root row. The flatten is memoized: only structure or
-// staged-state changes (MergeThreads, Stage/Undo, SetTags, SetGroups,
-// SetCollapsed) mark it dirty - message CONTENT updates (SetAtts) are
-// visible through the shared Msg pointers, so a cache scan or a
-// progress tick never rebuilds the full row model (the 129k-row case).
+// Rows flattens the thread forest depth-first; collapsed threads render
+// only their root row. Memoized: only structure or staged-state changes
+// (MergeThreads, Stage/Undo, SetTags, SetGroups, SetCollapsed) mark it
+// dirty - content updates (SetAtts) are visible through the shared Msg
+// pointers, so a cache scan never rebuilds the row model (129k-row case).
 func (v *View) Rows() []Row {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -227,14 +220,12 @@ func (v *View) rowsLocked() []Row {
 	var rows []Row
 	for _, t := range v.Threads {
 		full := flattenThread(t, t.Collapsed, v.threaded, v.msgDesc)
-		// the thread-tail marks: only a windowed thread marks - one with
-		// rows hidden above or below (the "+N more" ghosts). The marks
-		// classify the FULL tree and ride the rows through the window,
-		// so the recent-5 of a long thread tints wherever it sits in the
-		// window and a thread that fits renders unmarked. Computed in
-		// the flatten so the marks are memoized with the rows - the
-		// index tints without any open, and a rebuild re-derives them at
-		// the same cost.
+		// the thread-tail marks: only a windowed thread marks (rows
+		// hidden above or below). The marks classify the FULL tree and
+		// ride the rows through the window - a long thread tints
+		// wherever it sits, a thread that fits renders unmarked.
+		// Computed in the flatten so the marks are memoized with the
+		// rows; the index tints without any open.
 		if v.winRows > 0 && len(full) > v.winRows {
 			marks := ClassifyRows(full, v.me)
 			for j := range full {
@@ -242,19 +233,18 @@ func (v *View) rowsLocked() []Row {
 			}
 		}
 		out := window(full, t.WinStart, v.winRows)
-		// the tree-window overflow: a thread with rows hidden below the
-		// window marks its last emitted row with the count (the page
-		// move continues the thread there) and emits a ghost "+N more"
-		// indicator row in the free space under the thread
+		// the tree-window overflow: hidden tail marks the last emitted
+		// row with the count (the page move continues there) and emits
+		// a ghost "+N more" row under the thread
 		if v.winRows > 0 && len(full) > v.winRows {
 			start := max(0, min(t.WinStart, len(full)-v.winRows))
 			if n := len(full) - (start + v.winRows); n > 0 {
 				out[len(out)-1].More = n
 				out = append(out, Row{Ghost: true, ThreadID: t.ID, More: n})
 			}
-			// the top-side mirror: a window that starts mid-thread emits
-			// a leading ghost with the hidden-above count, so the rows
-			// over the window stay visible (the walk-up slides into them)
+			// the top-side mirror: a mid-thread start emits a leading
+			// ghost with the hidden-above count, so the rows over the
+			// window stay visible (the walk-up slides into them)
 			if start > 0 {
 				out = append([]Row{{Ghost: true, ThreadID: t.ID, MoreTop: start}}, out...)
 			}
@@ -280,7 +270,7 @@ func (v *View) rowsLocked() []Row {
 		// thread identity for summary rows (no message id - the index
 		// is search data). A message whose id carries no ops falls back
 		// to its thread's ops: an op staged on the stub row survives
-		// hydration (R14 - the staged state never vanishes mid-session).
+		// hydration (R14).
 		identity := msg.ID
 		if identity == "" {
 			identity = "t:" + rows[i].ThreadID
@@ -296,9 +286,8 @@ func (v *View) rowsLocked() []Row {
 		v.filterRows, v.filterIdx, v.filterMap = nil, nil, nil
 		return rows
 	}
-	// the display filter: rows that match stay, the rest drop. The
-	// cursor stays on its message when the filter hides it - the
-	// mapping falls back to the first visible row.
+	// the display filter: rows that match stay, the rest drop. A cursor
+	// the filter hides falls back to the first visible row.
 	full := rows
 	v.filterRows = v.filterRows[:0]
 	v.filterIdx = v.filterIdx[:0]
@@ -315,8 +304,7 @@ func (v *View) rowsLocked() []Row {
 }
 
 // rowMatches is the filter predicate: a case-insensitive substring
-// over the row's index data - author, subject, and tag names (the F
-// filter's "text or other data that exists in the index view").
+// over author, subject, and tag names (the F filter).
 func rowMatches(r Row, f string) bool {
 	msg := r.Msg
 	if msg == nil {
@@ -334,11 +322,10 @@ func rowMatches(r Row, f string) bool {
 	return false
 }
 
-// SetFilter narrows the displayed rows to the ones matching the text
+// SetFilter narrows the displayed rows to those matching the text
 // (case-insensitive substring over author, subject, and tags - the
-// live F filter). Display-only (R1): the query and the thread set are
-// untouched; merges keep feeding the view and re-derive the filter at
-// the next materialization.
+// live F filter). Display-only (R1): the query and thread set are
+// untouched; merges re-derive the filter at the next materialization.
 func (v *View) SetFilter(f string) {
 	v.mu.Lock()
 	v.filter = strings.ToLower(f)
@@ -354,9 +341,8 @@ func (v *View) Filter() string {
 }
 
 // collapseMsg is the message a collapsed thread row shows: the newest
-// unread message in the thread, or the newest message when nothing is
-// unread (the row keeps the root's tree position; the subject tells
-// what still needs reading). Nil for a thread without messages - the
+// unread message, or the newest when nothing is unread (the row keeps
+// the root's tree position). Nil when the thread has no messages - the
 // ghost root renders the stub. skipDeleted excludes deleted messages
 // (the threaded views' rule - the flat views never collapse).
 func collapseMsg(root *Node, skipDeleted bool) *Message {
@@ -383,15 +369,13 @@ func collapseMsg(root *Node, skipDeleted bool) *Message {
 }
 
 // flattenThread flattens one thread's tree into index rows. The
-// skipDeleted rule applies AFTER the tree is built over the thread's
-// full message set (the user's rule: fetch everything first, filter
-// after): a deleted message with children keeps its row - the
-// subtree hangs under it and removing it would break the hierarchy -
-// only a deleted LEAF vanishes from the threaded view. desc reverses
-// the flattened rows: the thread reads newest-first (the notmuch
-// tree itself is never reordered - the rows' depth and sibling
-// glyphs describe the reference structure, only the display order
-// flips, so the diff machinery's MsgLess ordering stays untouched).
+// skipDeleted rule applies AFTER the tree is built over the full
+// message set (fetch everything first, filter after): a deleted
+// message with children keeps its row (removing it would break the
+// hierarchy); only a deleted LEAF vanishes from the threaded view.
+// desc reverses the flattened rows - the thread reads newest-first,
+// while the tree itself is never reordered, so the diff's MsgLess
+// ordering stays untouched.
 func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 	var rows []Row
 	if t.Root == nil {
@@ -437,16 +421,13 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 	return rows
 }
 
-// window bounds one thread's flattened rows to the tree window: the
-// rows [start, start+winRows). Zero winRows passes the thread through
-// untouched; start is clamped to the valid range (merges can shrink
-// the flatten between slides). A window that starts mid-thread cuts
-// the leading tree columns: every row's Depth shifts by the first
-// row's depth (the marker of the first visible row lands at column 0),
-// so a deep thread's window still shows the subject lines. The shift
-// is display-only - the Siblings chains keep their true indexing, and
-// column c then shows the ancestor at true depth cut+c (the visible
-// row above), never a cut one.
+// window bounds one thread's flattened rows to [start, start+winRows).
+// Zero winRows passes the thread through; start is clamped (merges can
+// shrink the flatten between slides). A mid-thread start cuts the
+// leading tree columns: every Depth shifts by the first row's depth
+// (the first visible row's marker lands at column 0). Display-only -
+// the Siblings chains keep their true indexing, so column c shows the
+// ancestor at true depth cut+c, never a cut one.
 func window(full []Row, start, winRows int) []Row {
 	if winRows <= 0 {
 		return full
@@ -465,12 +446,11 @@ func window(full []Row, start, winRows int) []Row {
 }
 
 // MergeThreads diffs the incoming threads into the view: thread-level
-// diff plus per-thread message diffs for threads present on both sides.
-// Input is sorted defensively (the caller's slice is not modified).
-// Matched messages keep their identity; the snapshot reconciles their
-// fields (reconcile-then-replay is the ordering the optimistic layer
-// of T11/T12 builds on, per plan section 8). The cursor survives by
-// id.
+// diff plus per-thread message diffs for threads on both sides. Input
+// is sorted defensively (the caller's slice is not modified). Matched
+// messages keep their identity; the snapshot reconciles their fields
+// (reconcile-then-replay, the ordering the optimistic layer of
+// T11/T12 builds on, per plan section 8). The cursor survives by id.
 func (v *View) MergeThreads(threads []*Thread) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -495,10 +475,8 @@ func (v *View) MergeThreads(threads []*Thread) {
 		}
 		mops := DiffSorted(cur.msgs, in.msgs, MsgLess, func(m *Message) string { return m.ID })
 		cur.msgs = Apply(cur.msgs, mops)
-		// Matched keys keep old elements, so snapshot fields must be
-		// reconciled onto them. Reconcile-then-replay is the ordering
-		// the optimistic layer (T11/T12) builds on: apply snapshot
-		// truth first, then replay pending local ops.
+		// Matched keys keep old elements, so reconcile snapshot fields
+		// onto them (reconcile-then-replay, the T11/T12 ordering).
 		for i, j := 0, 0; i < len(cur.msgs) && j < len(in.msgs); {
 			c, f := cur.msgs[i], in.msgs[j]
 			if c.ID == f.ID {
@@ -527,16 +505,13 @@ func (v *View) MergeThreads(threads []*Thread) {
 
 // BeginMerge opens a merge-batching window: MergeThreads calls inside
 // it do not mark the view dirty, so Rows() keeps returning the last
-// flatten across the intermediate keypresses of a refresh fill.
-// EndMerge marks dirty once if any merge ran inside, so the flatten
-// rebuilds once per batch end. No-op when no batch is open: single
-// merges (tests, tag ops) keep their immediate dirty-mark. The depth
-// counter makes nested windows safe; an EndMerge without a matching
-// BeginMerge is a no-op.
+// flatten across a refresh fill's intermediate keypresses. EndMerge
+// marks dirty once if any merge ran inside. No-op when no batch is
+// open (single merges keep their immediate dirty-mark); the depth
+// counter makes nested windows safe.
 // Dirty reports whether the memoized rows need rebuilding: the batch
-// discipline defers the mark to EndMerge, so the batch owner publishes
-// its completion diff only when a merge actually landed inside - a
-// no-op wave must not self-trigger.
+// discipline defers the mark to EndMerge, so a no-op wave must not
+// self-trigger the completion diff.
 func (v *View) Dirty() bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -562,8 +537,8 @@ func (v *View) EndMerge() {
 	}
 }
 
-// stubThread reports a thread with only summary rows (no message has an
-// id - the refresh feed shape). A stub snapshot must never delete a
+// stubThread reports a thread with only summary rows (no message id -
+// the refresh feed shape). A stub snapshot must never delete a
 // hydrated tree (the MergeThreads guard).
 func stubThread(t *Thread) bool { return !hasRealMsg(t) }
 
@@ -577,9 +552,9 @@ func hasRealMsg(t *Thread) bool {
 }
 
 // MergeThread replaces one thread's messages with a fetched snapshot
-// (the hydrator path): the thread keeps its collapse and window state
-// and its sorted position; other threads are untouched. No-op when the
-// thread left the view mid-fetch (a view switch raced the reply).
+// (the hydrator path): the thread keeps its collapse, window state,
+// and sorted position; others are untouched. No-op when the thread
+// left the view mid-fetch (a view switch raced the reply).
 func (v *View) MergeThread(in *Thread) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -592,9 +567,8 @@ func (v *View) MergeThread(in *Thread) {
 	cur.LastDate = in.LastDate
 	cur.Root = buildTree(cur.msgs)
 	sort.Slice(v.Threads, func(i, j int) bool { return ThreadLess(v.Threads[i], v.Threads[j]) })
-	// the batch discipline of MergeThreads: the hydrator merges a
-	// whole wave under one BeginMerge, so the flatten rebuilds once
-	// per wave, not once per thread.
+	// the MergeThreads batch discipline: the hydrator merges a whole
+	// wave under one BeginMerge, so the flatten rebuilds once per wave.
 	if v.mergeDepth > 0 {
 		v.mergeDirty = true
 	} else {
@@ -603,8 +577,8 @@ func (v *View) MergeThread(in *Thread) {
 }
 
 // Hydrated reports whether the thread holds real messages (the stub
-// guard's positive side): the hydrator skips hydrated threads and the
-// refresher re-fetches changed ones.
+// guard's positive side): the hydrator skips these; the refresher
+// re-fetches changed ones.
 func (v *View) Hydrated(id string) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -618,8 +592,8 @@ func (v *View) Hydrated(id string) bool {
 
 // ThreadMsgs returns the thread's full message set - the walk's rows
 // carry headers and paths, the open path's rows-first resolution (an
-// open must not queue behind the full walk that owns the worker).
-// nil when the thread is not in the view.
+// open must not queue behind the full walk that owns the worker). nil
+// when the thread is not in the view.
 func (v *View) ThreadMsgs(id string) []*Message {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -632,11 +606,9 @@ func (v *View) ThreadMsgs(id string) []*Message {
 }
 
 // SlideWindow advances the thread's tree window by step rows and
-// reports whether it moved. False at the edges: the walk-through steps
-// (+-1) refuse when nothing hides in that direction or the thread fits
-// the budget, so the caller steps on normally. A larger step (the page
-// move) clamps to the tail instead of refusing - the hidden rows
-// exist, the tail window is the last chunk.
+// reports whether it moved. The walk-through steps (+-1) refuse at the
+// edges - nothing hides that way or the thread fits the budget; the
+// page move clamps to the tail instead of refusing.
 func (v *View) SlideWindow(threadID string, step int) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -671,7 +643,7 @@ func (v *View) SlideWindow(threadID string, step int) bool {
 }
 
 // WindowRows is the per-thread tree window budget ([index.thread]
-// max-rows); the page move advances a truncated thread by one chunk.
+// max-rows).
 func (v *View) WindowRows() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -692,9 +664,8 @@ func (v *View) WindowStart(threadID string) int {
 }
 
 // reconcileMsg copies snapshot fields from the fresh message onto the
-// retained one. Atts are never copied (the cache job owns them and
-// snapshots carry empty lists) and Paths are never copied (the
-// thread-fetch path returns none).
+// retained one. Atts are never copied (the cache job owns them) and
+// Paths are never copied (the thread-fetch path returns none).
 func reconcileMsg(cur, fresh *Message) {
 	cur.Timestamp = fresh.Timestamp
 	cur.Author = fresh.Author
@@ -721,9 +692,9 @@ func (v *View) SetCursor(id string) {
 
 // SetCursorIndex records the cursor's row index - the O(1) read the
 // paint path uses (moves write it, merges re-anchor it at
-// materialization). The id anchor survives: SetCursor(id) + SetCursorIndex
-// together leave both fields consistent, and the stub case (no id)
-// clears the anchor via SetCursor("").
+// materialization). The id anchor survives: SetCursor(id) +
+// SetCursorIndex leave both consistent; the stub case (no id) clears
+// the anchor via SetCursor("").
 func (v *View) SetCursorIndex(idx int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -737,10 +708,9 @@ func (v *View) SetCursorIndex(idx int) {
 
 // CursorRowIndex returns the last known cursor row index - the
 // fallback CursorRow/CursorIndex use when the cursor id is empty or
-// gone (stub rows and post-merge drift). While a filter is active the
-// index is the filtered-space one (the row list the caller renders);
-// a cursor whose message the filter hides reports the first visible
-// row.
+// gone (stub rows and post-merge drift). Under an active filter the
+// index is the filtered-space one; a cursor the filter hides reports
+// the first visible row.
 func (v *View) CursorRowIndex() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -760,8 +730,7 @@ func (v *View) CursorRow() (Row, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	// cached rows when clean: the unconditional flatten here was the
-	// per-paint O(all rows) stall at 33k (every render resolved the
-	// cursor through CursorRow)
+	// per-paint O(all rows) stall at 33k
 	if v.dirty || v.rows == nil {
 		v.rows = v.rowsLocked()
 		v.dirty = false
@@ -782,9 +751,9 @@ func (v *View) CursorRow() (Row, bool) {
 	return rows[v.lastRow], true
 }
 
-// SetCollapsed toggles a thread's collapsed state under the view lock.
-// It errors on unknown thread ids; collapse toggles go through the view
-// from now on, never by writing Threads[i].Collapsed directly.
+// SetCollapsed toggles a thread's collapsed state under the view lock;
+// errors on unknown ids. Collapse toggles go through the view, never
+// by writing Threads[i].Collapsed directly.
 func (v *View) SetCollapsed(id string, collapsed bool) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -814,9 +783,8 @@ func (v *View) Collapsed(id string) bool {
 }
 
 // ToggleCollapsed flips the thread's collapse state (the C key).
-// Collapsing re-anchors the cursor to the thread's root row - the
-// child rows vanish at the next materialization, so the anchor must
-// name a row that survives.
+// Collapsing re-anchors the cursor to the summary row - the child rows
+// vanish at the next materialization, so the anchor must survive.
 func (v *View) ToggleCollapsed(id string) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -824,8 +792,8 @@ func (v *View) ToggleCollapsed(id string) error {
 		if t.ID == id {
 			t.Collapsed = !t.Collapsed
 			if t.Collapsed {
-				// the anchor must name the row that survives the collapse:
-				// the summary shows collapseMsg, not the root
+				// anchor the cursor on the summary row (collapseMsg), not
+				// the root: it is the row that survives the collapse
 				if m := collapseMsg(t.Root, v.threaded); m != nil {
 					v.cursorID = m.ID
 				}
@@ -839,10 +807,9 @@ func (v *View) ToggleCollapsed(id string) error {
 	return fmt.Errorf("view: unknown thread %q", id)
 }
 
-// ToggleCollapseAll flips the whole index between the flat layout
-// (every thread one row) and the tree (all expanded): collapse-all
-// when any thread is expanded, expand-all when every thread is
-// collapsed. The cursor's thread survives by its root anchor.
+// ToggleCollapseAll flips the whole index between flat (one row per
+// thread) and tree: collapse-all when any thread is expanded,
+// expand-all when every thread is collapsed.
 func (v *View) ToggleCollapseAll() {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -873,9 +840,9 @@ func (v *View) SetAtts(msgID string, atts []Attachment) {
 	}
 }
 
-// SetTags replaces a message's tags under the view lock. UI tag toggles
-// go through here, never by writing Msg.Tags directly: the message
-// pointers are shared with the refresher's merge path.
+// SetTags replaces a message's tags under the view lock. UI toggles go
+// through here, never by writing Msg.Tags directly: the pointers are
+// shared with the refresher's merge path.
 func (v *View) SetTags(msgID string, tags []string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -886,11 +853,10 @@ func (v *View) SetTags(msgID string, tags []string) {
 }
 
 // Tags returns an identity's applied tags under the view lock; the
-// slice is shared, so callers copy before mutating it (SetTags /
+// slice is shared, so callers copy before mutating (SetTags /
 // SetThreadTags are the write paths). A message identity resolves its
-// message; a thread identity (t:threadID) resolves the thread's
-// summary stub, or the first message once the stub is gone (hydrated
-// rows). Unknown identities return nil.
+// message; a thread identity (t:threadID) resolves the summary stub,
+// or the first message once the stub is gone. Unknown ids return nil.
 func (v *View) Tags(identity string) []string {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -913,8 +879,8 @@ func (v *View) Tags(identity string) []string {
 	return nil
 }
 
-// identityExistsLocked reports whether the identity names something in
-// the view: a message id, or a thread for thread identities.
+// identityExistsLocked reports whether the identity names a message
+// id, or a thread for thread identities.
 func (v *View) identityExistsLocked(identity string) bool {
 	if strings.HasPrefix(identity, "t:") {
 		return findThread(v.Threads, identity[2:]) != nil
@@ -941,9 +907,9 @@ func (v *View) SetThreadTags(threadID string, tags []string) {
 
 // Remove drops an identity from the snapshot (R13 materialized-view
 // discipline): a message leaves its thread's tree (the thread stays
-// when other messages remain), a thread identity removes the whole
-// thread. The apply path calls it when notmuch reports the identity
-// no longer matches the view query; a later refresh reconciles truth.
+// when other messages remain); a thread identity removes the whole
+// thread. Called by the apply path when notmuch reports the identity
+// no longer matches the query; a later refresh reconciles truth.
 func (v *View) Remove(identity string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1012,12 +978,12 @@ func buildTree(msgs []*Message) *Node {
 	// every message a root: the walk's refs fallback ships no chains
 	// (docs/refs-from-terms.md), so a structure-less thread renders as
 	// a flat forest without the [...] marker - a genuine multi-root
-	// has at least one attached child and keeps the marker
+	// has an attached child and keeps the marker
 	return &Node{Children: roots, Forest: len(roots) == len(msgs)}
 }
 
 // parentOf scans references in reverse so the nearest present ancestor
-// wins over distant ones.
+// wins.
 func parentOf(m *Message, nodes map[string]*Node) *Node {
 	for _, ref := range slices.Backward(m.References) {
 		if ref == m.ID {
@@ -1031,8 +997,7 @@ func parentOf(m *Message, nodes map[string]*Node) *Node {
 }
 
 // SetGroups sets the exclusive tag groups the staged render resolves
-// against (R14). The app supplies them from the config store; the view
-// never knows the member list itself.
+// against (R14); the app supplies them from the config store.
 func (v *View) SetGroups(groups []TagGroup) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1040,8 +1005,8 @@ func (v *View) SetGroups(groups []TagGroup) {
 	v.dirty = true
 }
 
-// Groups returns a copy of the exclusive tag groups under the view lock;
-// callers may not mutate the view's slice.
+// Groups returns a copy of the exclusive tag groups under the view
+// lock; callers may not mutate the view's slice.
 func (v *View) Groups() []TagGroup {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1050,14 +1015,12 @@ func (v *View) Groups() []TagGroup {
 
 // Stage appends a pending tag op for an identity - a message id, or a
 // thread identity ("t:" + threadID) for summary rows: the index is
-// search data without message ids, and a tag op on a summary row is a
-// thread-level op (the apply path emits thread:<id>, notmuch's natural
-// unit - moving a thread moves all its messages). Staging an op
-// identical to one already staged cancels it (toggle semantics: r
-// twice is a no-op, r then a keeps both). Unknown identities are a
-// no-op: the message left the view. Staging bumps the generation: an
-// in-flight apply snapshot taken before it can no longer clear the
-// entry (ClearStaged is generation-guarded).
+// search data without message ids, so a summary-row op is thread-level
+// (the apply path emits thread:<id> - moving a thread moves all its
+// messages). An identical op already staged cancels it (toggle
+// semantics: r twice is a no-op, r then a keeps both). Unknown
+// identities are a no-op. Staging bumps the generation: an in-flight
+// apply snapshot can no longer clear the entry (generation-guarded).
 func (v *View) Stage(identity string, op TagOp) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1085,8 +1048,7 @@ func (v *View) Stage(identity string, op TagOp) {
 
 // StagedOps snapshots the buffer for the apply path, with the buffer
 // generation at snapshot time; ClearStaged(msgID, gen) no-ops unless
-// gen is still current, so ops staged during an in-flight apply cannot
-// be cleared by it.
+// gen is current, so in-flight apply cannot clear newer ops.
 func (v *View) StagedOps() (map[string][]TagOp, uint64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1098,7 +1060,7 @@ func (v *View) StagedOps() (map[string][]TagOp, uint64) {
 }
 
 // Undo discards all staged ops for a message (pure buffer drop, no DB
-// traffic). Unknown ids are a no-op.
+// traffic); unknown ids are a no-op.
 func (v *View) Undo(msgID string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1111,11 +1073,10 @@ func (v *View) Undo(msgID string) {
 }
 
 // ClearStaged removes the entry if the generation still matches, i.e.
-// nothing was staged or undone since the caller's snapshot. The guard
-// over-blocks: it no-ops when ANY message staged or undid since the
-// snapshot, not just this entry, leaving an already-applied entry
-// staged until the next apply or undo. Benign: notmuch tag ops are
-// idempotent.
+// nothing was staged or undone since the snapshot. The guard
+// over-blocks: it no-ops when ANY message staged or undid, not just
+// this entry, leaving an applied entry staged until the next apply or
+// undo. Benign: notmuch tag ops are idempotent.
 func (v *View) ClearStaged(msgID string, gen uint64) {
 	v.mu.Lock()
 	defer v.mu.Unlock()

@@ -6,10 +6,9 @@ package tui
 import "testing"
 
 // TestFuzzyAddressRanking pins the matcher's score ranking: query
-// "Mila" must rank the exact display form "Mila <mila@stlab.test>"
-// first, above every longer entry that shares the M-i-l-a subsequence
-// (the old first-position tie-break ranked alphabetically and lost).
-// Entries are fabricated - never real people's addresses.
+// "Mila" must rank "Mila <mila@stlab.test>" first, above every longer
+// entry sharing the M-i-l-a subsequence (the old first-position
+// tie-break ranked alphabetically and lost). Entries are fabricated.
 func TestFuzzyAddressRanking(t *testing.T) {
 	f := newFuzzy("address", "address:", []string{
 		"Maria Lopez-Diaz <maria.lopez@design.test>",
@@ -35,8 +34,7 @@ func TestFuzzyFilteredRanking(t *testing.T) {
 	f.query = "gmail"
 	got := f.filtered()
 	// entries are sorted at construction: [gmail, gmail-work, jane];
-	// both matches score the same run, the stable sort keeps entry
-	// order, so [0, 1]
+	// both matches score the same run, the stable sort keeps entry order, so [0, 1]
 	if len(got) != 2 || got[0] != 0 || got[1] != 1 {
 		t.Fatalf("filtered = %v", got)
 	}

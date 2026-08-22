@@ -14,21 +14,19 @@ import (
 )
 
 // TestExecCmdWiresStdio pins the exec.Command contract this migration
-// must not drop: a foreground TUI child (the editor, the attach picker)
-// gets the parent's terminal on all three fds. exec.Command wires nil
-// stdio to /dev/null - the child would launch invisible and unreadable
-// (the tea ExecProcess pattern, cmd.go).
+// must not drop: a foreground TUI child (the editor, the attach
+// picker) gets the parent's terminal on all three fds - nil stdio
+// launches it invisible (the tea ExecProcess pattern, cmd.go).
 func TestExecCmdWiresStdio(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("/proc/self/fd is linux-specific")
 	}
 	want := []string{fdTarget(t, 0), fdTarget(t, 1), fdTarget(t, 2)}
 	report := filepath.Join(t.TempDir(), "fds")
-	// the child reports its fd targets through fd 3; any output redirect
-	// would clobber the measured fd, so fds 0-2 are aliased to 3/4/5
-	// before the report opens (the alias is a dup of the original fd and
-	// resolves to the same target); the path rides as $1, never
-	// interpolated into the script
+	// the child reports its fd targets through fd 3; any output
+	// redirect would clobber the measured fd, so fds 0-2 are aliased
+	// to 3/4/5 before the report opens (a dup resolves to the same
+	// target); the path rides as $1, never interpolated
 	c := exec.Command("sh", "-c",
 		`exec 3<&0
 exec 4<&1

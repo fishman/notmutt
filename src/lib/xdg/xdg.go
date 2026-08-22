@@ -1,10 +1,9 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-// Package xdg resolves the XDG base directories (the spec read
-// directly, so stdlib quirks in one place: os.UserStateDir is absent
-// from this toolchain's stdlib). App-specific name suffixing belongs
-// to the caller.
+// Package xdg resolves the XDG base directories (os.UserStateDir is
+// absent from this toolchain's stdlib). App-specific name suffixing
+// belongs to the caller.
 package xdg
 
 import (

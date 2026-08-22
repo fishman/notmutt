@@ -11,20 +11,17 @@ import (
 
 // fuzzy is the selector dialogue (R4): entries, the filter query, the
 // selection. kind is the picker's identity ("account" | "address" |
-// "signature"), title is the popup's prompt line. Matching is
-// github.com/sahilm/fuzzy (the lazygit reference's matcher, v0.1.3):
-// the bonus/penalty scorer ranks consecutive runs and word-boundary
-// matches above scattered subsequences - "Mila" beats "Maria
-// Lopez-Diaz" for a "Mila" query.
+// "signature"), title the popup's prompt line. Matching is
+// github.com/sahilm/fuzzy (the lazygit matcher, v0.1.3): the scorer
+// ranks consecutive runs and word-boundary matches above scattered
+// subsequences - "Mila" beats "Maria Lopez-Diaz" for a "Mila" query.
 type fuzzy struct {
 	kind    string
 	title   string
 	entries []string
 	query   string
 	sel     int
-	// marks is the file chooser's attachment marks (the t key): the
-	// marked entry names render with a marker and attach with the
-	// commit selection. Nil in every other picker.
+	// marks: the file chooser's attachment marks (the t key); nil in every other picker.
 	marks map[string]bool
 }
 
@@ -34,9 +31,9 @@ func newFuzzy(kind, title string, entries []string) *fuzzy {
 	return &fuzzy{kind: kind, title: title, entries: entries}
 }
 
-// filtered returns the matching entry indices, ranked by the
-// matcher's score (best first, ties keep entry order - the sort is
-// stable). An empty query matches everything in entry order.
+// filtered returns the matching entry indices ranked by score (best
+// first, ties keep entry order - the sort is stable); an empty query
+// matches everything in entry order.
 func (f *fuzzy) filtered() []int {
 	if f.query == "" {
 		out := make([]int, len(f.entries))

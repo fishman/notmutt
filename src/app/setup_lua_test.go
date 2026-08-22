@@ -15,9 +15,8 @@ import (
 	"notmutt/setup"
 )
 
-// TestLuaTemplatesLoad pins the contribution contract: a template
-// file returns its name, the top-level match names, and the tag ->
-// candidate maps.
+// TestLuaTemplatesLoad: a template file returns its name, the top-level
+// match names, and the tag -> candidate maps.
 func TestLuaTemplatesLoad(t *testing.T) {
 	dir := t.TempDir()
 	templates := filepath.Join(dir, "templates")
@@ -57,9 +56,9 @@ return {
 	}
 }
 
-// TestLuaTemplatesOptIn pins the opt-in rule: only the names in the
-// active list load - an unlisted file is not even evaluated (a broken
-// unlisted template stays invisible).
+// TestLuaTemplatesOptIn: only the names in the active list load - an
+// unlisted file is not even evaluated (a broken unlisted template
+// stays invisible).
 func TestLuaTemplatesOptIn(t *testing.T) {
 	dir := t.TempDir()
 	templates := filepath.Join(dir, "templates")
@@ -82,9 +81,9 @@ func TestLuaTemplatesOptIn(t *testing.T) {
 	}
 }
 
-// TestLuaTemplateLoadErrorSkips pins the degrade rule: a listed bad
-// file is skipped, the good ones still load (the plugin load rule);
-// a file whose name field does not match its file name is skipped.
+// TestLuaTemplateLoadErrorSkips: a listed bad file is skipped, the good
+// ones still load; a file whose name field does not match its file name
+// is skipped.
 func TestLuaTemplateLoadErrorSkips(t *testing.T) {
 	dir := t.TempDir()
 	templates := filepath.Join(dir, "templates")
@@ -109,9 +108,8 @@ func TestLuaTemplateLoadErrorSkips(t *testing.T) {
 	}
 }
 
-// TestLuaTemplateSandbox pins the lib-less VM: a template has no
-// surface to call - os.load is not available, so the file cannot
-// escape its data shape.
+// TestLuaTemplateSandbox: a template has no callable surface - os.load
+// is unavailable, so the file cannot escape its data shape.
 func TestLuaTemplateSandbox(t *testing.T) {
 	dir := t.TempDir()
 	templates := filepath.Join(dir, "templates")
@@ -129,9 +127,9 @@ return { name = "evil", match = { "INBOX" }, folders = { inbox = { "INBOX" } } }
 	}
 }
 
-// TestMergedTemplates pins the merge: a listed Lua template replaces
-// the built-in of the same name, a new name adds after the built-ins,
-// an unlisted file never loads.
+// TestMergedTemplates: a listed Lua template replaces the built-in of
+// the same name, a new name adds after the built-ins, an unlisted file
+// never loads.
 func TestMergedTemplates(t *testing.T) {
 	dir := t.TempDir()
 	templates := filepath.Join(dir, "templates")
@@ -173,8 +171,8 @@ return { name = "vendor", match = { "INBOX" }, folders = { inbox = { "INBOX" } }
 	}
 }
 
-// TestSetupDetectionFromLua end-to-end: a contributed exchange
-// template detects an exchange-shaped account in the merged flow.
+// TestSetupDetectionFromLua end-to-end: a contributed exchange template
+// detects an exchange-shaped account in the merged flow.
 func TestSetupDetectionFromLua(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "exchange/INBOX"), 0700); err != nil {
@@ -214,10 +212,10 @@ return {
 	}
 }
 
-// TestBuiltinTemplatesMatchGoData pins the no-Lua fallback: the
-// embedded template files and setup.Templates are the same data, so
-// the default and lua builds detect identically. A drift breaks the
-// build - the files must change together.
+// TestBuiltinTemplatesMatchGoData (the no-Lua fallback): the embedded
+// template files and setup.Templates are the same data, so the default
+// and lua builds detect identically. A drift breaks the build - the
+// files must change together.
 func TestBuiltinTemplatesMatchGoData(t *testing.T) {
 	got := builtinTemplates()
 	if len(got) != len(setup.Templates) {
@@ -241,8 +239,8 @@ func TestBuiltinTemplatesMatchGoData(t *testing.T) {
 	}
 }
 
-// TestSetupDetectsProviderSeeds pins the shipped exchange/icloud/
-// outlook/zoho seeds against their folder shapes.
+// TestSetupDetectsProviderSeeds: the shipped exchange/icloud/outlook/
+// zoho seeds against their folder shapes.
 func TestSetupDetectsProviderSeeds(t *testing.T) {
 	root := t.TempDir()
 	for _, d := range []string{

@@ -6,10 +6,10 @@ package tui
 import "slices"
 
 // viewport is the pager widget: a scroll window over a pre-rendered
-// line list (R5 - the widget the mail pager, the help dialog, and the
-// compose form share). Offset math only; the content's styling stays
-// at the call sites. Hand-rolled like the index windowing: the bubbles
-// viewport package is not a dependency (R7 supply-chain bar).
+// line list (R5 - shared by the mail pager, the help dialog, and the
+// compose form). Offset math only; the content's styling stays at the
+// call sites. Hand-rolled like the index windowing (R7 - no bubbles
+// viewport dependency).
 type viewport struct {
 	lines  []string
 	offset int
@@ -27,16 +27,15 @@ func (v *viewport) setSize(w, h int) {
 	v.clamp()
 }
 
-// clamp keeps the offset inside [0, len-lines-height]; a window taller
-// than the content pins to the top.
+// clamp keeps the offset inside [0, len-lines-height]; a window taller than the content pins to the top.
 func (v *viewport) clamp() {
 	v.offset = max(0, min(v.offset, len(v.lines)-v.height))
 }
 
 // window returns the visible line range as a copy: the pager's render
 // pads short content, and the copy keeps the padding out of the lines
-// (a later render must see the clean content, not an ever-growing pile
-// of blank rows).
+// (a later render must see the clean content, not a growing pile of
+// blank rows).
 func (v *viewport) window() []string {
 	last := min(v.offset+v.height, len(v.lines))
 	return slices.Clone(v.lines[v.offset:last])
@@ -53,9 +52,7 @@ func (v *viewport) scrollUp(n int) {
 	v.clamp()
 }
 
-// pageDown/pageUp move a full window (pgdown/pgup); halfPageDown/Up
-// half a window (ctrl+d/ctrl+u, vim's default). The clamp pins the
-// last page to the tail, so repeated page-down ends on the bottom.
+// pageDown/pageUp move a full window (pgdown/pgup); halfPageDown/Up half one (ctrl+d/ctrl+u, vim's default). The clamp pins the last page to the tail.
 func (v *viewport) pageDown()     { v.offset += v.height; v.clamp() }
 func (v *viewport) pageUp()       { v.offset -= v.height; v.clamp() }
 func (v *viewport) halfPageDown() { v.offset += v.height / 2; v.clamp() }
@@ -71,9 +68,7 @@ func (v *viewport) scrollBottom() {
 	v.clamp()
 }
 
-// ensureVisible scrolls the window so row is on screen (the compose
-// form's follow-cursor): above the window scrolls up, below scrolls
-// down to it.
+// ensureVisible scrolls the window so row is on screen (the compose form's follow-cursor).
 func (v *viewport) ensureVisible(row int) {
 	if row < v.offset {
 		v.offset = row

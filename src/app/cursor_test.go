@@ -10,8 +10,8 @@ import (
 	"notmutt/core"
 )
 
-// TestCursorInvariant: the cursor must survive a merge when its message
-// survives the merge. Random lists and mutations, deterministic seed.
+// TestCursorInvariant: the cursor survives a merge when its message
+// does; random lists and mutations, deterministic seed.
 func TestCursorInvariant(t *testing.T) {
 	rng := rand.New(rand.NewSource(11))
 	for i := 0; i < 500; i++ {

@@ -16,8 +16,8 @@ import (
 	"notmutt/notmuch"
 )
 
-// fixtureMail writes a multipart/mixed mail with two attachments
-// (pdfName + photo.png) and returns its path. Fabricated data only.
+// fixtureMail writes a multipart/mixed mail (pdfName + photo.png) and
+// returns its path. Fabricated data only.
 func fixtureMail(t *testing.T, dir, name, subject, from, pdfName string, ts time.Time) string {
 	t.Helper()
 	msg := "From: " + from + "\nTo: alpha@example.com\nSubject: " + subject + "\n" +
@@ -81,8 +81,7 @@ func TestAttachmentTarget(t *testing.T) {
 	if got := attachmentTarget("/dl", "", meta, "travel", "boarding-pass.pdf"); got != "/dl/travel/boarding-pass.pdf" {
 		t.Fatalf("no-date target = %q", got)
 	}
-	// a full path is used verbatim: the plugin owns structure and
-	// filename, the layout is bypassed
+	// a full path is used verbatim: the plugin owns structure and filename, the layout is bypassed
 	if got := attachmentTarget("/dl", "YYYY-MM", meta, "travel/flights/Boarding Pass.pdf", "x.pdf"); got != "/dl/travel/flights/Boarding Pass.pdf" {
 		t.Fatalf("full path target = %q", got)
 	}
@@ -157,9 +156,9 @@ func TestSaveMessageAttachments(t *testing.T) {
 	}
 }
 
-// TestSaveMessageAttachmentsHookError pins the message-level error: a
-// hook error surfaces as the message's Err entry (the review surface),
-// nothing is saved for that message - and a clean message still saves.
+// TestSaveMessageAttachmentsHookError: a hook error surfaces as the
+// message's Err entry (the review surface), nothing saves for that
+// message - a clean message still saves.
 func TestSaveMessageAttachmentsHookError(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -184,9 +183,9 @@ func TestSaveMessageAttachmentsHookError(t *testing.T) {
 	}
 }
 
-// TestSaveMessageAttachmentsOutOfRange pins the ordinal contract: a
-// category key beyond the message's attachment count is an error
-// entry, the in-range saves proceed.
+// TestSaveMessageAttachmentsOutOfRange: a category key beyond the
+// message's attachment count is an error entry; the in-range saves
+// proceed.
 func TestSaveMessageAttachmentsOutOfRange(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -243,10 +242,9 @@ func (w *recWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return w.fjWorker.Call(a)
 }
 
-// TestCategorizeThread pins the hotkey pass: the cursor thread's
-// messages (thread:<tid>), the save/skip lines and tallies published
-// as CategorizeResult, and the error path publishing instead of
-// wedging.
+// TestCategorizeThread pins the hotkey pass: thread:<tid> messages,
+// save/skip lines and tallies as CategorizeResult, errors publish
+// instead of wedging.
 func TestCategorizeThread(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -296,8 +294,8 @@ func TestCategorizeThread(t *testing.T) {
 		t.Fatal("no CategorizeResult")
 	}
 
-	// a stale snapshot path (an external maildir rename between
-	// notmuch new runs) degrades to a skip line - the pass never aborts
+	// a stale snapshot path (an external maildir rename between notmuch
+	// new runs) degrades to a skip line - the pass never aborts
 	go categorizeThread(&recWorker{fjWorker: fjWorker{
 		delta: []core.Message{{ID: "m2"}},
 		snaps: []core.Message{{ID: "m2", Author: "a@example.com", Subject: "s", Paths: []string{filepath.Join(dir, "gone.eml")}}},
@@ -325,18 +323,16 @@ func TestCategorizeThread(t *testing.T) {
 	}
 }
 
-// failWorker answers every call with an error - the error path of
-// worker-driven passes.
+// failWorker answers every call with an error - the worker-error path.
 type failWorker struct{}
 
 func (failWorker) Call(notmuch.Action) (notmuch.Reply, error) {
 	return notmuch.Reply{}, errors.New("boom")
 }
 
-// TestRunAttachmentBackfill pins the command body: the query's ids
-// (ActQueryMsgs), the snapshots (paths), and the per-message save pass -
-// the filter engine's two-step. The dry run writes nothing, and re-runs
-// skip existing targets.
+// TestRunAttachmentBackfill pins the command body: ActQueryMsgs ids,
+// snapshot paths, the per-message save pass - the filter engine's
+// two-step. Dry run writes nothing; re-runs skip existing targets.
 func TestRunAttachmentBackfill(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -382,8 +378,8 @@ func TestRunAttachmentBackfill(t *testing.T) {
 	}
 }
 
-// TestRunAttachmentBackfillRelative pins the mail-root join: a
-// snapshot path relative to root resolves against it.
+// TestRunAttachmentBackfillRelative: a snapshot path relative to root
+// resolves against it.
 func TestRunAttachmentBackfillRelative(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()

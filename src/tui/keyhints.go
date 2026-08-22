@@ -12,8 +12,7 @@ import (
 
 // keyhintRow renders the active context's bindings as "key action"
 // pairs, sorted by key and truncated to the terminal width (R11 slot
-// reservation: the row never shifts with content). Labels are the
-// action names - config data, never hardcoded.
+// reservation). Labels are the action names - config data, never hardcoded.
 func keyhintRow(km map[string]string, w int) string {
 	keys := make([]string, 0, len(km))
 	for k := range km {
@@ -33,8 +32,7 @@ func keyhintRow(km map[string]string, w int) string {
 
 // bindingCtx is the context the bindings answer for: the preview
 // popup borrows the pager surface (its scroll keys ARE the pager
-// keys), so both the keyhint and the help derive the same way (R9 -
-// the binding data answers).
+// keys) - both the keyhint and the help derive the same way (R9).
 func (m Model) bindingCtx() string {
 	if m.preview {
 		return "pager"
@@ -42,8 +40,7 @@ func (m Model) bindingCtx() string {
 	return m.mode
 }
 
-// activeBindings resolves the current context's map, falling back to
-// the index map for modes without bindings.
+// activeBindings resolves the current context's map, falling back to the index map for modes without bindings.
 func (m Model) activeBindings() map[string]string {
 	if km := m.bindings[m.bindingCtx()]; km != nil {
 		return km
@@ -52,11 +49,9 @@ func (m Model) activeBindings() map[string]string {
 }
 
 // keyhint is the context keyhint row, extended while a chain prefix
-// is armed: pressing "g" lists "g g cursor-top" and "g r
-// reply-all", so the user sees what the prefix can become (R9 - the
-// binding data answers, no hardcoded list). The layer caches the row
-// per (mode, armed prefix, width) - a cursor move repaints it without
-// rebuilding.
+// is armed: pressing "g" lists "g g cursor-top" and "g r reply-all"
+// (R9 - the binding data answers, no hardcoded list). The layer
+// caches the row per (mode, armed prefix, width).
 func (m Model) keyhint() string {
 	sig := m.mode + "|" + strconv.FormatBool(m.preview) + "|" + m.pendingPrefix + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.hintLayer.get(sig, m.keyhintBuild)
@@ -78,9 +73,9 @@ func (m Model) keyhintBuild() string {
 
 // visibleBindings is the active context's map restricted to its shown
 // keys: visibility is opt-in (the show flag), the generic bindings
-// (paging, navigation) stay out of the keyhint row, the help dialog
-// shows every binding (R9 - the show flag is binding data). A store
-// without a Shown set (tests, pre-config) shows everything.
+// (paging, navigation) stay out of the keyhint, the help dialog shows
+// every binding (R9). A store without a Shown set (tests, pre-config)
+// shows everything.
 func (m Model) visibleBindings() map[string]string {
 	km := m.activeBindings()
 	if m.st == nil {
@@ -100,8 +95,8 @@ func (m Model) visibleBindings() map[string]string {
 }
 
 // keyFor finds the alphabetically-first key bound to an action (single
-// keys and chains both count) - the inverse of the dispatch table.
-// Deterministic: map iteration never drives output.
+// keys and chains both count) - the dispatch table's inverse; map
+// iteration never drives output.
 func keyFor(km map[string]string, action string) string {
 	keys := make([]string, 0, len(km))
 	for k := range km {
@@ -116,8 +111,7 @@ func keyFor(km map[string]string, action string) string {
 	return ""
 }
 
-// scrollKeys returns the pager map's scroll-up/down keys sorted - the
-// shared hint derivation for the preview popup and the help dialog.
+// scrollKeys returns the pager map's scroll-up/down keys sorted - the shared hint derivation for the preview popup and help dialog.
 func scrollKeys(pm map[string]string) []string {
 	keys := make([]string, 0, len(pm))
 	for k := range pm {
@@ -134,8 +128,7 @@ func scrollKeys(pm map[string]string) []string {
 }
 
 // previewHint derives the popup's hint row from the binding data: the
-// scroll keys from the pager map, the open key from the index map the
-// popup sits over, the close key from the pager's back action (R9).
+// pager's scroll keys, the index's open key, the pager's back action (R9).
 func (m Model) previewHint() string {
 	pm := m.bindings["pager"]
 	var parts []string
@@ -155,8 +148,7 @@ func (m Model) previewHint() string {
 // (helpRows) through a viewport - the pager widget, the same scroll
 // surface the mail thread uses. The pager scroll keys navigate it,
 // any other keypress closes it (the check runs before dispatch, so
-// the closing key never fires). The frame is always exactly m.height
-// lines, assembled like renderCompose (R11 slot reservation).
+// the closing key never fires). The frame is always exactly m.height lines (R11).
 func (m Model) renderHelp() string {
 	sig := m.mode + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.helpView.height) + "|" + strconv.Itoa(m.helpView.offset) + "|" + strconv.Itoa(m.styleVer)
 	return m.helpLayer.get(sig, m.helpBuild)
@@ -203,9 +195,7 @@ func (m Model) helpRows() []string {
 	return rows
 }
 
-// helpFooter derives the dialog's hint row from the pager binding data
-// (the surface borrows the pager keys): the scroll keys, the close
-// key, the help key (R9 - the data answers).
+// helpFooter derives the dialog's hint row from the pager binding data: the scroll, close, and help keys (R9 - the data answers).
 func (m Model) helpFooter() string {
 	pm := m.bindings["pager"]
 	var parts []string
@@ -221,8 +211,7 @@ func (m Model) helpFooter() string {
 	return strings.Join(parts, "  ")
 }
 
-// descriptions is the help vocabulary from the config store (nil in
-// stores without one: the description falls back to the action).
+// descriptions is the help vocabulary from the config store (nil without one - the description falls back to the action).
 func (m Model) descriptions() map[string]string {
 	if m.st == nil {
 		return nil
@@ -230,8 +219,7 @@ func (m Model) descriptions() map[string]string {
 	return m.st.Config().Descriptions
 }
 
-// actionDesc is the help description for a bound action: the config's
-// one-line text, or a tag action's derived line (the tag IS the data).
+// actionDesc is a bound action's help description: the config's one-line text, or a tag action's derived line (the tag IS the data).
 func actionDesc(descs, tagActions map[string]string, action string) string {
 	if d, ok := descs[action]; ok {
 		return d

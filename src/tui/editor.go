@@ -12,16 +12,13 @@ import (
 )
 
 // writeEditorBuffer writes the editor buffer to the tab's buffer file
-// (0600, F5): the first write creates the file, later writes reuse the
-// same path - the message-text row shows it for the tab's lifetime
-// (mutt's msgbody). The buffer holds ONLY the mail content (mutt's
-// shape - the email header is built from the dialogue fields, never
-// the editor). The write is the buffer contract's local half - the
-// dialogue state itself never leaves the model.
+// (0600, F5); later writes reuse the same path (mutt's msgbody - the
+// message-text row shows it for the tab's lifetime). The buffer holds
+// ONLY the mail content: the email header is built from the dialogue
+// fields, never the editor. The dialogue state never leaves the model.
 func writeEditorBuffer(st compose.State, path string) (string, error) {
 	if path == "" {
-		// mutt-family temp name: neovim's filetype detection maps
-		// mutt-*/neomutt-* basenames to the mail filetype
+		// mutt-family temp name: neovim maps mutt-*/neomutt-* basenames to the mail filetype
 		f, err := os.CreateTemp("", "mutt-notmutt-*")
 		if err != nil {
 			return "", err
@@ -36,8 +33,7 @@ func writeEditorBuffer(st compose.State, path string) (string, error) {
 }
 
 // editorCmd builds the $EDITOR run (fallback vi): whitespace-tokenized
-// argv, the buffer path appended (F4 - no shell, no interpolation).
-// The EDITOR value is trusted config, not mail content.
+// argv with the buffer path appended (F4 - no shell). EDITOR is trusted config.
 func editorCmd(path string) *exec.Cmd {
 	e := os.Getenv("EDITOR")
 	if strings.TrimSpace(e) == "" {
@@ -47,10 +43,9 @@ func editorCmd(path string) *exec.Cmd {
 	return exec.Command(parts[0], append(parts[1:], path)...)
 }
 
-// applyEditorResult reads the edited buffer and applies it back to
-// the state: the content (body + signature tail, detached per its
-// rule - an edited tail stays as the user's text). The header fields
-// never parse from the buffer; the dialogue rows own them.
+// applyEditorResult reads the edited buffer back: the body plus the
+// signature tail (an edited tail detaches and stays as the user's
+// text). Header fields never parse from the buffer - the dialogue rows own them.
 func applyEditorResult(st compose.State, path string) (compose.State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

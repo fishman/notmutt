@@ -20,7 +20,7 @@ func openPreview(t *testing.T, m Model, id string, lines []core.Line) Model {
 // TestAiStreamAppendRenders pins the summary stream: the first delta
 // replaces the placeholder, token-per-event deltas merge into a
 // flowing line, and newline deltas start fresh lines - all visible as
-// they arrive (a stale document would hide every appended line).
+// they arrive.
 func TestAiStreamAppendRenders(t *testing.T) {
 	m := model()
 	next, _ := m.Update(EventMsg{Event: core.AiStarted{JobID: "j1", ThreadID: "t1"}})
@@ -38,8 +38,8 @@ func TestAiStreamAppendRenders(t *testing.T) {
 
 // TestPreviewShrinkNoPanic pins the stale-layout bug: a render with a
 // long body builds the preview's expanded layout (doc/imgFrom), and
-// replacing the body with a shorter one must drop the layout - the old
-// row map pointed past the new, shorter line list (index out of range).
+// replacing the body with a shorter one must drop the layout - the
+// old row map pointed past the new, shorter line list.
 func TestPreviewShrinkNoPanic(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.composeTab().Body = strings.Repeat("a line of reply text\n", 20)
@@ -56,8 +56,7 @@ func TestPreviewShrinkNoPanic(t *testing.T) {
 // TestPreviewStaysInIndexAndShowsBox pins the preview surface: p opens
 // the popup over the index (mode stays "index"), the box carries the
 // row's subject as its title, the loaded content lands inside it, and
-// the keyhint derives the pager keys (activeBindings flips with the
-// popup).
+// the keyhint derives the pager keys (activeBindings flips).
 func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	stubOpenHandler(t)
 	m := model()
@@ -79,8 +78,7 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 
 // TestPreviewScrollsAndCloses pins the popup keys: the pager scroll
 // keys scroll the box (index cursor untouched), q closes it and drops
-// the pager. A long fixture body makes the preview window movable
-// (the box is only 14 rows at 80x24).
+// the pager. A long fixture body makes the preview window movable.
 func TestPreviewScrollsAndCloses(t *testing.T) {
 	stubOpenHandler(t)
 	m := model()
@@ -138,8 +136,7 @@ func TestPreviewOpensFull(t *testing.T) {
 	}
 }
 
-// TestPreviewStaleReplyDrops pins the async guard: a preview reply
-// landing after the popup closed must not force the thread open.
+// TestPreviewStaleReplyDrops pins the async guard: a preview reply landing after the popup closed must not force the thread open.
 func TestPreviewStaleReplyDrops(t *testing.T) {
 	stubOpenHandler(t)
 	m := model()
@@ -151,9 +148,7 @@ func TestPreviewStaleReplyDrops(t *testing.T) {
 	}
 }
 
-// TestPreviewTargetWinsOverRacingOpen pins the FIFO ordering: a full
-// open for another thread landing mid-preview must not stick - the
-// preview target's reply re-asserts the popup over the index.
+// TestPreviewTargetWinsOverRacingOpen pins the FIFO ordering: a full open for another thread landing mid-preview must not stick - the preview target's reply re-asserts the popup.
 func TestPreviewTargetWinsOverRacingOpen(t *testing.T) {
 	stubOpenHandler(t)
 	m := model()

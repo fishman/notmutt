@@ -55,9 +55,8 @@ func (s *Store) Config() Config {
 }
 
 // cloneStyleTable deep-copies one theme variant: every style's Attrs
-// slice gets its own backing array and the tag map is cloned (the same
-// discipline as TagGroups above - a Config() caller mutating the copy
-// must never touch the store).
+// slice gets its own backing array and the tag map is cloned, so a
+// Config() caller mutating the copy never touches the store.
 func cloneStyleTable(t StyleTable) StyleTable {
 	for _, s := range []*Style{
 		&t.Normal, &t.Indicator, &t.Status, &t.Progress, &t.Error,
@@ -119,8 +118,7 @@ func (s *Store) SetThemeVariant(name string) error {
 
 // SetActiveView moves the active-view pointer (the view switch's
 // single write path, R8): the refresher re-reads the entry and
-// full-reloads the new query. The views themselves are config data -
-// this only selects among them.
+// full-reloads the new query. It only selects among config views.
 func (s *Store) SetActiveView(name string) error {
 	s.mu.Lock()
 	if _, ok := s.cfg.Views[name]; !ok {

@@ -18,18 +18,15 @@ import (
 
 // renderRow renders the fixed-slot template (R11): number, flags,
 // attachment, signed, date, author, tags, subject. The number and tag
-// slots are the variable-width slots: each grows to the widest on the
-// page (the caller passes the per-render widths) so the columns align
-// without padding waste. The subject is the flexible last slot - the
-// thread tree run is prepended in it, so the subject moves with the
-// thread indent (mutt's %T placement) and no column alignment is
-// needed for the depth. The subject renders in full and padRow clamps
-// the row to the terminal width, so the title takes the rest of the
-// line. Optional slots reserve width; every slot renders through its
-// style, so the line carries per-slot SGR runs (the outer row style
-// is applied later by padRow). Glyphs and the tag-slot cap come from
-// config data, never hardcoded. Account tags never render here - the
-// account lives in the status bar (R2), not the mail title.
+// slots are variable-width, growing to the widest on the page. The
+// subject is the flexible last slot - the thread tree run prepends in
+// it, so the subject moves with the thread indent (mutt's %T
+// placement); it renders in full, padRow clamps the row to the
+// terminal width. Optional slots reserve width; every slot renders
+// through its style, so the line carries per-slot SGR runs (the outer
+// row style applies later by padRow). Glyphs and the tag-slot cap
+// come from config data. Account tags never render here - the account
+// lives in the status bar (R2), not the mail title.
 func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth int, selected bool, accountTags map[string]bool, query string, mark core.MsgMark) string {
 	sg := st.sgr
 	// the row keeps its slot styles; the selection is the cursor
@@ -116,8 +113,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	subject := core.SanitizeControls(row.Msg.Subject)
 	if row.Collapsed && row.Count > 1 {
 		// the collapsed marker: the tree glyph plus the hidden-row count
-		// in the [index.collapsed] style - without it a collapsed thread
-		// is indistinguishable from a plain thread root
+		// in the [index.collapsed] style - without it a collapsed thread looks like a plain root
 		b.WriteString(sg.collapsed.render(ui.Glyphs.Tree + strconv.Itoa(row.Count-1)))
 		b.WriteByte(' ')
 	} else {
@@ -128,12 +124,11 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 }
 
 // treePrefix renders the thread tree run (R3): the root marker for a
-// thread with children (depth 0, Count > 1), indentation plus the
-// branch/leaf marker below the root. The vertical at column c draws
-// iff the ancestor at depth c+1 (Depth-1-c levels up, neomutt's
-// conditional pfx) has a next sibling. The glyphs carry their own
-// trailing space (config data), so a zero-width prefix (stubs, single
-// messages) leaves the flat layout byte-identical.
+// thread with children (depth 0, Count > 1), then indentation plus the
+// branch/leaf marker. The vertical at column c draws iff the ancestor
+// at depth c+1 (Depth-1-c levels up, neomutt's conditional pfx) has a
+// next sibling. Glyphs carry their own trailing space (config data),
+// so zero-width prefixes leave the flat layout byte-identical.
 func treePrefix(r core.Row, g config.Glyphs) string {
 	if r.Depth == 0 {
 		if r.Count > 1 {
@@ -158,10 +153,9 @@ func treePrefix(r core.Row, g config.Glyphs) string {
 	return b.String()
 }
 
-// renderHighlighted renders s through style with every occurrence of
-// query in hl instead (the / search match, case-insensitive); an
-// empty query renders plain. Byte offsets from Index are rune-safe
-// boundaries, so the runs never split a character.
+// renderHighlighted renders s through style, every query occurrence
+// in hl (the / search match, case-insensitive); empty query renders
+// plain. Index's offsets are rune-safe, so runs never split a character.
 func renderHighlighted(s, query string, style, hl sgr) string {
 	if query == "" {
 		return style.render(s)
@@ -181,8 +175,7 @@ func renderHighlighted(s, query string, style, hl sgr) string {
 	}
 }
 
-// rowTagList is the tag list a row renders in its tag slot: staged
-// rows show the staged set, ghost rows none.
+// rowTagList is the tag list a row renders in its tag slot: staged rows show the staged set, ghost rows none.
 func rowTagList(row core.Row) []string {
 	if row.Msg == nil {
 		return nil
@@ -199,9 +192,9 @@ func flags(tags []string) string {
 
 // flagLetters is the canonical status-flag lookup table: tag -> the
 // letter it owns in the row-start flags cell (mutt's %S index flags as
-// tags, R1: client state is tags, not flags). A tag with an entry never
-// renders in the tag slot (flagTag) - it renders its letter in the
-// flags slot (flagChars). One table, both consumers.
+// tags, R1: client state is tags, not flags). A tag with an entry
+// renders its letter in the flags slot, never the tag slot (flagTag).
+// One table, both consumers.
 var flagLetters = map[string]byte{
 	"new":       'N',
 	"unread":    'N',
@@ -211,9 +204,7 @@ var flagLetters = map[string]byte{
 	"trash":     'D',
 }
 
-// flagTag reports whether tag is a flag-slot tag (a flagLetters key):
-// it owns a letter in the row-start flags cell and never renders in
-// the tag slot.
+// flagTag reports whether tag is a flag-slot tag (a flagLetters key): it owns a row-start flags letter and never renders in the tag slot.
 func flagTag(tag string) bool {
 	_, ok := flagLetters[tag]
 	return ok
@@ -231,9 +222,8 @@ func flagChars(tags []string) string {
 
 // signedIcon renders the signed marker slot at the row start, right
 // after the attachment slot: the signed tag's icon (config data,
-// ui.tags.icons) when the message is signed. The caller pads the slot
-// to 2 cells - the double-width lock emoji fits without shifting the
-// following columns (R11 slot reservation).
+// ui.tags.icons) when signed. The caller pads the slot to 2 cells -
+// the double-width lock emoji fits without shifting columns (R11).
 func signedIcon(m *core.Message, t config.UITags) string {
 	if slices.Contains(m.Tags, "signed") {
 		if t.ShowIcons && t.Icons["signed"] != "" {
@@ -246,10 +236,9 @@ func signedIcon(m *core.Message, t config.UITags) string {
 
 // attachIcon renders the attachment slot at the row start: the marker
 // tag's icon (config data, ui.tags.attach + icons) when the message
-// carries the marker tag or the cache found attachments. The marker tag
-// never repeats in the tag slot (tagGlyphs skips it). The caller pads the
-// slot to 2 cells - double-width glyphs (the paperclip emoji) fit without
-// shifting the following columns (R11 slot reservation).
+// carries the marker tag or the cache found attachments. The marker
+// tag never repeats in the tag slot (tagGlyphs skips it); the caller
+// pads the slot to 2 cells so double-width glyphs fit (R11).
 func attachIcon(m *core.Message, t config.UITags) string {
 	if (t.Attach != "" && slices.Contains(m.Tags, t.Attach)) || len(m.Atts) > 0 {
 		if t.ShowIcons && t.Icons[t.Attach] != "" {
@@ -264,16 +253,15 @@ func formatDate(ts int64) string {
 	return time.Unix(ts, 0).Format("06/01/02 15:04")
 }
 
-// tagGlyphs renders up to max tags as styled glyphs, first of the
-// display order; the tag-groups priority list supplies the order later
-// (spec section 6). Each glyph renders through its per-tag style (R11),
-// falling back to the default tag style. A tag with an icon entry in the
-// ui.tags.icons dict renders the icon instead of its name (muttrc
-// tag-transforms); flag-slot tags (flagTag) and the signed marker tag
-// are skipped - they own row-start cells (flagChars, signedIcon) - the
-// attachment marker tag is skipped too - it owns the attachment slot
-// at the row start - and account tags are skipped - the account lives
-// in the status bar (R2), never the mail title.
+// tagGlyphs renders up to max tags as styled glyphs in display order
+// (the tag-groups priority list supplies the order later, spec section
+// 6), each through its per-tag style (R11), falling back to the
+// default tag style. An icon entry in ui.tags.icons renders instead of
+// the name (muttrc tag-transforms). Skipped: flag-slot tags (flagTag)
+// and the signed marker tag - they own row-start cells (flagChars,
+// signedIcon); the attachment marker tag - it owns the attachment
+// slot; account tags - the account lives in the status bar (R2),
+// never the mail title.
 func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITags, accountTags map[string]bool) string {
 	var b strings.Builder
 	n := 0
@@ -285,8 +273,7 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITag
 			break
 		}
 		if t.ShowIcons && t.Icons[tag] != "" {
-			// icons are config glyphs (1-2 cells): natural width, one
-			// separator - padding would leave gaps between icons
+			// icons are config glyphs (1-2 cells): natural width, one separator - padding would leave gaps
 			b.WriteString(tagStyle(tag).render(t.Icons[tag]))
 			b.WriteByte(' ')
 			n++
@@ -304,8 +291,7 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITag
 // their natural width, names in full, one separator space per pair.
 // The per-page tag slot width is the widest run among the visible
 // rows; rows pad to it, so the subject column aligns within the page.
-// The skip list mirrors tagGlyphs - the width measures exactly the run
-// the render emits.
+// The skip list mirrors tagGlyphs.
 func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bool) int {
 	n, cells := 0, 0
 	for _, tag := range tags {
@@ -328,9 +314,7 @@ func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bo
 	return cells
 }
 
-// padTagRun pads a styled tag run to the page's slot width; the pad
-// renders in the slot's style, so the blank cells carry the row's
-// background like every other slot.
+// padTagRun pads a styled tag run to the page's slot width; the pad renders in the slot's style, so blank cells carry the row's background.
 func padTagRun(run string, width int, tagStyle func(string) sgr) string {
 	if width <= 0 {
 		return ""
@@ -341,8 +325,7 @@ func padTagRun(run string, width int, tagStyle func(string) sgr) string {
 	return run
 }
 
-// truncCells truncates s to at most w terminal cells; padCellsRight pads
-// it to exactly w cells (wcwidth, not runes).
+// truncCells truncates s to at most w terminal cells; padCellsRight pads it to exactly w (wcwidth, not runes).
 func truncCells(s string, w int) string {
 	var b strings.Builder
 	cells := 0
@@ -362,8 +345,7 @@ func padCellsRight(s string, w int) string {
 	return t + strings.Repeat(" ", w-runewidth.StringWidth(t))
 }
 
-// stripANSI removes SGR sequences (ESC [ ... m) from s; other control
-// chars never reach rendered lines (SanitizeControls ran on the content).
+// stripANSI removes SGR sequences (ESC [ ... m) from s; other control chars never reach rendered lines (SanitizeControls ran).
 func stripANSI(s string) string {
 	if !strings.ContainsRune(s, '\x1b') {
 		return s
@@ -386,8 +368,7 @@ func stripANSI(s string) string {
 	return b.String()
 }
 
-// truncateStyled truncates a styled string to at most w visible cells;
-// SGR runs are zero-width and kept whole, so the line stays parseable.
+// truncateStyled truncates a styled string to at most w visible cells; SGR runs are zero-width and kept whole, so the line stays parseable.
 func truncateStyled(s string, w int) string {
 	if runewidth.StringWidth(stripANSI(s)) <= w {
 		return s
@@ -422,9 +403,8 @@ func truncateStyled(s string, w int) string {
 // last completed SGR open re-emits when the cut lands inside its run,
 // so the tail keeps the style it would otherwise lose. A reset inside
 // the skipped region closes the tracked open. A line fully scrolled
-// past returns empty - the content is gone, never the head again (the
-// flip a width-guard would cause). The mirror of truncateStyled for
-// the horizontal scroll.
+// past returns empty - never the head again (the flip a width-guard
+// would cause). The mirror of truncateStyled for horizontal scroll.
 func skipStyled(s string, x int) string {
 	if x <= 0 {
 		return s
@@ -440,16 +420,14 @@ func skipStyled(s string, x int) string {
 			cur += string(r)
 			if r == 'm' {
 				if skipping {
-					// track the last open while skipping: a reset closes
-					// it, so the cut re-emits only what is still in effect
+					// track the last open while skipping: a reset closes it, so the cut re-emits only what is still in effect
 					if cur == "\x1b[0m" || cur == "\x1b[m" {
 						open = ""
 					} else {
 						open = cur
 					}
 				} else {
-					// past the cut the sequences pass through whole: the
-					// tail keeps its own style transitions
+					// past the cut the sequences pass through whole: the tail keeps its own style transitions
 					b.WriteString(cur)
 				}
 				cur, inSeq = "", false
@@ -488,17 +466,14 @@ func skipStyled(s string, x int) string {
 }
 
 // padRow wraps line in outer so the row style covers the full width
-// (R11: rows never exceed width, alignment never shifts). The slot
-// styles reset it mid-line, so the row style's opening sequence is
-// re-applied after every reset; the line's own slot colors survive
-// inside.
+// (R11: rows never exceed width, alignment never shifts). Slot styles
+// reset it mid-line, so the row style's opening re-applies after every
+// reset; the line's slot colors survive inside.
 func padRow(line string, w int, outer lipgloss.Style) string {
 	return padRowSGR(line, w, sgrOf(outer))
 }
 
-// padRowSGR is the hot-path padRow: the row style's SGR fragments are
-// precomputed, so the wrap is pure string ops (byte-identical to the
-// Style-based form).
+// padRowSGR is the hot-path padRow: the row style's SGR fragments are precomputed, so the wrap is pure string ops (byte-identical to the Style-based form).
 func padRowSGR(line string, w int, outer sgr) string {
 	inner := line
 	if width := runewidth.StringWidth(stripANSI(line)); width >= w {

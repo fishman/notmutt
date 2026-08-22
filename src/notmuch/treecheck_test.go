@@ -40,10 +40,9 @@ func dump(t *testing.T, label string, v *core.View) {
 	}
 }
 
-// TestDebugTreeCheck walks one 10-deep synthetic thread (the ThreadTree
-// harness) through the merge sequence the real refresh cycle runs:
-// stub load, hydration, refresh merges, and the window slide. Row dumps
-// only, fabricated data - the scratch-db harness, never the real mailbox.
+// TestDebugTreeCheck walks one 10-deep synthetic thread (ThreadTree)
+// through the real refresh's merge sequence: stub load, hydration,
+// refresh merges, window slide. Row dumps only, fabricated data.
 func TestDebugTreeCheck(t *testing.T) {
 	e := testutil.Setup(t)
 	testutil.ThreadTree(t, e.Maildir, 1, 10)

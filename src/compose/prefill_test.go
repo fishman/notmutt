@@ -83,8 +83,7 @@ func TestReplyAllPrefill(t *testing.T) {
 
 // TestReplyAllCcBuild pins the neomutt Cc rules: own-address exclusion
 // by mailbox part (case-insensitive - a case variant is still the own
-// address), dedupe, xrefs (entries already in the To are not repeated),
-// and the Cc-to-To swap when the To ends up empty.
+// address), dedupe, To-xref exclusion, and the empty-To Cc-to-To swap.
 func TestReplyAllCcBuild(t *testing.T) {
 	if got := replyAllCc([]string{"Carol@Example.org"}, []string{"bob@example.com"}, "carol@example.org", nil); len(got) != 1 || got[0] != "bob@example.com" {
 		t.Fatalf("case variant of the own address must be excluded: %v", got)

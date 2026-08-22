@@ -59,9 +59,8 @@ func TestCGOSmoke(t *testing.T) {
 }
 
 // TestCGOMsgWalk pins the flat (message-level) walk: one row per
-// matched message - the flat views' shape (unread, deleted, search).
-// The message row carries its real thread id, so open still finds the
-// conversation.
+// matched message (unread, deleted, search). Rows carry the real
+// thread id, so open still finds the conversation.
 func TestCGOMsgWalk(t *testing.T) {
 	e := testutil.Setup(t)
 	for i := 0; i < 5; i++ {
@@ -95,12 +94,10 @@ func TestCGOMsgWalk(t *testing.T) {
 }
 
 // TestCGOMsgWalkExcludes pins the flat path's exclude scheme: the msg
-// walk omits the config search.exclude_tags (the CLI search default),
-// and CountMsgs must count exactly what the walk emits - a mismatch
-// leaves the progress bar stuck short of completion (the search tab's
-// 2212/2230 stall on the real mailbox). The threaded Count keeps full
-// membership: the threaded walk does not exclude (the view applies
-// the deleted-leaf rule itself).
+// walk omits search.exclude_tags, and CountMsgs must count exactly
+// what the walk emits - a mismatch leaves the progress bar stuck short
+// of completion. The threaded Count keeps full membership: the threaded
+// walk does not exclude (the view applies the deleted-leaf rule).
 func TestCGOMsgWalkExcludes(t *testing.T) {
 	e := testutil.Setup(t)
 	for i := range 6 {
@@ -150,9 +147,9 @@ func TestCGOMsgWalkExcludes(t *testing.T) {
 }
 
 // TestCGOTagRoundTrip exercises the write path on a scratch database:
-// one synthetic fixture message, add a scratch tag, assert via Count,
-// remove it, assert again. The fixture is authored test data (no real
-// mail); the real mailbox is never written by the test suite.
+// one fixture message, add a scratch tag, assert via Count, remove,
+// assert again. The fixture is authored test data; the real mailbox is
+// never written by the test suite.
 func TestCGOTagRoundTrip(t *testing.T) {
 	e := testutil.Setup(t)
 	fixture := []byte("From: alpha <alpha@example.com>\n" +
@@ -184,11 +181,11 @@ func TestCGOTagRoundTrip(t *testing.T) {
 	}
 }
 
-// TestCGODeltaRoundTrip exercises the filter engine's working set on a
-// scratch database: a second file for the same message (the mover's
-// copy), the revision bracket around the AddPaths op, the lastmod delta
-// walk, the snapshot, and the remove-side update - tags must survive
-// the path swap (the mover's add-first guarantee).
+// TestCGODeltaRoundTrip exercises the filter engine's working set: a
+// second file for the same message (the mover's copy), the revision
+// bracket around AddPaths, the lastmod delta walk, the snapshot, and
+// the remove-side update - tags survive the path swap (the mover's
+// add-first guarantee).
 func TestCGODeltaRoundTrip(t *testing.T) {
 	e := testutil.Setup(t)
 	fixture := []byte("From: alpha <alpha@example.com>\n" +

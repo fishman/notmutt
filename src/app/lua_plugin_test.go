@@ -28,8 +28,8 @@ func pluginDir(t *testing.T, files map[string]string) string {
 	return dir
 }
 
-// TestLuaRegisterAttachCommand pins the in-DoFile registration: a
-// plugin calling register_attach_command lands in the registry (R8).
+// TestLuaRegisterAttachCommand: register_attach_command during DoFile
+// lands in the registry (R8).
 func TestLuaRegisterAttachCommand(t *testing.T) {
 	attachcmdsMu.Lock()
 	attachcmds = map[string][]string{}
@@ -48,9 +48,9 @@ register_attach_command("yazi", {"yazi", "--chooser-file"})
 	}
 }
 
-// TestLuaBodyRenderTransforms pins the end-to-end adapter: a plugin's
-// body_render runs on the open job and its output rides ThreadLoaded to
-// the TUI (decision record 20's adapter shape, this time through Lua).
+// TestLuaBodyRenderTransforms: a plugin's body_render runs on the open
+// job and its output rides ThreadLoaded to the TUI (decision record 20's
+// adapter shape, this time through Lua).
 func TestLuaBodyRenderTransforms(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -83,10 +83,10 @@ end
 	}
 }
 
-// TestLuaBodyRenderDeadlineFallsBack pins the freeze fix through Lua:
-// a busy-looping body_render is killed by the chain deadline via
-// SetContext, the open completes with the un-hooked render, and the
-// disabled plugin fails fast on later calls instead of hanging them.
+// TestLuaBodyRenderDeadlineFallsBack: a busy-looping body_render is
+// killed by the chain deadline via SetContext, the open completes with
+// the un-hooked render, and the disabled plugin fails fast on later
+// calls instead of hanging them.
 func TestLuaBodyRenderDeadlineFallsBack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -127,8 +127,8 @@ end
 	}
 }
 
-// TestLuaPluginLoadErrorSkips pins the load-error degrade: a broken
-// file logs and skips, the good plugin still registers.
+// TestLuaPluginLoadErrorSkips: a broken file logs and skips, the good
+// plugin still registers.
 func TestLuaPluginLoadErrorSkips(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -154,9 +154,9 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 	}
 }
 
-// TestLuaTranslateBinding pins the translate() global (decision record
-// 24): the plugin binding is backed by the same embedded bundle as the
-// UI, so its output rides the catalog lookup.
+// TestLuaTranslateBinding (decision record 24): translate() is backed
+// by the same embedded bundle as the UI, so its output rides the
+// catalog lookup.
 func TestLuaTranslateBinding(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -188,9 +188,9 @@ end
 	}
 }
 
-// TestLuaSandboxNoOS pins the sandbox whitelist: a plugin touching os
-// fails to load (no os/io/debug in the whitelist - no filesystem, no
-// exec) and is skipped without affecting the client.
+// TestLuaSandboxNoOS: a plugin touching os fails to load (no os/io/debug
+// in the whitelist - no filesystem, no exec) and is skipped without
+// affecting the client.
 func TestLuaSandboxNoOS(t *testing.T) {
 	dir := pluginDir(t, map[string]string{"os.lua": "os.exit(1)\nfunction body_render(lines) return lines end"})
 	saved := renderHooks
@@ -203,11 +203,10 @@ func TestLuaSandboxNoOS(t *testing.T) {
 	}
 }
 
-// TestLuaCategorizeRegisters pins the categorize adapter end to end: a
-// plugin declaring only categorize registers a hook (the per-global
-// registration), the handle fetches the message's attachment list via
-// get_attachments, msg carries the metadata-only projection, and the
-// ordinal-keyed table is the contract's return shape.
+// TestLuaCategorizeRegisters: a plugin declaring only categorize
+// registers a hook (per-global registration); the handle fetches the
+// attachment list via get_attachments, msg is the metadata-only
+// projection, and the ordinal-keyed table is the return contract.
 func TestLuaCategorizeRegisters(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -245,9 +244,8 @@ end
 	}
 }
 
-// TestLuaReMatchCompileError pins the two-value contract: a bad
-// pattern is false plus the error text (single-value use keeps
-// working), never a panic.
+// TestLuaReMatchCompileError: a bad pattern is false plus the error
+// text (single-value use keeps working), never a panic.
 func TestLuaReMatchCompileError(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -264,9 +262,9 @@ end
 	}
 }
 
-// TestLuaDateStr pins the date_str binding: the YYYY/MM/DD token
-// pattern formats a unix timestamp (the calendar lives in Go, not the
-// plugin), and the default pattern is YYYY/MM.
+// TestLuaDateStr: the YYYY/MM/DD token pattern formats a unix timestamp
+// (the calendar lives in Go, not the plugin); the default pattern is
+// YYYY/MM.
 func TestLuaDateStr(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -294,9 +292,9 @@ end
 	}
 }
 
-// TestLuaCategorizeDeadline pins the kill switch: a busy-looping
-// categorize is killed by the per-call budget, the VM is closed, and
-// the disabled plugin fails fast on later calls.
+// TestLuaCategorizeDeadline: a busy-looping categorize is killed by the
+// per-call budget, the VM is closed, and the disabled plugin fails fast
+// on later calls.
 func TestLuaCategorizeDeadline(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()

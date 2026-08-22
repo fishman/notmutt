@@ -4,12 +4,12 @@
 package tui
 
 // fakeScreen is the v3 stand-in for the removed SimulationScreen: a
-// minimal Screen backed by a cell buffer, events injected by writing
-// to the EventQ channel (v3's injection path). Only the surface the
-// tests use is real; the rest are no-ops. The cell buffer is mutexed:
-// the loop tests run runLoop on a goroutine (pushFrame -> SetContent)
-// while the test goroutine polls the same buffer - the race detector
-// caught the unlocked buffer.
+// minimal Screen backed by a cell buffer, events injected via the
+// EventQ channel (v3's injection path). Only the surface the tests use
+// is real; the rest are no-ops. The cell buffer is mutexed: the loop
+// tests run runLoop on a goroutine (pushFrame -> SetContent) while the
+// test goroutine polls the same buffer - the race detector caught the
+// unlocked buffer.
 
 import (
 	"sync"
@@ -94,8 +94,7 @@ func (s *fakeScreen) Fill(r rune, st tcell.Style) {
 
 func (s *fakeScreen) EventQ() chan tcell.Event { return s.evQ }
 
-// InjectKey posts a key press onto the event queue (the v2
-// SimulationScreen helper the loop tests drove).
+// InjectKey posts a key press onto the event queue (the v2 SimulationScreen helper the loop tests drove).
 func (s *fakeScreen) InjectKey(k tcell.Key, r rune, mod tcell.ModMask) {
 	s.evQ <- tcell.NewEventKey(k, string(r), mod)
 }

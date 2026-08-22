@@ -30,11 +30,11 @@ func resolveNotifyBackend(cfg config.Config, probe func() bool) string {
 	return "command"
 }
 
-// notifyDaemonReachable probes for a notification daemon: darwin
-// always (beeep uses osascript, part of the OS), linux on the session
-// bus (org.freedesktop.Notifications answers GetServerInformation),
-// elsewhere never - the command backend takes over. beeep keeps its
-// own dbus -> notify-send -> kdialog fallback per show either way.
+// notifyDaemonReachable probes for a notification daemon: darwin always
+// (beeep uses osascript, part of the OS), linux on the session bus
+// (GetServerInformation answers), elsewhere never - the command backend
+// takes over. beeep keeps its own dbus -> notify-send -> kdialog
+// fallback either way.
 func notifyDaemonReachable() bool {
 	if runtime.GOOS == "darwin" {
 		return true
@@ -55,11 +55,10 @@ func notifyDaemonReachable() bool {
 }
 
 // notifyNewMail runs the [notify] side effect for one processed batch
-// (the filter job's completion event, R2): the argv command backend
-// or the platform backend ("beeep"), the backend resolved once at
-// startup. The payload is the count plus the priority headlines -
-// sender, subject, timestamp - never bodies or ids (F6). The caller
-// spawns the goroutine; no entries is a no-op.
+// (the filter job's completion event, R2): the argv command backend or
+// the platform backend ("beeep"), resolved once at startup. The payload
+// is the count plus the priority headlines - sender, subject, timestamp
+// - never bodies or ids (F6). No entries is a no-op.
 func notifyNewMail(cfg config.Config, backend string, entries int, head []core.NotifyHeadline) {
 	if entries <= 0 {
 		return
@@ -93,8 +92,7 @@ func expandNotifyTokens(argv []string, entries int, head []core.NotifyHeadline) 
 }
 
 // notifyTitle is the notification title: the deduped sender list,
-// ellipsized - the senders, never a static app name (the reference
-// script's fixed title was the first thing to go).
+// ellipsized - the senders, never a static app name.
 func notifyTitle(head []core.NotifyHeadline) string {
 	var names []string
 	seen := map[string]bool{}
@@ -117,10 +115,8 @@ func notifyTitle(head []core.NotifyHeadline) string {
 }
 
 // notifyRows renders the headline list as aligned 3-part rows: sender,
-// subject, time - the reference script's bare subject list with the
-// parts it dropped restored. The columns truncate by rune: the body
-// renders in a system popup, not a terminal, so cell widths do not
-// apply; a long line cannot break the alignment either way.
+// subject, time. The columns truncate by rune: the body renders in a
+// system popup, not a terminal, so cell widths do not apply.
 func notifyRows(head []core.NotifyHeadline) string {
 	if len(head) == 0 {
 		return ""

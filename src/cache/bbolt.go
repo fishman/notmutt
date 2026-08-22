@@ -15,14 +15,12 @@ import (
 
 var bucket = []byte("atts")
 
-// openTimeout bounds the single-writer flock wait: bbolt's default
-// retry is infinite, so a second instance would hang at startup until
-// the holder exits. The cache is derived and disposable (R13) - a
-// contended open gives up quickly and the app runs cacheless.
+// openTimeout bounds the flock wait: bbolt's infinite retry would
+// hang a second instance, but the cache is disposable (R13) - run
+// cacheless instead.
 const openTimeout = time.Second
 
-// Bbolt is the default Cache backend. The file is 0600 (F5); corrupt
-// payloads are discarded, never fatal (defensive parse).
+// Bbolt is the default Cache backend: file 0600 (F5); corrupt payloads are discarded, never fatal.
 type Bbolt struct {
 	db *bbolt.DB
 }

@@ -7,16 +7,15 @@ import (
 	"strings"
 )
 
-// SigBlock is the signature block below the body: a blank line, the
-// "-- " marker, the content. ONE definition - the editor buffer, the
-// preview, and the assembled message all use it (DRY).
+// SigBlock is the signature block: a blank line, "-- ", the content.
+// ONE definition - editor buffer, preview, and assembly share it (DRY).
 func SigBlock(content string) string {
 	return "\n\n-- \n" + content
 }
 
-// BodyWithSig joins the body and the signature block: the body
-// normalizes its trailing newlines, one blank line separates. Without
-// a signature the body passes through untouched.
+// BodyWithSig joins body and signature block: the body's trailing
+// newlines normalize, one blank line separates; no signature -> body
+// untouched.
 func BodyWithSig(body, sigBody string) string {
 	if sigBody == "" {
 		return body
@@ -37,14 +36,11 @@ func SplitAddrs(s string) []string {
 }
 
 // ParseBuffer parses the editor buffer back (spec section 7): the
-// buffer holds ONLY the mail content - the body and the attached
-// signature tail (mutt's msgbody shape). The email header never
-// lives here; the dialogue fields build it at assembly. The
-// signature tail detaches by exact match with the previously
-// attached block: a matched tail keeps the signature, an edited tail
-// stays as user text and detaches it. CRLF line endings (vim
-// fileformat=dos) normalize to LF at entry; a trailing newline
-// strips.
+// buffer holds ONLY the mail content - body plus attached signature
+// tail (mutt's msgbody); headers never live here, the dialogue fields
+// build them at assembly. The tail detaches by exact match: a matched
+// tail keeps the signature, an edited tail stays as user text. CRLF
+// (vim fileformat=dos) normalizes to LF; a trailing newline strips.
 func ParseBuffer(buf, prevSigName, prevSigBody string) (body, sigName, sigBody string) {
 	buf = strings.ReplaceAll(buf, "\r\n", "\n")
 	body = strings.TrimSuffix(buf, "\n")

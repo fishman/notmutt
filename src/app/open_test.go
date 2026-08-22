@@ -15,12 +15,10 @@ import (
 	"notmutt/core"
 )
 
-// TestOpenThreadHtmlOnlyDefaultsHTML pins the html-only open default:
-// a thread whose first message has no plain part opens in the html
-// view (RenderAuto), colored runs included - the old default rendered
-// the html structure with the colors stripped (the html-background
-// with plain-font-colors report), a hybrid plain view had no reason
-// to win over the real html view.
+// TestOpenThreadHtmlOnlyDefaultsHTML: a thread whose first message has
+// no plain part opens in the html view (RenderAuto), colored runs
+// included - a hybrid plain view has no reason to win over the real
+// html view.
 func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -62,10 +60,9 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	}
 }
 
-// TestOpenThreadMarksRead pins the open-reads contract: a full open
-// loads the thread AND tags the opened message -unread (R1 - read is a
-// tag, the refresh cycle reconciles it into the view), never the whole
-// thread - the other messages keep their unread state. ThreadLoaded
+// TestOpenThreadMarksRead (R1): a full open loads the thread AND tags
+// the opened message -unread (read is a tag; the refresh cycle
+// reconciles it into the view), never the whole thread. ThreadLoaded
 // publishes first.
 func TestOpenThreadMarksRead(t *testing.T) {
 	bus := core.NewBus()
@@ -109,8 +106,8 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	}
 }
 
-// TestOpenThreadPreviewSkipsReadMarking pins the preview half: the
-// fetch happens, the tag never does.
+// TestOpenThreadPreviewSkipsReadMarking: the fetch happens, the tag
+// never does.
 func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -133,12 +130,11 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	}
 }
 
-// TestOpenViewMode pins the open key's per-domain default view: a
-// sender domain mapped to html opens in the html view, plain and
-// unmapped domains keep the plain default, the lookup is
-// case-insensitive (the From string is display text), and an
-// unparseable From has no domain. An empty message set keeps the
-// plain default - the domain is message data, only the fetch has it.
+// TestOpenViewMode: a sender domain mapped to html opens in html; plain
+// and unmapped domains keep the plain default; the lookup is
+// case-insensitive (the From string is display text); an unparseable
+// From has no domain. An empty message set keeps the plain default -
+// the domain is message data, only the fetch has it.
 func TestOpenViewMode(t *testing.T) {
 	defs := map[string]string{"alpha.example.com": "html", "atlas.example.com": "plain"}
 	cases := []struct {
@@ -167,9 +163,9 @@ func TestOpenViewMode(t *testing.T) {
 	}
 }
 
-// TestOpenThreadTagFailureKeepsOpen pins the failure surface: a failed
-// mark-read (lock timeout) must not lose the open - ThreadLoaded still
-// publishes, the JobError reports the tag.
+// TestOpenThreadTagFailureKeepsOpen: a failed mark-read (lock timeout)
+// must not lose the open - ThreadLoaded still publishes, the JobError
+// reports the tag.
 func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -198,12 +194,11 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	}
 }
 
-// TestOpenThreadRendersOnlyOpenedMessage pins the message-scoped
-// pager: the open carries the cursor message's id, the thread fetch
-// narrows to that message, and the reply names it - the pager shows
-// one email, never the whole thread (the thread-wide text stays
-// queryable via the lua layer, not as the default view). A bare open
-// (empty id) falls back to the thread's first.
+// TestOpenThreadRendersOnlyOpenedMessage: the open carries the cursor
+// message's id, the fetch narrows to it, and the reply names it - the
+// pager shows one email, never the whole thread (thread-wide text
+// stays queryable via the lua layer). A bare open (empty id) falls
+// back to the thread's first.
 func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -257,11 +252,11 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 	}
 }
 
-// TestOpenThreadRowsFirst pins the open-while-loading path: the full
-// walk owns the worker for seconds, so an open must not queue behind
-// it. A thread resident in a registered view opens from the view's
-// rows - zero ActThread calls, the walk already loaded headers and
-// paths; a thread in no view falls back to the worker fetch.
+// TestOpenThreadRowsFirst: the full walk owns the worker for seconds,
+// so an open must not queue behind it. A thread resident in a
+// registered view opens from the view's rows - zero ActThread calls,
+// the walk already loaded headers and paths; a thread in no view falls
+// back to the worker fetch.
 func TestOpenThreadRowsFirst(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()

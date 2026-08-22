@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package state is the persisted client-state file (XDG state dir):
-// TOML like config (same parser), but load is LENIENT - state is
-// machine-written, a corrupt file degrades to defaults, never a
-// startup error (config's strict load exists for human typos, state
-// has no user to correct). The caller resolves the file's directory
-// (lib/xdg).
+// TOML like config, but load is LENIENT - state is machine-written,
+// a corrupt file degrades to defaults, never a startup error. The
+// caller resolves the file's directory (lib/xdg).
 package state
 
 import (
@@ -17,9 +15,7 @@ import (
 	"github.com/BurntSushi/toml"
 )
 
-// File is the state file schema; sections grow as the client gains
-// persisted state (the chooser's last directory today, staged tags
-// later).
+// File is the state file schema; sections grow with persisted state.
 type File struct {
 	Chooser struct {
 		LastDir string `toml:"last-dir"`
@@ -41,9 +37,8 @@ func Load(path string) File {
 	return f
 }
 
-// Save writes the state atomically (same-dir temp + rename): a full
-// disk mid-write fails the temp and the old state survives, the
-// target is never truncated.
+// Save writes the state atomically (same-dir temp + rename): on a
+// full disk the temp fails and the old state survives.
 func Save(path string, f File) error {
 	if path == "" {
 		return fmt.Errorf("state: empty path")

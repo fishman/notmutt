@@ -12,13 +12,11 @@ import (
 )
 
 // The command layer is the tea.Cmd shape with the tea runtime gone
-// (decision record 23): a Cmd is a closure producing messages (or
-// none); the loop runs cmds on goroutines and their results come back
-// on the command channel, serialized through Update like every other
-// message. batch concatenates several cmds' messages (the EventCmd +
-// tick pattern); tickCmd sleeps the goroutine (the model's
-// single-flight gates already bound the tick count, so a sleeping
-// goroutine per tick is free); quitCmd ends the loop.
+// (record 23): a Cmd is a closure producing messages; the loop runs
+// cmds on goroutines, results serialized through Update on the command
+// channel. batch concatenates cmds' messages (the EventCmd + tick
+// pattern); tickCmd sleeps its goroutine (single-flight gates bound
+// the tick count); quitCmd ends the loop.
 
 type Cmd func() []any
 
@@ -48,17 +46,13 @@ func quitCmd() Cmd {
 }
 
 // loopScreen is the screen the loop owns; execCmd suspends it around
-// the subprocess so the editor and attach pickers run as foreground
-// TUIs (the tea.ExecProcess pattern, record 23). Tests without a loop
-// never suspend. Resume forces the next frame push - the loop repaints
-// on the done message, and tcell clears the screen on resume.
+// the subprocess so editors run as foreground TUIs (record 23). Tests
+// without a loop never suspend; tcell clears the screen on resume.
 var loopScreen tcell.Screen
 
 func execCmd(cmd *exec.Cmd, done func(error) any) Cmd {
 	// the child must see the parent's terminal - exec.Command wires nil
-	// stdio to the null device, and a foreground TUI with /dev/null on
-	// all three fds launches invisible and unreadable (the tea contract
-	// this migration dropped)
+	// stdio to /dev/null, launching a foreground TUI invisible and unreadable
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -69,9 +63,8 @@ func execCmd(cmd *exec.Cmd, done func(error) any) Cmd {
 		err := cmd.Run()
 		if s := loopScreen; s != nil {
 			s.Resume()
-			// the suspend wiped the screen's cell buffer; the row cache
-			// must not survive it (the corruption bug - a row-skip push
-			// against the fresh buffer leaves the terminal blank)
+			// the suspend wiped the cell buffer; the row cache must not
+			// survive it (a row-skip push leaves the terminal blank)
 			resetPushedFrames(s)
 		}
 		return []any{done(err)}

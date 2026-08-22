@@ -18,12 +18,11 @@ import (
 	"notmutt/notmuch"
 )
 
-// sendArgs builds the transport argv (the mutt sendmail contract):
-// the configured args first, then the envelope recipients (To + Cc +
-// Bcc) - the transport cannot deliver without them (msmtp: "no
-// recipients found"). The message flows on stdin; msmtp resolves the
-// account from the From header (--read-envelope-from, the default
-// config). A fresh slice - the config's args never mutate.
+// sendArgs builds the transport argv (the mutt sendmail contract): the
+// configured args first, then the envelope recipients (To + Cc + Bcc)
+// - the transport cannot deliver without them. The message flows on
+// stdin; msmtp resolves the account from the From header. A fresh
+// slice - the config's args never mutate.
 func sendArgs(cfg config.Send, st compose.State) []string {
 	args := make([]string, 0, len(cfg.Args)+len(st.To)+len(st.Cc)+len(st.Bcc))
 	args = append(args, cfg.Args...)
@@ -35,12 +34,11 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 
 // sendJob runs the send (spec section 8): assemble once, transport
 // argv exec with the message on stdin and output captured (F4 - no
-// shell, no interpolation), then fcc + reindex + reply tag. Order is
-// transport first: what was not delivered is not stored. A delivered
-// message never fails the dialogue on a fcc error (a retry would
-// double-send) - the note surfaces in the SendResult output. A
-// missing mail root (unresolvable at startup) leaves the fcc empty
-// and skips it silently.
+// shell, no interpolation), then fcc + reindex + reply tag. Transport
+// first: what was not delivered is not stored. A delivered message
+// never fails the dialogue on a fcc error (a retry would double-send)
+// - the note surfaces in SendResult. A missing mail root leaves the
+// fcc empty and skips it silently.
 func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) {
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {
@@ -49,9 +47,8 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	}
 	// snapshot the bytes: exec drains the buffer reading stdin, and the
 	// fcc must be the exact delivered bytes. The wire message drops the
-	// Bcc header (envelope-only, mutt write_bcc default off); the fcc
-	// copy keeps it - the sender's record shows the blind recipients
-	// (mutt's FCC mode).
+	// Bcc header (envelope-only); the fcc copy keeps it - the sender's
+	// record shows the blind recipients.
 	data := buf.Bytes()
 	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
 	cmd.Stdin = bytes.NewReader(compose.DropBcc(data))
@@ -71,8 +68,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 		}
 	}
 	// the sent copy is in the maildir now: index it so the folder rule
-	// tags it sent (the R2 filter engine is its own milestone - the
-	// copy is physically in the sent folder regardless)
+	// tags it sent (R2)
 	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
 	if st.OriginalID != "" {
 		tag := "replied"
@@ -91,10 +87,8 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 
 // writeFcc lands the sent copy in the maildir new/ slot (maildir
 // convention: delivery lands in new, the sync tool flags into cur).
-// Unique name, 0600 (F5). The name follows the maildir spec -
-// seconds since the epoch, pid, hostname - so the client's files
-// carry the same shape as the sync tool's own (mbsync stamps the
-// host).
+// Unique name, 0600 (F5) - seconds since the epoch, pid, hostname, so
+// the client's files carry the same shape as the sync tool's own.
 func writeFcc(dir string, data []byte) error {
 	sub := filepath.Join(dir, "new")
 	if err := os.MkdirAll(sub, 0700); err != nil {
@@ -109,8 +103,8 @@ func writeFcc(dir string, data []byte) error {
 // plus the account's folder space plus the sent folder candidates,
 // resolved through the mover's own machinery (first existing wins,
 // else the first candidate - the sync tool creates the folder). A
-// hard tag never needs a config option; an empty root (notmuch
-// config unresolvable at startup) leaves the fcc empty.
+// hard tag never needs a config option; an empty root leaves the fcc
+// empty.
 func sentPath(root, name string, a config.Account) string {
 	if root == "" {
 		return ""
@@ -123,12 +117,10 @@ func sentPath(root, name string, a config.Account) string {
 }
 
 // saveDraft writes the composition into the account's draft folder
-// (the muttrc $postponed path as data, the same writeFcc shape - the
-// draft lands in the maildir new/ slot and notmuch new picks it up
-// with the draft folder rule). The write is local, no transport; the
-// error keeps the composition open. A missing mail root (unresolvable
-// at startup) is an error - dropping the buffer silently loses the
-// mail.
+// (the muttrc $postponed path as data, the same writeFcc shape -
+// notmuch new picks it up with the draft folder rule). Local write,
+// no transport; the error keeps the composition open. A missing mail
+// root is an error - dropping the buffer silently loses the mail.
 func saveDraft(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) error {
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {

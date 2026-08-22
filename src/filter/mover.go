@@ -17,18 +17,16 @@ import (
 )
 
 // Mover is the per-account mail mover (the afew MailMover as native
-// logic, R2): hard-tagged mail physically moves into the folder of its
-// move tag, resolved only within the account's folder space. The
-// reference's stale-handle workaround (MailMover.py:214-220) does not
-// exist here - the mover updates the database through the client's own
-// notmuch layer, and the revision bump reaches the next refresh cycle.
+// logic, R2): hard-tagged mail physically moves into the folder of
+// its move tag, within the account's folder space. The reference's
+// stale-handle workaround (MailMover.py:214-220) is absent: the mover
+// updates the database through the client's own notmuch layer.
 type Mover struct {
 	worker Worker
 	cfg    config.Config
 	root   string
 	dryRun bool
-	// Progress, when set, reports each processed entry (R15 batch
-	// boundary: the mover's per-message loop).
+	// Progress, when set, reports each processed entry (R15 batch boundary: the per-message loop).
 	Progress func(done, total int)
 }
 
@@ -61,12 +59,11 @@ type MoveReport struct {
 	Moves []MoveEntry
 }
 
-// Move moves each report entry's files into the folder of its move tag
-// (the report entries with a Folder set, computed by the engine).
-// Copy-then-delete: every copy lands before any source goes; the
-// database sees AddPaths before RemovePaths, so the message keeps its
-// tags through the move (the binding's duplicate-id status on re-add is
-// success - the mover's exact add-first case).
+// Move moves each report entry's files into the folder of its move
+// tag. Copy-then-delete: every copy lands before any source goes, so
+// the database sees AddPaths before RemovePaths and the message keeps
+// its tags (re-add of a duplicate id is success - the mover's exact
+// add-first case).
 func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 	out := &MoveReport{}
 	targets, managed := m.resolveAccounts(rep)
@@ -82,13 +79,9 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 		if target == "" {
 			continue
 		}
-		// home is a message-level rule: one of the message's files
-		// already sits in the resolved target tree - the message is
-		// home and no copy moves. The self-send shape (the client's fcc
-		// copy in Sent plus the mbsync-delivered copy in INBOX, one
-		// message id) must leave the delivered copy untouched: moving an
-		// mbsync-owned file breaks its UID bookkeeping and the next sync
-		// re-downloads it.
+		// home is a message-level rule: a file already in the target
+		// tree means no copy moves. Moving the mbsync-owned delivered
+		// copy breaks its UID bookkeeping (the next sync re-downloads it).
 		home := false
 		for _, g := range e.Paths {
 			if sameTree(filepath.Dir(filepath.Dir(RelPath(m.root, g))), target) {
@@ -126,9 +119,8 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 		}
 	}
 	if !m.dryRun && len(toRemove) > 0 {
-		// copy-then-delete: every copy landed (the loop either completed
-		// or returned on an error); only now do the sources go. The
-		// backend's RemovePaths only drops the index link - the file
+		// copy-then-delete: the sources go only after every copy
+		// landed. RemovePaths drops only the index link - the file
 		// itself is the mover's.
 		for _, p := range toRemove {
 			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
@@ -138,9 +130,8 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 	}
 	if !m.dryRun && len(toAdd) > 0 {
 		// add-first keeps the tags: the new filename lands before the
-		// sources go. A backend without path ops (the cli) is a silent
-		// no-op - its own `notmuch new` reconciles the move one poll
-		// later.
+		// sources go. A backend without path ops (the cli) no-ops
+		// silently; its `notmuch new` reconciles the move next poll.
 		if rpl, err := m.worker.Call(notmuch.Action{Kind: notmuch.ActAddPaths, Paths: toAdd}); err != nil || rpl.Err != nil {
 			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
 				return nil, fmt.Errorf("mover: add: %v %v", err, rpl.Err)
@@ -157,14 +148,11 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 }
 
 // resolveAccounts computes the per-account move targets and managed
-// folder sets once per run: the folder state changes between polls
-// (mbsync creates folders), so the resolution never caches across runs.
-// The managed set is the inbox tree plus every resolved target tree -
-// mail the user filed in organizational folders is left where it is
-// (the reference gmail/* wildcard expansion). The inbox tree resolves
-// through the same candidate machinery as the untag gate (candidates,
-// R2); the bare INBOX convention is the fallback where an account has
-// no inbox candidates at all.
+// folder sets once per run (never cached: folder state changes
+// between polls). Managed = the inbox tree plus every resolved target
+// tree - mail in organizational folders is left alone (reference
+// gmail/* wildcard expansion). The inbox tree resolves through
+// Candidates (R2), with bare INBOX as the no-candidates fallback.
 func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[string][]string) {
 	targets := map[string]map[string]string{}
 	managed := map[string][]string{}
@@ -177,9 +165,8 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 		}
 		a, ok := m.cfg.Accounts[e.Account]
 		if !ok || a.ReadOnly {
-			// readonly accounts (dead accounts like toptal) are never
-			// classified (the engine drops them before this pass); no
-			// targets here stays as the defense - nothing ever moves.
+			// readonly accounts: no targets here is the defense - the
+			// engine drops them first, but nothing may move regardless.
 			continue
 		}
 		fs := a.Tag(e.Account)
@@ -201,9 +188,8 @@ func (m *Mover) resolveAccounts(rep *Report) (map[string]map[string]string, map[
 }
 
 // candidateTags is the account's hard tags with folder candidates:
-// the union of the moves, preset, and detected-folder keys, each
-// resolved through Candidates() - the moves > preset > folders
-// precedence lives there once.
+// the union of moves, preset, and detected-folder keys (the moves >
+// preset > folders precedence lives in Candidates()).
 func candidateTags(a config.Account) map[string][]string {
 	out := map[string][]string{}
 	seen := map[string]bool{}
@@ -233,12 +219,9 @@ func candidateTags(a config.Account) map[string][]string {
 }
 
 // stripUID removes an mbsync UID marker (",U=NNN") from a maildir
-// basename, keeping the rest (unique part, flags, the ",S=" size
-// marker). mbsync embeds the IMAP UID in the filename; a move with
-// the UID intact collides with the destination's UID tracking
-// ("Maildir error: duplicate UID 1234"). Detection is the marker's
-// presence - never a config option - so offlineimap and plain maildir
-// names pass through untouched (afew rename=auto semantics,
+// basename: moving a file with the UID intact collides with the
+// destination's UID tracking ("duplicate UID 1234"). Detection is the
+// marker's presence, never a config option (afew rename=auto,
 // MailMover.py:43-46).
 func stripUID(name string) string {
 	i := strings.Index(name, ",U=")
@@ -253,11 +236,9 @@ func stripUID(name string) string {
 }
 
 // ResolveFolder is the reference _resolve_account_folder: the first
-// candidate that exists under root+folderSpace wins ('*' candidates
-// are globs); none existing falls back to the first candidate - the
-// sync tool creates the folder. Returns the account-relative path;
-// the caller joins its root. Shared by the mover and the sent-folder
-// derivation.
+// candidate that exists under root+folderSpace wins ('*' are globs);
+// none existing falls back to the first - the sync tool creates the
+// folder. Returns the account-relative path; the caller joins its root.
 func ResolveFolder(root, folderSpace string, cs []string) string {
 	base := filepath.Join(root, folderSpace)
 	for _, c := range cs {
@@ -280,9 +261,8 @@ func ResolveFolder(root, folderSpace string, cs []string) string {
 	return filepath.Join(folderSpace, cs[0])
 }
 
-// managedTree reports whether the source maildir is one the mover
-// manages for the account: INBOX or a resolved target tree, or a
-// subfolder of either.
+// managedTree reports whether the maildir is managed for the account:
+// INBOX or a resolved target tree (or a subfolder of either).
 func managedTree(trees []string, maildir string) bool {
 	for _, t := range trees {
 		if maildir == t || strings.HasPrefix(maildir, t+"/") {
@@ -293,19 +273,16 @@ func managedTree(trees []string, maildir string) bool {
 }
 
 // sameTree is the reference _same_maildir_tree: the source already
-// lives in the destination tree (the folder or a subfolder) - this
-// keeps prefix folder queries from pulling mail out of organizational
-// subfolders into the folder root.
+// lives in the destination tree (folder or subfolder) - keeps prefix
+// queries from pulling mail out of organizational subfolders.
 func sameTree(srcMaildir, dstMaildir string) bool {
 	return srcMaildir == dstMaildir || strings.HasPrefix(srcMaildir, dstMaildir+"/")
 }
 
-// copyFile is shutil.copy2: content, mode, and mtime. The moved file
-// keeps its mtime - the delivery-gate checks (untag-reversal) compare
-// file times, so a move must not age a file. The destination dirs are
-// created (the reference leaves folder creation to the sync tool; the
-// mover is the client's own engine and a first move must not fail on a
-// missing folder).
+// copyFile is shutil.copy2: content, mode, and mtime. The mtime is
+// kept because the untag-reversal delivery gate compares file times;
+// destination dirs are created so a first move never fails on a
+// missing folder.
 func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err

@@ -32,9 +32,9 @@ type fakeWorker struct {
 	threadMap atomic.Value // ActThread content per thread id (the hydrated-thread re-fetch)
 }
 
-// setThreadMsgs installs the full thread content for ActThread fetches,
-// keyed by thread id: the changed set may carry only summary stubs
-// while the thread fetch returns the real messages.
+// setThreadMsgs installs ActThread content keyed by thread id: the
+// changed set may carry only summary stubs while the fetch returns the
+// real messages.
 func (f *fakeWorker) setThreadMsgs(byID map[string][]core.Message) {
 	f.threadMap.Store(byID)
 }
@@ -50,10 +50,10 @@ func (f *fakeWorker) setMsgs(msgs []core.Message) {
 	f.msgs.Store(msgs)
 }
 
-// setStubs installs a query result; ActQuery serves it to Emit in
-// chunks mirroring the backend cadence (100, then 5000 - the contract
-// refresh_test pins), honoring a.Limit for the fast pre-query. The
-// setMsgs path serves the changed-set cycle.
+// setStubs installs a query result; ActQuery emits it in chunks
+// mirroring the backend cadence (100, then 5000 - the contract
+// refresh_test pins), honoring a.Limit for the fast pre-query. setMsgs
+// serves the changed-set cycle.
 func (f *fakeWorker) setStubs(msgs []core.Message) {
 	f.stubs.Store(msgs)
 }
@@ -93,11 +93,10 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		} else if all, ok := f.msgs.Load().([]core.Message); ok {
 			msgs = all
 		}
-		// membership queries carry the view query plus an identity
-		// term: the apply-path eviction check (" and id:...", " and
-		// thread:...") and the refresh prune's OR form (" and
-		// (thread:... or ...)"). They match on the tag: terms,
-		// mirroring notmuch for the tag-only subset. Plain refresh
+		// membership queries carry the view query plus an identity term
+		// (the apply-path eviction check " and id:...", " and thread:...",
+		// and the refresh prune's OR form). They match on tag: terms,
+		// mirroring notmuch for the tag-only subset; plain refresh
 		// queries pass through unfiltered.
 		if strings.Contains(a.Query, " and id:") || strings.Contains(a.Query, " and (id:") || strings.Contains(a.Query, " and thread:") || strings.Contains(a.Query, " and (thread:") {
 			msgs = matchTagQuery(msgs, a.Query)
@@ -137,10 +136,9 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 	return r, nil
 }
 
-// matchTagQuery answers a membership query: the message must carry
-// every tag:X term AND match an id:.../thread:... identity term. The
-// refresh prune's OR form collects every thread: term (parens stripped
-// from tokens).
+// matchTagQuery: a message must carry every tag:X term AND match an
+// id:.../thread:... identity term; the prune's OR form collects every
+// thread: term (parens stripped from tokens).
 func matchTagQuery(msgs []core.Message, q string) []core.Message {
 	var terms []string
 	want := map[string]bool{}
@@ -258,10 +256,10 @@ func TestCycleIncremental(t *testing.T) {
 	}
 }
 
-// TestCycleRefetchesHydratedThread pins the R3 diff-and-insert: a
-// hydrated thread's changed set carries only summary stubs (the
-// refresh feed shape), so the cycle re-fetches the thread content -
-// the new message appears in the existing tree, no full reload.
+// TestCycleRefetchesHydratedThread (R3 diff-and-insert): a hydrated
+// thread's changed set carries only summary stubs (the refresh feed
+// shape), so the cycle re-fetches the thread content - the new message
+// appears in the existing tree, no full reload.
 func TestCycleRefetchesHydratedThread(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -305,11 +303,11 @@ func TestCycleRefetchesHydratedThread(t *testing.T) {
 	}
 }
 
-// TestCyclePrunesRetaggedOut pins the resurrection fix: a message
-// retagged out of the view query (the apply path archives it) still
-// bumps lastmod, so the changed set carries its thread - the prune
-// intersect drops it from the merge AND from the snapshot carry-over
-// (once its lastmod is consumed, no later changed set names it again).
+// TestCyclePrunesRetaggedOut (the resurrection fix): a message retagged
+// out of the view query (the apply path archives it) still bumps
+// lastmod, so the changed set carries its thread - the prune intersect
+// drops it from the merge AND the snapshot carry-over (once its lastmod
+// is consumed, no later changed set names it again).
 func TestCyclePrunesRetaggedOut(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -336,9 +334,8 @@ func TestCyclePrunesRetaggedOut(t *testing.T) {
 	}
 }
 
-// TestCyclePruneKeepsMatching pins the positive prune: a changed
-// thread that still matches the view query merges with its reconciled
-// tags.
+// TestCyclePruneKeepsMatching: a changed thread that still matches the
+// view query merges with its reconciled tags.
 func TestCyclePruneKeepsMatching(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -359,10 +356,10 @@ func TestCyclePruneKeepsMatching(t *testing.T) {
 	}
 }
 
-// TestCyclePruneFailureKeepsStale pins the prune-failure path: a
-// failed intersect must not advance rPrev (an un-pruned changed set
-// would merge the removed thread back, and with rPrev advanced its
-// lastmod is consumed - permanent resurrection); the next cycle retries.
+// TestCyclePruneFailureKeepsStale: a failed intersect must not advance
+// rPrev (an un-pruned changed set would merge the removed thread back,
+// and with rPrev advanced its lastmod is consumed - permanent
+// resurrection); the next cycle retries.
 func TestCyclePruneFailureKeepsStale(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -595,8 +592,8 @@ func TestFullReloadPages(t *testing.T) {
 	}
 }
 
-// TestFullReloadCountFailure pins the fallback: when the count query
-// fails, progress degrades to per-batch totals instead of a wrong one.
+// TestFullReloadCountFailure: when the count query fails, progress
+// degrades to per-batch totals instead of a wrong one.
 func TestFullReloadCountFailure(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -621,10 +618,10 @@ func TestFullReloadCountFailure(t *testing.T) {
 	}
 }
 
-// TestFullReloadStubThreads pins the step-one fill: search summaries
-// (empty message ids - the index read, zero file opens) group into one
-// stub thread per thread id. No per-thread fallback exists in the
-// fill: ActQuery pages are the whole ingestion.
+// TestFullReloadStubThreads: search summaries (empty message ids - the
+// index read, zero file opens) group into one stub thread per thread
+// id. No per-thread fallback exists in the fill: ActQuery pages are the
+// whole ingestion.
 func TestFullReloadStubThreads(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -652,11 +649,10 @@ func TestFullReloadStubThreads(t *testing.T) {
 	}
 }
 
-// TestLoadPathHasNoThreadFetch pins the content-free contract: the
-// fill pages ActQuery (thread summaries - DB-side, zero file opens)
-// and the changed-set cycle merges the lastmod summaries directly.
-// ActThread (notmuch show - file opens) never runs in the load path;
-// content loads only on open (R13).
+// TestLoadPathHasNoThreadFetch (R13): the fill pages ActQuery (thread
+// summaries - DB-side, zero file opens) and the changed-set cycle
+// merges the lastmod summaries directly. ActThread (notmuch show -
+// file opens) never runs in the load path; content loads only on open.
 func TestLoadPathHasNoThreadFetch(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -697,8 +693,8 @@ func findThread(threads []*core.Thread, id string) *core.Thread {
 	return nil
 }
 
-// TestFullReloadEmpty pins the loop termination: an empty result ends
-// the fill after one empty merge.
+// TestFullReloadEmpty: an empty result ends the fill after one empty
+// merge.
 func TestFullReloadEmpty(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -720,10 +716,10 @@ func TestFullReloadEmpty(t *testing.T) {
 	}
 }
 
-// TestRunSearchQuery pins the search-tab loader (the ctrl+f seam's
-// app side): the count + walk fill the fresh view in one merged batch,
-// publishing progress first and the diff keyed by the query name - the
-// event order the search tab renders against.
+// TestRunSearchQuery (the ctrl+f seam's app side): the count + walk
+// fill the fresh view in one merged batch, publishing progress first
+// and the diff keyed by the query name - the event order the search
+// tab renders against.
 func TestRunSearchQuery(t *testing.T) {
 	bus := core.NewBus()
 	fw := &fakeWorker{}
@@ -766,12 +762,11 @@ func TestRunSearchQuery(t *testing.T) {
 	}
 }
 
-// TestFlatRefresh pins the flat-view refresh: unread is a
-// chronological message list - one row per matched message, no thread
-// drag. A cycle whose changed set names ONE message of a conversation
-// must keep the other's synthetic thread: the prune decides
-// membership per message id, so a read sibling never drags its
-// conversation back in.
+// TestFlatRefresh: unread is a chronological message list - one row per
+// matched message, no thread drag. A cycle whose changed set names ONE
+// message of a conversation must keep the other's synthetic thread: the
+// prune decides membership per message id, so a read sibling never
+// drags its conversation back in.
 func TestFlatRefresh(t *testing.T) {
 	bus := core.NewBus()
 	w := &fakeWorker{}
@@ -794,9 +789,8 @@ func TestFlatRefresh(t *testing.T) {
 			t.Fatalf("flat row must be its own message: %+v", row)
 		}
 	}
-	// b read: the toggle bumps BOTH messages' lastmod, so the changed
-	// set names both; the prune answers membership per message and
-	// drops b - a read sibling never drags its conversation back in
+	// b read: the toggle bumps BOTH messages' lastmod, so the changed set
+	// names both; the prune drops b (membership is per message)
 	w.set("uuid", 20)
 	w.setMsgs([]core.Message{
 		{ID: "a@example.com", ThreadID: "conv1", Timestamp: 1, Tags: []string{"unread"}},

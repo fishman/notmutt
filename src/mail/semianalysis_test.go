@@ -3,11 +3,10 @@
 
 package mail
 
-// Layout pin for testdata/html/semianalysis.html (the stripped sample
-// corpus): the fixture's render must keep its structural shape -
-// forwarded header top right, title/authors/buttons left, READ IN APP
-// right, joined list marks, centered sources. Assertions are alignment
-// signatures only, never mail content.
+// Layout pin for testdata/html/semianalysis.html: the render keeps its
+// structural shape - forwarded header right, title/authors/buttons
+// left, READ IN APP right, joined list marks, centered sources.
+// Assertions are alignment signatures only, never mail content.
 
 import (
 	"os"

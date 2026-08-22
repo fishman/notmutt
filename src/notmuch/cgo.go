@@ -15,11 +15,10 @@ import (
 	"notmutt/core"
 )
 
-// CGOBackend wraps github.com/fishman/go.notmuch (fishman fork of zenhack's
-// go.notmuch, vendored; the upstream contrib/go bindings lack Revision and
-// were dormant 2018-2026). Runtime default: the batched walk closed the gap
-// to the CLI (decision record 3); the CLI backend stays reachable behind
-// -tags cli (SECURITY.md F10).
+// CGOBackend wraps the vendored fishman fork of go.notmuch (upstream
+// contrib/go lacks Revision and was dormant 2018-2026). Runtime default
+// since the batched walk closed the gap to the CLI (decision record 3);
+// the CLI backend stays reachable behind -tags cli (SECURITY.md F10).
 type CGOBackend struct {
 	db  *nm.DB
 	run runFn // the subprocess boundary: `notmuch new` (scanning is CLI machinery)
@@ -45,12 +44,10 @@ func (b *CGOBackend) Open(ctx context.Context, dbPath string) error {
 	return nil
 }
 
-// OpenConfig opens the database at dbPath with an explicit notmuch
-// config file: no environment resolution, so the caller guarantees
-// which config applies (its search.exclude_tags included). The plain
-// Open resolves the config from the environment (NOTMUCH_CONFIG or
-// ~/.notmuch-config); OpenConfig binds both inputs - the test env's
-// explicit-init form.
+// OpenConfig opens the database with an explicit config file: no
+// environment resolution (NOTMUCH_CONFIG or ~/.notmuch-config), so the
+// caller guarantees which config applies (its search.exclude_tags
+// included) - the test env's explicit-init form.
 func (b *CGOBackend) OpenConfig(ctx context.Context, dbPath, configPath string) error {
 	db, err := nm.OpenWithConfig(&dbPath, &configPath, nil, nm.DBReadOnly)
 	if err != nil {
@@ -77,18 +74,15 @@ func (b *CGOBackend) Revision(ctx context.Context) (string, uint64, error) {
 }
 
 // Query walks the result as one native batch per chunk: the full walk
-// emits each thread's summary and every message row in one pass (the
-// per-thread header-cache reads amortize C-side, zero file opens), so
-// the view fills with real rows from the first chunk - no stubs, no
-// per-thread hydration. The binding keeps the summary-only walk
-// (ThreadsWalk) intact; this path consumes the full walk. Chunk
-// cadence: firstChunk then steadyChunk. limit counts threads, like
-// `notmuch search --limit`.
+// emits each thread's summary and every message row in one pass
+// (header-cache reads amortize C-side, zero file opens) - the view
+// fills with real rows from the first chunk, no stubs. Chunk cadence:
+// firstChunk then steadyChunk; limit counts threads.
 //
-// flat switches to the message-level walk (the flat views: unread,
-// deleted, search): the msg_walk keeps its messages iterator alive in
-// C, so the boundary crossings stay per-chunk - the flat fill walks a
-// 10k-message list without the per-message iterator overhead.
+// flat switches to the message-level walk (unread, deleted, search):
+// the msg_walk keeps its messages iterator alive in C, so boundary
+// crossings stay per-chunk - a 10k-message list walks without
+// per-message iterator overhead.
 func (b *CGOBackend) Query(ctx context.Context, query string, limit int, flat bool, emit func([]core.Message) bool) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch search: database not open")
@@ -191,21 +185,18 @@ func refsSplit(raw string) []string {
 	return refs
 }
 
-// CountMsgs returns the message count for the query - the flat fill's
-// progress total (the threaded fill counts threads). The msg walk
-// omits the config search.exclude_tags (the CLI search default, the
-// binding's query_apply_excludes); the count applies the same
-// excludes, or a result with excluded-tagged matches never reaches
-// Done == Total and the bar sticks short of completion.
+// CountMsgs returns the message count - the flat fill's progress
+// total. The msg walk omits search.exclude_tags; the count applies
+// the same excludes, or excluded matches never reach Done == Total
+// and the bar sticks short of completion.
 func (b *CGOBackend) CountMsgs(ctx context.Context, query string) (int, error) {
 	if b.db == nil {
 		return 0, fmt.Errorf("notmuch count: database not open")
 	}
 	q := b.db.NewQuery(query)
 	defer q.Close()
-	// mirror the msg walk: read search.exclude_tags and omit them
-	// (EXCLUDE_TRUE), skipping the tag adds on error like the C
-	// helper - an unset key means no excludes on either side.
+	// mirror the msg walk: omit search.exclude_tags (EXCLUDE_TRUE); an
+	// unset key means no excludes on either side.
 	if ex, err := b.db.GetConfig("search.exclude_tags"); err == nil {
 		for _, tag := range strings.Split(ex, ";") {
 			if tag != "" {
@@ -234,10 +225,10 @@ func (b *CGOBackend) Count(ctx context.Context, query string) (int, error) {
 	return int(n), nil
 }
 
-// Thread fetches one thread's messages with the per-message iterators
-// - real ids, paths, and reference chains for the pager tree. A thread
-// is a handful of messages, so the per-message boundary crossings are
-// negligible here; only the query path is batched.
+// Thread fetches one thread's messages with per-message iterators -
+// real ids, paths, and reference chains for the pager tree. A thread
+// is a handful of messages, so per-message crossings are negligible;
+// only the query path is batched.
 func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Message, error) {
 	if b.db == nil {
 		return nil, fmt.Errorf("notmuch show: database not open")
@@ -273,11 +264,10 @@ func (b *CGOBackend) Thread(ctx context.Context, threadID string) ([]core.Messag
 	return msgs, nil
 }
 
-// Addresses harvests the deduplicated sender addresses (from: only -
-// the completion corpus, spec section 3) from messages matching the
-// query. The binding walks in C with the header cache (zero file
-// opens - the fast path); entries map to the core shape, counts stay
-// in the binding (the fuzzy match ranks by position, not frequency).
+// Addresses harvests deduplicated sender addresses (from: only - the
+// completion corpus, spec section 3). The binding walks in C with the
+// header cache (zero file opens); counts stay in the binding (the
+// fuzzy match ranks by position, not frequency).
 func (b *CGOBackend) Addresses(ctx context.Context, query string) ([]core.AddressEntry, error) {
 	if b.db == nil {
 		return nil, fmt.Errorf("notmuch address: database not open")
@@ -295,10 +285,9 @@ func (b *CGOBackend) Addresses(ctx context.Context, query string) ([]core.Addres
 
 // withWriteLock runs fn on a transient read-write handle: the handle
 // stays read-only for the fill (reads never hold notmuch's write
-// lock), and the write lock is held only for the op - the CLI
-// backend's lock footprint, so concurrent `notmuch new`/`notmuch tag`
-// elsewhere keep working. The whole op is one atomic transaction,
-// like `notmuch tag`.
+// lock), the write lock is held only for the op - the CLI backend's
+// lock footprint, so concurrent notmuch new/tag elsewhere keep
+// working. The whole op is one atomic transaction, like `notmuch tag`.
 func (b *CGOBackend) withWriteLock(ctx context.Context, what string, fn func(*nm.DB) error) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch %s: database not open", what)
@@ -342,12 +331,10 @@ func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
 	})
 }
 
-// AddPaths indexes the given files (the mover's copy-side update). The
-// message keeps its tags: AddMessage finds it by message-id and
-// appends the path - add-first is the ordering that preserves tags.
-// The binding maps index_file's duplicate-id status to an error, but
-// the filename association already happened - the mover's exact case
-// (a copy of a known message), so it counts as success.
+// AddPaths indexes the given files (the mover's copy-side update).
+// AddMessage finds the message by id and appends the path - add-first
+// is the ordering that preserves tags. Duplicate-id maps to success:
+// the association already happened (a copy of a known message).
 func (b *CGOBackend) AddPaths(ctx context.Context, paths []string) error {
 	return b.withWriteLock(ctx, "add", func(db *nm.DB) error {
 		for _, p := range paths {
@@ -368,9 +355,8 @@ func (b *CGOBackend) RemovePaths(ctx context.Context, paths []string) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// the binding maps remove_message's duplicate-id status (the
-			// message still has other files) to an error, but the file
-			// link was removed - the mover's copy-then-delete case.
+			// duplicate-id means the message has other files, but the link was
+			// removed - the mover's copy-then-delete case.
 			if err := db.RemoveMessage(p); err != nil && !errors.Is(err, nm.ErrDuplicateMessageID) {
 				return fmt.Errorf("notmuch remove: %w", err)
 			}
@@ -379,18 +365,16 @@ func (b *CGOBackend) RemovePaths(ctx context.Context, paths []string) error {
 	})
 }
 
-// New runs `notmuch new` as a subprocess (argv-only, F4): scanning
-// needs the CLI machinery - the incremental scan, the write lock, and
-// the post-new hooks are notmuch-new.c, there is no library API. The
-// hooks run as configured; the filter engine takes over classification
-// on the revision delta after this returns, and the migration empties
-// the hook file once the engine owns the pipeline (early overlap is
-// guarded, never double-worked).
+// New runs `notmuch new` as a subprocess (argv-only, F4): scanning is
+// notmuch-new.c - the incremental scan, write lock, and post-new hooks
+// have no library API. The filter engine takes over classification on
+// the revision delta after this returns (early overlap is guarded,
+// never double-worked).
 //
-// The read handle is stale across an external commit - the revision
-// is cached at open and the Xapian snapshot hides the new messages -
-// so the handle reopens around the run: the pre read and every read
-// after the new (the poll's delta query) must see the commit.
+// The read handle is stale across an external commit (revision cached
+// at open, the Xapian snapshot hides new messages), so the handle
+// reopens around the run: the pre read and every later read must see
+// the commit.
 func (b *CGOBackend) New(ctx context.Context) (uint64, uint64, error) {
 	if err := b.reopen(ctx); err != nil {
 		return 0, 0, err
@@ -414,10 +398,9 @@ func (b *CGOBackend) New(ctx context.Context) (uint64, uint64, error) {
 }
 
 // reopen refreshes the read snapshot: an external commit (the new run
-// itself, another notmutt instance, a CLI new from a hook) is
-// invisible to a snapshot taken earlier - cached revision and query
-// results both go stale until notmuch_database_reopen (Xapian reopen
-// plus _load_database_state in lib/open.cc) replaces it.
+// itself, another instance, a CLI new from a hook) is invisible to the
+// earlier snapshot - cached revisions and query results go stale until
+// notmuch_database_reopen replaces it.
 func (b *CGOBackend) reopen(ctx context.Context) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch new: database not open")
@@ -425,10 +408,9 @@ func (b *CGOBackend) reopen(ctx context.Context) error {
 	return b.db.Reopen(nm.DBReadOnly)
 }
 
-// QueryMsgs walks a message-level query (the filter engine's delta
-// scans - lastmod ranges): bare message ids, chunked like Query. The
-// per-message iterator crosses the C boundary per message, so this is
-// for small result sets - the delta - never the index fill.
+// QueryMsgs walks a message-level query (delta scans - lastmod
+// ranges): bare message ids, chunked like Query. Per-message C
+// crossings make it for small sets - the delta, never the fill.
 func (b *CGOBackend) QueryMsgs(ctx context.Context, query string, emit func([]core.Message) bool) error {
 	if b.db == nil {
 		return fmt.Errorf("notmuch search: database not open")
@@ -467,7 +449,7 @@ func (b *CGOBackend) QueryMsgs(ctx context.Context, query string, emit func([]co
 // Snapshots fetches per-message tags and paths via the header cache
 // (zero file opens) - the engine's working set. A message that
 // vanished between the delta query and this call (an external new or
-// move) is skipped, never an error: its classification is moot.
+// move) is skipped, never an error.
 func (b *CGOBackend) Snapshots(ctx context.Context, ids []string) ([]Message, error) {
 	if b.db == nil {
 		return nil, fmt.Errorf("notmuch snapshot: database not open")

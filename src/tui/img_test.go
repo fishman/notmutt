@@ -4,11 +4,11 @@
 package tui
 
 // The load-remote-images pipeline: image lines stay collapsed
-// placeholders (privacy gate - the bytes are never decoded until the
-// toggle), the toggle expands them to Image.Rows rows, and the
-// terminal paint emits the decoded+scaled pixels after the frame
-// (protocol by config + environment, sixel by default). All paints
-// flow through imageWriter - nil in the frame tests, a buffer here.
+// placeholders (privacy gate - bytes never decode until the toggle),
+// the toggle expands them to Image.Rows rows, and the terminal paint
+// emits the decoded+scaled pixels after the frame (protocol by config
+// + environment, sixel by default). All paints flow through
+// imageWriter - nil in frame tests, a buffer here.
 
 import (
 	"bytes"
@@ -29,8 +29,7 @@ import (
 	"notmutt/mail"
 )
 
-// TestSetCellSize pins the ioctl-derived cell size: window pixels over
-// cell counts, out-of-range or missing pixels keep the 10x20 defaults.
+// TestSetCellSize pins the ioctl-derived cell size: window pixels over cell counts, out-of-range or missing pixels keep the 10x20 defaults.
 func TestSetCellSize(t *testing.T) {
 	saveW, saveH := imgCellW, imgCellH
 	defer func() { imgCellW, imgCellH = saveW, saveH }()
@@ -63,8 +62,7 @@ func trimRows(s string) []string {
 	return rows
 }
 
-// testPNG renders a deterministic w x h PNG (noise-ish pixels so the
-// encoded size is meaningful for the chunking tests).
+// testPNG renders a deterministic w x h PNG (noise-ish pixels so the encoded size is meaningful for the chunking tests).
 func testPNG(t *testing.T, w, h int) []byte {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
@@ -80,9 +78,7 @@ func testPNG(t *testing.T, w, h int) []byte {
 	return buf.Bytes()
 }
 
-// testImg is an image with noise-ish pixels (the x*y term kills the
-// per-row correlation, so the encoded size is meaningful for the
-// chunking tests).
+// testImg is an image with noise-ish pixels (the x*y term kills per-row correlation, so the encoded size is meaningful for the chunking tests).
 func testImg(w, h int) image.Image {
 	img := image.NewNRGBA(image.Rect(0, 0, w, h))
 	for y := range h {
@@ -192,8 +188,7 @@ func TestPagerVisibleImages(t *testing.T) {
 }
 
 func TestDecodeImage(t *testing.T) {
-	// 400x900 px at an 80x30 window: the row budget binds first
-	// (aspect kept: 2/3), the pixel dims snap to exact cell multiples
+	// 400x900 px at an 80x30 window: the row budget binds first (aspect kept: 2/3), the pixel dims snap to exact cell multiples
 	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30, 0, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -205,8 +200,7 @@ func TestDecodeImage(t *testing.T) {
 		t.Fatalf("pixel dims must snap to cell multiples: %dx%d", b.Dx(), b.Dy())
 	}
 
-	// the same image in a 100-row window binds on the width instead:
-	// a tall chart renders at its natural aspect, not squashed
+	// the same image in a 100-row window binds on the width instead: a tall chart renders at its natural aspect, not squashed
 	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100, 0, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -235,8 +229,7 @@ func TestDecodeImage(t *testing.T) {
 		t.Fatal("garbage must fail the decode")
 	}
 
-	// jpeg/gif/webp decode via the blank-imported registrations: mail
-	// charts are rarely png, and an undecoded chart never renders
+	// jpeg/gif/webp decode via the blank-imported registrations: mail charts are rarely png, and an undecoded chart never renders
 	var jbuf bytes.Buffer
 	src, _, _ := image.Decode(bytes.NewReader(testPNG(t, 400, 300)))
 	if err := jpeg.Encode(&jbuf, src, nil); err != nil {
@@ -253,9 +246,7 @@ func TestDecodeImage(t *testing.T) {
 		t.Fatalf("gif must decode at its aspect, got %dx%d err=%v", cols, rows, err)
 	}
 
-	// a declared display size is the target: a 200x300 image declared
-	// 600x600 upscales to 600px wide (2x) - with no declaration the
-	// scale would cap at 1 and render 200px
+	// a declared display size is the target: a 200x300 image declared 600x600 upscales to 600px wide (2x) - with no declaration the scale would cap at 1 and render 200px
 	if _, cols, rows, err = decodeImage(testPNG(t, 200, 300), 80, 100, 600, 600); err != nil {
 		t.Fatal(err)
 	}
@@ -263,9 +254,7 @@ func TestDecodeImage(t *testing.T) {
 		t.Fatalf("declared size must upscale the image, got %dx%d", cols, rows)
 	}
 
-	// the window cap still binds: a declared 10000px image cannot leave
-	// the view, and a one-axis declaration scales the other axis with
-	// it (aspect kept)
+	// the window cap still binds: a declared 10000px image cannot leave the view, and a one-axis declaration scales the other axis with it (aspect kept)
 	if _, cols, rows, err = decodeImage(testPNG(t, 400, 300), 80, 100, 10000, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -274,8 +263,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 }
 
-// stubCaps is the negotiated-capability stand-in: Sixel answers from a
-// field, so a test pins the screen's DA reply.
+// stubCaps is the negotiated-capability stand-in: Sixel answers from a field, so a test pins the screen's DA reply.
 type stubCaps struct{ sixel bool }
 
 func (s stubCaps) Sixel() bool { return s.sixel }
@@ -301,9 +289,7 @@ func TestDetectImageProtocol(t *testing.T) {
 		// a negative reply selects nothing
 		{base.Pager, map[string]string{}, stubCaps{}, ""},
 	}
-	// the non-tmux cases must not inherit the ambient session's TMUX
-	// (the tmux query path is pinned separately in
-	// TestDetectImageProtocolTmux)
+	// the non-tmux cases must not inherit the ambient session's TMUX (the tmux query path is pinned separately in TestDetectImageProtocolTmux)
 	t.Setenv("TMUX", "")
 	for _, c := range cases {
 		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM"} {
@@ -321,8 +307,8 @@ func TestDetectImageProtocol(t *testing.T) {
 
 // TestDetectImageProtocolTmux pins the tmux path: tmux answers DA1
 // itself (build-time reply), so under tmux the tmux query is tried
-// first; the negotiation stays the fallback (both share the same build
-// flag, so they cannot genuinely disagree).
+// first; the negotiation stays the fallback (both share the same
+// build flag, so they cannot genuinely disagree).
 func TestDetectImageProtocolTmux(t *testing.T) {
 	t.Setenv("TMUX", "x")
 	orig := tmuxSixel
@@ -374,9 +360,8 @@ func TestSixelEncode(t *testing.T) {
 
 // TestComposeImages pins the offscreen batch compose: two images at
 // different offsets land in one canvas whose dims are the rect union
-// (exact cell multiples), each image at its own pixel offset, and the
-// gap cells between them transparent (the page background shows
-// through).
+// (exact cell multiples), each at its own pixel offset, the gap cells
+// between them transparent.
 func TestComposeImages(t *testing.T) {
 	one := testImg(20, 40) // 2x2 cells
 	two := testImg(40, 40) // 4x2 cells
@@ -432,10 +417,7 @@ func TestBgHexOf(t *testing.T) {
 	}
 }
 
-// TestModelRenderImagesToggle runs the full path: open an html-only
-// message with an inline image, verify the placeholder gate, the
-// alt+i toggle expansion, the terminal paint, and the toggle-off
-// clear.
+// TestModelRenderImagesToggle runs the full path: open an html-only message with an inline image, verify the placeholder gate, the alt+i toggle expansion, the terminal paint, and the toggle-off clear.
 func TestModelRenderImagesToggle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -466,8 +448,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	imageWriter = &buf
 	defer func() { imageWriter = old }()
 
-	// the loop split: the stale rects clear before the frame, the
-	// blocks paint after it
+	// the loop split: the stale rects clear before the frame, the blocks paint after it
 	paint := func() {
 		next, stale := m.paintRects()
 		clearRects(imageWriter, stale)
@@ -502,8 +483,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
 	}
 
-	// toggle off: the second press (the cycle: off -> remote -> off)
-	// clears the rect BEFORE the collapsed frame renders
+	// toggle off: the second press (the cycle: off -> remote -> off) clears the rect BEFORE the collapsed frame renders
 	m = press(t, m, "alt+i")
 	if !strings.Contains(buf.String(), "\x1b[4;1H") {
 		t.Fatalf("toggle-off must clear the painted rect")
@@ -550,9 +530,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 		t.Fatalf("open must switch to pager, mode=%q", m.mode)
 	}
 
-	// the first alt+i press arms the fetch (there is no local mode
-	// anymore - embedded cid:/data: bytes render, http(s) fetch on
-	// demand)
+	// the first alt+i press arms the fetch (there is no local mode anymore - embedded cid:/data: bytes render, http(s) fetch on demand)
 	m = press(t, m, "alt+i")
 	if len(fetched) != 1 || fetched[0] != "http://example.com/x.png" {
 		t.Fatalf("the toggle must fetch the visible url, got %v", fetched)
@@ -584,8 +562,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 		t.Fatalf("the fetched image must expand:\n%s", out)
 	}
 
-	// the mode cycled away: a stale reply drops without touching the
-	// lines (off mode, second press)
+	// the mode cycled away: a stale reply drops without touching the lines (off mode, second press)
 	m = press(t, m, "alt+i")
 	if m.imgMode != 0 {
 		t.Fatalf("the second press must cycle to off, mode=%d", m.imgMode)
@@ -603,8 +580,7 @@ func TestModelRenderImagesRemote(t *testing.T) {
 // TestModelRenderSemianalysisImages runs the real fixture through the
 // remote-images pipeline: the semianalysis newsletter's http(s) srcs
 // (icons + article images) must fetch on the alt+i press, expand when
-// the bytes arrive, and collapse on the toggle-off press. Pins the
-// fixture's image flow, not its layout.
+// the bytes arrive, and collapse on the toggle-off press.
 func TestModelRenderSemianalysisImages(t *testing.T) {
 	html, err := os.ReadFile("../testdata/html/semianalysis.html")
 	if err != nil {
@@ -664,9 +640,7 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 		t.Fatalf("the fetched images must expand: [image] count %d -> %d", before, after)
 	}
 
-	// the buttons row carries its 4 icons as inline images at
-	// increasing offsets, and the paint emits one rect per icon at
-	// that offset (the icons are real images, not placeholder text)
+	// the buttons row carries its 4 icons as inline images at increasing offsets, and the paint emits one rect per icon at that offset (real images, not placeholder text)
 	var iconLine *core.Line
 	for i := range m.pager.lines {
 		if len(m.pager.lines[i].Imgs) == 4 {
@@ -711,7 +685,7 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 // TestModelRenderImagesScrollCycle pins the scroll behavior: a below-
 // fold block image decodes when scrolled into view, its rect clears
 // when scrolled past, and the same rect paints again on the way back
-// (the decode cache keeps the bytes, the pixel state is re-emitted).
+// (the decode cache keeps the bytes).
 func TestModelRenderImagesScrollCycle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -792,8 +766,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 		t.Fatalf("the visible image must paint one rect, got %d", len(m.painted))
 	}
 
-	// scroll past: the rect stales (cleared before the frame) and the
-	// bookkeeping drops it
+	// scroll past: the rect stales (cleared before the frame) and the bookkeeping drops it
 	m.pager.vp.offset = 60
 	m.View()
 	np, stale := m.paintRects()
@@ -806,9 +779,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	clearRects(imageWriter, stale)
 	m.paintImages(np)
 
-	// scroll back: the same rect paints again (the pixels were cleared
-	// when it left the window - the cache keeps the bytes, the dims
-	// stay decoded)
+	// scroll back: the same rect paints again (the pixels were cleared when it left the window - the cache keeps the bytes, the dims stay decoded)
 	m.pager.vp.offset = 25
 	m.View()
 	paint()
@@ -817,9 +788,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	}
 }
 
-// TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave
-// the cleared page background visible (P2=0 paints them in the terminal's
-// default background), and the stream must round-trip to the same dims.
+// TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave the cleared page background visible (P2=0 paints them in the terminal's default background), and the stream must round-trip to the same dims.
 func TestSixelEncodeTransparent(t *testing.T) {
 	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0)
 	if err != nil {

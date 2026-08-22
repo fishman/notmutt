@@ -31,8 +31,7 @@ func statusMarker(count string) string {
 
 // testBindings is the per-context binding table (R9): the mutt scheme
 // from the embedded base config (config.Default derives it), plus the
-// live config's arrow-key overlay - the test table mirrors the user
-// config exactly, so a scheme change propagates to the tests.
+// live config's arrow-key overlay - it mirrors the user config.
 func testBindings() map[string]map[string]string {
 	km := config.Default().Bindings
 	km["index"]["up"] = "cursor-up"
@@ -564,8 +563,8 @@ func stubModel() Model {
 // TestStubThreadStaging pins the stub-row rules: the cursor tracks
 // summary rows by index (no message id to anchor by), and tag actions
 // on a stub stage a THREAD-level op - the summary stands for the whole
-// thread, and apply emits thread:<id>. A soft tag toggle resolves
-// against the thread's applied tags.
+// thread, apply emits thread:<id>. A soft tag toggle resolves against
+// the thread's applied tags.
 func TestStubThreadStaging(t *testing.T) {
 	m := stubModel()
 	m = press(t, m, "j")
@@ -623,8 +622,7 @@ func TestCursorMoves(t *testing.T) {
 // TestGotoDispatch pins the goto-<view> dispatch: the action drives
 // the store (the single write path, R8), an unknown view is a no-op
 // (load validation rejects it at startup), and the derived account key
-// resolves through the chain machinery (g 1 -> goto-gmail from the
-// placeholder account).
+// resolves through the chain machinery (g 1 -> goto-gmail).
 func TestGotoDispatch(t *testing.T) {
 	m := model()
 	m, _ = m.dispatchAction("goto-archive", 0)
@@ -1137,9 +1135,9 @@ func TestProgressBarEmptyView(t *testing.T) {
 
 // TestEmptyViewLooksFilled pins the load-time surface: an empty view
 // renders like a populated one - blank rows fill the list area (the
-// indicator sits on the first, cursor-style), and the keyhint bar and
-// status row always render, with or without a progress job. The
-// literal "empty" text never appears.
+// indicator sits on the first), the keyhint/status rows always render,
+// with or without a progress job. The literal "empty" text never
+// appears.
 func TestEmptyViewLooksFilled(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
@@ -1310,13 +1308,12 @@ func TestPagerRestylesOnThemeSwitch(t *testing.T) {
 
 // TestIndexTailTintsWithoutOpen pins the no-open mark contract: the
 // thread-tail marks derive from the view's own rows (the flatten
-// classifies a WINDOWED thread - one with rows hidden above or below,
-// the "+N more" ghosts), so the index tints without opening anything.
-// A nine-message thread under a five-row window renders its visible
-// recent-5 boundary (m4) with the cyan tint and the "+4 more" ghost
-// unmarked; the same thread with a window that fits has nothing hidden
-// and renders entirely unmarked. Nothing loaded, no pager: a
-// row-materializing event alone renders the tint.
+// classifies a WINDOWED thread - rows hidden above or below, the
+// "+N more" ghosts), so the index tints without opening anything. A
+// nine-message thread under a five-row window tints its recent-5
+// boundary (m4) and leaves the "+4 more" ghost unmarked; a window
+// that fits renders entirely unmarked. No pager: a row-materializing
+// event alone renders the tint.
 func TestIndexTailTintsWithoutOpen(t *testing.T) {
 	cfg := config.Default()
 	chain := func() []*core.Message {
@@ -1388,8 +1385,7 @@ func hasTag(tags []string, tag string) bool {
 // TestProgressBarSurvivesDroppedCompletion pins the stuck-bar fix: the
 // bus keeps the latest progress as a snapshot, so a completion event
 // dropped from the channel under backpressure still clears the bar via
-// the tick (the tail of a publish burst used to vanish with the bar
-// stuck mid-progress).
+// the tick.
 func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	bus := core.NewBus()
@@ -1497,9 +1493,7 @@ func rowsModel(n int) Model {
 	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
-// openPager presses the open key with an open handler that injects the
-// loaded lines as a bus event. loadedLines renders a message set the
-// way the app's open job does:
+// loadedLines renders a message set the way the app's open job does:
 // handlers publish the same ThreadLoaded the app would (the model
 // attaches lines, it never renders).
 func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
@@ -1511,9 +1505,10 @@ func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 	return lines
 }
 
-// thread as a bus event, mirroring the app's worker publish path. The
-// handler updates the model synchronously, so the returned model
-// carries the pager state.
+// openPager presses the open key with an open handler that injects the
+// loaded lines as a bus event, mirroring the app's worker publish
+// path; the handler updates the model synchronously, so the returned
+// model carries the pager state.
 func openPager(t *testing.T, m Model, path string) Model {
 	t.Helper()
 	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
@@ -1870,10 +1865,9 @@ func TestCountedMove(t *testing.T) {
 }
 
 // TestIndexPagesAtEdges pins the read-position model in the index: the
-// window holds still while the cursor moves within the page (row 1
-// stays the top line); only when the cursor crosses the bottom edge
-// does the window jump a full page and the cursor land on the new
-// page's first line (up: the new page's last line).
+// window holds still while the cursor moves within the page; only a
+// bottom-edge crossing jumps the window a full page, the cursor
+// landing on the new page's first line (up: its last line).
 func TestIndexPagesAtEdges(t *testing.T) {
 	m := rowsModel(60)
 	h := m.listHeight()
@@ -2004,9 +1998,8 @@ func TestComposeOpenedAttachesDialogue(t *testing.T) {
 
 // TestComposeOpenedPaints pins the async attach repaint: a
 // ComposeOpened that lands after the triggering frame painted (the
-// mailto link path - the picker painted, then the bus event arrives)
-// must flag a paint, or the compose tab stays invisible behind the
-// previous view.
+// mailto link path) must flag a paint, or the compose tab stays
+// invisible behind the previous view.
 func TestComposeOpenedPaints(t *testing.T) {
 	m := model()
 	m.paint = false // the picker already painted this frame
@@ -2049,8 +2042,7 @@ func TestTabSwitchParksDialogue(t *testing.T) {
 // TestSearchTabOpen pins the ctrl+f search tab: the prompt commits a
 // raw notmuch query into a fresh view through the onSearch seam, the
 // "active" config attaches the tab and renders the query's rows, q
-// closes the tab instead of the app. The test fills the fresh view
-// and reports the diff the way the app-side load does.
+// closes the tab instead of the app.
 func TestSearchTabOpen(t *testing.T) {
 	var got *core.View
 	SetSearchHandler(func(v *core.View) { got = v })
@@ -2217,9 +2209,9 @@ func TestSendResultFailureKeepsDialogue(t *testing.T) {
 
 // TestSendResultSnapshotResolvesDroppedCompletion pins the bus
 // last-value recovery: a SendResult dropped from the channel under
-// backpressure (64-deep subscriber) must still resolve the dialogue -
-// the snapshot is polled on the next keypress instead of wedging the
-// tab in PhaseSending forever.
+// backpressure must still resolve the dialogue - the snapshot is
+// polled on the next keypress instead of wedging the tab in
+// PhaseSending forever.
 func TestSendResultSnapshotResolvesDroppedCompletion(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
@@ -2944,8 +2936,7 @@ func TestKeyboardEnhancementsMsgSetsReleasePath(t *testing.T) {
 // TestPaintGateDeferredNavigation pins the ShouldRender gate's core
 // promise: a navigation defers its paint to the frame tick (paint
 // false, renderDue true, one tick in flight), the tick re-arms the
-// gate exactly once, and an idle tick turns the gate off again - the
-// model never renders on a timer with nothing to show.
+// gate exactly once, and an idle tick turns the gate off again.
 func TestPaintGateDeferredNavigation(t *testing.T) {
 	m := model()
 	m = press(t, m, "j")
@@ -3074,7 +3065,7 @@ func TestPaintGateHoldBurst(t *testing.T) {
 // picker lists the registered commands, selecting arms the attach
 // prompt with "@name", and enter arms the exec (a non-nil Cmd) and
 // closes the prompt. The picker outranks the prompt while both are
-// live - the dispatch order change this test enforces.
+// live.
 func TestAttachPromptCommandPicker(t *testing.T) {
 	saved := attachCommands
 	defer func() { attachCommands = saved }()
@@ -3479,8 +3470,8 @@ func TestFormNavRestrictedToAttachments(t *testing.T) {
 // TestComposeAttachmentWindow pins the attachment-list window: three
 // rows around the selection, "+N more" above and below for the hidden
 // count. At the top of the list the window starts at the first
-// attachment with a bottom count only; as the cursor moves past the
-// third, the window slides and a top count appears.
+// attachment with a bottom count only; past the third row it slides
+// and a top count appears.
 func TestComposeAttachmentWindow(t *testing.T) {
 	names := []string{"a.txt", "b.txt", "c.txt", "d.txt", "e.txt", "f.txt", "g.txt"}
 	atts := make([]compose.Attachment, len(names))
@@ -4109,9 +4100,8 @@ func TestDefaultChooser(t *testing.T) {
 
 // TestAttachTabChooser pins Tab in the attach prompt: with a
 // registered command it runs the default chooser (the first
-// registered), and without one it opens the built-in directory
-// picker, which descends into directories and attaches a selected
-// file.
+// registered); without one it opens the built-in directory picker,
+// which descends into directories and attaches a selected file.
 func TestAttachTabChooser(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	// with a registered yazi, Tab returns an exec cmd and closes the
@@ -4179,8 +4169,8 @@ func TestAddrCompletionLengthGate(t *testing.T) {
 // TestAddrCompletionLazyDebounce pins the lazy harvest: without a
 // corpus, Tab arms the debounce tick (single-flight); the settle
 // guard re-arms a too-young tick and fires the request once the
-// triggers settle; the AddressIndex result resolves the pending
-// trigger by opening the picker on the still-open field.
+// triggers settle; the AddressIndex result opens the picker on the
+// still-open field.
 func TestAddrCompletionLazyDebounce(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "b") // the Bcc field, empty
@@ -4365,11 +4355,9 @@ func TestModelCollapseThread(t *testing.T) {
 }
 
 // TestModelCollapseEscapesOnMove pins the collapse escape: the C
-// collapse is a cursor-scoped view - moving the cursor off the
-// collapsed thread expands it again, so the thread's rows never stay
-// hidden once the cursor moved past its summary row. A manual C
-// expand clears the escape; an edge jump (G) off the thread expands
-// it too.
+// collapse is cursor-scoped - moving the cursor off the collapsed
+// thread expands it again. A manual C expand clears the escape; an
+// edge jump (G) off the thread expands it too.
 func TestModelCollapseEscapesOnMove(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
@@ -4423,7 +4411,7 @@ func TestModelCollapseEscapesOnMove(t *testing.T) {
 // TestModelAttachmentDialog pins the v key's attachment flow: the
 // picker lists the pager's attachment lines, enter views the chosen
 // attachment through the seam (the AttachmentLoaded reply swaps the
-// pager), s arms the save prompt prefilled with the name, and back
+// pager), s arms the save prompt prefilled with the name, back
 // re-opens the message to restore.
 func TestModelAttachmentDialog(t *testing.T) {
 	cfg := config.Default()
@@ -4557,12 +4545,11 @@ func TestModelOpenHeaders(t *testing.T) {
 }
 
 // TestHorizontalScroll pins the h/l pan (the arrows bind the same
-// actions): the index offset moves in scrollStep cells and clips the
-// rows at the write site - the rendered row loses its head as the pan
-// grows, the deep title tail becomes visible (rows render to the view
-// width plus the offset), and the offset clamps at the page's widest
-// row content - scrolled past the end, the row never flips back to
-// its head. open-headers moved to H, so h/l are free.
+// actions): the index offset moves in scrollStep cells and clips at
+// the write site - the row loses its head as the pan grows, the deep
+// title tail becomes visible, and the offset clamps at the page's
+// widest row content - scrolled past the end, the row never flips
+// back to its head.
 func TestHorizontalScroll(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
@@ -4613,8 +4600,7 @@ func TestHorizontalScroll(t *testing.T) {
 // TestPagerHorizontalPan pins the pager pan: the offset moves in
 // scrollStep cells and clamps at the content width minus the window,
 // and the style boundary follows the offset - the clipped render shows
-// the content tail (the styled cache is truncated to pad(), a moved
-// boundary invalidates it).
+// the content tail (the styled cache is truncated to pad()).
 func TestPagerHorizontalPan(t *testing.T) {
 	p := newPager("t1", "a", []core.Line{{Text: "HEAD" + strings.Repeat("x", 196)}})
 	p.setSize(40, 5, Styles{})
@@ -4652,14 +4638,12 @@ func fixtureHtml(t *testing.T, body string) string {
 }
 
 // TestOpenLinksHTML pins the F key in the html view (easyjump style):
-// F re-renders with the inline "[N]" labels (the render handler sees
-// labelLinks=true) and the key loop owns the digits - no prompt, the
-// selection IS the feedback. A digit that completes a number (n*10 > N)
-// opens that link's target through the openLink seam on the spot; the
+// F re-renders with inline "[N]" labels and the key loop owns the
+// digits - no prompt, the selection IS the feedback. A digit
+// completing a number (n*10 > N) opens its target on the spot; the
 // exit re-render drops the labels. F again or esc exits without
-// opening; a dead digit (above the label count) is ignored. The render
-// replies are injected like the app's bus would deliver them - the
-// seam records the requests.
+// opening; a dead digit (above the label count) is ignored. The
+// render replies arrive like the app's bus would deliver them.
 func TestOpenLinksHTML(t *testing.T) {
 	m := model()
 	path := fixtureHtml(t, "<p>see <a href=\"https://alpha.example.com/x\">alpha</a>"+
@@ -5040,7 +5024,7 @@ func TestNextMatch(t *testing.T) {
 // prompt, enter commits the pattern, closes the prompt and jumps the
 // cursor to the next match; the matched part highlights in the rows,
 // and n repeats the search from the cursor (wrapping). A miss logs the
-// no-match notice and leaves the cursor.
+// notice and leaves the cursor.
 func TestIndexSearch(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
@@ -5207,12 +5191,11 @@ func TestSummaryViewFromIndex(t *testing.T) {
 }
 
 // TestAttachChooseReArmsBus pins the attach-choose Tab path: the Lua
-// action runs async and its picker request rides the bus, so the Tab
-// keypress must re-arm the event channel (a nil Cmd leaves the request
-// sitting in the buffer until the next keypress - the picker never
-// opens). The prompt must STAY open: closing it drops the next Tab
-// into the compose keymap (tab=attach reopens the prompt) instead of
-// re-running the chooser - the followup pick appears to hang.
+// action runs async and its picker request rides the bus, so Tab must
+// re-arm the event channel (a nil Cmd leaves the request in the buffer
+// until the next keypress - the picker never opens). The prompt must
+// STAY open: closing it drops the next Tab into the compose keymap
+// (tab=attach reopens the prompt) instead of re-running the chooser.
 func TestAttachChooseReArmsBus(t *testing.T) {
 	old := pluginActions
 	pluginActions = func() map[string]bool { return map[string]bool{"attach-choose": true} }
@@ -5232,8 +5215,7 @@ func TestAttachChooseReArmsBus(t *testing.T) {
 // TestPickerRequestRunsExec pins the picker deadlock: the request's
 // exec must run with an idle bus. A batch(EventCmd, exec) sequences
 // yazi behind the next bus event the blocked Lua action can never
-// produce - the exec never runs and the picker never opens (the
-// goroutine dump shows the batch parked on EventCmd).
+// produce - the exec never runs and the picker never opens.
 func TestPickerRequestRunsExec(t *testing.T) {
 	bus := core.NewBus()
 	m := sized(New(core.NewView("inbox", "tag:inbox"), bus.Subscribe(),
@@ -5438,8 +5420,8 @@ func TestFilePickerMark(t *testing.T) {
 // TestWindowSlidesWithCursor pins the bounded tree window navigation
 // (R3): stepping past a thread's window edge slides the window instead
 // of leaving the thread - the cursor keeps its row while the revealed
-// message lands under it; at the thread's tail the step crosses into
-// the next thread; stepping up slides back to the root.
+// message lands under it; at the tail the step crosses into the next
+// thread; stepping up slides back to the root.
 func TestWindowSlidesWithCursor(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
@@ -5577,11 +5559,10 @@ func TestPageDownFoldKeepsPlainFlip(t *testing.T) {
 // TestScrollSnapsToThreadHead pins the j-scroll snap: a down step
 // crossing the page bottom inside a windowed thread advances the
 // window to the next chunk boundary and re-anchors the page at the
-// thread head - the top of the page becomes "beginning of thread -1"
-// (the leading "+N more" ghost when the window is cut), head-visible
-// or not. The snap repeats chunk by chunk; once the tail is reached
-// the crossing flips plainly. Page down keeps the plain flip: a
-// counted move never snaps.
+// thread head - the top becomes "beginning of thread -1" (the leading
+// "+N more" ghost when the window is cut). The snap repeats chunk by
+// chunk; once the tail is reached the crossing flips plainly - page
+// down keeps the plain flip, a counted move never snaps.
 func TestScrollSnapsToThreadHead(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{

@@ -4,11 +4,11 @@
 package tui
 
 // Frame-chrome regression: drive the real loop on the simulation
-// screen, and assert the chrome (tab bar, keyhint, status line)
-// survives cursor moves and a refresh that shrinks the list. The loop
-// writes the full frame every paint (tcell diffs internally), so a
-// short list must leave blank rows - never stale rows from the
-// previous paint.
+// screen; the chrome (tab bar, keyhint, status line) must survive
+// cursor moves and a refresh that shrinks the list. The loop writes
+// the full frame every paint (tcell diffs internally), so a short
+// list must leave blank rows - never stale rows from the previous
+// paint.
 
 import (
 	"fmt"

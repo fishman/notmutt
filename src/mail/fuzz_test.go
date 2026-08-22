@@ -4,11 +4,10 @@
 package mail
 
 // Fuzz targets for the html renderer boundary (AGENTS.md: parser-
-// adjacent code passes the fuzz targets in SECURITY.md before it is
-// accepted). The properties under test are panic-freedom and bounded
-// output: a hostile document never exceeds the render line budget
-// (content lines <= maxHTMLLines, each block boundary adds at most one
-// blank, plus the truncation marker).
+// adjacent code passes SECURITY.md's fuzz targets). Properties:
+// panic-freedom and bounded output - content lines <= maxHTMLLines,
+// each block boundary adds at most one blank, plus the truncation
+// marker.
 
 import "testing"
 

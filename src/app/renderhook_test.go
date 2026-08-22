@@ -28,9 +28,9 @@ func restoreRenderHooks(hooks []BodyRenderHook, budget time.Duration) {
 	renderHookBudget = budget
 }
 
-// TestBodyRenderHooksTransform pins the boundary: registered hooks run
-// in order on the open job's render output, and the transformed lines
-// ride the ThreadLoaded event to the TUI.
+// TestBodyRenderHooksTransform: registered hooks run in order on the
+// open job's render output, and the transformed lines ride the
+// ThreadLoaded event to the TUI.
 func TestBodyRenderHooksTransform(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -70,9 +70,9 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 	}
 }
 
-// TestBodyRenderHookErrorFallsBack pins the fallback: a hook error
-// drops the hook's output and the render keeps the last good lines -
-// the open never fails because a plugin misbehaved.
+// TestBodyRenderHookErrorFallsBack: a hook error drops its output and
+// the render keeps the last good lines - the open never fails because a
+// plugin misbehaved.
 func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -108,10 +108,10 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 	}
 }
 
-// TestBodyRenderHookDeadlineFallsBack pins the freeze fix: a hook that
-// never returns gets killed by the chain deadline (the context the
-// gopher-lua SetContext adapter wires later), and the render falls
-// back to the un-hooked lines instead of hanging the open.
+// TestBodyRenderHookDeadlineFallsBack: a hook that never returns is
+// killed by the chain deadline (the context the gopher-lua SetContext
+// adapter wires later), and the render falls back to the un-hooked
+// lines instead of hanging the open.
 func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -154,10 +154,9 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 	}
 }
 
-// TestOpenThreadEmptyThreadPublishesErr pins the moved empty check:
-// with nothing to render, the open publishes Err and the TUI stays in
-// index (the model test covers the fallback). The fake worker cannot
-// represent an empty thread (it substitutes a changed-set marker), so
+// TestOpenThreadEmptyThreadPublishesErr: with nothing to render the
+// open publishes Err and the TUI stays in index (the model test covers
+// the fallback); the fake worker substitutes a changed-set marker, so
 // this test uses a minimal stub.
 func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	bus := core.NewBus()
@@ -177,11 +176,10 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	}
 }
 
-// TestOpenThreadLinks pins the F key's label render through the open
-// job: labelLinks=true renders the inline "[N]" labels and ships the
-// target list on the ThreadLoaded event; the unlabeled render carries
-// no links - the labels are mode-scoped, never the html view's
-// default.
+// TestOpenThreadLinks (the F key): labelLinks=true renders the inline
+// "[N]" labels and ships the target list on ThreadLoaded; the
+// unlabeled render carries no links - the labels are mode-scoped,
+// never the html view's default.
 func TestOpenThreadLinks(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()

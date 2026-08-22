@@ -42,9 +42,8 @@ import (
 var pickersLib string
 
 // luaPlugin is one loaded plugin file: its VM and body_render function.
-// A VM is not concurrency-safe, so every call serializes on mu - async
-// opens run on their own goroutines, and the decision-record 20
-// one-VM-one-goroutine discipline applies across them.
+// A VM is not concurrency-safe, so every call serializes on mu
+// (decision-record 20 one-VM-one-goroutine).
 type luaPlugin struct {
 	vm         *lua.LState
 	mu         sync.Mutex
@@ -56,9 +55,9 @@ type luaPlugin struct {
 // chain order is deterministic) and registers each plugin's body_render
 // as a BodyRenderHook. Network gates the sandbox http module per
 // plugin ([lua.network.<name>], lua_http.go - deny by default). A file
-// that fails to load is logged and skipped (decision record 20: load
-// errors degrade, they never kill the client). A missing dir is a
-// no-op - no plugins configured.
+// that fails to load is logged and skipped (load errors degrade, they
+// never kill the client). A missing dir is a no-op - no plugins
+// configured.
 func loadLuaPlugins(dir string, network map[string]config.LuaNetwork) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -86,9 +85,8 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 	// the sandbox json/http modules: http only when the plugin has a
 	// network section (the deny-by-default gate)
 	setPluginNet(vm, networkFor(network, path))
-	// register_attach_command runs DURING DoFile (the reverse of the
-	// body_render read-after pattern): a plugin file calls it to add a
-	// command to the attach-command registry (R8).
+	// register_attach_command runs DURING DoFile: a plugin file calls it
+	// to add a command to the attach-command registry (R8).
 	vm.SetGlobal("register_attach_command", vm.NewFunction(func(L *lua.LState) int {
 		name := L.CheckString(1)
 		var argv []string
@@ -102,9 +100,9 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		registerAttachCommand(name, argv)
 		return 0
 	}))
-	// register_action and bind_key run during DoFile too: the registries
-	// map name/key to THIS plugin file, and an invocation re-runs the
-	// file in a fresh VM before calling the registered fn (lua_action.go)
+	// register_action and bind_key run during DoFile too: name/key ->
+	// THIS plugin file; an invocation re-runs the file in a fresh VM
+	// before calling the registered fn (lua_action.go)
 	vm.SetGlobal("register_action", vm.NewFunction(func(L *lua.LState) int {
 		registerAction(L.CheckString(1), path)
 		L.CheckFunction(2) // type-check the fn; the invocation re-registers the callable
@@ -116,15 +114,15 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		return 0
 	}))
 	// translate runs the session language lookup (decision record 24):
-	// backed by the same embedded bundle as the client UI, selected by
-	// the [ui] language - never plugin config.
+	// the same embedded bundle as the client UI, selected by the [ui]
+	// language - never plugin config.
 	vm.SetGlobal("translate", vm.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(i18n.T(L.CheckString(1))))
 		return 1
 	}))
 	// re_match is the regex helper (Go regexp syntax - Lua string
-	// patterns have no alternation): match(bool), err(string or nil).
-	// A compile error is false plus the error text, so the common
+	// patterns have no alternation): match(bool), err(string or nil). A
+	// compile error is false plus the error text, so the common
 	// single-value usage keeps working.
 	vm.SetGlobal("re_match", vm.NewFunction(func(L *lua.LState) int {
 		re, err := regexp.Compile(L.CheckString(1))
@@ -138,10 +136,9 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		return 2
 	}))
 	// get_attachments is the mail-handle fetch (the categorize
-	// contract): the save pass registers each message's parsed
-	// attachment list under the handle it passes to categorize, and
-	// the binding returns name/mime/size/ordinal per attachment. The
-	// plugin never opens files - the list is what the client parsed.
+	// contract): returns name/mime/size/ordinal per attachment for the
+	// handle the save pass passed to categorize. The plugin never opens
+	// files - the list is what the client parsed.
 	vm.SetGlobal("get_attachments", vm.NewFunction(func(L *lua.LState) int {
 		atts, ok := attachmentsForHandle(L.CheckString(1))
 		if !ok {
@@ -209,7 +206,7 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 
 // openSandboxLibs opens the whitelisted libs (decision record 20 point
 // 3): no os/io/debug - no filesystem, no exec. Package opens first so
-// require works for plugin-local files. Shared by the load-time and the
+// require works for plugin-local files. Shared by the load-time and
 // per-invocation VMs (the action layer, lua_action.go).
 func openSandboxLibs(vm *lua.LState, path string) error {
 	for _, pair := range []struct {
@@ -256,9 +253,9 @@ func (p *luaPlugin) renderBody(ctx context.Context, lines []core.Line) ([]core.L
 // callBodyRender converts the lines to a Lua table, calls the plugin's
 // body_render, and converts the returned table back. The output is
 // plugin-authored, user-installed code - the same trust as config, not
-// mail content (F1's sanitize boundary is for mail; it already ran).
-// A malformed return (non-table, non-string rows) is a hook failure -
-// the chain falls back.
+// mail content (F1's sanitize boundary already ran). A malformed return
+// (non-table, non-string rows) is a hook failure - the chain falls
+// back.
 func (p *luaPlugin) callBodyRender(lines []core.Line) ([]core.Line, error) {
 	arg := p.vm.NewTable()
 	for _, l := range lines {

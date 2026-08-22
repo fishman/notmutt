@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package html holds the HTML layout primitives for terminal
-// renderers: the CSS-subset cascade engine (x/net/html parses, the
-// selector matching is cascadia - the mature, fuzzed piece), the
-// cell-width helpers, and the hyperlink scanner (the aerc port in
-// links.go). The flow walker that emits a client's line model is NOT
-// here - the mail renderer owns it (docs/html-rendering-analysis.md
-// describes the full pipeline).
+// renderers: the CSS cascade engine (x/net/html + cascadia), the
+// cell-width helpers, and the hyperlink scanner (aerc port in
+// links.go). The flow walker that emits a line model is the mail
+// renderer's job (docs/html-rendering-analysis.md).
 package html
 
 import (
@@ -23,8 +21,7 @@ import (
 )
 
 // Style is the computed style the renderer acts on. Zero values mean
-// "inherit from the parent" except Display which is the tag default
-// when empty.
+// "inherit", except Display which is the tag default when empty.
 type Style struct {
 	Fg        string // #rrggbb, "" = inherit
 	FgSet     bool   // an explicit color source at this node, not inherited
@@ -38,9 +35,8 @@ type Style struct {
 	Pre       bool   // white-space: pre* -> no wrap, keep spaces
 }
 
-// cssColor normalizes a CSS color value to #rrggbb, or "" when the
-// value is not a color the renderer understands (transparent, current-
-// color, gradients, ... all drop to inherit).
+// cssColor normalizes a CSS color value to #rrggbb, or "" when not a
+// color the renderer understands (transparent, current-color, ...).
 func cssColor(v string) string {
 	v = strings.ToLower(strings.TrimSpace(v))
 	switch {
@@ -117,8 +113,7 @@ func (s *Style) apply(decls map[string]string) {
 			s.Bg = c
 		}
 	} else if v, ok := decls["background"]; ok {
-		// the shorthand (background: #fff url(...) no-repeat): the first
-		// color token; the longhand above wins when both are present
+		// shorthand: first color token; longhand above wins when both present
 		for _, tok := range strings.Fields(v) {
 			if c := cssColor(tok); c != "" {
 				s.Bg = c
@@ -179,11 +174,9 @@ type CSSRule struct {
 	decls map[string]string
 }
 
-// ParseStyleSheet parses the text of a <style> element into rules
-// sorted by ascending specificity: later entries in the slice win on
-// ties, and higher specificity wins over lower - the cascade order.
-// Unparseable selectors and @-rules (media queries, imports) drop
-// their rules entirely; the renderer degrades to the inline styles.
+// ParseStyleSheet parses a <style> element's text into rules sorted by
+// ascending specificity (later entries win on ties - the cascade).
+// Unparseable selectors and @-rules (media queries, imports) drop.
 func ParseStyleSheet(text string) []CSSRule {
 	text = stripCSSComments(text)
 	var rules []CSSRule
@@ -235,18 +228,15 @@ func stripCSSComments(s string) string {
 	}
 }
 
-// StyleOf computes the node's computed style: the parent's inherited
-// style, overridden by matching <style> rules in cascade order, then
-// by the inline style attribute (which always wins). UA defaults (bold
-// headings, italic em, underlined links) fill only what the author did
-// not set - the author cascade runs after them and wins.
+// StyleOf computes the node's style: the parent's inherited style,
+// then matching rules in cascade order, then the inline style
+// attribute (always wins). UA defaults fill only what the author
+// did not set.
 func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s := *parent
 	s.AlignSet = false // align inherits, its explicit-source flag never does
 	s.FgSet = false    // same for color: the contrast derivation must override an inherited value
-	// display is NOT inherited (CSS): a block cell's content stays
-	// inline-by-default - the copy above must not carry the parent's
-	// display into the children
+	// display is not inherited (CSS): don't carry the parent's display into children
 	s.Display = ""
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
@@ -257,22 +247,19 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	if a := Attr(n, "style"); a != "" {
 		s.apply(ParseDecls(a))
 	}
-	// the legacy bgcolor attribute (body/table/tr/td/th - the Outlook-era
-	// templates use it everywhere): same effect as background-color
+	// legacy bgcolor (Outlook-era templates): same effect as background-color
 	if v := Attr(n, "bgcolor"); v != "" {
 		s.apply(ParseDecls("background-color:" + v))
 	}
-	// the legacy align attribute (Outlook-era tables): same effect as
-	// text-align
+	// legacy align (Outlook-era tables): same effect as text-align
 	if v := Attr(n, "align"); v != "" {
 		s.apply(ParseDecls("text-align:" + v))
 	}
 	return &s
 }
 
-// uaDefaults fills the UA emphasis for unstyled elements; the cascade
-// runs afterwards, so author rules override. Each flag fills
-// independently - a bold <b> inside an italic context stays italic.
+// uaDefaults fills UA emphasis for unstyled elements; the cascade runs
+// after, so author rules override. Flags fill independently.
 func uaDefaults(tag string, s *Style) {
 	switch tag {
 	case "h1", "h2", "b", "strong":
@@ -282,9 +269,7 @@ func uaDefaults(tag string, s *Style) {
 	case "u":
 		s.Underline = true
 	case "a":
-		// the UA anchor: underline always, blue only when the whole
-		// chain set no color (an inherited author color wins per the
-		// cascade - author beats UA)
+		// underline always; blue only when no color was set (author beats UA)
 		s.Underline = true
 		if s.Fg == "" {
 			s.Fg = "#0000ee"
@@ -303,10 +288,8 @@ func Attr(n *html.Node, key string) string {
 }
 
 // TakeCells cuts the longest true byte prefix of s that fits in cap
-// cells. The cut runs on the SOURCE bytes (DecodeRuneInString reports
-// each rune's real size): a recoded replacement char would claim more
-// bytes than the source consumed, and the caller's s[len(chunk):]
-// slice would overrun (the fuzz catch).
+// cells, on the SOURCE bytes: a recoded replacement char would misalign
+// the caller's s[len(chunk):] slice (the fuzz catch).
 func TakeCells(s string, cap int) string {
 	i := 0
 	cells := 0
@@ -331,9 +314,8 @@ func TextWidth(s string) int {
 	return n
 }
 
-// ContrastFG picks a readable default foreground for a declared
-// background: Rec.709 luma of the bg, dark text on light pages and
-// light text on dark pages.
+// ContrastFG picks a readable foreground for a background: Rec.709
+// luma, dark text on light, light on dark.
 func ContrastFG(bg string) string {
 	n, err := strconv.ParseUint(strings.TrimPrefix(bg, "#"), 16, 32)
 	if err != nil {
@@ -355,8 +337,7 @@ func ListMark(n int) string {
 	return "*"
 }
 
-// namedColors is the CSS3 named color table (the 148 standard names),
-// used to resolve color: red, background-color: white, ...
+// namedColors is the CSS3 named color table (148 standard names).
 var namedColors = map[string]string{
 	"aliceblue": "#f0f8ff", "antiquewhite": "#faebd7", "aqua": "#00ffff",
 	"aquamarine": "#7fffd4", "azure": "#f0ffff", "beige": "#f5f5dc",

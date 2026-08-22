@@ -3,8 +3,8 @@
 
 package core
 
-// LineKind identifies the render line's style class (the TUI maps kinds
-// to the theme styles).
+// LineKind identifies the render line's style class (the TUI maps
+// kinds to theme styles).
 type LineKind int
 
 const (
@@ -18,7 +18,7 @@ const (
 
 // LineAttrs is a bitmask of run emphasis - the renderer-visible subset
 // of the theme's unified attrs (R11), transported as data so the pager
-// can join runs into one SGR sequence.
+// joins runs into one SGR sequence.
 type LineAttrs uint8
 
 const (
@@ -28,21 +28,19 @@ const (
 	AttrReverse
 )
 
-// Run is one styled text span of an HTML-sourced body line. Fg/Bg are
-// hex colors (#rrggbb) or "" for inherit - the mail's own colors, theme
-// independent; the pager resolves them to SGR at paint.
+// Run is one styled text span of an HTML-sourced body line; Fg/Bg are
+// hex colors (#rrggbb) or "" for inherit, resolved to SGR at paint.
 type Run struct {
 	Text  string
 	Fg    string // #rrggbb, "" = none
 	Bg    string
 	Attrs LineAttrs
 	// Label marks the F key's link-marker run: the "[N]" the html
-	// renderer inserts before every link. It never merges with mail
-	// text, so the TUI finds the marker under entry by exact run match.
+	// renderer inserts before every link; it never merges with mail
+	// text, so the TUI finds it by exact run match.
 	Label bool
 	// Image marks an inline image's placeholder run: the pager blanks
-	// the run once the image decodes (Rows > 0), the pixels paint at
-	// the run's cell offset (the line's ImagePos).
+	// it once the image decodes (Rows > 0) and paints at the cell offset.
 	Image *Image
 }
 
@@ -50,45 +48,39 @@ type Run struct {
 // is the raw encoded bytes (png/jpeg/gif/webp), Alt the fallback text.
 // Images are NEVER rendered by default - the pager shows the Alt text
 // and the TUI decodes + paints only on the render-images key (privacy
-// gate: local images decode on demand, remote ones fetch only in the
-// remote mode - URL names the http(s) src of a remote image that has
-// no bytes yet; the TUI fetches it on the key and sets Data).
-// Cols/Rows are the cell dimensions the TUI sets when it decodes the
-// image for the render-images path; 0 means not decoded - the line
-// collapses to one Alt row.
+// gate: local decode on demand, remote fetch only in remote mode - URL
+// names the http(s) src with no bytes yet). Cols/Rows are the decoded
+// cell dimensions, 0 = not decoded (line collapses to one Alt row).
 type Image struct {
 	Data []byte
 	URL  string // the http(s) src, when the image is remote (Data empty)
 	Alt  string
 	Cols int
 	Rows int
-	// DispW/DispH are the email's declared display size in pixels (the
-	// img width/height attrs or style; 0 = unspecified). The decode
-	// targets it - the mail sizes its sections for this size.
+	// DispW/DispH are the email's declared display size in pixels (img
+	// width/height attrs or style; 0 = unspecified); the decode targets it.
 	DispW int
 	DispH int
 }
 
 // Line is one pager render line: the text plus the style kind. All text
-// has been stripped of C0/DEL/C1 control chars before it leaves the mail
+// is stripped of C0/DEL/C1 control chars before it leaves the mail
 // package (F1) - the render surface never sees raw mail content. Lines
-// are produced on the async open job (mail.RenderThread + registered
-// render transforms) and travel to the TUI in the ThreadLoaded event.
+// are produced on the async open job and travel in ThreadLoaded.
 type Line struct {
 	Text   string
 	Kind   LineKind
 	Quoted int // LineBody only, 0..5 (capped)
 	Runs   []Run
 	// Bg is the line's default background (#rrggbb, "" = theme): the
-	// html view's mail-declared background (the <body> color), so the
-	// whole rendered region - pad and blank lines included - respects
-	// it. Run backgrounds paint over it; trailing blocks extend over
-	// the pad.
+	// html view's mail-declared <body> color, respected by the whole
+	// rendered region - pad and blank lines included. Run backgrounds
+	// paint over it; trailing blocks extend over the pad.
 	Bg    string
 	Image *Image // LineBody only; the line occupies Image.Rows rows
 	// Imgs holds a text line's inline images (the icon rows): each
-	// image's block sits at cell offset X on the line, the line keeps
-	// its words (the placeholder runs blank once the image decodes).
+	// block sits at cell offset X while the line keeps its words (the
+	// placeholder runs blank once the image decodes).
 	Imgs []ImagePos
 }
 

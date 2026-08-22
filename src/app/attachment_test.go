@@ -12,9 +12,9 @@ import (
 	"notmutt/core"
 )
 
-// TestAttachmentSeams pins the app's attachment view/save handlers:
-// the worker round trip (ActThread), the on-demand extraction, the
-// render, and the 0600 write all ride the published events.
+// TestAttachmentSeams pins the attachment view/save handlers: the
+// ActThread round trip, on-demand extraction, render, and 0600 write
+// all ride the published events.
 func TestAttachmentSeams(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()

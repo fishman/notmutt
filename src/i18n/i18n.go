@@ -2,12 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package i18n serves the interface language (decision record 24):
-// locale/*.toml ship inside the binary via go:embed and load through
-// Bundle.LoadMessageFileFS at startup - never runtime reads. The Lua
-// translate() binding lives in the app adapter under the lua build
-// tag, backed by the SAME bundle. Catalog keys are the English strings
-// themselves, so a missing entry falls back to the key - English works
-// with an empty catalog, en.toml is the reference and merge template.
+// locale catalogs embed into the binary and load at startup - never
+// runtime reads. Keys are the English strings, so a missing entry
+// falls back to the key; the Lua translate() binding shares this
+// same bundle.
 package i18n
 
 import (
@@ -41,11 +39,9 @@ func init() {
 	}
 }
 
-// SetLanguage selects the interface language from the [ui] language
-// value: "auto" resolves from the locale env, a BCP 47 tag pins one.
-// The closest shipped catalog wins (base-tag match), English is the
-// last-resort fallback - an unsupported language degrades to the
-// reference instead of failing.
+// SetLanguage selects the interface language: "auto" resolves from
+// the locale env, a BCP 47 tag pins one; the closest shipped catalog
+// wins, English is the last-resort fallback.
 func SetLanguage(v string) {
 	tag := ResolveLanguage(v)
 	lang, _, _ := language.NewMatcher(bundle.LanguageTags()).Match(language.Make(tag))
@@ -55,9 +51,8 @@ func SetLanguage(v string) {
 }
 
 // ResolveLanguage maps a [ui] language value to a BCP 47 tag: "auto"
-// reads LC_ALL/LC_MESSAGES/LANG in POSIX order, the charset suffix and
-// underscore region normalize ("en_US.UTF-8" -> "en-US"). Unparseable
-// input (the C locale) resolves to English.
+// reads LC_ALL/LC_MESSAGES/LANG in POSIX order, normalizing suffix
+// and region; unparseable input (the C locale) falls back to English.
 func ResolveLanguage(v string) string {
 	lang := v
 	if v == "" || v == "auto" {

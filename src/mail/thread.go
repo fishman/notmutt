@@ -3,8 +3,7 @@
 
 // Package mail is the content pipeline: it opens message files with
 // go-message (R6) and produces F1-clean render lines. The TUI never
-// touches mail files - parse and sanitize happen here, at the mail
-// boundary.
+// touches mail files - parse and sanitize happen here.
 package mail
 
 import (
@@ -23,48 +22,27 @@ import (
 	"notmutt/core"
 )
 
-// maxPartBytes bounds one part's read (body content or attachment
-// size count): the trust boundary gets a ceiling, never an unbounded
-// buffered read (F4). The body content beyond the ceiling is dropped
-// and marked; an attachment beyond it reports the capped size and a
-// truncated marker. 8 MiB covers any realistic single part.
+// maxPartBytes bounds one part's read - a ceiling at the trust
+// boundary, never an unbounded buffered read (F4); beyond it the body
+// drops/marks truncated. 8 MiB covers any realistic part.
 const maxPartBytes = 8 << 20
 
-// maxImgBytes bounds one image attachment's buffered data (the
-// render-on-key path); imgBudget bounds the total per message - a mail
-// with dozens of images must not balloon in RAM when none render.
+// maxImgBytes bounds one image's buffered data (render-on-key);
+// imgBudget bounds the per-message total so many images never balloon RAM.
 const (
 	maxImgBytes = 4 << 20
 	imgBudget   = 16 << 20
 )
 
-// RenderThread parses each message's file and produces the pager's
-// render lines (the Line type lives in core - the open job ships them
-// to the TUI in the ThreadLoaded event): per message a header block
-// (subject, from/date - or the full header set under the h toggle),
-// then the body with quoted levels and signature, then attachment
-// lines. A per-message failure (no path, unreadable file, unparseable
-// mail) becomes an error line so the rest of the thread stays readable
-// - mutt-style partial content. RenderThread errors only when the
-// input is empty: then there is nothing to show at all.
-//
-// mode selects the part view (the toggle-render and source keys): the
-// html part, the plain part, or the raw source of the html part.
-// Html-only messages render in the plain view too - the raw source as
-// plain text. The returned mime labels what actually rendered (for the
-// status bar), resolved against the message's real parts, never the
-// requested view.
-//
-// The subject is the notmuch value (the worker's messages carry it):
-// notmuch decodes RFC 2047 at index time, so the pager and the index
-// show the same string - the go-message parse keeps the raw header
-// only as an empty fallback. width is the caller's terminal width: the
-// html wrap caps at htmlWrapWidth, narrower terminals reflow.
-// RenderThread renders the thread; links is the html view's label
-// targets (the F key), non-empty only when labelLinks asks for the
-// label render, empty in every other view. labelLinks is the pager
-// F key's mode flag - the labels are mode-scoped, never a permanent
-// decoration of the html view.
+// RenderThread renders the thread's pager lines: per message a header
+// block (subject/from/date, or the full raw set under the h toggle),
+// body, attachment lines. A per-message failure becomes an error line
+// so the rest of the thread stays readable - mutt-style; errors only
+// on an empty input. mode selects the part view; the returned mime
+// labels what actually rendered. The subject is the notmuch value
+// (RFC 2047 decoded at index time, so pager and index agree). width
+// caps the html wrap at htmlWrapWidth; links holds the F key's label
+// targets, non-empty only under labelLinks (labels are mode-scoped).
 func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int, labelLinks bool) ([]core.Line, string, []string, error) {
 	if len(msgs) == 0 {
 		return nil, "", nil, fmt.Errorf("no messages in thread")
@@ -107,9 +85,8 @@ type Message struct {
 	To        []string // bare addresses, reply-all prefill
 	Cc        []string
 	ReplyTo   []string
-	// Headers is the full raw header block in file order (the h key):
-	// every field, delivery headers included (Received, Return-Path,
-	// DKIM-Signature, SPF), values unfolded.
+	// Headers: the full raw header block in file order (the h key),
+	// delivery headers included, values unfolded.
 	Headers     []string
 	Parts       []Part
 	Attachments []Attachment
@@ -123,11 +100,9 @@ type Part struct {
 	Truncated bool // HTML only: the raw body was capped
 }
 
-// refineMimeType maps generic header types onto the filename's
-// extension (the mime.TypeByExtension map the composer uses, type part
-// only): mailers ship docx/xlsx/pptx as application/octet-stream or
-// application/zip, and the header alone cannot tell the formats apart.
-// A concrete header type (image/png, application/pdf) stays as sent.
+// refineMimeType maps generic header types (octet-stream/zip - the
+// header alone cannot tell docx/xlsx/pptx apart) onto the filename's
+// extension; concrete types (image/png, application/pdf) stay as sent.
 func refineMimeType(ct, name string) string {
 	switch ct {
 	case "application/octet-stream", "application/zip":
@@ -151,20 +126,13 @@ type Attachment struct {
 	Data      []byte // image attachments only, for the render-on-key path
 }
 
-// ParseMessage opens one mail file and reads its structure with
-// go-message: the text/plain inline parts become body parts (quoted
-// depth + signature split), text/html parts are kept raw (the pager
-// renders them; the render selects the view - the toggle-render key
-// switches between the plain and the html part of an alternative
-// pair), and attachment parts are listed with their sizes (image
-// attachments buffer their bytes for the render-on-key path).
-//
-// Unknown charsets/encodings are tolerated, not fatal: go-message
-// returns the part with the body reader still raw (undecoded) when it
-// cannot map the charset, so the part renders as-is instead of killing
-// the whole thread. A structural part error (e.g. a missing closing
-// boundary) ends the part scan instead of aborting the parse - the
-// parts read so far survive, mutt-style.
+// ParseMessage opens one mail file and reads its structure: text/plain
+// inline parts become body parts (quoted depth + signature split),
+// text/html parts stay raw (the render selects the view), attachment
+// parts list with sizes (images buffer bytes for the render-on-key
+// path). Unknown charsets/encodings are tolerated, not fatal: the part
+// renders raw, undecoded. A structural part error ends the scan,
+// keeping the parts read so far - mutt-style.
 func ParseMessage(path string) (*Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -179,9 +147,7 @@ func ParseMessage(path string) (*Message, error) {
 	hdr := mr.Header
 	m := &Message{}
 	// the full raw block for the h key: Fields() walks the parsed
-	// fields in file order (the textproto iterator reverses its
-	// internal list). Values arrive unfolded (continuation lines
-	// joined with a space by the parser).
+	// fields in file order; values arrive unfolded
 	iter := hdr.Fields()
 	for iter.Next() {
 		m.Headers = append(m.Headers, iter.Key()+": "+iter.Value())
@@ -214,8 +180,7 @@ func ParseMessage(path string) (*Message, error) {
 			break
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
-			break // a structural error (e.g. a missing closing boundary):
-			// keep the parts read so far, mutt-style - the mail is not lost
+			break // a structural error: keep the parts read so far, mutt-style
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -232,16 +197,14 @@ func ParseMessage(path string) (*Message, error) {
 				}
 				m.Parts = append(m.Parts, parts...)
 			case ct == "text/html":
-				// kept alongside the plain parts: the render picks the
-				// view (toggle-render), so both halves of an alternative
-				// pair survive the parse
+				// kept alongside the plain parts so both halves of an
+				// alternative pair survive the parse
 				data, err := io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", path, err)
 				}
 				m.Parts = append(m.Parts, Part{Body: string(data), HTML: true, Truncated: len(data) > maxPartBytes})
-				// and as a download entry: the raw markup is the
-				// debugging artifact (the v dialog / s save path)
+				// and as a download entry (the v dialog / s save path)
 				m.Attachments = append(m.Attachments, Attachment{Name: "html", MimeType: "text/html", Size: int64(len(data)), Truncated: len(data) > maxPartBytes})
 			}
 		case *mail.AttachmentHeader:
@@ -253,9 +216,9 @@ func ParseMessage(path string) (*Message, error) {
 			ct, _, _ := h.ContentType()
 			a.MimeType = refineMimeType(ct, name)
 			if strings.HasPrefix(ct, "image/") && imgBuffered < imgBudget {
-				// image attachments buffer their bytes for the
-				// render-on-key path; other attachments are size-counted
-				// only. Over-budget images list without data.
+				// image attachments buffer bytes for the render-on-key
+				// path; others are size-counted only; over-budget
+				// images list without data
 				data, err := io.ReadAll(io.LimitReader(p.Body, maxImgBytes+1))
 				if err != nil {
 					return nil, fmt.Errorf("%s: %w", path, err)
@@ -280,13 +243,12 @@ func ParseMessage(path string) (*Message, error) {
 	return m, nil
 }
 
-// ExtractAttachment re-opens one mail file and reads the ordinal-th
-// attachment's bytes and content type (the attachment view/save demand
-// path) - ParseMessage size-counts non-image parts and never keeps
-// them, so the demand path reads one part, capped like the parse. The
-// html part of an alternative pair counts as an entry, matching the
-// parse walk's attachment list. A structural part error ends the scan
-// with "not found".
+// ExtractAttachment re-opens the mail file and reads the ordinal-th
+// attachment's bytes + type (the view/save demand path - the parse
+// size-counts and keeps nothing, so the demand path reads one part,
+// capped like the parse). The html part of an alternative pair counts
+// as an entry, matching the parse walk. A structural error ends the
+// scan with "not found".
 func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -307,9 +269,9 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break
 		}
-		// the entry walk matches the parse walk (ParseMessage): the
-		// html part of an alternative pair lists as an attachment
-		// too, so the v dialog's ordinals index the same stream
+		// the entry walk matches the parse walk: the html part of an
+		// alternative pair lists as an attachment too, so the v
+		// dialog's ordinals index the same stream
 		switch h := p.Header.(type) {
 		case *mail.AttachmentHeader:
 			name, _ = h.Filename()
@@ -340,9 +302,8 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 }
 
 // RenderAttachment renders an attachment's bytes as pager body lines
-// (the v dialog's view): sanitized text lines (F1). Binary
-// attachments render garbled but harmless - the save path (the s key)
-// is their real consumer.
+// (the v dialog's view): sanitized text (F1). Binary attachments render
+// garbled but harmless - the s key's save path is their real consumer.
 func RenderAttachment(data []byte) []core.Line {
 	var lines []core.Line
 	for _, l := range strings.Split(strings.TrimSuffix(string(data), "\n"), "\n") {
@@ -351,9 +312,8 @@ func RenderAttachment(data []byte) []core.Line {
 	return lines
 }
 
-// QuoteDepth counts a line's leading ">" markers (mutt-style quote
-// nesting, one optional space per layer), capped at the 5 visible
-// quote layers.
+// QuoteDepth counts a line's leading ">" markers (mutt-style, one
+// optional space per layer), capped at 5 visible quote layers.
 func QuoteDepth(line string) int {
 	depth := 0
 	rest := line
@@ -370,11 +330,9 @@ func QuoteDepth(line string) int {
 
 // splitBody splits the raw text into parts: quoted depth by leading
 // ">" count (capped at 5), signature after the first standalone "-- ".
-// The marker line itself stays a part - renderMessage emits it as-is,
-// so the delimiter renders exactly once, never re-prefixed. Tabs
-// expand to the default 8-column stop first - a report aligned with
-// tabs must render column-aligned (and the sanitize pass drops C0
-// controls, tab included, so an unexpanded tab would vanish entirely).
+// The marker line stays a part so the delimiter renders once, never
+// re-prefixed. Tabs expand to the 8-column stop first - the sanitize
+// pass would drop an unexpanded tab entirely.
 func splitBody(text string) []Part {
 	var parts []Part
 	sig := false
@@ -393,9 +351,8 @@ func splitBody(text string) []Part {
 	return parts
 }
 
-// expandTabs pads each tab to the next multiple of 8 columns (the
-// terminal default stop), counting one column per rune - the shape
-// coreutils expand produces for tab-aligned reports.
+// expandTabs pads each tab to the next multiple of 8 columns (one
+// column per rune) - the shape coreutils expand produces.
 func expandTabs(line string) string {
 	if !strings.ContainsRune(line, '\t') {
 		return line
@@ -423,9 +380,8 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 	add := func(text string, kind core.LineKind, quoted int) {
 		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
-	// the curated header block (Date/From/To/Subject) tops every pager
-	// view, labels aligned; the h key replaces it with the full raw
-	// block (the plain view)
+	// the curated header block (Date/From/To/Subject) tops every view;
+	// the h key replaces it with the full raw block in the plain view
 	if headers && mode == core.RenderPlain {
 		lines = append(lines, headerLines(m)...)
 	} else {
@@ -435,18 +391,14 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		add(fmt.Sprintf("%-8s %s", "Subject:", subject), core.LineSubject, 0)
 	}
 	hasPlain, hasHTML := partFlags(m)
-	// The view selection: the html view renders the html part, the plain
-	// view the plain parts, the source view the html part's raw text.
-	// An html-only message renders in all three: the plain view shows
-	// the html as unstyled text (runs stripped, images kept), the html
-	// view styled, the source view raw - the raw markup belongs to the
-	// source view alone.
+	// The view selection: the html view renders the html part, the
+	// plain view the plain parts, the source view the html part's raw
+	// text. An html-only message renders in all three - plain as
+	// unstyled text (runs stripped, images kept), html styled, source raw.
 	for _, p := range m.Parts {
 		switch {
 		case p.HTML && mode == core.RenderHTML:
-			// the F key's label render carries the inline "[N]" labels
-			// and the target list; the plain render is unlabeled (the
-			// label renderer is link-mode's, never the default)
+			// the F key's label render carries the "[N]" labels + target list
 			var htmlLines []core.Line
 			var ls []string
 			if labelLinks {
@@ -494,10 +446,8 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 }
 
 // headerLines renders the full raw header block (the h key): every
-// field of the message in file order - the delivery headers
-// (Received, Return-Path, DKIM-Signature, SPF) included, not a
-// curated summary. The raw block is the true header: an encoded-word
-// subject renders encoded here.
+// field in file order, delivery headers included, not a curated
+// summary - an encoded-word subject renders encoded here.
 func headerLines(m *Message) []core.Line {
 	var lines []core.Line
 	for _, h := range m.Headers {
@@ -547,11 +497,9 @@ func renderPlain(body string) []core.Line {
 	return lines
 }
 
-// QuoteParts returns the body parts to quote: the plain parts (html
-// parts filtered out - the quote never carries raw markup) when the
-// original carries plain content, or the rendered text of the first
-// html part when it is html-only (the reply quotes the rendered text,
-// never the raw markup).
+// QuoteParts returns the parts to quote: the plain parts (html
+// filtered out - the quote never carries raw markup), or the rendered
+// text of the first html part when the original is html-only.
 func QuoteParts(parts []Part, width int) []Part {
 	plain := false
 	for _, p := range parts {
@@ -578,8 +526,7 @@ func QuoteParts(parts []Part, width int) []Part {
 }
 
 // HTMLQuoteBody renders an html-only original to quote parts: the
-// rendered lines joined as text, then the standard body split (quoted
-// depth + signature on the rendered content).
+// rendered lines joined as text, then the standard body split.
 func HTMLQuoteBody(body string, width int) []Part {
 	lines := RenderHTML(body, nil, width)
 	var b strings.Builder

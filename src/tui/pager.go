@@ -14,22 +14,18 @@ import (
 )
 
 // pager holds the open thread's render lines and the scroll window.
-// Scrolling moves the WINDOW by line (the glow/less model): j/k shift
-// the offset one line, so every press changes every visible line and
-// the renderer repaints the whole window - no read-position indicator
-// whose style-only change the diff can drop (the pre-glow model that
-// made the first press render nothing). Content is styled LAZILY: only
-// the visible window plus a margin above and below (ensureStyled),
-// never the whole document - the old style() pass re-styled 20k lines
-// on every resize (the 385ms resize stall). Styled lines stay cached;
-// a scroll into an unstyled region styles it on demand, and a resize
-// or theme switch (the width/styleKey invalidation) re-styles only the
-// window at the new width. The content is bounded (one thread), so the
-// window owns the scroll state (the index stays windowed - 129k rows
-// must never flatten). Long lines are truncated to the window width,
-// never wrapped (R11 alignment; the truncation is a pinned limitation,
-// wrapping is future work) - the h/l keys pan the window horizontally
-// past the truncation instead.
+// Scrolling moves the WINDOW by line (the glow/less model): every
+// press changes every visible line, so the renderer repaints the whole
+// window - no style-only indicator the diff can drop (the pre-glow
+// double-press bug). Content is styled LAZILY: only the visible window
+// plus a margin (ensureStyled), never the whole document - the old
+// style() pass re-styled 20k lines on every resize (the 385ms stall).
+// Styled lines stay cached; a resize or theme switch (the width/
+// styleKey invalidation) re-styles only the window. The content is
+// bounded (one thread), so the window owns the scroll state (the index
+// stays windowed - 129k rows must never flatten). Long lines truncate
+// to the window width, never wrap (R11; wrapping is future work) - the
+// h/l keys pan horizontally past the truncation instead.
 type pager struct {
 	threadID string
 	// msgID is the opened message: the pager shows that message's
@@ -66,8 +62,8 @@ func newPager(threadID, msgID string, lines []core.Line) *pager {
 
 // setLines replaces the pager content (the compose preview after a
 // body edit, the AI summary swap): the expanded layout drops with the
-// lines - a stale doc maps old rows into the new line list, and
-// ensureStyled rebuilds it from the new content.
+// lines - a stale doc maps old rows into the new list; ensureStyled
+// rebuilds it.
 func (p *pager) setLines(lines []core.Line) {
 	p.lines = lines
 	p.doc = nil
@@ -82,9 +78,7 @@ func (p *pager) setLines(lines []core.Line) {
 	}
 }
 
-// pad is the style-time truncation boundary: the window width plus the
-// pan offset, so a panned line still carries the cells the clip will
-// show.
+// pad is the style-time truncation boundary: the window width plus the pan offset, so a panned line still carries the cells the clip will show.
 func (p *pager) pad() int { return p.width + p.x }
 
 func (p *pager) setSize(w, h int, st Styles) {
@@ -106,12 +100,10 @@ func (p *pager) setSize(w, h int, st Styles) {
 // relayout rebuilds the expanded document: an image line (only when
 // images is on AND the image has decoded dims) spans Image.Rows empty
 // rows - the terminal paint fills them - every other line maps 1:1.
-// The per-line styled cache survives: doc rows resolve to lines via
-// imgFrom, so the toggle and a decode-gained resize never re-style.
+// The styled cache survives: doc rows resolve to lines via imgFrom,
+// so the toggle and a decode-gained resize never re-style.
 func (p *pager) relayout() {
-	// image-carrying lines re-style on every layout: their cached text
-	// holds the placeholder or the blanked run - the decode state
-	// (Rows) decides which, and it changed
+	// image-carrying lines re-style on every layout: their cached text holds the placeholder or the blanked run - the decode state (Rows) decides which
 	for i := range p.styled {
 		if l := &p.lines[i]; l.Image != nil || len(l.Imgs) > 0 {
 			p.styled[i] = ""
@@ -156,8 +148,7 @@ func (p *pager) relayout() {
 	p.vp.clamp()
 }
 
-// imgRowSpan is the expansion row count of a text line's inline
-// images: the tallest decoded image (1 when none are decoded).
+// imgRowSpan is a text line's inline-image expansion rows: the tallest decoded image (1 when none are decoded).
 func imgRowSpan(l *core.Line) int {
 	rows := 1
 	for _, im := range l.Imgs {
@@ -167,11 +158,11 @@ func imgRowSpan(l *core.Line) int {
 }
 
 // ensureStyled styles the visible window plus a margin above and
-// below, so small scroll movements never touch the styled lines; lines
-// outside the range stay unstyled until scrolled into it. The styled
-// slice doubles as the viewport's content, so the clamp and window
-// math see the full document. Image expansion rows carry no text and
-// are never styled - the terminal paint fills them.
+// below, so small scrolls never touch the styled lines; lines outside
+// the range stay unstyled until scrolled into it. The styled slice
+// doubles as the viewport's content, so the clamp and window math see
+// the full document. Image rows carry no text - the terminal paint
+// fills them.
 func (p *pager) ensureStyled() {
 	if p.doc == nil {
 		p.relayout()
@@ -194,9 +185,6 @@ func (p *pager) ensureStyled() {
 	p.vp.setLines(p.doc)
 }
 
-// setLinkSel points the easyjump highlight at the label marker under
-// entry; the styled cache drops so the visible window re-renders with
-// the reversed marker on the next paint.
 // append adds a line to the pager (the AI summary stream): the styled
 // cache extends and the document grows with the line - a streamed
 // line is plain text, one row, never an image expansion. The viewport
@@ -215,8 +203,7 @@ func (p *pager) append(l core.Line) {
 // appendText merges a streamed delta into the pager (the AI summary's
 // token stream): whole lines split off and append, a trailing partial
 // extends the last line in place - a token-per-event stream renders as
-// flowing text, never one row per token. A partial after a completed
-// line starts a fresh line.
+// flowing text, never one row per token.
 func (p *pager) appendText(text string) {
 	for len(text) > 0 {
 		i := strings.IndexByte(text, '\n')
@@ -238,6 +225,9 @@ func (p *pager) appendText(text string) {
 	}
 }
 
+// setLinkSel points the easyjump highlight at the label marker under
+// entry; the styled cache drops so the window re-renders the reversed
+// marker on the next paint.
 func (p *pager) setLinkSel(sel string) {
 	if p.linkSel == sel {
 		return
@@ -249,9 +239,7 @@ func (p *pager) setLinkSel(sel string) {
 	}
 }
 
-// setImages switches the image expansion (the render-images key): on
-// expands decoded image lines to Image.Rows rows, off collapses them
-// to their single Alt row.
+// setImages switches the image expansion (the render-images key): on expands decoded image lines to Image.Rows rows, off collapses them to their Alt row.
 func (p *pager) setImages(on bool) {
 	if p.images == on {
 		return
@@ -262,8 +250,8 @@ func (p *pager) setImages(on bool) {
 
 // imgBlock is one visible image block: the source line, its doc row
 // (first expanded row - the paint crop anchor), the cell dims (0
-// until the decode runs), the image (the line's block or one of its
-// inline row) and its cell offset.
+// until the decode runs), the image (the block or one of its inline
+// rows) and its cell offset.
 type imgBlock struct {
 	line int
 	doc  int
@@ -274,10 +262,9 @@ type imgBlock struct {
 }
 
 // visibleImages lists the window's image lines, one block per image:
-// the expanded block (its rows walked back to the first doc row for
-// the anchor) or the collapsed Alt row (Rows 0 - listed as the
-// decoder's trigger, painted as text). The dims may still be 0 - the
-// decode pass fills them.
+// the expanded block (rows walked back to the first doc row for the
+// anchor) or the collapsed Alt row (Rows 0 - listed as the decoder's
+// trigger, painted as text). The dims may still be 0.
 func (p *pager) visibleImages() []imgBlock {
 	if p.imgRow == nil {
 		return nil
@@ -308,19 +295,17 @@ func (p *pager) visibleImages() []imgBlock {
 	return out
 }
 
-// styleLine maps one structured line to styled text: subject ->
-// header, from/date -> hdrdefault, body -> quotedN by depth,
-// signature -> signature, attachment -> attachment, error -> error.
-// Every line pads to the style boundary (the window width plus the
-// pan offset) with its own style (the R11 slot-reservation rule -
-// alignment never shifts per line). The styles' SGR fragments are
-// precomputed (p.st.sgr), so a line is plain string joins, never a
-// Style.Render.
+// styleLine maps one structured line to styled text (subject ->
+// header, from/date -> hdrdefault, body -> quotedN by depth, etc.).
+// Every line pads to the style boundary (the window width plus the pan
+// offset) with its own style (the R11 slot-reservation rule); the
+// styles' SGR fragments are precomputed (p.st.sgr), so a line is plain
+// string joins, never a Style.Render.
 //
-// quoteColor maps the line's quote depth to the style table: depth 0
-// (plain body text) is the normal text color - a plain mail must not
-// share a custom color with the first reply layer quote; depths 1-5
-// keep their own colors (quoted0-4, the mutt surface).
+// quoteColor maps the quote depth to the style table: depth 0 (plain
+// body text) is the normal color - a plain mail must not share a
+// custom color with the first reply layer quote; depths 1-5 keep their
+// own colors (quoted0-4).
 func quoteColor(sg sgrSet, quoted int) sgr {
 	if quoted <= 0 {
 		return sg.normal
@@ -336,9 +321,7 @@ func (p *pager) styleLine(li int) string {
 	case core.LineSubject:
 		g = sg.pagerHdr
 	case core.LineHeader:
-		// the rotation position: how far this line sits into its
-		// contiguous header run (a run resets after a non-header
-		// line, so each message's block restarts the cycle)
+		// the rotation position: how far this line sits into its contiguous header run (a run resets after a non-header line)
 		n := 0
 		for j := li; j >= 0 && p.lines[j].Kind == core.LineHeader; j-- {
 			n++
@@ -355,9 +338,7 @@ func (p *pager) styleLine(li int) string {
 	default:
 		g = sg.normal
 	}
-	// the line's default background (the html view's mail-declared
-	// body color) covers the pad and the blank rows; a trailing run
-	// background (a colored block) extends over the pad too
+	// the line's default background (the html view's mail-declared body color) covers the pad and blank rows; a trailing run background extends over the pad too
 	outer := g
 	if l.Bg != "" {
 		outer.open += "\x1b[48;2;" + hexRGB(l.Bg) + "m"
@@ -379,10 +360,10 @@ func (p *pager) styleLine(li int) string {
 
 // styleRuns joins the run fragments into one styled string: each run
 // emits its own SGR open + text, and a reset closes a styled run only
-// (the open of an unstyled run would be redundant). padRowSGR re-applies
+// (an unstyled run's open would be redundant). padRowSGR re-applies
 // the line's base style after every reset, so the quoted/header color
-// covers the gaps and the pad; a trailing background run closes with a
-// reset so its bg does not leak into the pad region.
+// covers the gaps and the pad; a trailing bg run closes with a reset
+// so its bg does not leak into the pad.
 func (p *pager) styleRuns(runs []core.Run) string {
 	var b strings.Builder
 	for i, r := range runs {
@@ -396,16 +377,14 @@ func (p *pager) styleRuns(runs []core.Run) string {
 		if open := runSGR(r); open != "" {
 			b.WriteString(open)
 		}
-		// a decoded inline image's placeholder run blanks: the pixels
-		// paint at its offset, the words would render under them
+		// a decoded inline image's placeholder run blanks: the pixels paint at its offset, the words would render under them
 		if r.Image != nil && p.images && r.Image.Rows > 0 {
 			b.WriteString(strings.Repeat(" ", runewidth.StringWidth(r.Text)))
 		} else {
 			b.WriteString(r.Text)
 		}
 	}
-	// the trailing reset covers the selected marker's reverse too - a
-	// reverse pad row is a visible artifact, unlike a colored one
+	// the trailing reset covers the selected marker's reverse too - a reverse pad row is visible, unlike a colored one
 	last := p.runSel(runs[len(runs)-1])
 	if last.Bg != "" || last.Attrs != runs[len(runs)-1].Attrs {
 		b.WriteString("\x1b[0m")
@@ -423,9 +402,7 @@ func (p *pager) runSel(r core.Run) core.Run {
 	return r
 }
 
-// runSGR maps a run's style to its SGR open (truecolor fg/bg, the attr
-// bits); "" when the run carries no style, so the line style shows
-// through.
+// runSGR maps a run's style to its SGR open (truecolor fg/bg, attr bits); "" when the run carries no style, so the line style shows through.
 func runSGR(r core.Run) string {
 	var b strings.Builder
 	if h := hexRGB(r.Fg); h != "" {
@@ -453,8 +430,7 @@ func runSGR(r core.Run) string {
 	return b.String()
 }
 
-// hexRGB parses a #rrggbb color to its "r;g;b" channel form; "" for
-// anything unparseable - a bad color drops, never reaches the terminal.
+// hexRGB parses a #rrggbb color to its "r;g;b" channel form; "" for anything unparseable - a bad color never reaches the terminal.
 func hexRGB(hex string) string {
 	if len(hex) != 7 || hex[0] != '#' {
 		return ""
@@ -466,9 +442,7 @@ func hexRGB(hex string) string {
 	return fmt.Sprintf("%d;%d;%d", n>>16&255, n>>8&255, n&255)
 }
 
-// scrollDown/scrollUp move the window by n lines (j / k / a count).
-// Every press changes every visible line, so the renderer repaints the
-// window - there is nothing that can diff to zero.
+// scrollDown/scrollUp move the window by n lines (j / k / a count). Every press changes every visible line, so the renderer repaints the window - nothing can diff to zero.
 func (p *pager) scrollDown(n int) {
 	p.vp.offset += n
 	p.vp.clamp()
@@ -482,9 +456,8 @@ func (p *pager) scrollUp(n int) {
 // scrollLeft/scrollRight pan the window horizontally (the h/l keys):
 // the offset moves in scrollStep cells, clamped to the content width
 // minus the window (a right pan at the end is a no-op). The pan moves
-// the style boundary - the styled cache is truncated to pad(), so a
-// moved boundary invalidates it (the next render re-styles the window
-// at the new pad).
+// the style boundary - the styled cache truncates to pad(), so a moved
+// boundary invalidates it (the next render re-styles at the new pad).
 func (p *pager) scrollLeft() {
 	p.x = max(0, p.x-scrollStep)
 	if p.pad() != p.styleWidth {
@@ -503,9 +476,7 @@ func (p *pager) scrollRight() {
 	}
 }
 
-// pageDown/pageUp move a full window (pgdown/pgup); halfPageDown/Up
-// half a window (ctrl+d/ctrl+u, vim's default). The clamp pins the
-// last page to the tail, so repeated page-down ends on the bottom.
+// pageDown/pageUp move a full window (pgdown/pgup); halfPageDown/Up half one (ctrl+d/ctrl+u, vim's default). The clamp pins the last page to the tail, so repeated page-down ends on the bottom.
 func (p *pager) pageDown()     { p.vp.offset += p.vp.height; p.vp.clamp() }
 func (p *pager) pageUp()       { p.vp.offset -= p.vp.height; p.vp.clamp() }
 func (p *pager) halfPageDown() { p.vp.offset += p.vp.height / 2; p.vp.clamp() }
@@ -523,9 +494,8 @@ func (p *pager) scrollBottom() {
 
 // render returns the styled window, ALWAYS exactly vp.height lines
 // (no trailing newline - the frame's keyhint/status composition adds
-// it): short content is padded with blank styled rows so the frame
-// keeps its full height and the keyhint/status rows stay anchored at
-// the bottom (the R11 slot-reservation rule applied to the frame
+// it): short content pads with blank styled rows so the keyhint/status
+// rows stay anchored at the bottom (the R11 rule applied to the frame
 // itself).
 func (p *pager) render() string {
 	p.ensureStyled()
@@ -537,8 +507,7 @@ func (p *pager) render() string {
 		// the horizontal pan: skip the offset, re-pad to the window.
 		// The styled lines carry their own per-line base style inside
 		// (styleLine's pad), so the re-wrap uses the plain normal - the
-		// line's SGR runs survive the skip (skipStyled re-emits the last
-		// open at the cut) and the outer wrap covers the blank tail.
+		// SGR runs survive the skip and the outer wrap covers the tail.
 		for i, l := range win {
 			win[i] = padRowSGR(skipStyled(l, p.x), p.width, p.st.sgr.normal)
 		}

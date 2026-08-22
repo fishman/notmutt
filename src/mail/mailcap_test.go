@@ -11,11 +11,9 @@ import (
 )
 
 // TestMailcapPreview pins the preview contract: a copiousoutput entry
-// tokenizes its command (quotes stripped, %s = the attachment's temp
-// path), the exact type overrides a built-in, a "*" wildcard serves
-// the rest, and a non-copious entry never previews. The fixture script
-// cats its argument, so a successful run proves the data round-trips
-// through the temp file.
+// tokenizes its command (quotes stripped, %s = the temp path), exact
+// type overrides a built-in, "*" wildcard serves the rest, non-copious
+// never previews.
 func TestMailcapPreview(t *testing.T) {
 	script := filepath.Join(t.TempDir(), "cat.sh")
 	if err := os.WriteFile(script, []byte("#!/bin/sh\ncat \"$1\"\n"), 0o700); err != nil {

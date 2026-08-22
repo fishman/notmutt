@@ -4,13 +4,12 @@
 package mail
 
 // The HTML flow renderer (docs/html-rendering-analysis.md): x/net/html
-// parses (error-tolerant, fuzz-exercised - the trust boundary), the
-// CSS cascade from lib/html computes styles, and the flow walk emits
-// pager lines. Layout is CSS 2.1 block flow + inline runs + column-
-// aligned tables; everything else (position, flex, media queries)
-// drops. Images render as placeholders - the bytes travel with the
-// line, the TUI decodes and paints only on the render-images key
-// (privacy gate); remote srcs never fetch (tracking pixels stay dead).
+// parses (fuzz-exercised trust boundary), lib/html's CSS cascade
+// styles, the walk emits pager lines. Layout: CSS 2.1 block flow +
+// inline runs + column-aligned tables; position/flex/media queries
+// drop. Images render as placeholders - bytes paint only on the
+// render-images key (privacy gate); remote srcs never fetch (tracking
+// pixels stay dead).
 
 import (
 	"encoding/base64"
@@ -25,26 +24,22 @@ import (
 )
 
 const (
-	htmlWrapWidth = 120  // the open job has no TUI width; shr.el's 120-cap is the reference, the plain path wraps at the same fixed width
+	htmlWrapWidth = 120  // no TUI width at render; shr.el's 120-cap reference, the plain path wraps at the same width
 	maxHTMLLines  = 5000 // render budget: a hostile doc cannot balloon the thread
 )
 
-// RenderHTML renders an HTML mail body to pager lines. Returns nil for
-// an empty result (the caller falls back to the raw text). width is the
-// caller's terminal width: the wrap caps at htmlWrapWidth, so a wide
-// terminal keeps the fixed-width layout and a narrow one reflows; 0
-// means the cap.
+// RenderHTML renders an HTML mail body to pager lines; nil for an
+// empty result (the caller falls back to the raw text). width caps at
+// htmlWrapWidth: wide terminals keep the fixed layout, narrow reflow.
 func RenderHTML(body string, atts []Attachment, width int) []core.Line {
 	lines, _ := renderHTML(body, atts, width, false)
 	return lines
 }
 
-// RenderHTMLWithLinks renders the same content in link mode (the
-// pager F key, easyjump-style): every link - an anchor href or a bare
-// URL word - gets a "[N]" label inline in front of it, and the label
-// order is the returned list (label N opens Links[N-1]). Both come
-// from the walk's document order, so the labels and the list always
-// agree.
+// RenderHTMLWithLinks is the pager F key's link mode (easyjump-style):
+// every link - anchor href or bare URL word - gets an inline "[N]"
+// label; the label order is the returned list (label N opens
+// Links[N-1]), both from the walk's document order.
 func RenderHTMLWithLinks(body string, atts []Attachment, width int) ([]core.Line, []string) {
 	return renderHTML(body, atts, width, true)
 }
@@ -81,10 +76,8 @@ type htmlWalker struct {
 	lines     []core.Line
 	linesLeft int
 	truncated bool
-	// defaultBG is the mail's declared background (the <html>/<body>
-	// color, CSS or the bgcolor attribute): every rendered line carries
-	// it, so the html view's region - pad and blank lines included -
-	// respects the mail's background instead of the theme's.
+	// defaultBG: the mail's declared background (CSS or bgcolor); every
+	// line carries it, so the html view respects the mail, not the theme.
 	defaultBG string
 	// inline state
 	words []word
@@ -95,17 +88,12 @@ type htmlWalker struct {
 	// block spacing: one blank line between content blocks
 	blankPending bool
 	blockSeen    bool
-	// list counters: one entry per open ol/ul (the top counts the
-	// current item; a ul counts too but renders bullets)
+	// list counters: one entry per open ol/ul (the top counts the current item)
 	lists []int
-	// pendingMark is an li marker that attaches to the item's first
-	// content line at the next non-empty flush; it survives empty
-	// flushes (a nested block's leading flush) so a marked item never
-	// renders as a bare "1." line
+	// pendingMark: an li marker attached at the next non-empty flush,
+	// surviving empty ones so a marked item never renders as a bare "1."
 	pendingMark *word
-	// link mode (the F key): labelLinks arms the "[N]" labels and the
-	// links list (label order = list order); the mode is per-render,
-	// never persisted
+	// link mode (F key): arms "[N]" labels + links list; per-render, never persisted
 	labelLinks bool
 	links      []string
 }
@@ -119,10 +107,9 @@ type word struct {
 	img   *core.Image // inline image: the word is its placeholder
 }
 
-// cellLine is one line of a table cell's text: its words and the line's
-// alignment (nested-table rows join the line; the row's align is the
-// last aligned cell's). img is a resolved cell image - the line then
-// carries no words and emits as a full-width image line.
+// cellLine is one line of a table cell's text: words + alignment
+// (nested-table rows join the line, aligned by the last aligned cell).
+// img is a resolved cell image - the line then emits full-width.
 type cellLine struct {
 	words []word
 	align string
@@ -149,8 +136,7 @@ var skipTags = map[string]bool{
 }
 
 // walk flows the subtree in its computed style: block elements flush
-// and recurse as block contexts, inline elements accumulate into the
-// pending word buffer.
+// and recurse; inline elements accumulate into the pending buffer.
 func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if w.linesLeft <= 0 {
@@ -167,23 +153,18 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 				continue
 			}
 			if tag == "html" || tag == "body" {
-				// the mail's declared background (CSS or the bgcolor
-				// attribute; the body's own color overrides the html
-				// default), or the light fallback: mail renders for a
-				// light page - a mail without a background is
-				// unreadable on a dark theme
+				// the mail's declared background (body color overrides
+				// the html default) or the light fallback: a mail
+				// without one is unreadable on a dark theme
 				if cs.Bg != "" {
 					w.defaultBG = cs.Bg
 				} else if w.defaultBG == "" {
 					w.defaultBG = "#ffffff"
 				}
-				// the default foreground must read on that background:
-				// an unstyled mail inherits the contrast color instead
-				// of the theme's light text on a dark terminal. The
-				// contrast derives only when no author color set it -
-				// FgSet does not inherit, so the body's background
-				// recomputes what the html element derived against the
-				// fallback (the dark-bg mail bug: dark on dark)
+				// unstyled text must read on that background: derive
+				// the contrast fg (FgSet does not inherit, so the
+				// body recomputes against its own bg - the dark-bg
+				// mail bug: dark on dark)
 				if !cs.FgSet {
 					cs.Fg = html.ContrastFG(w.defaultBG)
 				}
@@ -191,7 +172,7 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 			switch {
 			case tag == "img":
 				if isTrackingPixel(c) {
-					continue // a declared 1x1 beacon drops before the fetch path can ever see it
+					continue // declared 1x1 beacon drops before the fetch path sees it
 				}
 				w.image(c, cs)
 			case tag == "br" && !cs.Pre:
@@ -201,9 +182,8 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 			case isBlock(tag, cs):
 				w.flush()
 				prev := w.align
-				// only an explicit text-align at this node sets the line's
-				// alignment; inherited text-align (button-internal
-				// align="center" scaffolds) must not re-align a line
+				// only an explicit text-align sets the line's alignment;
+				// inherited align (button scaffolds) must not re-align
 				if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
 					w.align = a
 				}
@@ -217,9 +197,7 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 					}
 				}
 				if tag == "a" {
-					// a display:block anchor (button links) is still a
-					// link: the label leads its block, never lost to
-					// the display split
+					// a display:block anchor (button links) is still a link
 					w.anchorLabel(c, cs)
 				}
 				w.walk(c, cs)
@@ -233,9 +211,7 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 					w.blockSeen = false
 				}
 			case tag == "a":
-				// the F key's link label: the anchor's href gets its
-				// "[N]" label inline before the anchor text (an
-				// anchor without an href is plain text)
+				// the F key's link label: href gets its "[N]" inline
 				w.anchorLabel(c, cs)
 				w.walk(c, cs)
 			default:
@@ -245,12 +221,10 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 	}
 }
 
-// anchorLabel registers the anchor's link label (the F key's "[N]"
-// marker): an anchor is a link whatever its display value - a
-// display:block anchor (button links) must not lose its label to the
-// block split. The caller emits it after any leading flush, so it
-// leads the anchor's first line; an anchor without an href is plain
-// text.
+// anchorLabel registers the anchor's link label (the F key's "[N]"):
+// an anchor is a link whatever its display value - a display:block
+// anchor (button links) must not lose its label to the block split.
+// An anchor without an href is plain text.
 func (w *htmlWalker) anchorLabel(c *xhtml.Node, cs *html.Style) {
 	if !w.labelLinks {
 		return
@@ -262,11 +236,10 @@ func (w *htmlWalker) anchorLabel(c *xhtml.Node, cs *html.Style) {
 	}
 }
 
-// isTrackingPixel is the declared-dims beacon fingerprint: an img
-// declaring 1x1 (width/height attributes or style declarations) is a
-// read receipt, not content - it drops at render, before the fetch
-// path can ever see it. The app's fetched-bytes 1x1 check (imgfetch)
-// stays as the runtime guard for pixels that hide their declared dims.
+// isTrackingPixel is the declared-dims beacon fingerprint: a 1x1 img
+// (attrs or style) is a read receipt, not content - it drops at render
+// before the fetch path sees it; the imgfetch bytes check stays as the
+// guard for pixels hiding their dims.
 func isTrackingPixel(c *xhtml.Node) bool {
 	dw, dh := imgSize(c, 0)
 	return dw == 1 && dh == 1
@@ -286,8 +259,7 @@ func isBlock(tag string, cs *html.Style) bool {
 }
 
 // addText ingests a text node: pre content preserves spaces and line
-// breaks (tab-expanded, sanitized per line), inline content collapses
-// to space-separated words.
+// breaks (tab-expanded, sanitized), inline collapses to words.
 func (w *htmlWalker) addText(txt string, st *html.Style) {
 	if w.linesLeft <= 0 {
 		w.truncated = true
@@ -351,8 +323,7 @@ func (w *htmlWalker) addWord(text string, st *html.Style, label bool) {
 }
 
 // flush wraps the pending words into a line: trailing space drops, the
-// block context's alignment pads to the wrap width, and a pending
-// block-boundary blank leads the line.
+// block alignment pads to the wrap width, a pending blank leads.
 func (w *htmlWalker) flush() {
 	if w.linesLeft <= 0 {
 		return
@@ -405,8 +376,8 @@ func (w *htmlWalker) emitLine(runs []core.Run) {
 
 // image emits an <img> as its own line: the placeholder text, or the
 // image line when the src resolves - cid: attachments and data: URIs
-// carry their bytes, http(s) srcs carry their URL (the remote images
-// mode fetches them on the render-images key; never fetched here).
+// carry bytes, http(s) srcs carry their URL (fetched only on the
+// render-images key, never here).
 func (w *htmlWalker) image(c *xhtml.Node, st *html.Style) {
 	w.flush()
 	img := resolveImage(c, w.atts, w.width)
@@ -420,10 +391,9 @@ func (w *htmlWalker) image(c *xhtml.Node, st *html.Style) {
 	w.lines[i].Text = img.Alt
 }
 
-// resolveImage resolves an <img> src to its bytes + alt text: the
-// cid: attachment or data: URI bytes, or a remote http(s) image as a
-// URL-only placeholder (Data stays empty - the fetch is the remote
-// mode's keypress-gated step).
+// resolveImage resolves an <img> src to its bytes + alt: cid:/data:
+// URI bytes, or a remote http(s) image as a URL-only placeholder
+// (Data stays empty - the fetch is the remote mode's keypress step).
 func resolveImage(c *xhtml.Node, atts []Attachment, layoutCells int) *core.Image {
 	src := html.Attr(c, "src")
 	var data []byte
@@ -454,11 +424,9 @@ func resolveImage(c *xhtml.Node, atts []Attachment, layoutCells int) *core.Image
 	return img
 }
 
-// imgSize reads an <img>'s declared display size: the width/height
-// attributes or the style declarations. px numbers pass through;
-// percentages resolve against the layout width (the mail's section
-// sizing - a chart fills the space its layout reserves). 0 =
-// unspecified, the decode falls back to a window fit.
+// imgSize reads an <img>'s declared display size (attrs or style):
+// px passes through, percentages resolve against the layout width (the
+// mail's section sizing); 0 = unspecified, the decode fits the window.
 func imgSize(c *xhtml.Node, layoutCells int) (w, h int) {
 	decls := html.ParseDecls(html.Attr(c, "style"))
 	read := func(name string) int {
@@ -479,9 +447,8 @@ func imgSize(c *xhtml.Node, layoutCells int) (w, h int) {
 	return read("width"), read("height")
 }
 
-// table renders a table as column-aligned rows (w3m's approach: pad
-// each column to its widest cell, wrapped at a per-column cap). Cell
-// content is extracted as word-lines, so styles survive into the rows.
+// table renders a table as column-aligned rows (w3m: pad each column
+// to its widest cell, wrapped at a per-column cap).
 func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG, w.width)
 	if len(rows) == 0 {
@@ -493,9 +460,8 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 			ncols = len(r)
 		}
 	}
-	// the wrap cap comes from the CONTENT columns: empty spacer cells
-	// (the layout tables of the Outlook/Substack era) must not halve or
-	// third the text width
+	// the cap comes from the CONTENT columns: empty spacer cells
+	// (Outlook/Substack layout tables) must not shrink the text width
 	content := 0
 	for ci := 0; ci < ncols; ci++ {
 		has := false
@@ -553,16 +519,14 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 	for _, r := range rows {
 		rowLines := 0
 		for ci := 0; ci < ncols; ci++ {
-			// a ragged table: shorter rows have fewer cells - the
-			// widths pass guards the same bound, the emit pass must too
+			// a ragged row has fewer cells; the emit pass must guard the bound too
 			if ci < len(r) && len(r[ci]) > rowLines {
 				rowLines = len(r[ci])
 			}
 		}
 		for li := 0; li < rowLines; li++ {
-			// a cell image emits as its own full-width line (the line
-			// model holds one image); the text join below pads the
-			// image cells' columns blank
+			// a cell image emits as its own full-width line (one image
+			// per line); the join below pads its columns blank
 			for ci := 0; ci < ncols; ci++ {
 				if ci < len(r) && li < len(r[ci]) && r[ci][li].img != nil {
 					before := len(w.lines)
@@ -582,8 +546,7 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 			var imgs []core.ImagePos
 			rowX := 0
 			for ci := 0; ci < ncols; ci++ {
-				// a ragged row has no cell at ci: it renders as an empty
-				// column span, the same shape as an exhausted cell
+				// a missing cell renders as an empty column span
 				var lines []cellLine
 				if ci < len(r) {
 					lines = r[ci]
@@ -640,9 +603,8 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 }
 
 // cellRows collects the table's tr rows, each cell a list of word-
-// lines (block boundaries and <br> inside a cell start a new line).
-// The HTML5 parser inserts an implicit tbody between the table and
-// its rows, so the row groups descend into it.
+// lines (block boundaries and <br> start a new line). The HTML5
+// parser inserts an implicit tbody, so the row groups descend into it.
 func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
@@ -670,16 +632,12 @@ func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]stri
 	return rows
 }
 
-// collectCell extracts a cell's text flow as word-lines: the same
-// block/inline walk as htmlWalker, but text-only. A nested table's
-// rows flatten into the current line - the Outlook/Substack era wraps
-// every layout element in presentation tables, and dropping them (the
-// old skip) emptied the article. Only an explicitly right-aligned
-// cell starts a new line under that alignment (the READ-IN-APP
-// column); inherited text-align - the align="center" button scaffolds
-// inside the row - never re-aligns a line. Link mode (labelLinks)
-// labels anchors and bare URLs inside cells like the main walk - the
-// layout-table era wraps every link in a td.
+// collectCell extracts a cell's text flow as word-lines (the same
+// block/inline walk, text-only). Nested-table rows flatten into the
+// current line - the layout-table era wraps everything, dropping them
+// emptied the article. Only an explicitly right-aligned cell starts a
+// new line (READ IN APP); inherited text-align never re-aligns. Link
+// mode labels anchors and bare URLs inside cells like the main walk.
 func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
 	if st.Display == "none" {
 		return nil // a display:none cell renders nothing - display never inherits
@@ -687,11 +645,10 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 	var out []cellLine
 	var cur []word
 	align := ""
-	// lineAlign is a one-shot line alignment set by an explicitly
-	// right-aligned cell split: it applies to the next flushed line and
-	// then dies. It never rides the align prev/restore chains, so a
-	// split cannot leak into the enclosing flow (the buttons row) or be
-	// resurrected by a nested table's restore (READ IN APP).
+	// lineAlign: a one-shot alignment set by an explicitly right-
+	// aligned cell split - applies to the next flushed line, then dies;
+	// never rides the prev/restore chains, so it cannot leak or be
+	// resurrected (READ IN APP)
 	lineAlign := ""
 	var blankPending, blockSeen bool
 	var lists []int
@@ -746,22 +703,19 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 					flush()
 				case tag == "img":
 					if isTrackingPixel(c) {
-						continue // a declared 1x1 beacon drops before the fetch path can ever see it
+						continue // declared 1x1 beacon drops before the fetch path sees it
 					}
-					// a resolved block image becomes its own full-width
-					// line (the column join can hold one image per
-					// line); an inline image (the icon rows) joins its
-					// line's words - the placeholder run rides the
-					// word, the row keeps the mail's one-line layout
+					// a block image becomes its own full-width line (one
+					// per line); an inline image (icon rows) joins its
+					// line's words as a placeholder run
 					if img := resolveImage(c, nil, layoutCells); img != nil {
 						if cs.Display != "block" {
 							cur = append(cur, word{text: img.Alt, st: cs, img: img})
 							break
 						}
 						flush()
-						// the block's clear fill: the cell's declared bg or
-						// the mail's page background - an image on a white
-						// page must clear to white, never to the theme
+						// the clear fill: the cell's declared bg or the
+						// mail's page background, never the theme
 						bg := cs.Bg
 						if bg == "" {
 							bg = defaultBG
@@ -787,9 +741,8 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 				case isBlock(tag, cs):
 					flush()
 					prev := align
-					// only an explicit text-align at this node sets the
-					// line's alignment; inherited text-align must not
-					// re-align a line
+					// only an explicit text-align sets the alignment;
+					// inherited align must not re-align
 					if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
 						align = a
 						lineAlign = "" // an explicit block alignment wins over a pending cell split
@@ -804,8 +757,7 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 						}
 					}
 					if tag == "a" && labelLinks {
-						// a display:block anchor in a cell (button links)
-						// is still a link: the label leads its block
+						// a display:block anchor in a cell is still a link
 						if href := html.Attr(c, "href"); href != "" {
 							href = sanitize(href)
 							*links = append(*links, href)
@@ -823,9 +775,7 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 						blockSeen = false
 					}
 				case tag == "a":
-					// the F key's link label in a cell: same rule as the
-					// main walk - the anchor's href gets its "[N]" label
-					// inline; an anchor without an href is plain text
+					// the F key's link label in a cell: same rule as the main walk
 					if labelLinks {
 						if href := html.Attr(c, "href"); href != "" {
 							href = sanitize(href)
@@ -913,15 +863,13 @@ func wrapWords(words []word, cap int) [][]word {
 	return out
 }
 
-// html.TakeCells cuts the longest true byte prefix of s that fits in cap
 func sanitize(s string) string {
 	return core.SanitizeControls(s)
 }
 
-// runWords merges a word-line into runs: adjacent words with identical
-// styles merge (the inter-word space inherits the preceding word's
-// style); style changes and the F key's label markers split runs (the
-// marker keeps its own run - the TUI's highlight anchor).
+// runWords merges a word-line into runs: same-style adjacent words
+// merge (the space inherits the preceding style); style changes and
+// the F key's markers split runs (the marker keeps its own run).
 func runWords(words []word) []core.Run {
 	var runs []core.Run
 	for _, wd := range words {
@@ -938,7 +886,7 @@ func runWords(words []word) []core.Run {
 	return runs
 }
 
-// runFor maps a computed style to its run representation: "" fg/bg and
+// runFor maps a computed style to its run representation; "" fg/bg and
 // zero attrs for the unstyled base (run equality gates run merging).
 func runFor(st *html.Style) core.Run {
 	var r core.Run

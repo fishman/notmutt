@@ -105,13 +105,11 @@ func TestAssemble(t *testing.T) {
 	}
 }
 
-// TestAssembleWireShapes pins the neomutt wire shapes on the raw
-// bytes (send/send.c:2712, send/header.c:830): a bare body is ONE
-// text/plain part with no multipart wrapper and no
-// Content-Disposition anywhere; an attachment wraps the message in
-// multipart/mixed and only the attachment part carries
-// Content-Disposition. A body part tagged inline is what makes
-// Betterbird render a phantom attachment.
+// TestAssembleWireShapes pins the neomutt wire shapes on raw bytes
+// (send/send.c:2712, send/header.c:830): a bare body is ONE text/plain
+// part, no multipart or Content-Disposition anywhere; attachments wrap
+// in multipart/mixed, only they carry Content-Disposition. An inline
+// body part makes Betterbird render a phantom attachment.
 func TestAssembleWireShapes(t *testing.T) {
 	single := NewCompose("gmail", "bob@example.com", "", "")
 	single.To = []string{"alice@example.com"}
@@ -250,9 +248,8 @@ func TestDropBcc(t *testing.T) {
 	}
 }
 
-// TestDropBccAssembled pins the mutt delivery shape on the real
-// assembled bytes: the wire copy (DropBcc) carries no Bcc header, the
-// fcc copy (the raw assembly) keeps it.
+// TestDropBccAssembled pins the mutt delivery shape on assembled bytes:
+// the wire copy (DropBcc) carries no Bcc, the fcc copy keeps it.
 func TestDropBccAssembled(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"alice@example.com"}

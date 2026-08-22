@@ -75,8 +75,8 @@ func TestFetchRemoteImage(t *testing.T) {
 	if got, err := fetchRemoteImage(srv2.URL, true); err != nil || len(got) == 0 {
 		t.Fatalf("1x1 with allow-tracking must fetch, got %v", err)
 	}
-	// a 1x1 image that is not a tracking pixel: blocked identically (the
-	// dims are the signal, there is no way to tell intent)
+	// a non-tracking 1x1 image is blocked identically (the dims are the
+	// signal - intent is undetectable)
 	if _, err := fetchRemoteImage(srv.URL+"/ok.png", false); err != nil {
 		t.Fatalf("non-1x1 must pass the tracking check, got %v", err)
 	}

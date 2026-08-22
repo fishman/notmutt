@@ -5,11 +5,10 @@ package core
 
 import "sort"
 
-// AccountTag is the message's account: the first account tag in the
-// tag list (R2 - accounts map to folder-prefix tags). Empty when the
-// message carries no account tag. The one definition: the status bar,
-// the compose dialogue detection, and the account resolution all use
-// it (DRY - never a second copy).
+// AccountTag returns the message's account: the first account tag in
+// the tag list (R2 - accounts map to folder-prefix tags), empty when
+// none. The single definition used by the status bar, compose
+// detection, and account resolution (DRY).
 func AccountTag(tags []string, set map[string]bool) string {
 	for _, tag := range tags {
 		if set[tag] {
@@ -20,22 +19,19 @@ func AccountTag(tags []string, set map[string]bool) string {
 }
 
 // ResolveOps applies ops to tags, then normalizes exclusive groups.
-// Per group, when the ops touch it (any op names a member), exactly one
-// member survives: the last member-ADD op wins (moves are symmetric -
-// +archive on spam untags spam, +inbox on archive moves back), else the
-// sole remaining member, else the first present in list order
-// (deterministic for legacy mail carrying several folder tags). Ops
-// that do not touch a group leave it untouched: pending mail at
-// [pending, inbox, unread] keeps its inbox view, soft tags are never
+// When ops touch a group, exactly one member survives: the last
+// member-ADD op wins (moves are symmetric - +archive on spam untags
+// spam, +inbox on archive moves back), else the sole remaining member,
+// else the first in list order (deterministic for legacy mail with
+// several folder tags). Untouched groups stay: pending mail at
+// [pending, inbox, unread] keeps its inbox view; soft tags are never
 // removed by folder moves.
 //
 // newTags is the display arm (stage-time rendering): input order
-// preserved, with the group winner rendered at the slot of the first
-// member the group drops (staging +archive on [inbox, unread] renders
-// [archive, unread]); remaining additions append in op order. resolved
-// is the apply arm - the minimal op set (symmetric difference, sorted
-// by tag) turning the input tags into newTags. A net no-op yields an
-// empty resolved arm.
+// preserved, the winner at the first dropped member's slot (+archive
+// on [inbox, unread] renders [archive, unread]), remaining additions
+// appended in op order. resolved is the apply arm - the minimal op set
+// (symmetric difference, sorted by tag); a net no-op yields empty.
 func ResolveOps(tags []string, ops []TagOp, groups []TagGroup) (newTags []string, resolved []TagOp) {
 	set := make(map[string]bool, len(tags)+len(ops))
 	for _, t := range tags {
@@ -86,8 +82,7 @@ func ResolveOps(tags []string, ops []TagOp, groups []TagGroup) (newTags []string
 			}
 		}
 	}
-	// first input slot each group drops, for the display order: the
-	// winner renders where the member it replaces was
+	// the input slot where each group's winner renders (first dropped member)
 	firstDrop := make([]int, len(groups))
 	for gi := range firstDrop {
 		firstDrop[gi] = -1
@@ -138,8 +133,8 @@ func memberOf(g TagGroup, tag string) bool {
 	return false
 }
 
-// diffTags is the symmetric difference of the applied and resolved
-// tags as ops, sorted by tag for a deterministic batch.
+// diffTags is the symmetric difference of two tag sets as ops, sorted
+// by tag for a deterministic batch.
 func diffTags(a, b []string) []TagOp {
 	have := make(map[string]bool, len(a))
 	for _, t := range a {

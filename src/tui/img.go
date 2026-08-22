@@ -4,14 +4,14 @@
 package tui
 
 // Terminal image emission: the mail renderer's image lines are decoded
-// + scaled + emitted to the terminal ONLY on the load-remote-images key
-// (privacy gate - the bytes stay inert until then) and only for the
-// visible window. Protocol: kitty opt-in via [pager] image-protocol
-// (env match), sixel via the engaged screen's DA negotiation (under
-// tmux a tmux query - tmux answers DA itself); unsupported terminals
-// keep the collapsed Alt row. The writer is
-// /dev/tty (the tcell screen cannot emit raw image protocols) and paint
-// runs AFTER the frame flush, so pixels never race the text.
+// + scaled + emitted ONLY on the load-remote-images key (privacy gate
+// - the bytes stay inert until then) and only for the visible window.
+// Protocol: kitty opt-in via [pager] image-protocol (env match), sixel
+// via the engaged screen's DA negotiation (under tmux a tmux query -
+// tmux answers DA itself); unsupported terminals keep the collapsed
+// Alt row. The writer is /dev/tty (the tcell screen cannot emit raw
+// image protocols) and paint runs AFTER the frame flush, so pixels
+// never race the text.
 
 import (
 	"bytes"
@@ -44,22 +44,20 @@ const (
 
 // imgCellW/H are the terminal cell size in pixels: probed from the
 // TIOCGWINSZ ioctl at startup and on resize, 10x20 when the pty
-// reports no pixels. An image's reserved rows must match the pixels
-// its raster occupies - a wrong cell size misaligns every image.
+// reports no pixels. A wrong cell size misaligns every image.
 var (
 	imgCellW = 10
 	imgCellH = 20
 )
 
-// imageWriter is the paint sink: /dev/tty in Run, nil in tests (all
-// paint paths no-op, so the frame tests never write to a terminal).
+// imageWriter is the paint sink: /dev/tty in Run, nil in tests (paint paths no-op, so frame tests never write to a terminal).
 var imageWriter io.Writer
 
 // detectImageProtocol picks the image protocol: kitty only when
 // [pager] image-protocol opts in and the kitty env matches; sixel when
-// the engaged screen's DA negotiation reported it (tmux answers DA1
-// itself with a build-time reply, so under tmux a tmux query replaces
-// the negotiation). "" = no image support.
+// the screen's DA negotiation reported it (tmux answers DA1 itself
+// with a build-time reply, so under tmux a tmux query replaces the
+// negotiation). "" = no image support.
 func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	if p.ImageProtocol == "kitty" {
 		if os.Getenv("KITTY_WINDOW_ID") != "" {
@@ -80,8 +78,7 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	return ""
 }
 
-// setCellSize adopts a measured cell size (window pixels over cell
-// counts); bounds keep a corrupt ioctl from breaking the paint math.
+// setCellSize adopts a measured cell size (window pixels over cell counts); bounds keep a corrupt ioctl from breaking the paint math.
 func setCellSize(cols, rows, pxW, pxH int) {
 	if cols <= 0 || rows <= 0 || pxW <= 0 || pxH <= 0 {
 		return
@@ -92,29 +89,26 @@ func setCellSize(cols, rows, pxW, pxH int) {
 	}
 }
 
-// sixelCapable is the negotiated sixel flag the screen exposes (the
-// tcell Screen.Sixel seam; tests stub it).
+// sixelCapable is the negotiated sixel flag the screen exposes (the tcell Screen.Sixel seam; tests stub it).
 type sixelCapable interface {
 	Sixel() bool
 }
 
-// tmuxSixel asks tmux for its sixel support (the server format; tmux's
-// own DA1 reply to panes is fixed at build time and omits it).
+// tmuxSixel asks tmux for its sixel support (the server format; tmux's own DA1 reply to panes is fixed at build time and omits it).
 var tmuxSixel = func() bool {
 	out, err := exec.Command("tmux", "display", "-p", "#{sixel_support}").Output()
 	return err == nil && strings.TrimSpace(string(out)) == "1"
 }
 
-// decodeImage decodes the raw image bytes and scales to the cell
-// grid: at most widthCells (capped at imgMaxCols) wide and heightRows
-// tall, aspect preserved, then snapped UP to exact cell multiples so
-// the pixel dims align with the terminal's cells. dispW/dispH are the
-// email's declared display size in pixels (0 = unspecified): the
-// declared axis is the target scale - an email that sizes its section
-// for a 600px chart gets a 600px chart, capped by the window so the
-// paint never leaves the visible area. With no declared size the scale
-// caps at 1 (natural size, never upscale). Returns the scaled image
-// (always NRGBA) plus its cell dims.
+// decodeImage decodes and scales the raw bytes to the cell grid: at
+// most widthCells (capped at imgMaxCols) wide and heightRows tall,
+// aspect preserved, snapped UP to exact cell multiples so the pixel
+// dims align with the terminal's cells. dispW/dispH are the email's
+// declared display size in pixels (0 = unspecified): the declared axis
+// is the target scale - an email that sizes its section for a 600px
+// chart gets a 600px chart, capped by the window. With no declared
+// size the scale caps at 1 (natural size, never upscale). Returns the
+// scaled image (always NRGBA) plus its cell dims.
 func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.Image, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
@@ -141,9 +135,7 @@ func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.I
 	return dst, cols, rows, nil
 }
 
-// kittyEncode transmits the image as PNG over the kitty graphics
-// protocol: base64 chunks of kittyChunk bytes, the classic chunked
-// frame (a=T transmit placement at the cursor).
+// kittyEncode transmits the image as PNG over the kitty graphics protocol: base64 chunks of kittyChunk bytes, the classic chunked frame (a=T transmit placement at the cursor).
 func kittyEncode(w io.Writer, img image.Image) {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
@@ -165,7 +157,7 @@ func kittyEncode(w io.Writer, img image.Image) {
 
 // sixelEncode emits the image as sixels; go-sixel writes the complete
 // DCS sequence in one call. Transparent (P2=1) leaves the cleared page
-// background visible behind alpha pixels - P2=0 would paint them in the
+// background visible behind alpha pixels - P2=0 paints them in the
 // terminal's default background (dark boxes around icons on a white page).
 func sixelEncode(w io.Writer, img image.Image) {
 	e := sixel.NewEncoder(w)
@@ -173,16 +165,14 @@ func sixelEncode(w io.Writer, img image.Image) {
 	e.Encode(img)
 }
 
-// cropImage cuts a pixel sub-rect of the scaled image (decodeImage
-// always produces NRGBA, but draw.Draw crops any source).
+// cropImage cuts a pixel sub-rect of the scaled image (decodeImage always produces NRGBA, but draw.Draw crops any source).
 func cropImage(src image.Image, x, y, w, h int) image.Image {
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(dst, dst.Bounds(), src, image.Pt(x, y), draw.Src)
 	return dst
 }
 
-// cellRect is a screen rect in cells (paint-diff bookkeeping), with
-// the block's clear background (the line's declared bg or the theme).
+// cellRect is a screen rect in cells (paint-diff bookkeeping) with the block's clear background (the line's declared bg or the theme).
 type cellRect struct {
 	x, y, w, h int
 	bg         string
@@ -190,8 +180,8 @@ type cellRect struct {
 
 // clearRects erases a rect set to each rect's background - per-row EL,
 // the erase that also removes sixel graphics (a space fill leaves the
-// pixels). Runs BEFORE the text frame, so the frame's fresh content
-// draws over the cleared rows.
+// pixels). Runs BEFORE the text frame, so the fresh content draws over
+// the cleared rows.
 func clearRects(w io.Writer, rects []cellRect) {
 	if w == nil {
 		return
@@ -211,9 +201,7 @@ func clearRects(w io.Writer, rects []cellRect) {
 	}
 }
 
-// imgBG is an image block's clear color: the line's declared
-// background (the mail's body/html bg, a table cell's bgcolor) or the
-// theme default when the line leaves it unset.
+// imgBG is an image block's clear color: the line's declared background (the mail's body/html bg, a table cell's bgcolor) or the theme default when unset.
 func (m *Model) imgBG(line int) string {
 	if b := m.pager.lines[line].Bg; b != "" {
 		return b
@@ -221,10 +209,6 @@ func (m *Model) imgBG(line int) string {
 	return m.themeBG()
 }
 
-// paintImage emits one image block at the screen cell (x, y): cursor
-// home, then the protocol encode of the visible pixel slice (srcY,
-// srcH - the crop keeps a window-edge block from overflowing onto the
-// keyhint/status rows).
 // composeImages builds one offscreen canvas covering the union of the
 // paint rects: each image's visible slice draws at its cell-aligned
 // offset, the gap cells stay transparent - P2=1 shows the page
@@ -251,8 +235,7 @@ func composeImages(paints []imgPaint) (image.Image, cellRect) {
 
 // bgHexOf renders a lipgloss background color as #rrggbb; "" when the
 // theme leaves the terminal default (NoColor) or the color is not a
-// plain hex (ANSI/palette entries) - the clear then uses the
-// terminal's default background.
+// plain hex - the clear then uses the terminal's default background.
 func bgHexOf(c color.Color) string {
 	if r, ok := c.(color.RGBA); ok && r.A == 0xff {
 		return fmt.Sprintf("#%02x%02x%02x", r.R, r.G, r.B)
@@ -260,8 +243,7 @@ func bgHexOf(c color.Color) string {
 	return ""
 }
 
-// themeBG is the theme's normal background hex (#rrggbb, "" when the
-// theme leaves the terminal default) - the clear fill color.
+// themeBG is the theme's normal background hex (#rrggbb, "" when the theme leaves the terminal default) - the clear fill color.
 func (m *Model) themeBG() string {
 	return bgHexOf(m.styles.Normal.GetBackground())
 }
@@ -269,8 +251,8 @@ func (m *Model) themeBG() string {
 // prepareImages decodes the pager window's image lines (the privacy
 // gate: bytes decode ONLY here - the render-images toggle and scrolls
 // into an image) and re-lays-out when a decode gives a block dims.
-// Runs on the render side, before the frame builds, so a decode-
-// gained expansion lands in the SAME frame.
+// Runs before the frame builds, so a decode-gained expansion lands in
+// the SAME frame.
 func (m *Model) prepareImages() {
 	if m.mode != "pager" || m.pager == nil || !m.pager.images || m.imgProto == "" {
 		return
@@ -303,7 +285,7 @@ func (m *Model) prepareImages() {
 // setImgMode applies the load-remote-images toggle (alt+i): off ->
 // remote (embedded cid:/data: bytes render, http(s) srcs fetch on
 // demand, gated by this key) -> off. Toggling off drops the fetched
-// remote bytes - the network never feeds the decode outside the mode.
+// bytes - the network never feeds the decode outside the mode.
 func (m *Model) setImgMode(mode int) {
 	switch mode {
 	case 0:
@@ -321,8 +303,7 @@ func (m *Model) setImgMode(mode int) {
 // remote images mode): every URL-image line without bytes fetches
 // once - the keypress is the gate, the decode stays per-window
 // (prepareImages), so below-fold images fetch now and expand when
-// scrolled into view. imgFetching single-flights the in-flight URLs,
-// the seam owns the goroutine so the render path never blocks.
+// scrolled into view. imgFetching single-flights in-flight URLs.
 func (m *Model) fetchRemoteImages() {
 	if m.pager == nil {
 		return
@@ -338,8 +319,7 @@ func (m *Model) fetchRemoteImages() {
 	}
 }
 
-// lineImages lists a line's image blocks: the block image line or the
-// inline row's images.
+// lineImages lists a line's image blocks: the block image line or the inline row's images.
 func lineImages(l *core.Line) []*core.Image {
 	if l.Image != nil {
 		return []*core.Image{l.Image}
@@ -354,9 +334,8 @@ func lineImages(l *core.Line) []*core.Image {
 // attachFetched attaches a fetch reply to its image lines (the remote
 // images mode): the bytes land on every line sharing the URL, the
 // pager re-expands, and the decode runs on the next prepareImages. A
-// failed fetch keeps the Alt row AND the URL: the next toggle
-// refetches (a transient network failure must not kill the image
-// forever).
+// failed fetch keeps the Alt row AND the URL, so the next toggle
+// refetches (a transient failure must not kill the image forever).
 func (m *Model) attachFetched(e core.ImageFetched) {
 	delete(m.imgFetching, e.URL)
 	if m.pager == nil {
@@ -408,8 +387,7 @@ func (m *Model) dropRemoteData() {
 	}
 }
 
-// imgPaint is one block's paint: its rect, the decoded image and the
-// visible pixel slice (rows into the decoded image).
+// imgPaint is one block's paint: its rect, the decoded image, and the visible pixel slice (rows into the decoded image).
 type imgPaint struct {
 	rect cellRect
 	img  image.Image
@@ -421,9 +399,9 @@ type imgPaint struct {
 // (unchanged rects excluded) and the stale rects the frame displaces
 // or drops. The non-pager and toggled-off paths stale every painted
 // rect - the safety net for a mode change that skips the dispatch
-// clears. The caller clears the stale rects BEFORE the text frame
-// (EL removes sixel - an after-frame clear would erase the freshly
-// drawn text) and paints after it.
+// clears. The caller clears the stale rects BEFORE the text frame (EL
+// removes sixel - an after-frame clear would erase the freshly drawn
+// text) and paints after it.
 func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 	if m.imgProto == "" {
 		return nil, nil
@@ -445,9 +423,7 @@ func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 		if !ok {
 			continue
 		}
-		// the block's window rect: rows [windowTop, windowTop+Rows);
-		// the visible top sits at window row max(windowTop, 0) (the
-		// paint emits only the visible pixel slice below it)
+		// the block's window rect: rows [windowTop, windowTop+Rows); the visible top sits at max(windowTop, 0), and the paint emits only the visible pixel slice below it
 		windowTop := b.doc - off
 		visTop := max(0, -windowTop)
 		visBot := min(img.Rows, height-windowTop)
@@ -498,9 +474,7 @@ func (m *Model) paintImages(next map[*core.Image]imgPaint) {
 	}
 }
 
-// clearImageRects erases every painted rect to its block background -
-// the toggle-off, mode-exit and resize paths run it BEFORE the next
-// frame so the collapsed text never renders under stale pixels.
+// clearImageRects erases every painted rect to its block background - the toggle-off, mode-exit and resize paths run it BEFORE the next frame so the collapsed text never renders under stale pixels.
 func (m *Model) clearImageRects() {
 	if len(m.painted) == 0 {
 		return
@@ -515,9 +489,7 @@ func (m *Model) clearImageRects() {
 	clear(m.painted)
 }
 
-// resetImages drops the decode cache and painted rects on a resize
-// (the cell math changed): the dims zero, the layout collapses, the
-// next prepareImages re-decodes at the new width.
+// resetImages drops the decode cache and painted rects on a resize (the cell math changed): the dims zero, the layout collapses, the next prepareImages re-decodes at the new width.
 func (m *Model) resetImages() {
 	m.imgCache = map[*core.Image]image.Image{}
 	m.clearImageRects()

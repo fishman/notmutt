@@ -4,14 +4,14 @@
 package tui
 
 // The loop's repaint contract on the simulation screen: a cursor move
-// repaints only the affected rows. Regression for the user report:
+// repaints only the affected rows. Regression for the user report
 // "when i press j 5 is highlighted and 4 is unhighlighted. every other
-// line should stay the same, but instead the entire frame is
-// redrawn." The frame is written whole every paint (tcell diffs
-// internally), so the observable contract is buffer equality: the
-// chrome and the untouched list rows must be identical after the move
-// - only the two cursor rows (and the status segment, which resolves
-// the cursor's legend) may change.
+// line should stay the same, but instead the entire frame is redrawn."
+// The frame is written whole every paint (tcell diffs internally), so
+// the observable contract is buffer equality: the chrome and the
+// untouched list rows must be identical after the move - only the two
+// cursor rows (and the status segment, which resolves the cursor's
+// legend) may change.
 
 import (
 	"fmt"
@@ -33,8 +33,7 @@ func newSim(t *testing.T, w, h int) *fakeScreen {
 	return s
 }
 
-// rowText decodes one screen row to text, right-trimmed like the
-// terminal renders it.
+// rowText decodes one screen row to text, right-trimmed like the terminal renders it.
 func rowText(cs []fakeCell, w, y int) string {
 	var b strings.Builder
 	for x := 0; x < w; x++ {
@@ -51,8 +50,7 @@ func rowCells(cs []fakeCell, w, y int) []fakeCell {
 	return cs[y*w : (y+1)*w]
 }
 
-// copyCells deep-copies the buffer (GetContents may alias the screen's
-// internal rune slices).
+// copyCells deep-copies the buffer (GetContents may alias the screen's internal rune slices).
 func copyCells(cs []fakeCell) []fakeCell {
 	out := make([]fakeCell, len(cs))
 	for i := range cs {
@@ -95,9 +93,7 @@ func waitScreen(t *testing.T, s *fakeScreen, w, h int, want func([]fakeCell) boo
 	t.Fatal("timed out waiting for the frame state")
 }
 
-// TestLoopCursorMoveRepaints drives the REAL loop (runLoop on the
-// simulation screen): a keypress flows through tcell -> the model ->
-// the frame.
+// TestLoopCursorMoveRepaints drives the REAL loop (runLoop on the simulation screen): a keypress flows tcell -> the model -> the frame.
 func TestLoopCursorMoveRepaints(t *testing.T) {
 	const w, h = 80, 24
 	view := core.NewView("inbox", "tag:inbox")
@@ -137,8 +133,7 @@ func TestLoopCursorMoveRepaints(t *testing.T) {
 	}
 }
 
-// cellsOf rebuilds the buffer through the Screen Get API (v3 has no
-// bulk GetContents).
+// cellsOf rebuilds the buffer through the Screen Get API (v3 has no bulk GetContents).
 func cellsOf(s *fakeScreen) []fakeCell {
 	w, h := s.Size()
 	cs := make([]fakeCell, w*h)

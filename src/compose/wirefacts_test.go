@@ -10,12 +10,11 @@ import (
 	"testing"
 )
 
-// TestAssemblePartWireFacts pins the part wire facts the compose
-// rows display (InlineFacts/AttachmentFacts - the TUI renders them
-// verbatim): the inline part is quoted-printable with the explicit
-// charset, an attachment rides base64 and the detected Content-Type.
-// Assemble writes the same facts, so the display and the wire share
-// one definition - a drift in either fails this test.
+// TestAssemblePartWireFacts pins the part wire facts the compose rows
+// display (InlineFacts/AttachmentFacts - rendered verbatim): the inline
+// part is quoted-printable with the explicit charset, an attachment
+// rides base64 and the detected Content-Type. Assemble writes the same
+// facts, so display and wire share one definition - a drift fails here.
 func TestAssemblePartWireFacts(t *testing.T) {
 	f, err := os.CreateTemp(t.TempDir(), "note-*.md")
 	if err != nil {

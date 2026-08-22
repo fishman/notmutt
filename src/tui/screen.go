@@ -14,24 +14,22 @@ import (
 
 // pushFrame writes the built frame to the screen: the SGR runs are
 // parsed into per-cell styles (the R11 engine's styles travel as SGR
-// strings through the frame builders; this adapter is where they land
-// as tcell.Style - decision record 23's trust boundary). Only OUR
-// frames arrive here, so the parser is the defense: SGR sequences
-// update the current style, C0 control characters (past the mail
-// path's F1 sanitize) drop, everything else is one rune. Every cell
-// of every row is written - rows pad to the width with the row's
-// final style (SGR state semantics: the row's last SGR continues to
-// EOL, exactly like the terminal would render it), and the frame's
-// rows fill the screen - so tcell's internal diff erases stale cells.
-// Rows beyond the frame get the screen base; the renderers pad their
-// rows (the empty-view contract), so the base only shows below an
+// strings through the frame builders; this adapter lands them as
+// tcell.Style - decision record 23's trust boundary). Only OUR frames
+// arrive here, so the parser is the defense: SGR sequences update the
+// current style, C0 control characters (past the mail path's F1
+// sanitize) drop, everything else is one rune. Every cell of every row
+// is written - rows pad to the width with the row's final style (the
+// last SGR continues to EOL, like the terminal), so tcell's internal
+// diff erases stale cells. Rows beyond the frame get the screen base;
+// the renderers pad their rows, so the base only shows below an
 // abnormally short frame.
 // pushedFrames remembers the last frame pushed per screen: an
-// unchanged row skips its SetContent sweep (the tcell Show diff covers
-// the rest), and a wholly unchanged frame (same rows, cursor, and size)
-// skips the Show diff walk entirely - the terminal already shows it.
-// The map keeps test screens from aliasing the loop's screen; the loop
-// is the only writer, so no lock.
+// unchanged row skips its SetContent sweep (the tcell Show diff
+// covers the rest), and a wholly unchanged frame skips the Show diff
+// walk entirely - the terminal already shows it. The map keeps test
+// screens from aliasing the loop's screen; the loop is the only
+// writer, so no lock.
 type pushedState struct {
 	frame      string
 	rows       []string
@@ -44,12 +42,10 @@ type pushedState struct {
 var pushedFrames = map[tcell.Screen]pushedState{}
 
 // resetPushedFrames forgets a screen's last-pushed rows: the suspend
-// cycle wipes the tcell cell buffer (disengageFinish Resize(0,0), the
-// engage re-resizes fresh) while this cache survives, so the next push
-// must re-emit every row - a row-skip against the fresh buffer leaves
-// the cleared terminal blank everywhere except the changed rows, and
-// later repaints skip the same rows forever. execCmd calls this after
-// Resume.
+// cycle wipes the tcell cell buffer while this cache survives, so the
+// next push must re-emit every row - a row-skip against the fresh
+// buffer leaves the terminal blank and later repaints skip the same
+// rows forever. execCmd calls this after Resume.
 func resetPushedFrames(s tcell.Screen) { delete(pushedFrames, s) }
 
 func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bool) {
@@ -112,10 +108,9 @@ type sgrCell struct {
 // (0 resets, attrs and colors set), a lone ESC drops (the sequence
 // boundary), everything else is a cell. Colors: 30-37/90-97 and
 // 38;2;r;g;b (the R11 engine's truecolor emitter), backgrounds
-// 40-47/100-107 and 48;2. Unstyled text keeps the current style -
-// the builders concatenate styled fragments, and SGR state semantics
-// are what make that correct. The final style comes back for the
-// row's padding.
+// 40-47/100-107 and 48;2. Unstyled text keeps the current style - the
+// builders concatenate styled fragments, SGR state semantics make
+// that correct. The final style comes back for the row's padding.
 func parseSGR(row string, base tcell.Style) ([]sgrCell, tcell.Style) {
 	st := base
 	var out []sgrCell
@@ -140,9 +135,7 @@ func parseSGR(row string, base tcell.Style) ([]sgrCell, tcell.Style) {
 	return out, st
 }
 
-// applySGR applies one CSI parameter list to the style. The parameter
-// grammar is small (our emitters write only these forms), so the
-// parser is a strict param-walk, not a regex.
+// applySGR applies one CSI parameter list to the style. The grammar is small (our emitters write only these forms), so the parser is a strict param-walk, not a regex.
 func applySGR(st tcell.Style, params string) tcell.Style {
 	if params == "" {
 		return st.Normal() // ESC[m is the empty reset

@@ -9,29 +9,24 @@ import (
 	"slices"
 )
 
-// Ported from aerc's lib/parse/hyperlinks.go (MIT License,
-// copyright Drew DeVault and Robin Jarry) - the reference client's
-// link extraction, proven against real mail shapes.
+// Ported from aerc's lib/parse/hyperlinks.go (MIT License, copyright
+// Drew DeVault and Robin Jarry) - the reference client's link extraction.
 
-// Partial regexp to match the beginning of URLs and email addresses.
-// The remainder of the matched URLs/emails is parsed manually.
+// Matches URL/email beginnings; the remainder is parsed manually.
 var urlRe = regexp.MustCompile(
 	`([a-z]{2,8})://` + // URL start
 		`|` + // or
 		`(mailto:)?[[:alnum:]_+.~/-]*[[:alnum:]]@`, // email start
 )
 
-// Links extracts deduplicated, sorted URLs and email addresses
-// (mailto: prefixed) from s. If isHTML is true, left angle brackets
-// are always right link delimiters.
+// Links extracts deduplicated, sorted URLs and emails (mailto:)
+// from s; isHTML makes left angle brackets right delimiters.
 func Links(s string, isHTML bool) []string {
 	links := make(map[string]struct{})
 	b := []byte(s)
 	match := urlRe.FindSubmatchIndex(b)
 	for ; match != nil; match = urlRe.FindSubmatchIndex(b) {
-		// Regular expressions do not really cut it here and we
-		// need to detect opening/closing braces to handle
-		// markdown link syntax.
+		// regex alone can't balance braces (markdown link syntax)
 		var paren, bracket, ltgt, scheme int
 		var emitUrl bool
 		i, j := match[0], match[1]
@@ -95,9 +90,7 @@ func Links(s string, isHTML bool) []string {
 			}
 		}
 
-		// Heuristic to remove trailing characters that are
-		// valid URL characters, but typically not at the end of
-		// the URL
+		// strip trailing chars valid in URLs but not at the end
 		for trim := true; trim && j > 0; {
 			switch b[j-1] {
 			case '.', ',', ':', ';', '?', '!', '"', '\'', '%':

@@ -31,8 +31,7 @@ func TestEditorBufferRoundTrip(t *testing.T) {
 		t.Fatalf("buffer perms = %v, want 0600 (F5)", fi.Mode().Perm())
 	}
 	// the buffer holds ONLY the mail content (mutt's msgbody shape) -
-	// the email header is built from the dialogue fields, never the
-	// editor
+	// the email header is built from the dialogue fields, never the editor
 	if raw, _ := os.ReadFile(path); strings.Contains(string(raw), "Subject:") || strings.Contains(string(raw), "To:") {
 		t.Fatalf("the editor buffer must not carry the email header:\n%s", raw)
 	}
@@ -69,8 +68,7 @@ func TestApplyEditorResultParsesEdits(t *testing.T) {
 	if got.Body != "new body\n\n-- \nnew sig" {
 		t.Fatalf("edits = %q", got.Body)
 	}
-	// the edited signature tail no longer matches "bob": it stays as
-	// body text and the signature detaches
+	// the edited signature tail no longer matches "bob": it stays as body text, the signature detaches
 	if !strings.Contains(got.Body, "new sig") || got.SignatureBody != "" {
 		t.Fatalf("edited tail must stay as text, signature detach: %q %q", got.Body, got.SignatureBody)
 	}

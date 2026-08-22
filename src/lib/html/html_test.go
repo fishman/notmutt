@@ -4,9 +4,8 @@
 package html
 
 // Fuzz targets for the CSS boundary (AGENTS.md: parser-adjacent code
-// passes the fuzz targets in SECURITY.md before it is accepted). The
-// properties under test are panic-freedom and determinism on hostile
-// stylesheet text.
+// must pass SECURITY.md's fuzz targets). Under test: panic-freedom
+// and determinism on hostile stylesheet text.
 
 import (
 	"testing"
@@ -14,11 +13,9 @@ import (
 	"golang.org/x/net/html"
 )
 
-// TestDisplayNotInherited pins the CSS display rule: display is not an
-// inherited property, so a block element's content computes the tag
-// default (""), not the parent's display. The pre-fix StyleOf copied
-// the parent style, so a display:block anchor made its img children
-// block too - full-width image lines in responsive mail.
+// TestDisplayNotInherited pins the CSS rule: display is not inherited,
+// so a block element's content computes the tag default (""), not the
+// parent's display.
 func TestDisplayNotInherited(t *testing.T) {
 	parent := &Style{Display: "block"}
 	for _, tag := range []string{"img", "span", "a"} {
@@ -29,9 +26,8 @@ func TestDisplayNotInherited(t *testing.T) {
 	}
 }
 
-// TestBackgroundShorthand pins the background shorthand (the commonest
-// way mail declares a body color): the first color token becomes the
-// background-color, and the longhand wins when both are present.
+// TestBackgroundShorthand pins the shorthand: the first color token
+// becomes the background-color; the longhand wins when both are present.
 func TestBackgroundShorthand(t *testing.T) {
 	cases := []struct{ css, want string }{
 		{"background: #111111", "#111111"},

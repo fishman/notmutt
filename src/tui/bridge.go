@@ -7,9 +7,8 @@ import "notmutt/core"
 
 type EventMsg struct{ Event core.Event }
 
-// EventCmd forwards one bus event into the loop. Re-arm it after every
-// EventMsg (and from Init) to keep the loop alive. A nil channel waits
-// forever (tests), which is fine.
+// EventCmd forwards one bus event into the loop; re-arm after every
+// EventMsg (and Init) or the loop dies. A nil channel waits forever (tests).
 func EventCmd(ch <-chan core.Event) Cmd {
 	return func() []any {
 		return []any{EventMsg{Event: <-ch}}

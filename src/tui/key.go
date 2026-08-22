@@ -10,12 +10,12 @@ import (
 	"github.com/gdamore/tcell/v3"
 )
 
-// The key model is the tea v2 shape with the tea import gone (decision
-// record 23): Text is the printable string (empty for special and
-// ctrl/alt-modified keys), Code the rune or a special key code, Mod
-// the modifiers; String() is the canonical binding name ("j",
-// "ctrl+d", "pgup") - actionForKey's second probe. The loop maps
-// tcell events into these; tests construct presses directly.
+// The key model is the tea v2 shape with the tea import gone (record
+// 23): Text the printable string (empty for special and ctrl/alt
+// keys), Code the rune or a special key code, Mod the modifiers;
+// String() is the canonical binding name ("j", "ctrl+d", "pgup") -
+// actionForKey's second probe. The loop maps tcell events into these;
+// tests construct presses directly.
 
 type keyMod int
 
@@ -59,8 +59,7 @@ const (
 	KeyF12
 )
 
-// KeyPressMsg is one key press. String() mirrors ultraviolet's
-// canonical naming so the binding tables keep their vocabulary.
+// KeyPressMsg is one key press; String() mirrors ultraviolet's canonical naming so the binding tables keep their vocabulary.
 type KeyPressMsg struct {
 	Text string // the printable text, empty for special and ctrl/alt keys
 	Code rune   // the rune or a special key code
@@ -90,10 +89,9 @@ func (k KeyPressMsg) String() string {
 }
 
 // KeyReleaseMsg is a key release (kitty protocol release reporting).
-// tcell does not deliver release events (verified at implementation
-// time, record 23); the message type survives so the model's release
-// path stays wired, and the legendTick fallback settles terminals
-// without it.
+// tcell does not deliver release events (record 23); the type survives
+// so the model's release path stays wired, and the legendTick fallback
+// settles terminals without it.
 type KeyReleaseMsg KeyPressMsg
 
 var specialKeyName = map[rune]string{
@@ -106,15 +104,14 @@ var specialKeyName = map[rune]string{
 }
 
 // keyPressOf maps a tcell key event to a press (or release) message.
-// Runes map with their text (shifted runes arrive as the uppercase
-// rune - the bindings bind "G" and "j" separately); special keys map
-// to the special codes; ctrl/alt-modified keys carry no Text, so
+// Runes map with their text (shifted runes arrive uppercase - the
+// bindings bind "G" and "j" separately); special keys map to the
+// special codes; ctrl/alt-modified keys carry no Text, so
 // actionForKey's canonical probe resolves them.
 //
-// The screen opens with OptAdvancedKeys (loop.go): tcell's newer key
-// normalization reports ctrl+letter as KeyRune with ModCtrl on every
-// input path (kitty-protocol CSI-u, legacy control bytes, win32), so
-// the legacy KeyCtrlA..KeyCtrlZ folding never reaches this mapping.
+// The screen opens with OptAdvancedKeys (loop.go): tcell reports
+// ctrl+letter as KeyRune with ModCtrl on every input path, so the
+// legacy KeyCtrlA..KeyCtrlZ folding never reaches this mapping.
 func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 	code := ev.Key()
 	mod := modNone

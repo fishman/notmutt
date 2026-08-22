@@ -10,11 +10,9 @@ import (
 	"notmutt/lib/testutil"
 )
 
-// TestCGOWalkExhausts pins the progressive walk: the full walk must
-// terminate, yield every thread exactly once, and match Count - the
-// per-chunk restart bug made it loop forever re-yielding the head of
-// the result. Depth-1 threads keep threads == messages, so the
-// walk-vs-Count invariant holds by construction.
+// TestCGOWalkExhausts pins the progressive walk: it must terminate,
+// yield every thread exactly once, and match Count. Depth-1 threads
+// keep threads == messages, so walk-vs-Count holds by construction.
 func TestCGOWalkExhausts(t *testing.T) {
 	e := testutil.Setup(t)
 	testutil.ThreadTree(t, e.Maildir, 25, 1)

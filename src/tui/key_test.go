@@ -11,7 +11,7 @@ import (
 
 // TestKeyPressOfCtrl pins the loop's raw mapping for ctrl+letter: the
 // screen opens with OptAdvancedKeys (loop.go), so tcell reports it as
-// KeyRune with ModCtrl, which must map to the canonical binding name
+// KeyRune with ModCtrl, mapping to the canonical binding name
 // ("ctrl+f"). The legacy KeyCtrlX folding never reaches keyPressOf.
 func TestKeyPressOfCtrl(t *testing.T) {
 	advanced, _, ok := keyPressOf(tcell.NewEventKeyEx(tcell.KeyRune, "f", tcell.ModCtrl, true, 0, 1))

@@ -762,6 +762,43 @@ func TestLuaPromptRoundTrip(t *testing.T) {
 	}
 }
 
+// TestLuaPromptTabCommits pins Tab as accept on the Lua prompt()
+// (R8): the dialog closes and the answer resolves the blocked VM,
+// same as enter.
+func TestLuaPromptTabCommits(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	m := stubModel()
+	m.bus = bus
+
+	m = pressEvent(t, m, core.PromptRequest{ID: "p1", Label: "Language:", Prefill: "en"})
+	m = press(t, m, "glish") // the prefill is editable: "en" + "glish"
+	m = pressType(t, m, KeyTab)
+	if m.dialogue != nil {
+		t.Fatalf("Tab must close the lua prompt, dialogue = %+v", m.dialogue)
+	}
+	select {
+	case e := <-ch:
+		r, ok := e.(core.PromptResult)
+		if !ok || r.ID != "p1" || r.Text != "english" || r.Canceled {
+			t.Fatalf("Tab must publish the answer: %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no PromptResult on Tab")
+	}
+}
+
+// TestCommandTabCloses pins Tab as accept on the : command prompt
+// (R8): the dialog closes like enter.
+func TestCommandTabCloses(t *testing.T) {
+	m := model()
+	m.dialogue = &textDialogue{field: "command", label: ": "}
+	m = pressType(t, m, KeyTab)
+	if m.dialogue != nil {
+		t.Fatalf("Tab must close the command prompt, dialogue = %+v", m.dialogue)
+	}
+}
+
 // TestCountedG pins the counted-g jump: 12g moves the cursor to row 12
 // (1-based), and the gg chain still jumps to the top.
 func TestCountedG(t *testing.T) {
@@ -1962,6 +1999,20 @@ func TestComposeOpenedAttachesDialogue(t *testing.T) {
 	}
 	if len(m.tabs) != 1 || m.tabIdx != 1 || m.tabs[0].Subject != "Re: x" {
 		t.Fatalf("tabs = %+v idx %d", m.tabs, m.tabIdx)
+	}
+}
+
+// TestComposeOpenedPaints pins the async attach repaint: a
+// ComposeOpened that lands after the triggering frame painted (the
+// mailto link path - the picker painted, then the bus event arrives)
+// must flag a paint, or the compose tab stays invisible behind the
+// previous view.
+func TestComposeOpenedPaints(t *testing.T) {
+	m := model()
+	m.paint = false // the picker already painted this frame
+	m = openDialogue(t, m, "t1")
+	if !m.paint {
+		t.Fatal("attaching a compose tab must flag a repaint")
 	}
 }
 

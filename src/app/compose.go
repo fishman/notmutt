@@ -61,20 +61,41 @@ func defaultSig(cfg config.Config, account string) (name, body string) {
 	return file, strings.TrimSuffix(string(data), "\n")
 }
 
+// accountFrom resolves the dialogue's sender identity: the account
+// (the message tags, the view cursor, else the first configured -
+// resolveAccount), its from address, and the default signature. One
+// derivation for every dialogue builder (compose, reply/forward,
+// mailto - DRY).
+func accountFrom(cfg config.Config, msgTags, cursorTags []string) (account, from, sigName, sigBody string) {
+	account = resolveAccount(cfg, msgTags, cursorTags)
+	from = cfg.Accounts[account].From
+	sigName, sigBody = defaultSig(cfg, account)
+	return account, from, sigName, sigBody
+}
+
+// newCompose builds the compose-mode dialogue shell: the sender
+// identity (accountFrom) and the fcc path. The one builder for
+// compose-mode dialogues - the compose key and the mailto link share
+// it; reply/forward layer the parsed original on top (buildCompose).
+func newCompose(cfg config.Config, root string, msgTags, cursorTags []string) *compose.State {
+	account, from, sigName, sigBody := accountFrom(cfg, msgTags, cursorTags)
+	st := compose.NewCompose(account, from, sigName, sigBody)
+	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	return st
+}
+
 // buildCompose prefills a dialogue for mode ("compose" | "reply" |
 // "reply-all" | "forward"): account detection, the parsed original
 // (reply/forward), the default signature. Nil when the original
 // cannot be parsed - the open key then no-ops.
 func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, root string) *compose.State {
-	account := resolveAccount(cfg, tagsOf(msg), cursorTags(view))
-	from := cfg.Accounts[account].From
-	sigName, sigBody := defaultSig(cfg, account)
 	var st *compose.State
 	if mode == "compose" {
-		st = compose.NewCompose(account, from, sigName, sigBody)
+		st = newCompose(cfg, root, tagsOf(msg), cursorTags(view))
 	} else if msg != nil && len(msg.Paths) > 0 {
 		parsed, err := mail.ParseMessage(msg.Paths[0])
 		if err == nil {
+			account, from, sigName, sigBody := accountFrom(cfg, tagsOf(msg), cursorTags(view))
 			switch mode {
 			case "reply":
 				st = compose.Reply(*msg, parsed, account, from, sigName, sigBody)
@@ -87,10 +108,10 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 			case "forward":
 				st = compose.Forward(*msg, parsed, account, from, sigName, sigBody)
 			}
+			if st != nil {
+				st.Fcc = sentPath(root, account, cfg.Accounts[account])
+			}
 		}
-	}
-	if st != nil {
-		st.Fcc = sentPath(root, account, cfg.Accounts[account])
 	}
 	return st
 }
@@ -135,11 +156,7 @@ func mailtoCompose(cfg config.Config, root, rawURL string) (*compose.State, erro
 	if err != nil || !strings.EqualFold(u.Scheme, "mailto") {
 		return nil, fmt.Errorf("not a mailto url: %q", rawURL)
 	}
-	account := resolveAccount(cfg, nil, nil)
-	from := cfg.Accounts[account].From
-	sigName, sigBody := defaultSig(cfg, account)
-	st := compose.NewCompose(account, from, sigName, sigBody)
-	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	st := newCompose(cfg, root, nil, nil)
 	if addr, err := url.PathUnescape(u.Opaque); err == nil {
 		st.To = mailtoAddresses(addr)
 	}

@@ -1993,7 +1993,10 @@ func isAddrField(f string) bool {
 
 // onComposeOpened attaches a dialogue tab (R4). The opened set makes
 // it idempotent per TabID: the bus snapshot re-attaches a dropped
-// open event exactly once, never a closed dialogue.
+// open event exactly once, never a closed dialogue. The attach paints:
+// the event arrives async (a mailto link, a reply prefill) after the
+// triggering frame already painted, so without the flag the compose
+// tab stays invisible behind the previous view.
 func (m *Model) onComposeOpened(e core.ComposeOpened) {
 	if m.opened[e.TabID] {
 		return
@@ -2010,6 +2013,7 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 		tab.BodyPath = path
 	}
 	m.attachTab()
+	m.paint = true
 }
 
 // cursorThread resolves the cursor row's thread + message ids and
@@ -3250,84 +3254,7 @@ func (m *Model) cancelDialogue() {
 func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	switch msg.String() {
 	case "enter":
-		input := strings.TrimSpace(d.input)
-		switch d.field {
-		case "attach":
-			if strings.HasPrefix(input, "@") {
-				// the exec takes over; the chooser result re-opens the
-				// error box on failure. An unknown command arms no exec
-				// - the prompt keeps the text for correction.
-				cmd := m.runAttachCommand(strings.TrimPrefix(input, "@"))
-				if cmd == nil {
-					return d, nil
-				}
-				return nil, cmd
-			}
-			path := compose.ExpandHome(input)
-			if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
-				return nil, nil
-			}
-			return d, nil
-		case "command":
-			if input != "" {
-				tid, _, _ := m.cursorThread()
-				onLuaCommand(input, tid)
-			}
-			return nil, nil
-		case "luaprompt":
-			// the Lua prompt() round trip: the answer resolves the
-			// blocked VM; a nil bus (tests) just closes
-			if m.bus != nil {
-				m.bus.Publish(core.PromptResult{ID: d.promptID, Text: input})
-			}
-			return nil, nil
-		case "filter":
-			// the filter applied live per key - enter only closes
-			return nil, nil
-		case "search":
-			// enter commits the pattern and closes the prompt - the
-			// saved state drives the n key from the new cursor. The
-			// update's default paint stays: the box must vanish
-			// immediately, not on the next armed tick.
-			if input != "" {
-				m.searchQuery = core.SanitizeControls(input)
-				m.searchNext()
-			}
-			return nil, nil
-		case "searchtab":
-			// the ctrl+f prompt: enter opens the raw notmuch query in a
-			// new tab (the query is the tab's name); the activation
-			// follows [ui] search-open
-			if input != "" {
-				m.searchTabQuery = input
-				m.openSearchTab(core.SanitizeControls(input))
-			}
-			return nil, nil
-		case "saveatt":
-			// the s key in an attachment view: the app writes the
-			// viewed attachment to the path (0600) and the result
-			// surfaces on the status line
-			if input != "" && m.attView != nil {
-				onAttachmentSave(m.attView.threadID, m.attView.msgID, m.attView.ordinal, compose.ExpandHome(input))
-			}
-			return nil, nil
-		}
-		st := &m.tabs[m.tabIdx-1]
-		switch d.field {
-		case "from":
-			st.From = input
-		case "subject":
-			st.Subject = input
-		case "to":
-			st.To = compose.SplitAddrs(input)
-		case "cc":
-			st.Cc = compose.SplitAddrs(input)
-		case "bcc":
-			st.Bcc = compose.SplitAddrs(input)
-		case "replyto":
-			st.ReplyTo = compose.SplitAddrs(input)
-		}
-		return nil, nil
+		return d.commit(m)
 	case "esc", "ctrl+g":
 		// ctrl+g cancels like esc (the readline convention)
 		if d.field == "filter" {
@@ -3377,6 +3304,9 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			}
 			return m.filePicker(d), nil
 		}
+		// Tab accepts like enter on the command surface (R8): the :
+		// prompt and the Lua prompt() round trip close on Tab too
+		return d.commit(m)
 	case "?":
 		// a path can legally contain '?' - the command list is only the
 		// empty-prompt '?'; anything else appends
@@ -3747,6 +3677,90 @@ type errorDialogue struct {
 	output string
 	tabID  string
 	name   string
+}
+
+// commit accepts the dialogue's input and closes it: enter on any
+// field, Tab on the command surface (the : prompt and the Lua
+// prompt() round trip close on Tab too).
+func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
+	input := strings.TrimSpace(d.input)
+	switch d.field {
+	case "attach":
+		if strings.HasPrefix(input, "@") {
+			// the exec takes over; the chooser result re-opens the
+			// error box on failure. An unknown command arms no exec
+			// - the prompt keeps the text for correction.
+			cmd := m.runAttachCommand(strings.TrimPrefix(input, "@"))
+			if cmd == nil {
+				return d, nil
+			}
+			return nil, cmd
+		}
+		path := compose.ExpandHome(input)
+		if st := &m.tabs[m.tabIdx-1]; st.AddAttachment(path) == nil {
+			return nil, nil
+		}
+		return d, nil
+	case "command":
+		if input != "" {
+			tid, _, _ := m.cursorThread()
+			onLuaCommand(input, tid)
+		}
+		return nil, nil
+	case "luaprompt":
+		// the Lua prompt() round trip: the answer resolves the
+		// blocked VM; a nil bus (tests) just closes
+		if m.bus != nil {
+			m.bus.Publish(core.PromptResult{ID: d.promptID, Text: input})
+		}
+		return nil, nil
+	case "filter":
+		// the filter applied live per key - enter only closes
+		return nil, nil
+	case "search":
+		// enter commits the pattern and closes the prompt - the
+		// saved state drives the n key from the new cursor. The
+		// update's default paint stays: the box must vanish
+		// immediately, not on the next armed tick.
+		if input != "" {
+			m.searchQuery = core.SanitizeControls(input)
+			m.searchNext()
+		}
+		return nil, nil
+	case "searchtab":
+		// the ctrl+f prompt: enter opens the raw notmuch query in a
+		// new tab (the query is the tab's name); the activation
+		// follows [ui] search-open
+		if input != "" {
+			m.searchTabQuery = input
+			m.openSearchTab(core.SanitizeControls(input))
+		}
+		return nil, nil
+	case "saveatt":
+		// the s key in an attachment view: the app writes the
+		// viewed attachment to the path (0600) and the result
+		// surfaces on the status line
+		if input != "" && m.attView != nil {
+			onAttachmentSave(m.attView.threadID, m.attView.msgID, m.attView.ordinal, compose.ExpandHome(input))
+		}
+		return nil, nil
+	}
+	st := &m.tabs[m.tabIdx-1]
+	switch d.field {
+	case "from":
+		st.From = input
+	case "subject":
+		st.Subject = input
+	case "to":
+		st.To = compose.SplitAddrs(input)
+	case "cc":
+		st.Cc = compose.SplitAddrs(input)
+	case "bcc":
+		st.Bcc = compose.SplitAddrs(input)
+	case "replyto":
+		st.ReplyTo = compose.SplitAddrs(input)
+	}
+	return nil, nil
 }
 
 func (d *errorDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {

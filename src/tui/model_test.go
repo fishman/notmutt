@@ -2407,6 +2407,39 @@ func TestScheduledListPicker(t *testing.T) {
 	}
 }
 
+// TestScheduledEdit pins the e key: it hands the selected entry's id
+// to the edit seam (unschedule + reopen) and closes the list.
+func TestScheduledEdit(t *testing.T) {
+	SetScheduledListHandler(func() []ScheduledEntry {
+		return []ScheduledEntry{
+			{ID: "tabA", Subject: "hello", At: "Mon Aug 24 09:00"},
+			{ID: "tabB", Subject: "world", At: "Tue Aug 25 10:00"},
+		}
+	})
+	t.Cleanup(func() { SetScheduledListHandler(func() []ScheduledEntry { return nil }) })
+	var edited string
+	SetScheduledEditHandler(func(id string) { edited = id })
+	t.Cleanup(func() { SetScheduledEditHandler(func(string) {}) })
+	m := model()
+	m = press(t, m, "s")
+	m = pressType(t, m, 'e')
+	if edited != "tabA" {
+		t.Fatalf("e must hand the selected entry's id (the list sorts by display, tabA first), got %q", edited)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("e must close the list: %+v", m.dialogue)
+	}
+	// a filter narrows the list; e edits the filtered selection's id
+	edited = ""
+	m = model()
+	m = press(t, m, "s")
+	m = press(t, m, "world") // filter to the second entry
+	m = pressType(t, m, 'e')
+	if edited != "tabB" {
+		t.Fatalf("e must edit the filtered selection, got %q", edited)
+	}
+}
+
 // TestSendRetryClearsSnapshot pins the re-arm: a retry after a
 // failure must not re-apply the stale failure snapshot while the new
 // job is in flight - the dialogue stays Sending until the new result

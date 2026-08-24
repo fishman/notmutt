@@ -297,6 +297,9 @@ func Run() error {
 	tui.SetScheduledListHandler(func() []tui.ScheduledEntry {
 		return scheduledList(cfg)
 	})
+	tui.SetScheduledEditHandler(func(id string) {
+		editScheduled(bus, cfg, root, id)
+	})
 
 	// the scheduled-mail loop (resume + cadence): the startup check
 	// delivers mail that came due while the client was closed; the tick

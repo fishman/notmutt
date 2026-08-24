@@ -154,6 +154,26 @@ func scheduledList(cfg config.Config) []tui.ScheduledEntry {
 	return out
 }
 
+// editScheduled unschedules the mail (the s list's e key): the spool
+// record is removed and the stored state reopens as a compose
+// dialogue - a fresh TabID, because the original is in the TUI's
+// opened set and re-attaching it would no-op.
+func editScheduled(bus *core.Bus, cfg config.Config, root string, id string) {
+	path := filepath.Join(scheduleDir(cfg), id+".pending")
+	m, err := readScheduled(path)
+	if err != nil {
+		diag.Warn("schedule edit", "err", err.Error())
+		return
+	}
+	if err := os.Remove(path); err != nil {
+		diag.Warn("schedule edit", "err", err.Error())
+		return
+	}
+	st := m.State
+	st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+	bus.Publish(compose.ToEvent(&st))
+}
+
 // netOnline is the connectivity seam (the platform netcheck package);
 // tests override it to force the delivery path.
 var netOnline = netcheck.Online

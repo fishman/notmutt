@@ -339,6 +339,38 @@ func TestScheduledList(t *testing.T) {
 	}
 }
 
+// TestEditScheduled pins the e key's app side: the spool record is
+// removed (unscheduled) and the stored state reopens as a compose
+// dialogue with a fresh TabID (the original is in the TUI's opened
+// set - re-attaching it would no-op).
+func TestEditScheduled(t *testing.T) {
+	cfg := schedCfg(t)
+	st := schedState()
+	st.Subject = "editable"
+	st.Body = "the body"
+	if err := scheduleAt(cfg, "", st, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	editScheduled(bus, cfg, "", st.ID)
+	select {
+	case e := <-ch:
+		opened, ok := e.(core.ComposeOpened)
+		if !ok {
+			t.Fatalf("edit must publish ComposeOpened, got %T", e)
+		}
+		if opened.TabID == st.ID || opened.Subject != "editable" || opened.Body != "the body" {
+			t.Fatalf("reopened dialogue = %+v (fresh id, stored state)", opened)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no ComposeOpened")
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Schedule.Dir, st.ID+".pending")); !os.IsNotExist(err) {
+		t.Fatal("edit must unschedule the mail")
+	}
+}
+
 // TestSendDueStampsDeliveryDate pins the wire date: a due mail's Date
 // header is the delivery instant, never the schedule time (the stored
 // bytes carry the composition date; the delivered message the send

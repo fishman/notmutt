@@ -1194,19 +1194,23 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.tabNext()
 	case "scheduled-list":
 		// the s key: the pending scheduled mail, read-only (subject +
-		// send time from the app's spool scan)
-		names := make([]string, 0, 8)
-		for _, e := range onScheduledList() {
+		// send time from the app's spool scan); the e key edits the
+		// selected mail
+		entries := onScheduledList()
+		names := make([]string, 0, len(entries))
+		ids := make([]string, 0, len(entries))
+		for _, e := range entries {
 			subject := e.Subject
 			if subject == "" {
 				subject = "(no subject)"
 			}
 			names = append(names, e.At+"  "+subject)
+			ids = append(ids, e.ID)
 		}
 		if len(names) == 0 {
 			names = append(names, "(nothing scheduled)")
 		}
-		m.dialogue = &listDialogue{f: newFuzzy("scheduled", "scheduled:", names)}
+		m.dialogue = &listDialogue{f: newFuzzyPayload("scheduled", "scheduled:", names, ids)}
 	case "form-down":
 		// navigation lives in the message-text row and the attachment
 		// list only; settings rows are never focused
@@ -3293,6 +3297,15 @@ type listDialogue struct {
 }
 
 func (d *listDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
+	// the scheduled list's e key: edit the selected mail - unschedule
+	// and reopen the compose dialogue (the entry payload is the id)
+	if d.f.kind == "scheduled" && msg.String() == "e" {
+		if id, ok := d.f.selectedPayload(); ok && id != "" {
+			m.cancelDialogue()
+			onScheduledEdit(id)
+			return nil, nil
+		}
+	}
 	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
 		switch a {
 		case "fuzzy-down":

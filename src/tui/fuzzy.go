@@ -19,6 +19,7 @@ type fuzzy struct {
 	kind    string
 	title   string
 	entries []string
+	payload []string // opaque per-entry data (the scheduled ids); nil when unused
 	query   string
 	sel     int
 	// marks: the file chooser's attachment marks (the t key); nil in every other picker.
@@ -29,6 +30,32 @@ func newFuzzy(kind, title string, entries []string) *fuzzy {
 	entries = append([]string(nil), entries...)
 	sort.Strings(entries)
 	return &fuzzy{kind: kind, title: title, entries: entries}
+}
+
+// newFuzzyPayload builds the selector with per-entry payloads (the
+// scheduled ids): entries and payloads sort together, so the selected
+// payload always matches the selected entry. A payload count that
+// does not line up with the entries drops the payloads.
+func newFuzzyPayload(kind, title string, entries, payload []string) *fuzzy {
+	if len(payload) != len(entries) {
+		payload = nil
+	}
+	idx := make([]int, len(entries))
+	for i := range idx {
+		idx[i] = i
+	}
+	// sort.Slice is not stable: the index sort keeps every entry with
+	// its own payload, even when two entries are equal
+	sort.Slice(idx, func(i, j int) bool { return entries[idx[i]] < entries[idx[j]] })
+	se := make([]string, len(entries))
+	sp := make([]string, len(entries))
+	for i, j := range idx {
+		se[i] = entries[j]
+		if payload != nil {
+			sp[i] = payload[j]
+		}
+	}
+	return &fuzzy{kind: kind, title: title, entries: se, payload: sp}
 }
 
 // filtered returns the matching entry indices ranked by score (best
@@ -65,4 +92,14 @@ func (f *fuzzy) selected() (string, bool) {
 		return "", false
 	}
 	return f.entries[idx[f.sel]], true
+}
+
+// selectedPayload returns the selected entry's payload ("", false
+// when the picker carries none or nothing is selected).
+func (f *fuzzy) selectedPayload() (string, bool) {
+	idx := f.filtered()
+	if f.payload == nil || len(idx) == 0 || f.sel < 0 || f.sel >= len(idx) {
+		return "", false
+	}
+	return f.payload[idx[f.sel]], true
 }

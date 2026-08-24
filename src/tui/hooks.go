@@ -123,6 +123,15 @@ func SetScheduledListHandler(fn func() []ScheduledEntry) {
 	onScheduledList = fn
 }
 
+// onScheduledEdit is the edit-scheduled seam (the s list's e key): the
+// app removes the mail from the spool and reopens it as a compose
+// dialogue.
+var onScheduledEdit = func(id string) {}
+
+func SetScheduledEditHandler(fn func(string)) {
+	onScheduledEdit = fn
+}
+
 // onDraft is the draft seam: the app writes the dialogue state into the account's draft folder (maildir new/ slot, same shape as the fcc) and reindexes; an error keeps the composition open.
 var onDraft = func(st compose.State) error { return nil }
 

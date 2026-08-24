@@ -29,6 +29,7 @@ every key is described there and rebindable.
 | r / R | reply / reply-all |
 | f | forward |
 | m | compose a new message |
+| s | list scheduled mail (e reopens one for editing) |
 | F | live-filter the index rows |
 | / | search the index (enter commits, n repeats) |
 | ctrl+f | search the whole database in a new tab (raw notmuch query) |
@@ -117,6 +118,7 @@ styles. Your identity is the message's
 | A / C | choose the sender account / signature |
 | S | cycle the security setting (none / sign / encrypt / sign+encrypt) |
 | y | send |
+| P | schedule the message |
 | q | abort (confirm) |
 | ctrl+d / ctrl+u / ctrl+f / ctrl+b | scroll the preview pane |
 
@@ -168,6 +170,13 @@ yazi = ["yazi", "--chooser-file"]
 # seconds; 0 disables the automatic poll - the refresh key still works)
 [refresh]
 interval = 20
+
+# the scheduled-mail spool and check cadence: where composed messages
+# wait and how often the client checks for due mail (seconds). The
+# check also runs at startup, so a closed client catches up on resume.
+[schedule]
+# dir = "/path/to/spool"   # default: ~/.local/share/notmutt/schedule
+interval = 60
 ```
 
 ### Themes
@@ -195,6 +204,41 @@ tag lands - the error names the fix (the account folder space must
 cover the message, the tag needs move candidates, readonly accounts
 never move) and the entry stays staged. Move skips land in the `~`
 log, never silently.
+
+### Scheduled send
+
+`P` in the compose view schedules the message instead of sending it:
+the prompt takes the delivery time, the dialogue closes, and the mail
+waits in a spool until the client delivers it. Accepted forms - the
+exact grammar first, then the natural-language engine for every
+locale:
+
+```
+tomorrow             # tomorrow 09:00
+tomorrow 14:30
+today 14:30          # the next occurrence (today if still ahead)
+2026-08-23 09:00     # absolute
+in 90m / in 2h / in 3d
+2026-08-23T09:00:00+02:00   # RFC 3339
+next monday          # natural language, any locale: English, Persian
+فردا ساعت ۱۰:۳۰       # (فارسی), Arabic (بعد أسبوع), Chinese (明天下午三点)
+```
+
+The spool lives in the XDG data home (`~/.local/share/notmutt/
+schedule`, overridable with `[schedule] dir`), files 0600 (F5). The
+message assembles at delivery - the wire `Date` and `Message-ID` are
+the send instant, never the schedule time - and attachments read from
+their paths like a live send. Delivery is checked at startup (a
+closed client catches up on resume) and every `[schedule] interval`
+seconds (default 60); an offline machine or a failed transport keeps
+the mail pending for the next check, and concurrent instances
+serialize through a spool lock, so a mail is never delivered twice
+(delivery is at-least-once: a crash between transport and removal can
+double).
+
+`s` lists the pending mail (send time + subject); `e` on an entry
+unschedules it and reopens the compose dialogue with the stored
+state, ready to edit and re-schedule or send.
 
 ### Filters
 

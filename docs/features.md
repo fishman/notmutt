@@ -20,6 +20,17 @@ compose tab. Sends run as background jobs with captured output kept
 for review, and a failed send re-opens the dialogue with the message
 intact - pause and restart, never start over.
 
+## Scheduled send
+
+`P` in the compose view stores the message for a future delivery
+instead of sending it. The spool (XDG data home, 0600) survives restarts
+and offline stretches: delivery is checked at startup - a closed client
+catches up - and on a cadence, a failed transport keeps the mail
+pending, and concurrent instances serialize through a spool lock. The
+message assembles at delivery, so the wire Date is the send instant.
+Natural-language times work in English, Persian, Arabic and Chinese
+(`s` lists pending mail, `e` reopens one for editing).
+
 ## Staged tag operations (R14)
 
 UI tag operations (read/unread, archive, delete, flag) never write to

@@ -3992,22 +3992,23 @@ func (m *Model) composeTab() *compose.State {
 
 func (m *Model) attachTab() {
 	m.dialogue = nil
-	if m.activeSearchIdx() >= 0 {
+	switch {
+	case m.activeSearchIdx() >= 0:
 		// the search tabs reuse the index surface: activeView routes
 		// the query's rows under the index bindings (q closes the tab,
 		// / and F filter the results)
 		m.mode = "index"
-		return
-	}
-	if m.tabIdx > 0 {
+	case m.tabIdx > 0:
 		m.mode = "compose"
-		return
-	}
-	if m.pager != nil {
+	case m.pager != nil:
 		m.mode = "pager"
-		return
+	default:
+		m.mode = "index"
 	}
-	m.mode = "index"
+	// the render reads m.rows: every attach re-points it at the
+	// attached view, or the frame shows the previous view's rows until
+	// the first cursor move
+	m.rows = m.activeView().Rows()
 }
 
 // closeTab removes the tab at stack position i: search=true splices

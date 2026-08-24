@@ -2039,6 +2039,57 @@ func TestTabSwitchParksDialogue(t *testing.T) {
 	}
 }
 
+// TestTabSwitchShowsAttachedView pins the tab-switch render: attachTab
+// must re-point m.rows at the attached view - switching between the
+// mail surface and a search tab used to keep the previous view's rows
+// on screen until the first cursor move.
+func TestTabSwitchShowsAttachedView(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+
+	m := model()
+	// the mail surface: one inbox row
+	m.view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", Timestamp: 1, Author: "Ann", Subject: "inbox mail", Tags: []string{"inbox"}},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "inbox"})
+	if len(m.rows) != 1 || m.rows[0].Msg.Subject != "inbox mail" {
+		t.Fatalf("inbox rows: %+v", m.rows)
+	}
+	// a search tab with its own row
+	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", Timestamp: 9, Author: "Acme", Subject: "search mail"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+	if len(m.rows) != 1 || m.rows[0].Msg.Subject != "search mail" {
+		t.Fatalf("search rows: %+v", m.rows)
+	}
+	// ] back to the mail surface: the frame must show the inbox rows
+	// immediately - no cursor move needed
+	m = press(t, m, "]")
+	if m.mode != "index" || m.tabIdx != 0 {
+		t.Fatalf("back on the mail surface: mode %q idx %d", m.mode, m.tabIdx)
+	}
+	if len(m.rows) != 1 || m.rows[0].Msg.Subject != "inbox mail" {
+		t.Fatalf("the mail surface must show its rows right after the switch: %+v", m.rows)
+	}
+	if !strings.Contains(stripANSI(m.View()), "inbox mail") {
+		t.Fatalf("the frame must redraw the inbox rows right after the switch:\n%s", m.View())
+	}
+	// ] forward to the search tab again
+	m = press(t, m, "]")
+	if len(m.rows) != 1 || m.rows[0].Msg.Subject != "search mail" {
+		t.Fatalf("the search tab must show its rows right after the switch: %+v", m.rows)
+	}
+	if !strings.Contains(stripANSI(m.View()), "search mail") {
+		t.Fatalf("the frame must redraw the search rows right after the switch:\n%s", m.View())
+	}
+}
+
 // TestSearchTabOpen pins the ctrl+f search tab: the prompt commits a
 // raw notmuch query into a fresh view through the onSearch seam, the
 // "active" config attaches the tab and renders the query's rows, q

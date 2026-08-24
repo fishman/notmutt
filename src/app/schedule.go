@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"notmutt/core"
 	"notmutt/lib/netcheck"
 	"notmutt/lib/xdg"
+	"notmutt/tui"
 )
 
 // Scheduled mail: the composed message is assembled once and stored in
@@ -119,6 +121,37 @@ func deliverScheduled(worker workerAPI, cfg config.Config, root string, m schedu
 	}
 	_, _, err := deliverSend(worker, cfg, root, st, buf.Bytes())
 	return err
+}
+
+// scheduledList scans the spool for the list surface (the s key):
+// every pending mail's send time and subject - never bodies or
+// headers beyond the subject the notify path already allows (F6).
+// Sorted by send time. A read races a delivery benignly: a mail that
+// leaves mid-scan just drops out of the list.
+func scheduledList(cfg config.Config) []tui.ScheduledEntry {
+	entries, err := os.ReadDir(scheduleDir(cfg))
+	if err != nil {
+		return nil
+	}
+	var out []tui.ScheduledEntry
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".pending") {
+			continue
+		}
+		m, err := readScheduled(filepath.Join(scheduleDir(cfg), e.Name()))
+		if err != nil {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, m.At)
+		if err != nil {
+			continue
+		}
+		out = append(out, tui.ScheduledEntry{
+			ID: m.State.ID, Subject: m.State.Subject, At: at.Format("Mon Jan 2 15:04"),
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At < out[j].At })
+	return out
 }
 
 // netOnline is the connectivity seam (the platform netcheck package);

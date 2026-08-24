@@ -2358,6 +2358,55 @@ func TestScheduledResultClosesTab(t *testing.T) {
 	}
 }
 
+// TestScheduledResultLogsSubject pins the scheduling log entry: the
+// OK result names the scheduled subject (F6 - subjects only), and the
+// no-tab path (a due mail went out) logs the delivery without
+// content.
+func TestScheduledResultLogsSubject(t *testing.T) {
+	m := openDialogue(t, model(), "t1") // the dialogue's subject is "Re: x"
+	m = pressEvent(t, m, core.ScheduledResult{ID: "t1", OK: true, At: "Sat Aug 23 09:00"})
+	if !strings.Contains(m.statusMsg, "scheduled: Re: x") {
+		t.Fatalf("the log must name the scheduled subject: %q", m.statusMsg)
+	}
+	m = model()
+	m = pressEvent(t, m, core.ScheduledResult{ID: "gone", OK: true, At: "Sat Aug 23 09:00"})
+	if m.statusMsg != "scheduled mail sent" {
+		t.Fatalf("a due delivery must log without content: %q", m.statusMsg)
+	}
+}
+
+// TestScheduledListPicker pins the s key: the read-only list opens
+// with the seam's entries (subject + send time), enter closes without
+// an action, and an empty spool shows the placeholder.
+func TestScheduledListPicker(t *testing.T) {
+	SetScheduledListHandler(func() []ScheduledEntry {
+		return []ScheduledEntry{
+			{ID: "a", Subject: "hello", At: "Mon Aug 24 09:00"},
+			{ID: "b", At: "Tue Aug 25 10:00"},
+		}
+	})
+	t.Cleanup(func() { SetScheduledListHandler(func() []ScheduledEntry { return nil }) })
+	m := model()
+	m = press(t, m, "s")
+	d, ok := m.dialogue.(*listDialogue)
+	if !ok {
+		t.Fatalf("s must open the scheduled list: %+v", m.dialogue)
+	}
+	if len(d.f.entries) != 2 || !strings.Contains(d.f.entries[0], "hello") || !strings.Contains(d.f.entries[1], "(no subject)") {
+		t.Fatalf("entries = %v", d.f.entries)
+	}
+	m = pressType(t, m, KeyEnter) // read-only: enter just closes
+	if m.dialogue != nil {
+		t.Fatalf("enter must close the read-only list: %+v", m.dialogue)
+	}
+	SetScheduledListHandler(func() []ScheduledEntry { return nil })
+	m2 := model()
+	m2 = press(t, m2, "s")
+	if d2, ok := m2.dialogue.(*listDialogue); !ok || len(d2.f.entries) != 1 || !strings.Contains(d2.f.entries[0], "nothing scheduled") {
+		t.Fatalf("empty list placeholder: %+v", m2.dialogue)
+	}
+}
+
 // TestSendRetryClearsSnapshot pins the re-arm: a retry after a
 // failure must not re-apply the stale failure snapshot while the new
 // job is in flight - the dialogue stays Sending until the new result

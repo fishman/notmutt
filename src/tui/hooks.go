@@ -106,6 +106,23 @@ func SetScheduleHandler(fn func(compose.State, string)) {
 	onSchedule = fn
 }
 
+// ScheduledEntry is one pending scheduled mail for the list surface:
+// the send time and the subject - never mail content beyond the
+// subject (F6, the notify path's payload rule).
+type ScheduledEntry struct {
+	ID      string
+	Subject string
+	At      string // human time
+}
+
+// onScheduledList is the scheduled-list seam: the app scans the spool
+// and returns the pending mail.
+var onScheduledList = func() []ScheduledEntry { return nil }
+
+func SetScheduledListHandler(fn func() []ScheduledEntry) {
+	onScheduledList = fn
+}
+
 // onDraft is the draft seam: the app writes the dialogue state into the account's draft folder (maildir new/ slot, same shape as the fcc) and reindexes; an error keeps the composition open.
 var onDraft = func(st compose.State) error { return nil }
 

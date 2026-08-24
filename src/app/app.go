@@ -294,6 +294,9 @@ func Run() error {
 	tui.SetScheduleHandler(func(st compose.State, at string) {
 		go scheduleJob(bus, worker, view, cfg, root, st, at)
 	})
+	tui.SetScheduledListHandler(func() []tui.ScheduledEntry {
+		return scheduledList(cfg)
+	})
 
 	// the scheduled-mail loop (resume + cadence): the startup check
 	// delivers mail that came due while the client was closed; the tick

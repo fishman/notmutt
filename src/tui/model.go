@@ -57,7 +57,7 @@ var Actions = map[string]map[string]bool{
 		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true,
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
-		"tab-prev": true, "tab-next": true,
+		"tab-prev": true, "tab-next": true, "scheduled-list": true,
 		"help": true, "log": true, "command": true,
 	},
 	"pager": {
@@ -1192,6 +1192,21 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.tabPrev()
 	case "tab-next":
 		m.tabNext()
+	case "scheduled-list":
+		// the s key: the pending scheduled mail, read-only (subject +
+		// send time from the app's spool scan)
+		names := make([]string, 0, 8)
+		for _, e := range onScheduledList() {
+			subject := e.Subject
+			if subject == "" {
+				subject = "(no subject)"
+			}
+			names = append(names, e.At+"  "+subject)
+		}
+		if len(names) == 0 {
+			names = append(names, "(nothing scheduled)")
+		}
+		m.dialogue = &listDialogue{f: newFuzzy("scheduled", "scheduled:", names)}
 	case "form-down":
 		// navigation lives in the message-text row and the attachment
 		// list only; settings rows are never focused
@@ -1793,14 +1808,10 @@ func errStr(err error) string {
 // it open with the status-line entry. Unknown ids (the due-delivery
 // path - the tab is long gone) log only.
 func (m *Model) onScheduledResult(e core.ScheduledResult) {
-	if e.OK {
-		m.logEntry("scheduled for "+e.At, false)
-	} else {
-		m.logEntry("schedule failed: "+errStr(e.Err), true)
-	}
-	m.paint = true
+	subject := ""
 	for i := range m.tabs {
 		if m.tabs[i].ID == e.ID {
+			subject = m.tabs[i].Subject
 			if e.OK {
 				m.closeTab(i, false)
 			} else {
@@ -1809,6 +1820,17 @@ func (m *Model) onScheduledResult(e core.ScheduledResult) {
 			break
 		}
 	}
+	if e.OK {
+		if subject != "" {
+			m.logEntry("scheduled: "+subject+" for "+e.At, false)
+		} else {
+			// no tab: a due mail went out
+			m.logEntry("scheduled mail sent", false)
+		}
+	} else {
+		m.logEntry("schedule failed: "+errStr(e.Err), true)
+	}
+	m.paint = true
 }
 
 // activateTab attaches the dialogue with the given ID - the error
@@ -3356,6 +3378,9 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 			}
 		}
 		m.cancelDialogue()
+		return nil, nil
+	case "scheduled":
+		// the read-only scheduled list: enter or esc closes
 		return nil, nil
 	}
 	st := &m.tabs[m.tabIdx-1]

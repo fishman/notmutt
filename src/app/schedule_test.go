@@ -312,6 +312,33 @@ func TestSendDueAttachment(t *testing.T) {
 	}
 }
 
+// TestScheduledList pins the spool scan behind the s key: every
+// pending mail surfaces as subject + send time, sorted by time.
+func TestScheduledList(t *testing.T) {
+	cfg := schedCfg(t)
+	st1 := schedState()
+	st1.Subject = "first"
+	if err := scheduleAt(cfg, "", st1, time.Now().Add(2*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	st2 := schedState()
+	st2.ID = "tab2"
+	st2.Subject = "second"
+	if err := scheduleAt(cfg, "", st2, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	entries := scheduledList(cfg)
+	if len(entries) != 2 {
+		t.Fatalf("entries = %+v, want 2", entries)
+	}
+	if entries[0].ID != "tab2" || entries[1].ID != "tab1" {
+		t.Fatalf("the list must sort by send time: %+v", entries)
+	}
+	if entries[0].Subject != "second" || entries[1].Subject != "first" {
+		t.Fatalf("subjects = %q %q", entries[0].Subject, entries[1].Subject)
+	}
+}
+
 // TestSendDueStampsDeliveryDate pins the wire date: a due mail's Date
 // header is the delivery instant, never the schedule time (the stored
 // bytes carry the composition date; the delivered message the send

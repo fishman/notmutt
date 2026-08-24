@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -153,18 +154,18 @@ func TestScheduleAtRoundTrip(t *testing.T) {
 	if fi.Mode().Perm() != 0o600 {
 		t.Fatalf("spool perms = %v, want 0600 (F5)", fi.Mode().Perm())
 	}
-	m, data, err := readScheduled(path)
+	m, err := readScheduled(path)
 	if err != nil {
 		t.Fatalf("readScheduled: %v", err)
 	}
-	if m.ID != st.ID || m.To[0] != "a@b.c" || m.Mode != "compose" {
-		t.Fatalf("meta = %+v", m)
+	if m.State.ID != st.ID || m.State.To[0] != "a@b.c" || m.State.Mode != compose.ModeCompose {
+		t.Fatalf("state = %+v", m.State)
+	}
+	if m.State.Subject != "scheduled hello" {
+		t.Fatalf("the state must carry the body text: %q", m.State.Subject)
 	}
 	if m.At != at.Format(time.RFC3339) {
 		t.Fatalf("at = %q, want %q", m.At, at.Format(time.RFC3339))
-	}
-	if !strings.Contains(string(data), "scheduled hello") {
-		t.Fatalf("the spool must carry the assembled message: %q", data)
 	}
 }
 
@@ -276,28 +277,104 @@ func TestSendDueRetriesFailure(t *testing.T) {
 	}
 }
 
+// TestSendDueAttachment pins the path-based attachment contract: the
+// attachment reads from its file at delivery (like a live send), and
+// the wire carries its bytes.
+func TestSendDueAttachment(t *testing.T) {
+	cfg := schedCfg(t)
+	captured := filepath.Join(t.TempDir(), "wire.eml")
+	stub := "#!/bin/sh\ncat > " + captured + "\n"
+	stubPath := filepath.Join(t.TempDir(), "send-stub")
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Send.Command = stubPath
+	att := filepath.Join(t.TempDir(), "report.txt")
+	if err := os.WriteFile(att, []byte("hello attachment"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	st := schedState()
+	if err := st.AddAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+	if err := scheduleAt(cfg, "", st, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if res := sendDueOnce(t, cfg, &schedWorker{}); len(res) != 1 || !res[0].OK {
+		t.Fatalf("results = %+v, want one OK", res)
+	}
+	wire, err := os.ReadFile(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(wire), base64.StdEncoding.EncodeToString([]byte("hello attachment"))) {
+		t.Fatalf("the wire must carry the attachment content read at delivery:\n%s", wire)
+	}
+}
+
+// TestSendDueStampsDeliveryDate pins the wire date: a due mail's Date
+// header is the delivery instant, never the schedule time (the stored
+// bytes carry the composition date; the delivered message the send
+// date - mutt semantics).
+func TestSendDueStampsDeliveryDate(t *testing.T) {
+	cfg := schedCfg(t)
+	captured := filepath.Join(t.TempDir(), "wire.eml")
+	stub := "#!/bin/sh\ncat > " + captured + "\n"
+	stubPath := filepath.Join(t.TempDir(), "send-stub")
+	if err := os.WriteFile(stubPath, []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Send.Command = stubPath
+	st := schedState()
+	if err := scheduleAt(cfg, "", st, time.Now().Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	sendDueOnce(t, cfg, &schedWorker{})
+	wire, err := os.ReadFile(captured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	date := ""
+	for _, l := range strings.Split(string(wire), "\n") {
+		if strings.HasPrefix(l, "Date:") {
+			date = strings.TrimSpace(strings.TrimPrefix(l, "Date:"))
+			break
+		}
+	}
+	if date == "" {
+		t.Fatalf("the wire must carry a Date header:\n%s", wire)
+	}
+	wireTime, err := time.Parse(time.RFC1123Z, date)
+	if err != nil {
+		t.Fatalf("bad wire date %q: %v", date, err)
+	}
+	if d := time.Since(wireTime); d < -time.Minute || d > time.Minute {
+		t.Fatalf("the wire date %v must be the delivery instant, not the schedule time", wireTime)
+	}
+}
+
 // TestSendDueResume pins the closed-client catch-up: a mail that came
 // due while no client ran delivers on the next startup check.
 func TestSendDueResume(t *testing.T) {
 	cfg := schedCfg(t)
 	// write the spool directly - the mail "came due" while the client
 	// was closed (the schedule prompt is not involved)
-	m := scheduledMail{ID: "old", At: time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
-		Account: "gmail", From: "bob@example.com", To: []string{"a@b.c"}, Mode: "compose"}
+	m := scheduledMail{At: time.Now().Add(-2 * time.Hour).Format(time.RFC3339),
+		State: compose.State{ID: "old", Account: "gmail", From: "bob@example.com",
+			To: []string{"a@b.c"}, Body: "body", Mode: compose.ModeCompose}}
 	hdr, err := json.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 	os.MkdirAll(cfg.Schedule.Dir, 0o700)
-	if err := os.WriteFile(filepath.Join(cfg.Schedule.Dir, m.ID+".pending"),
-		append(append(hdr, '\n', '\n'), []byte("Subject: old mail\n\nbody\n")...), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfg.Schedule.Dir, m.State.ID+".pending"), hdr, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	res := sendDueOnce(t, cfg, &schedWorker{})
 	if len(res) != 1 || !res[0].OK {
 		t.Fatalf("resume results = %+v, want one OK", res)
 	}
-	if _, err := os.Stat(filepath.Join(cfg.Schedule.Dir, m.ID+".pending")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(cfg.Schedule.Dir, m.State.ID+".pending")); !os.IsNotExist(err) {
 		t.Fatal("a resumed mail must leave the spool")
 	}
 }

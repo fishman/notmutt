@@ -37,18 +37,14 @@ import (
 // scheduledMail is the spool header: the delivery identity (envelope
 // recipients for the transport argv, the account for the fcc, the
 // reply/forward tag) and the due time. The assembled message bytes
-// follow the JSON line.
+// scheduledMail is the spool record: when to send and the full compose
+// state. The message assembles at DELIVERY time - the wire Date and
+// Message-ID are the send instant, never the schedule time - and the
+// attachments read from their paths exactly like a live send (a file
+// that vanished by then fails the same way a live send would).
 type scheduledMail struct {
-	ID       string   `json:"id"`
-	At       string   `json:"at"` // RFC3339 (local)
-	Account  string   `json:"account"`
-	From     string   `json:"from"`
-	To       []string `json:"to"`
-	Cc       []string `json:"cc"`
-	Bcc      []string `json:"bcc"`
-	Fcc      string   `json:"fcc"`
-	Mode     string   `json:"mode"` // compose | reply | reply-all | forward
-	Original string   `json:"original,omitempty"`
+	At    string        `json:"at"` // RFC3339 (local)
+	State compose.State `json:"state"`
 }
 
 // scheduleDir resolves the spool: the config override, else the
@@ -66,23 +62,19 @@ func scheduleDir(cfg config.Config) string {
 }
 
 // scheduleAt stores the composed dialogue for delivery at t: the
-// message assembles once (the stored bytes are the fcc copy; the wire
-// drops Bcc at delivery like every send) and lands as <id>.pending in
-// the spool, 0600 (F5). The id is the dialogue's - unique per tab; an
-// O_EXCL create keeps racing instances from colliding on one name.
+// dialogue state serializes to the spool as <id>.pending, 0600 (F5).
+// The message is NOT assembled here - delivery assembles it, so the
+// wire date is the send instant. The id is the dialogue's - unique
+// per tab; an O_EXCL create keeps racing instances from colliding on
+// one name.
 func scheduleAt(cfg config.Config, root string, st compose.State, at time.Time) error {
-	var buf bytes.Buffer
-	if err := st.Assemble(&buf); err != nil {
-		return err
+	st.BodyPath = "" // the editor buffer dies with the tab; the body text rides the state
+	st.Phase = 0
+	st.Output = ""
+	if st.Fcc == "" {
+		st.Fcc = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
-	m := scheduledMail{
-		ID: st.ID, At: at.Format(time.RFC3339), Account: st.Account, From: st.From,
-		To: st.To, Cc: st.Cc, Bcc: st.Bcc, Fcc: st.Fcc, Mode: st.Mode.String(),
-		Original: st.OriginalID,
-	}
-	if m.Fcc == "" {
-		m.Fcc = sentPath(root, st.Account, cfg.Accounts[st.Account])
-	}
+	m := scheduledMail{At: at.Format(time.RFC3339), State: st}
 	hdr, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -96,36 +88,37 @@ func scheduleAt(cfg config.Config, root string, st compose.State, at time.Time) 
 		return err
 	}
 	defer f.Close()
-	_, err = f.Write(append(append(hdr, '\n', '\n'), buf.Bytes()...))
+	_, err = f.Write(hdr)
 	return err
 }
 
-// readScheduled splits the spool file: the JSON header line, then the
-// assembled message bytes.
-func readScheduled(path string) (scheduledMail, []byte, error) {
+// readScheduled loads the spool record.
+func readScheduled(path string) (scheduledMail, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return scheduledMail{}, nil, err
-	}
-	hdr, msg, ok := bytes.Cut(data, []byte("\n\n"))
-	if !ok {
-		return scheduledMail{}, nil, fmt.Errorf("schedule: malformed spool file %s", path)
+		return scheduledMail{}, err
 	}
 	var m scheduledMail
-	if err := json.Unmarshal(hdr, &m); err != nil {
-		return scheduledMail{}, nil, fmt.Errorf("schedule: %s: %w", path, err)
+	if err := json.Unmarshal(data, &m); err != nil {
+		return scheduledMail{}, fmt.Errorf("schedule: %s: %w", path, err)
 	}
-	return m, msg, nil
+	return m, nil
 }
 
-// stateFromMeta rebuilds the delivery state from the spool header:
-// the envelope recipients for the transport argv, the account for the
-// fcc, and the mode + original id for the replied/forwarded tag.
-func stateFromMeta(m scheduledMail) compose.State {
-	return compose.State{
-		ID: m.ID, Mode: compose.ParseMode(m.Mode), Account: m.Account, From: m.From,
-		To: m.To, Cc: m.Cc, Bcc: m.Bcc, Fcc: m.Fcc, OriginalID: m.Original,
+// deliverScheduled assembles the stored state NOW (the delivery
+// instant stamps the Date and Message-ID; attachments read from their
+// paths like a live send) and runs the delivery core.
+func deliverScheduled(worker workerAPI, cfg config.Config, root string, m scheduledMail) error {
+	st := m.State
+	if st.Fcc == "" {
+		st.Fcc = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
+	var buf bytes.Buffer
+	if err := st.Assemble(&buf); err != nil {
+		return err
+	}
+	_, _, err := deliverSend(worker, cfg, root, st, buf.Bytes())
+	return err
 }
 
 // netOnline is the connectivity seam (the platform netcheck package);
@@ -164,7 +157,7 @@ func sendDue(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.Vi
 			continue
 		}
 		path := filepath.Join(dir, name)
-		m, data, err := readScheduled(path)
+		m, err := readScheduled(path)
 		if err != nil {
 			diag.Warn("schedule", "drop", err.Error())
 			os.Remove(path)
@@ -174,14 +167,13 @@ func sendDue(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.Vi
 		if err != nil || at.After(now) {
 			continue // not due yet
 		}
-		st := stateFromMeta(m)
-		if _, _, err := deliverSend(worker, cfg, root, st, data); err != nil {
-			bus.Publish(core.ScheduledResult{ID: m.ID, At: m.At, OK: false, Err: err})
-			diag.Warn("schedule", "send", m.ID, "err", err.Error())
+		if err := deliverScheduled(worker, cfg, root, m); err != nil {
+			bus.Publish(core.ScheduledResult{ID: m.State.ID, At: m.At, OK: false, Err: err})
+			diag.Warn("schedule", "send", m.State.ID, "err", err.Error())
 			continue // stays .pending: retry next tick
 		}
 		os.Remove(path)
-		bus.Publish(core.ScheduledResult{ID: m.ID, At: m.At, OK: true})
+		bus.Publish(core.ScheduledResult{ID: m.State.ID, At: m.At, OK: true})
 	}
 	bus.Publish(core.ViewDiff{View: view.ViewName()})
 }

@@ -95,6 +95,33 @@ Lua hooks and UI callbacks, an emacs keymap scheme. GUI and IMAP/POP3
 transport are out of scope - notmutt is a terminal client that reads
 what notmuch sees.
 
+## Terminal mail clients
+
+Where notmutt sits among the terminal mail clients: the notmuch-native
+set (mutt/neomutt via sideband queries, aerc, alot, notmuch-emacs,
+mu4e), the CLI tools (himalaya), and the older tag-based MUAs (sup).
+The differentiators are the middle columns: notmutt's reads are async
+with diff-and-insert refresh, and its tag writes are staged and
+undoable instead of hitting notmuch at keypress time.
+
+| Client | Language | Backend | Async refresh | Staged tag ops | Built-in send |
+| --- | --- | --- | --- | --- | --- |
+| [notmutt](https://github.com/fishman/notmutt) | Go | notmuch (cgo) | yes - diff-and-insert | yes - staged, undoable | yes |
+| [mutt](https://mutt.org) | C | maildir / IMAP / POP3 | no - full reload | no - immediate | yes |
+| [neomutt](https://neomutt.org) | C | notmuch sideband + maildir | no - sync load, full rebuild | no - immediate | yes |
+| [aerc](https://aerc-mail.org) | Go | IMAP / maildir / notmuch | yes - worker channels | no - immediate | yes |
+| [notmuch-emacs](https://notmuchmail.org/emacs/) | Emacs Lisp | notmuch | yes - incremental search refresh | no - immediate | message-mode |
+| [mu4e](https://www.djcbsoftware.nl/code/mu/mu4e.html) | Emacs Lisp | mu index + maildir | partial - emacs threads | no - immediate | message-mode |
+| [alot](https://github.com/pazz/alot) | Python | notmuch | no - sync | no - immediate | yes |
+| [himalaya](https://github.com/pimalaya/himalaya) | Rust | IMAP | yes - async | no | yes |
+| [sup](https://sup-heliotrope.github.io) | Ruby | local maildir + own index | no | no | yes |
+
+"Staged tag ops" means tag changes land in a session buffer and hit
+the backend only on apply (`$`), with `u` to undo - mutt's sync
+semantics. "Async refresh" means reads and updates never block the UI;
+notmutt additionally inserts new mail into the visible threads instead
+of rebuilding the list.
+
 ## Where is notmutt
 
 - Source: https://github.com/fishman/notmutt

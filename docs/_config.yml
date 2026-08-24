@@ -1,5 +1,5 @@
 title: notmutt
-description: An async, command-line-first mail client built on notmuch
+description: An async mail client built on notmuch
 remote_theme: just-the-docs/just-the-docs@v0.10.1
 
 # the repo link in the top-right of every page (just-the-docs aux_links)

@@ -6,13 +6,13 @@ nav_order: 1
 
 # A mail client that never makes you wait
 
-notmutt is an async, command-line-first mail client built on notmuch.
+notmutt is an async mail client built on notmuch.
 Every query, filter and tag trigger runs as a background job; the UI
 never blocks on a sync, a search or a send. You keep reading and
 composing while the mailbox updates around you.
 
 Written in Go. tcell TUI, go-message for mail, TOML config, vim
-keybindings out of the box.
+keybindings by default.
 
 <img width="2285" height="1309" alt="notmutt screenshot" src="https://github.com/user-attachments/assets/1d0626f7-1e78-4100-8d4c-dea5108a51a2" />
 
@@ -34,7 +34,7 @@ group. Applying any member removes the others - inbox, archive,
 deleted, sent, draft, pending, spam - with no hand-maintained `-tag`
 chains across your config rules.
 
-**Privacy is the default posture.** Remote images stay collapsed until
+**Privacy by default.** Remote images stay collapsed until
 you press alt+i. Even then, 1x1 tracking pixels are dropped unless
 you opt in. No telemetry, no account sync, no mail content leaves
 your machine; encryption runs through your system `gpg`, never a

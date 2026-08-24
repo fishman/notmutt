@@ -62,7 +62,7 @@ The private accessors are not exported: lib/notmuch.sym is a
 `notmuch_*` glob plus `local: *`, and `nm -D` on the system lib shows
 zero `_notmuch_` symbols - a dynamic link against them fails.
 
-The glob is also the unlock: ANY function named with the public
+The glob is the mechanism: ANY function named with the public
 `notmuch_` prefix exports automatically. No version-script edit needed.
 
 ## The build option

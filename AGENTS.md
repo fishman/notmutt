@@ -5,7 +5,7 @@ Workspace: mail client under construction. Source material:
 `references/afew/` (per-account MailMover), `references/notmuch/` (notmuch
 source), `neovim/` (UI async + Lua reference).
 
-Goal: async, command-line-first mail client. All mail via notmuch.
+Goal: async mail client. All mail via notmuch.
 Architecture constraints, not suggestions.
 
 ## The mail concept

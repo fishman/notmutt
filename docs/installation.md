@@ -179,9 +179,9 @@ The contract with notmutt: the client runs the configured `[send]
 command` (default `msmtp`) with the envelope recipients as argv and
 the assembled message on stdin, and msmtp picks the account from
 the message's From header (its `--read-envelope-from` default).
-That is what makes per-account sending seamless: choose the sender
+That is per-account sending: choose the sender
 in the compose dialogue (`A`), the From header follows, msmtp
-routes. One account block per address, `from` and `user` matching
+routes by it. One account block per address, `from` and `user` matching
 the account's From address.
 
 Like mbsync, the credential is a command, never plaintext:

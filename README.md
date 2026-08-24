@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/fishman/notmutt/actions/workflows/codeql.yml/badge.svg)](https://github.com/fishman/notmutt/actions/workflows/codeql.yml)
 [![Govulncheck](https://github.com/fishman/notmutt/actions/workflows/govulncheck.yml/badge.svg)](https://github.com/fishman/notmutt/actions/workflows/govulncheck.yml)
 
-An async, command-line-first mail client built on notmuch. Tags are the
+An async mail client built on notmuch. Tags are the
 logical model: every view, filter, and trigger is a notmuch query or tag
 operation; folders exist only for sync-tool compatibility. Written in Go
 - tcell v3 TUI (lipgloss v2 for layout math), go-message for mail

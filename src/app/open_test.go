@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -103,6 +104,39 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	calls = fw.tagCallsSnapshot()
 	if len(calls) != 2 || calls[1].query != "id:b" {
 		t.Fatalf("a mid-thread open must tag its own message only: %+v", calls)
+	}
+}
+
+// TestOpenThreadMarksReadReflectsInViews: the direct -unread op must
+// reflect in every view holding the message (a search tab included),
+// or the flag stays stale until the next refresh.
+func TestOpenThreadMarksReadReflectsInViews(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Tags: []string{"unread", "inbox"}}})
+
+	main := core.NewView("inbox", "tag:inbox")
+	main.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", ThreadID: "t1", Timestamp: 1, Tags: []string{"unread", "inbox"}},
+	})})
+	search := core.NewView("tag:x", "tag:x")
+	search.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", ThreadID: "t1", Timestamp: 1, Tags: []string{"unread", "inbox"}},
+	})})
+	views := map[string]*core.View{"inbox": main, "tag:x": search}
+
+	openThread(fw, bus, views, "t1", "a", false, core.RenderPlain, false, 0, false, nil)
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("no ThreadLoaded")
+	}
+	if tags := main.Tags("a"); slices.Contains(tags, "unread") {
+		t.Fatalf("the mail surface must reflect -unread: %v", tags)
+	}
+	if tags := search.Tags("a"); slices.Contains(tags, "unread") {
+		t.Fatalf("a search tab must reflect -unread: %v", tags)
 	}
 }
 

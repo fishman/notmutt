@@ -142,14 +142,14 @@ func Run() error {
 		diag.Warn("filter: disabled", "err", rootErr.Error())
 	}
 
-	tui.SetApplyHandler(func() {
+	tui.SetApplyHandler(func(v *core.View) {
 		go func() {
-			if err := applyStaged(view, groups, worker, cfg, root); err != nil {
+			if err := applyStaged(v, groups, worker, cfg, root); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
 			}
 			// the view changed either way (applied drops and baselines); a
 			// partial failure still renders the succeeded entries
-			bus.Publish(core.ViewDiff{View: view.ViewName()})
+			bus.Publish(core.ViewDiff{View: v.ViewName()})
 		}()
 	})
 
@@ -492,8 +492,30 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 		})
 		if err != nil || rpl.Err != nil {
 			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", msgID, err, rpl.Err)})
+		} else {
+			// the read mark is a direct notmuch op (R3): reflect it in
+			// every view that holds the message, or the flag stays stale
+			// until the next refresh
+			for name, v := range views {
+				if tags := v.Tags(msgID); tags != nil {
+					v.SetTags(msgID, withoutTag(tags, "unread"))
+					bus.Publish(core.ViewDiff{View: name})
+				}
+			}
 		}
 	}
+}
+
+// withoutTag returns tags with one entry removed (the open path's
+// -unread reflection into the views).
+func withoutTag(tags []string, tag string) []string {
+	out := make([]string, 0, len(tags))
+	for _, t := range tags {
+		if t != tag {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // findMsg locates the opened message in the thread fetch by id; the

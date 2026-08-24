@@ -948,7 +948,7 @@ func TestUndoStaged(t *testing.T) {
 func TestApplyKeyInvokesHandler(t *testing.T) {
 	m := model()
 	called := false
-	SetApplyHandler(func() { called = true })
+	SetApplyHandler(func(v *core.View) { called = true })
 	m = press(t, m, "$")
 	if !called {
 		t.Fatal("$ must invoke the apply handler")
@@ -2087,6 +2087,32 @@ func TestTabSwitchShowsAttachedView(t *testing.T) {
 	}
 	if !strings.Contains(stripANSI(m.View()), "search mail") {
 		t.Fatalf("the frame must redraw the search rows right after the switch:\n%s", m.View())
+	}
+}
+
+// TestApplyTargetsActiveView pins the apply seam's view: ops staged in
+// a search tab (its own view, not the mail surface's) apply against
+// that view.
+func TestApplyTargetsActiveView(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+	var got *core.View
+	SetApplyHandler(func(v *core.View) { got = v })
+	t.Cleanup(func() { SetApplyHandler(func(v *core.View) {}) })
+
+	m := model()
+	m = press(t, m, "$")
+	if got != m.view {
+		t.Fatalf("apply on the mail surface must target the mail view")
+	}
+	got = nil
+	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	m = press(t, m, "$")
+	if got == nil || got != m.searchTabs[0] {
+		t.Fatalf("apply in a search tab must target that tab's view")
 	}
 }
 

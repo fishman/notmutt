@@ -8,10 +8,13 @@ import (
 	"notmutt/core"
 )
 
-// onApply is the apply seam (SetApplyHandler); a no-op default so the model works in tests.
-var onApply = func() {}
+// onApply is the apply seam (SetApplyHandler); a no-op default so the
+// model works in tests. The view is the ACTIVE one - staged ops live
+// in the view they were staged on, and a search tab's buffer is its
+// own view's, not the mail surface's.
+var onApply = func(v *core.View) {}
 
-func SetApplyHandler(fn func()) {
+func SetApplyHandler(fn func(*core.View)) {
 	onApply = fn
 }
 

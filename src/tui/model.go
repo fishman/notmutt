@@ -955,7 +955,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.moveCursor(1)
 		}
 	case "apply":
-		onApply()
+		onApply(m.activeView())
 	case "refresh":
 		// the manual poll trigger: the app-side refresher runs the same
 		// poll body as its ticker (notmuch new + view cycle)

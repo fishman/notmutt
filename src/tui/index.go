@@ -4,6 +4,7 @@
 package tui
 
 import (
+	"net/mail"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,7 +86,7 @@ func renderRow(n int, row core.Row, st Styles, ui config.UI, numWidth, tagWidth 
 	b.WriteString(padCellsRight(signedIcon(row.Msg, ui.Tags), 2))
 	b.WriteString(sg.date.render(padCellsRight(formatDate(row.Msg.Timestamp), 15)))
 	b.WriteByte(' ')
-	author := core.SanitizeControls(row.Msg.Author)
+	author := core.SanitizeControls(displayAuthor(row.Msg.Author))
 	b.WriteString(renderHighlighted(padCellsRight(truncCells(author, 16), 16), query, sg.author, sg.search))
 	b.WriteByte(' ')
 	if tagWidth > 0 {
@@ -251,6 +252,20 @@ func attachIcon(m *core.Message, t config.UITags) string {
 
 func formatDate(ts int64) string {
 	return time.Unix(ts, 0).Format("06/01/02 15:04")
+}
+
+// displayAuthor strips the RFC 5322 quoting from a From value for the
+// index row: the walk carries the raw header (`"Name" <a@b>`), and
+// the display shows the name without the quotes - a bare address or an
+// unparseable value renders as-is.
+func displayAuthor(raw string) string {
+	if p, err := mail.ParseAddress(raw); err == nil {
+		if p.Name != "" {
+			return p.Name
+		}
+		return p.Address
+	}
+	return raw
 }
 
 // tagGlyphs renders up to max tags as styled glyphs in display order

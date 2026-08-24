@@ -131,6 +131,29 @@ func TestRowSelectedMarker(t *testing.T) {
 	}
 }
 
+// TestRowAuthorUnquoted pins the author display: the walk carries the
+// raw From header (`"Name" <a@b>`), and the index row shows the name
+// without the RFC 5322 quoting; a bare address renders the address.
+func TestRowAuthorUnquoted(t *testing.T) {
+	if got := displayAuthor(`"Reza Jelveh" <reza@jelveh.me>`); got != "Reza Jelveh" {
+		t.Fatalf("quoted name = %q", got)
+	}
+	if got := displayAuthor("reza@jelveh.me"); got != "reza@jelveh.me" {
+		t.Fatalf("bare address = %q", got)
+	}
+	if got := displayAuthor("not an address"); got != "not an address" {
+		t.Fatalf("unparseable = %q", got)
+	}
+	row := core.Row{Msg: &core.Message{
+		ID: "m1", ThreadID: "t1", Timestamp: 1755150000,
+		Author: `"Reza Jelveh" <reza@jelveh.me>`, Subject: "hello", Tags: []string{"inbox"},
+	}}
+	out := stripANSI(renderRow(1, row, DefaultStyles(), config.Default().UI, 1, 0, false, config.Default().AccountTags(), "", core.MarkNone))
+	if !strings.Contains(out, "Reza Jelveh") || strings.Contains(out, `"Reza`) {
+		t.Fatalf("the row must show the unquoted name: %q", out)
+	}
+}
+
 // TestRowTagIconDisabled pins show-icons = false: mapped tags render their names, the attachment marker falls back to the plain text marker.
 func TestRowTagIconDisabled(t *testing.T) {
 	ui := config.Default().UI

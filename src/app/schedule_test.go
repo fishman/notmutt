@@ -96,6 +96,48 @@ func TestParseScheduleTime(t *testing.T) {
 	}
 }
 
+// TestParseScheduleTimeInternational pins the natural-language engine
+// (zaman): expressions in other locales and the richer English forms
+// resolve through it. The exact grammar above stays first - these only
+// reach zaman.
+func TestParseScheduleTimeInternational(t *testing.T) {
+	loc := time.Local
+	now := time.Date(2026, 8, 22, 10, 30, 0, 0, loc) // a Saturday
+	dm := func(ts time.Time, d int, hh, mm int) bool {
+		ts = ts.In(loc)
+		want := time.Date(2026, 8, 22, hh, mm, 0, 0, loc).AddDate(0, 0, d)
+		return ts.Year() == want.Year() && ts.Month() == want.Month() && ts.Day() == want.Day() &&
+			ts.Hour() == want.Hour() && ts.Minute() == want.Minute()
+	}
+	cases := []struct {
+		in   string
+		name string
+		ok   func(time.Time) bool
+	}{
+		{"next monday", "english weekday", func(ts time.Time) bool {
+			l := ts.In(loc)
+			// zaman's "next" weekday semantics: a Monday, in the future
+			return l.Weekday() == time.Monday && l.After(now)
+		}},
+		{"فردا ساعت ۱۰:۳۰", "persian tomorrow 10:30", func(ts time.Time) bool { return dm(ts, 1, 10, 30) }},
+		{"明天下午三点", "chinese tomorrow 3pm", func(ts time.Time) bool { return dm(ts, 1, 15, 0) }},
+		{"بعد أسبوع", "arabic after a week", func(ts time.Time) bool {
+			l := ts.In(loc)
+			want := now.AddDate(0, 0, 7)
+			return l.Year() == want.Year() && l.Month() == want.Month() && l.Day() == want.Day()
+		}},
+	}
+	for _, c := range cases {
+		ts, err := parseScheduleTime(c.in, now)
+		if err != nil {
+			t.Fatalf("%s (%q): %v", c.name, c.in, err)
+		}
+		if !c.ok(ts) {
+			t.Fatalf("%s (%q) = %v", c.name, c.in, ts)
+		}
+	}
+}
+
 func TestScheduleAtRoundTrip(t *testing.T) {
 	cfg := schedCfg(t)
 	st := schedState()

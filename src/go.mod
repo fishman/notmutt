@@ -8,6 +8,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.40.4
+	github.com/fishman/zaman v0.1.2
 	github.com/gdamore/tcell/v3 v3.4.1
 	github.com/gen2brain/beeep v0.11.2
 	github.com/godbus/dbus/v5 v5.1.0

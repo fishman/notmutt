@@ -53,6 +53,9 @@ github.com/esiqveland/notify
 # github.com/fishman/go.notmuch v0.40.4
 ## explicit; go 1.23
 github.com/fishman/go.notmuch
+# github.com/fishman/zaman v0.1.2
+## explicit; go 1.25.0
+github.com/fishman/zaman
 # github.com/gdamore/encoding v1.0.1
 ## explicit; go 1.9
 github.com/gdamore/encoding
@@ -205,3 +208,4 @@ golang.org/x/text/message
 golang.org/x/text/message/catalog
 golang.org/x/text/runes
 golang.org/x/text/transform
+golang.org/x/text/unicode/norm

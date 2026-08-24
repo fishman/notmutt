@@ -7,12 +7,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/fishman/zaman"
 
 	"notmutt/compose"
 	"notmutt/config"
@@ -224,17 +225,34 @@ func scheduleJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Co
 	bus.Publish(core.ScheduledResult{ID: st.ID, OK: true, At: at.Format("Mon Jan 2 15:04")})
 }
 
-// parseScheduleTime parses the schedule prompt: "tomorrow" (09:00),
-// "tomorrow 09:00", "09:00" (the next occurrence), "2026-08-23 09:00",
-// "in 30m"/"in 2h"/"in 3d", or an RFC3339 timestamp.
+// parseScheduleTime resolves the schedule prompt: the exact grammar
+// first (its semantics stay tuned - tomorrow = 09:00, HH:MM = the next
+// occurrence), then the natural-language engine (zaman) for every
+// locale and the richer expressions: "next monday", "فردا ساعت ۱۰:۳۰",
+// "明天下午三点", "بعد أسبوع".
 func parseScheduleTime(s string, now time.Time) (time.Time, error) {
+	if t, ok := parseExact(s, now); ok {
+		return t, nil
+	}
+	r, err := zaman.Parse(s, &zaman.Options{Now: now, Location: now.Location()})
+	if err == nil && r != nil && !r.Span.IsZero() {
+		return r.Time, nil
+	}
+	return time.Time{}, fmt.Errorf("schedule: cannot parse %q (tomorrow, HH:MM, YYYY-MM-DD HH:MM, in Nm/Nh/Nd, or natural language)", s)
+}
+
+// parseExact is the exact grammar: the forms whose semantics are
+// tuned (RFC3339, tomorrow [HH:MM], HH:MM next occurrence,
+// YYYY-MM-DD HH:MM, in Nm/Nh/Nd). ok=false when the input is not one
+// of these - the caller falls through to the natural-language engine.
+func parseExact(s string, now time.Time) (time.Time, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return time.Time{}, errors.New("empty schedule time")
+		return time.Time{}, false
 	}
 	// RFC3339 first: the timestamp is case-sensitive (the T separator)
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
+		return t, true
 	}
 	s = strings.ToLower(s)
 	if s == "tomorrow" {
@@ -243,38 +261,35 @@ func parseScheduleTime(s string, now time.Time) (time.Time, error) {
 	if rest, ok := strings.CutPrefix(s, "tomorrow "); ok {
 		var hh, mm int
 		if _, err := fmt.Sscanf(rest, "%d:%d", &hh, &mm); err != nil {
-			return time.Time{}, fmt.Errorf("schedule: %q (want tomorrow [HH:MM])", s)
+			return time.Time{}, false
 		}
-		return time.Date(now.Year(), now.Month(), now.Day()+1, hh, mm, 0, 0, now.Location()), nil
+		return time.Date(now.Year(), now.Month(), now.Day()+1, hh, mm, 0, 0, now.Location()), true
 	}
 	if rest, ok := strings.CutPrefix(s, "in "); ok {
 		var n int
 		var unit string
 		if _, err := fmt.Sscanf(rest, "%d%s", &n, &unit); err != nil || n < 0 {
-			return time.Time{}, fmt.Errorf("schedule: %q (want in Nm/Nh/Nd)", s)
+			return time.Time{}, false
 		}
 		switch unit {
 		case "m", "min", "mins":
-			return now.Add(time.Duration(n) * time.Minute), nil
+			return now.Add(time.Duration(n) * time.Minute), true
 		case "h", "hr", "hrs", "hour", "hours":
-			return now.Add(time.Duration(n) * time.Hour), nil
+			return now.Add(time.Duration(n) * time.Hour), true
 		case "d", "day", "days":
-			return now.AddDate(0, 0, n), nil
+			return now.AddDate(0, 0, n), true
 		}
-		return time.Time{}, fmt.Errorf("schedule: %q (unit %q)", s, unit)
-	}
-	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t, nil
+		return time.Time{}, false
 	}
 	if t, err := time.ParseInLocation("2006-01-02 15:04", s, now.Location()); err == nil {
-		return t, nil
+		return t, true
 	}
 	if t, err := time.ParseInLocation("15:04", s, now.Location()); err == nil {
 		t = time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, now.Location())
 		if !t.After(now) {
 			t = t.AddDate(0, 0, 1) // today's slot already passed: tomorrow
 		}
-		return t, nil
+		return t, true
 	}
-	return time.Time{}, fmt.Errorf("schedule: cannot parse %q (tomorrow, HH:MM, YYYY-MM-DD HH:MM, in Nm/Nh/Nd, RFC3339)", s)
+	return time.Time{}, false
 }

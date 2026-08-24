@@ -840,6 +840,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		if m.st != nil {
 			m.st.SetActiveView(strings.TrimPrefix(action, "goto-"))
 		}
+		// the goto re-points the mail surface's view: land on it, or
+		// the switch hides behind the attached search tab
+		m.tabIdx = 0
+		m.attachTab()
 		return m, nil
 	}
 	// navigation defers its paint to the frame tick: paint=false

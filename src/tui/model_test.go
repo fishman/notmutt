@@ -2090,6 +2090,34 @@ func TestTabSwitchShowsAttachedView(t *testing.T) {
 	}
 }
 
+// TestGotoSwitchesToMailSurface pins the goto-view tab behavior: a
+// view change re-points the mail surface's view and must land there -
+// staying on the attached search tab would hide the switch.
+func TestGotoSwitchesToMailSurface(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, KeyEnter)
+	if m.tabIdx != 1 || m.activeSearchIdx() != 0 {
+		t.Fatalf("the search tab must be attached: idx %d", m.tabIdx)
+	}
+	m = press(t, m, "g u") // goto-unread from the search tab
+	if m.tabIdx != 0 || m.mode != "index" {
+		t.Fatalf("goto must land on the mail surface: idx %d mode %q", m.tabIdx, m.mode)
+	}
+	// the search tab survives parked (] cycles back), the store moved
+	if len(m.searchTabs) != 1 {
+		t.Fatalf("the search tab must stay open: %d", len(m.searchTabs))
+	}
+	if m.st.Config().ActiveView != "unread" {
+		t.Fatalf("the store must select the goto view, got %q", m.st.Config().ActiveView)
+	}
+}
+
 // TestApplyTargetsActiveView pins the apply seam's view: ops staged in
 // a search tab (its own view, not the mail surface's) apply against
 // that view.

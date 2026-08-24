@@ -138,7 +138,7 @@ listing the pending buffer: per entry, the subject, the op (`+tag` /
 one, discard all. The human review gate is the point of the whole
 design - the view is where the review happens.
 
-## Why not a database
+## Why not a database or a shared WAL
 
 - **bbolt** (already vendored, R13): transactional and crash-safe, but
   single-writer behind an exclusive flock with a 1s timeout - the
@@ -152,6 +152,21 @@ design - the view is where the review happens.
 - **Per-op files**: native Go, zero machinery, proven in-repo by the
   schedule spool. A directory of small immutable facts with a
   human-gated apply is not a query surface.
+- **A shared write-ahead log** (a single append-only file, the
+  etcd/wal or hashicorp/raft-wal shape - both welded to their parent
+  projects' record models, neither a clean standalone): per-op files
+  already ARE a WAL - append-only immutable records replayed from the
+  head - with each record in its own segment, so the directory is the
+  log and record isolation is by construction. A shared log would
+  trade that for: writer serialization on one artifact (a flock, or
+  O_APPEND atomic small writes with torn-tail recovery becoming
+  load-bearing), per-record CRCs to skip a corrupt region, a byte-
+  offset replay position, and log compaction with temp+rename. Every
+  one of those is machinery to defend a property the directory gives
+  for free; ordering is already provided by the ULID sort, and the
+  volume is a handful of human-reviewed ops. A shared WAL wins only
+  for cross-writer ordering guarantees or a single compact artifact -
+  neither applies here.
 
 The only new dependency is `oklog/ulid` (MIT, small, established) for
 the ordered unique ids - it fits the minimal-deliberate-deps policy,

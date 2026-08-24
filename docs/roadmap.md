@@ -52,11 +52,14 @@ TestFrameChromeSurvivesRefresh both race).
 ### 3. Staged-tag persistence (R14) - effort M
 
 Staged tag ops and the undo buffer are session-local today; persistence is
-explicit future work in R14. A session record (applied ops per message id)
-would make undo survive restarts and make the apply path resumable.
+explicit future work in R14. The design is spec'd: a durable, multi-writer
+buffer (one file per op, ULID ids, crash-isolated) that MCP/CLI/Lua/TUI
+all append to and the session picks up - see
+[docs/staged-ops.md](staged-ops.html).
 
-Impact: undo becomes durable; mis-taps stop being permanent after a restart.
-Pointers: AGENTS.md R14, `src/tui/model.go` stage/apply/undo.
+Impact: undo becomes durable; mis-taps stop being permanent after a restart;
+the MCP server gains a stage-only write surface without touching notmuch.
+Pointers: AGENTS.md R14, docs/staged-ops.md, `src/tui/model.go` stage/apply/undo.
 
 ### 4. Send retry reopens the compose dialogue with the failed message (R4) - effort S-M
 

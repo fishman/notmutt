@@ -43,3 +43,17 @@ func StateHome() string {
 	}
 	return filepath.Join(home, ".local", "state")
 }
+
+// DataHome returns $XDG_DATA_HOME or ~/.local/share, "" when
+// unresolvable - the home for data that must persist (scheduled
+// mail, unlike cache, is not deletable-by-design).
+func DataHome() string {
+	if p := os.Getenv("XDG_DATA_HOME"); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".local", "share")
+}

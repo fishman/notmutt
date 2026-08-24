@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"notmutt/compose"
@@ -32,13 +33,11 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 	return args
 }
 
-// sendJob runs the send (spec section 8): assemble once, transport
-// argv exec with the message on stdin and output captured (F4 - no
-// shell, no interpolation), then fcc + reindex + reply tag. Transport
-// first: what was not delivered is not stored. A delivered message
-// never fails the dialogue on a fcc error (a retry would double-send)
-// - the note surfaces in SendResult. A missing mail root leaves the
-// fcc empty and skips it silently.
+// sendJob runs the send (spec section 8): assemble once, then the
+// delivery core (deliverSend) and the dialogue's SendResult. Transport
+// first: what was not delivered is not stored; the fcc note (a
+// delivered message never fails on a fcc error - a retry would
+// double-send) rides the result.
 func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) {
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {
@@ -50,14 +49,29 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	// Bcc header (envelope-only); the fcc copy keeps it - the sender's
 	// record shows the blind recipients.
 	data := buf.Bytes()
-	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
-	cmd.Stdin = bytes.NewReader(compose.DropBcc(data))
-	out, err := cmd.CombinedOutput()
+	note, out, err := deliverSend(worker, cfg, root, st, data)
 	if err != nil {
-		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Output: string(out), Err: err})
+		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Output: out, Err: err})
 		return
 	}
-	var note string
+	bus.Publish(core.SendResult{TabID: st.ID, OK: true, Output: note})
+	bus.Publish(core.ViewDiff{View: view.ViewName()})
+}
+
+// deliverSend runs the delivery core for pre-assembled bytes: the
+// transport argv exec with the message on stdin and output captured
+// (F4 - no shell, no interpolation), then fcc + reindex + reply tag.
+// Transport first: what was not delivered is not stored. A delivered
+// message never fails on a fcc error (a retry would double-send) - the
+// note carries it. A missing mail root leaves the fcc empty and skips
+// it silently. Shared by the dialogue send and the scheduled mailer.
+func deliverSend(worker workerAPI, cfg config.Config, root string, st compose.State, data []byte) (note, out string, err error) {
+	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
+	cmd.Stdin = bytes.NewReader(compose.DropBcc(data))
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", string(raw), fmt.Errorf("send: %w: %s", err, strings.TrimSpace(string(raw)))
+	}
 	sent := st.Fcc
 	if sent == "" {
 		sent = sentPath(root, st.Account, cfg.Accounts[st.Account])
@@ -81,8 +95,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 			TagOps: []notmuch.TagOp{{Tag: tag, Add: true}},
 		})
 	}
-	bus.Publish(core.SendResult{TabID: st.ID, OK: true, Output: note})
-	bus.Publish(core.ViewDiff{View: view.ViewName()})
+	return note, "", nil
 }
 
 // writeFcc lands the sent copy in the maildir new/ slot (maildir

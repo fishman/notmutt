@@ -154,6 +154,7 @@ opener = ["xdg-open"]
 "A" = { fun = "account", desc = "Choose the sender account", show = true }
 "C" = { fun = "signature", desc = "Choose the signature", show = true }
 "y" = { fun = "send", desc = "Send the message", show = true }
+"P" = { fun = "schedule", desc = "Schedule the message", show = true }
 "q" = { fun = "abort", desc = "Abort the composition", show = true }
 "[" = { fun = "tab-prev", show = true }
 "]" = { fun = "tab-next", show = true }

@@ -85,7 +85,7 @@ var Actions = map[string]map[string]bool{
 		"edit-cc": true, "edit-bcc": true, "edit-replyto": true,
 		"security": true,
 		"account":  true, "signature": true,
-		"send": true, "abort": true,
+		"send": true, "schedule": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
@@ -737,6 +737,8 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.onComposeOpened(e)
 		case core.SendResult:
 			m.onSendResult(e)
+		case core.ScheduledResult:
+			m.onScheduledResult(e)
 		case core.AddressIndex:
 			m.onAddressIndex(e)
 		case core.LuaResult:
@@ -1286,6 +1288,12 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			}
 			onSend(*m.composeTab())
 		}
+	case "schedule":
+		// the scheduled-send prompt (P): enter stores the composition
+		// for the parsed time; the ScheduledResult closes the tab
+		if m.composeTab().Phase != compose.PhaseSending {
+			m.dialogue = &textDialogue{field: "schedule", label: i18n.T("schedule for: ")}
+		}
 	case "abort":
 		st := m.composeTab()
 		switch st.Phase {
@@ -1765,6 +1773,38 @@ func (m *Model) onSendResult(e core.SendResult) {
 				m.dialogue = &errorDialogue{
 					label: i18n.T("send failed"), output: m.tabs[i].Output, tabID: e.TabID,
 				}
+			}
+			break
+		}
+	}
+}
+
+// errStr is the nil-safe error text for the status line and the error
+// dialogue.
+func errStr(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+// onScheduledResult reports a scheduled mail's fate: OK closes the
+// tab (the mail is stored and will send at its time), an error keeps
+// it open with the status-line entry. Unknown ids (the due-delivery
+// path - the tab is long gone) log only.
+func (m *Model) onScheduledResult(e core.ScheduledResult) {
+	if e.OK {
+		m.logEntry("scheduled for "+e.At, false)
+	} else {
+		m.logEntry("schedule failed: "+errStr(e.Err), true)
+	}
+	m.paint = true
+	for i := range m.tabs {
+		if m.tabs[i].ID == e.ID {
+			if e.OK {
+				m.closeTab(i, false)
+			} else {
+				m.dialogue = &errorDialogue{label: i18n.T("schedule failed"), output: errStr(e.Err), tabID: e.ID}
 			}
 			break
 		}
@@ -3560,6 +3600,14 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 			onAttachmentSave(m.attView.threadID, m.attView.msgID, m.attView.ordinal, compose.ExpandHome(input))
 		}
 		return nil, nil
+	case "schedule":
+		// the schedule prompt (P): the app parses the time, stores the
+		// composition, and publishes ScheduledResult - OK closes the
+		// tab, an error keeps it open
+		if input != "" && m.tabIdx > 0 {
+			onSchedule(m.tabs[m.tabIdx-1], input)
+		}
+		return nil, nil
 	}
 	st := &m.tabs[m.tabIdx-1]
 	switch d.field {
@@ -3959,7 +4007,6 @@ func (m *Model) openSearchTab(query string) {
 		m.tabIdx = len(m.tabs) + len(m.searchTabs)
 		m.attachTab()
 	}
-	m.rows = m.activeView().Rows()
 }
 
 // activeSearchIdx is the attached search tab's index in the searchTabs

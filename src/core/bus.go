@@ -205,6 +205,17 @@ type SendResult struct {
 	Err    error
 }
 
+// ScheduledResult reports one scheduled mail's fate (app -> TUI): the
+// schedule prompt and the due-delivery both surface on the status
+// line. At is the human time the mail was scheduled for; the payload
+// never carries mail content (F6).
+type ScheduledResult struct {
+	ID  string
+	OK  bool
+	At  string
+	Err error
+}
+
 // ThreadLoaded carries a thread's rendered lines to the TUI (R13
 // two-step: content loads on open only). The app renders the worker's
 // messages and runs the render transforms (decision record 20 - hooks

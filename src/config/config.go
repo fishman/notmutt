@@ -116,6 +116,7 @@ type Config struct {
 	Accounts       map[string]Account         `toml:"accounts"`
 	Send           Send                       `toml:"send"`
 	Refresh        Refresh                    `toml:"refresh"`
+	Schedule       Schedule                   `toml:"schedule"`
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
 	Attachments    Attachments                `toml:"attachments"`
@@ -845,6 +846,18 @@ type Send struct {
 	Args    []string `toml:"args"`
 }
 
+// Schedule configures the scheduled-mail spool ([schedule]): where
+// composed messages wait for their delivery time and how often the
+// client checks for due mail. The check also runs at startup, so a
+// closed client catches up on resume (multiple instances serialize
+// through the spool lock). The spool holds the assembled message
+// bytes - the XDG data home (must-persist data), never a cache or
+// temp dir.
+type Schedule struct {
+	Dir      string `toml:"dir"`      // spool dir; empty = <data>/notmutt/schedule
+	Interval int    `toml:"interval"` // check cadence in seconds (default 60; 0 = 60)
+}
+
 // Account is one mail account: the section key is the account name,
 // the folder prefix its folder space in the maildir (R2) - the notmuch
 // account tag is that prefix, the muttrc folder:/^<folder>\// pattern
@@ -1139,6 +1152,9 @@ func Default() Config {
 		Refresh: Refresh{
 			Interval: 20,
 		},
+		Schedule: Schedule{
+			Interval: 60,
+		},
 		Filter: Filter{
 			Enabled: true,
 			DryRun:  true,
@@ -1430,6 +1446,9 @@ func validate(cfg Config) error {
 	}
 	if cfg.Refresh.Interval < 0 {
 		return fmt.Errorf("refresh.interval: must be >= 0 minutes (0 disables the poll), got %d", cfg.Refresh.Interval)
+	}
+	if cfg.Schedule.Interval < 0 {
+		return fmt.Errorf("schedule.interval: must be >= 0 seconds, got %d", cfg.Schedule.Interval)
 	}
 	for name, argv := range cfg.AttachCommands {
 		if strings.TrimSpace(name) == "" {

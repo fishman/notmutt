@@ -98,6 +98,14 @@ func SetSendHandler(fn func(compose.State)) {
 	onSend = fn
 }
 
+// onSchedule is the schedule seam: the app stores the composition for
+// the parsed time and publishes ScheduledResult (OK closes the tab).
+var onSchedule = func(st compose.State, at string) {}
+
+func SetScheduleHandler(fn func(compose.State, string)) {
+	onSchedule = fn
+}
+
 // onDraft is the draft seam: the app writes the dialogue state into the account's draft folder (maildir new/ slot, same shape as the fcc) and reindexes; an error keeps the composition open.
 var onDraft = func(st compose.State) error { return nil }
 

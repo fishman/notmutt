@@ -60,7 +60,7 @@ func TestEventRoundTrip(t *testing.T) {
 }
 
 func TestParseModeUnknown(t *testing.T) {
-	if parseMode("bogus") != ModeCompose {
+	if ParseMode("bogus") != ModeCompose {
 		t.Fatal("unknown mode must fall back to compose")
 	}
 }

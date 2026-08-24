@@ -2321,6 +2321,43 @@ func TestSendResultSnapshotFailureKeepsDialogue(t *testing.T) {
 	}
 }
 
+// TestComposeSchedulePrompt pins the schedule flow: the P key opens
+// the time prompt over the compose tab, and commit hands the raw time
+// to the schedule seam.
+func TestComposeSchedulePrompt(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "P")
+	if d := textD(m); d == nil || d.field != "schedule" {
+		t.Fatalf("P must open the schedule prompt: %+v", m.dialogue)
+	}
+	got := ""
+	SetScheduleHandler(func(st compose.State, at string) { got = at })
+	m = press(t, m, "tomorrow")
+	m = pressType(t, m, KeyEnter)
+	if m.dialogue != nil {
+		t.Fatalf("enter must close the schedule prompt: %+v", m.dialogue)
+	}
+	if got != "tomorrow" {
+		t.Fatalf("the seam must receive the raw time, got %q", got)
+	}
+}
+
+// TestScheduledResultClosesTab pins the schedule outcome: an OK
+// result closes the tab with a status entry, a failure keeps it open
+// with the error dialogue.
+func TestScheduledResultClosesTab(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = pressEvent(t, m, core.ScheduledResult{ID: "t1", OK: true, At: "Sat Aug 23 09:00"})
+	if len(m.tabs) != 0 {
+		t.Fatalf("an OK schedule must close the tab, got %d tabs", len(m.tabs))
+	}
+	m = openDialogue(t, model(), "t2")
+	m = pressEvent(t, m, core.ScheduledResult{ID: "t2", OK: false, Err: fmt.Errorf("boom")})
+	if len(m.tabs) != 1 || m.dialogue == nil {
+		t.Fatalf("a failed schedule must keep the tab with the error box: %+v", m.dialogue)
+	}
+}
+
 // TestSendRetryClearsSnapshot pins the re-arm: a retry after a
 // failure must not re-apply the stale failure snapshot while the new
 // job is in flight - the dialogue stays Sending until the new result

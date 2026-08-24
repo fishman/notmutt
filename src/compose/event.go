@@ -29,7 +29,7 @@ func ToEvent(s *State) core.ComposeOpened {
 
 func FromEvent(e core.ComposeOpened) *State {
 	s := &State{
-		ID: e.TabID, Mode: parseMode(e.Mode), Account: e.Account, From: e.From,
+		ID: e.TabID, Mode: ParseMode(e.Mode), Account: e.Account, From: e.From,
 		To: e.To, Cc: e.Cc, Bcc: e.Bcc, ReplyTo: e.ReplyTo,
 		Subject: e.Subject, Body: e.Body, Fcc: e.Fcc, Security: parseSecurity(e.Security),
 		Signature: e.Signature, SignatureBody: e.SigContent,
@@ -41,7 +41,9 @@ func FromEvent(e core.ComposeOpened) *State {
 	return s
 }
 
-func parseMode(s string) Mode {
+// ParseMode resolves a wire mode name (the event round trip and the
+// scheduled-mail spool header share the table).
+func ParseMode(s string) Mode {
 	for m, name := range modeNames {
 		if name == s {
 			return m

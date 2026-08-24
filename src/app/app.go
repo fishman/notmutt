@@ -291,6 +291,15 @@ func Run() error {
 	tui.SetSendHandler(func(st compose.State) {
 		go sendJob(bus, worker, view, cfg, root, st)
 	})
+	tui.SetScheduleHandler(func(st compose.State, at string) {
+		go scheduleJob(bus, worker, view, cfg, root, st, at)
+	})
+
+	// the scheduled-mail loop (resume + cadence): the startup check
+	// delivers mail that came due while the client was closed; the tick
+	// covers mail due during the session. The spool lock serializes
+	// concurrent instances - a mail is never delivered twice.
+	go runScheduler(ctx, bus, worker, view, cfg, root)
 
 	// draft: the abort confirm's d key - a local write, runs inline;
 	// the error keeps the composition open

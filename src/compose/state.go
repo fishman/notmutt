@@ -23,7 +23,7 @@ const (
 )
 
 // modeNames is the canonical Mode wire-name table: the event round
-// trip parses (parseMode) and renders (Mode.String) from one table.
+// trip parses (ParseMode) and renders (Mode.String) from one table.
 var modeNames = map[Mode]string{
 	ModeCompose:  "compose",
 	ModeReply:    "reply",

@@ -787,7 +787,7 @@ func TestDefaultBindings(t *testing.T) {
 		"t": "edit-to", "s": "edit-subject", "f": "edit-from",
 		"c": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
 		"e": "edit", "a": "attach", "tab": "attach", "d": "detach",
-		"A": "account", "C": "signature", "y": "send", "q": "abort",
+		"A": "account", "C": "signature", "y": "send", "P": "schedule", "q": "abort",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help", "~": "log", ":": "command",
 	}

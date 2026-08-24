@@ -4,9 +4,9 @@ title: Roadmap
 nav_order: 8
 ---
 
-# Future work: high-ROI backlog
+# Future work: backlog
 
-Ranked by ROI (impact / effort), collected from AGENTS.md requirements not yet
+Ranked by impact over effort, collected from AGENTS.md requirements not yet
 built, spec decision records, and review residuals. Effort is S/M/L relative
 to the send-dialogue milestone. AGENTS.md is normative; a spec and plan are
 prerequisites before implementation per the project's workflow.
@@ -33,7 +33,7 @@ Impact: the client becomes usable for signed/encrypted mail - table stakes for
 this user's workflow. Pointers: AGENTS.md R10, `references/neomutt/ncrypt/*`,
 `references/neomutt/smime/smime.c`, `references/aerc/lib/crypto/gpg/gpgbin`.
 
-## Tier 2: strong ROI, schedule when a slot opens
+## Tier 2: schedule when a slot opens
 
 ### 2. Fix the redraw_test harness race, enable -race in CI - effort S
 

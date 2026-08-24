@@ -5,6 +5,7 @@ package tui
 
 import (
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/gdamore/tcell/v3"
@@ -104,10 +105,15 @@ var specialKeyName = map[rune]string{
 }
 
 // keyPressOf maps a tcell key event to a press (or release) message.
-// Runes map with their text (shifted runes arrive uppercase - the
-// bindings bind "G" and "j" separately); special keys map to the
-// special codes; ctrl/alt-modified keys carry no Text, so
-// actionForKey's canonical probe resolves them.
+// Runes map with their text; special keys map to the special codes;
+// ctrl/alt-modified keys carry no Text, so actionForKey's canonical
+// probe resolves them.
+//
+// The shifted rune's case depends on the input path: legacy terminals
+// deliver the shifted character itself ('H'), while the kitty protocol
+// (OptAdvancedKeys, negotiated outside tmux) delivers the unshifted
+// key with an explicit shift modifier - 'h' + ModShift. The shift is
+// applied here so both paths bind "H" and "j" separately.
 //
 // The screen opens with OptAdvancedKeys (loop.go): tcell reports
 // ctrl+letter as KeyRune with ModCtrl on every input path, so the
@@ -127,6 +133,11 @@ func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 	if code == tcell.KeyRune {
 		// v3 delivers the rune(s) as Str() (the Rune accessor is gone)
 		r, _ := utf8.DecodeRuneInString(ev.Str())
+		// kitty reports the unshifted key with an explicit shift
+		// modifier; the text is the shifted character
+		if mod&modShift != 0 {
+			r = unicode.ToUpper(r)
+		}
 		text := ""
 		if mod == modNone || mod == modShift {
 			text = string(r)

@@ -119,7 +119,7 @@ undoable instead of hitting notmuch at keypress time.
 "Staged tag ops" means tag changes land in a session buffer and hit
 the backend only on apply (`$`), with `u` to undo - mutt's sync
 semantics. "Async refresh" means reads and updates never block the UI;
-notmutt additionally inserts new mail into the visible threads instead
+notmutt inserts new mail into the visible threads instead
 of rebuilding the list.
 
 ## Where is notmutt

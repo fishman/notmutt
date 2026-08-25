@@ -375,6 +375,10 @@ notmutt, never cite authority.
   frameworks beyond what the project already uses. Test data generated,
   never personal: fabricated names (alpha, atlas, acme,
   sender@example.com).
+- Regression tests fail first (TDD): a regression fix starts by writing
+  the failing test against the current code, running it to confirm it
+  FAILS, then fixing. Never commit a regression fix without that red
+  run - a test that passed before the fix proves nothing.
 - Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
   in all output and code. No unnecessary comments; only non-obvious
   constraints get a comment.

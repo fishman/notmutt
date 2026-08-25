@@ -3,7 +3,7 @@
 # or a Lua-free `make build TAGS=""`.
 
 GO      ?= go
-TAGS    ?= lua
+TAGS    ?= lua mcp
 BIN     ?= notmutt
 FUZZ    ?= FuzzRenderHTML
 FUZZTIME?= 30s

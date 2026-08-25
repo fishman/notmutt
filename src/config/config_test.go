@@ -805,6 +805,31 @@ func TestDefaultBindings(t *testing.T) {
 	}
 }
 
+func TestPagerInheritsIndex(t *testing.T) {
+	cfg := Default()
+	// the pager inherits index keys it does not bind, so mail actions work there
+	if act := cfg.Bindings["pager"]["r"]; act != "reply" {
+		t.Fatalf("pager must inherit index r=reply, got %q", act)
+	}
+	if act := cfg.Bindings["pager"]["d"]; act != "delete" {
+		t.Fatalf("pager must inherit index d=delete, got %q", act)
+	}
+	// view-only index actions (marked inherit=false) never reach the pager
+	for key := range map[string]string{"$": "apply", "/": "search", "=": "refresh"} {
+		if act, ok := cfg.Bindings["pager"][key]; ok {
+			t.Fatalf("pager must not inherit index %s, got %s", key, act)
+		}
+	}
+	// the pager's own binding wins over the inherited one
+	if act := cfg.Bindings["pager"]["j"]; act != "scroll-down" {
+		t.Fatalf("pager override j must win, got %q", act)
+	}
+	// inheritance is one-way: the index never picks up a pager-only key
+	if _, ok := cfg.Bindings["index"]["alt+i"]; ok {
+		t.Fatalf("index must not inherit a pager-only key")
+	}
+}
+
 func TestKeymapSchemes(t *testing.T) {
 	cfg := Default()
 	if cfg.Bindings["index"]["j"] != "cursor-down" {

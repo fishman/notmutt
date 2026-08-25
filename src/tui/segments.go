@@ -29,6 +29,14 @@ func countSegment(visible int, st Styles) statusSegment {
 	return statusSegment{content: strconv.Itoa(visible), style: st.Count, priority: 5}
 }
 
+// editedSegment marks a cursor message with staged tag ops (R14): the
+// staged glyph plus the staged flag letters (R14), right after the view
+// name. Priority 7 - survives the count and account, never outlives the
+// view name.
+func editedSegment(glyph string, st Styles) statusSegment {
+	return statusSegment{content: glyph, style: st.Index.Staged, priority: 7}
+}
+
 // accountSegment is the cursor message's account (R2): the account tag
 // rendered as its own colored pill. Priority 6 - survives the count's
 // drop, never outlives the view name. Empty when the message has no

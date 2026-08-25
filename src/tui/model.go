@@ -67,11 +67,16 @@ var Actions = map[string]map[string]bool{
 		"scroll-top": true, "scroll-bottom": true,
 		"scroll-left": true, "scroll-right": true,
 		"back": true, "quit": true, "load-remote-images": true,
+		"next-mail": true, "prev-mail": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
 		"attachments": true, "save-attachment": true,
 		"search-tab": true,
-		"tab-prev":   true, "tab-next": true,
+		// the index mail actions the pager inherits (config inherit=true)
+		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"toggle-read": true, "archive": true, "inbox": true, "delete": true,
+		"undo": true, "spam": true, "pending": true,
+		"tab-prev": true, "tab-next": true,
 		"help": true, "log": true, "command": true,
 	},
 	"compose": {
@@ -906,16 +911,18 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "open":
 		if m.mode == "index" {
 			m.openCursorThread()
-		} else if m.mode == "pager" && m.pager != nil {
-			// enter in the pager: the next mail (mutt's next-message).
-			// The index cursor advances; a press that did not move it
-			// is a no-op. The reload guard replaces the pager content.
-			m.moveCursor(1)
-			if tid, mid, _ := m.cursorThread(); tid != "" && (tid != pagerThreadID(m.pager) || mid != pagerMsgID(m.pager)) {
-				onOpen(tid, mid, false, m.showHeaders, m.width)
-				deferPaint()
-				deferred = true
-			}
+		} else if m.mode == "pager" && m.pager != nil && m.pagerStep(1) {
+			deferred = true
+		}
+	case "next-mail":
+		// J in the pager: the next message in the view it was launched
+		// from (the index cursor walks that view's rows).
+		if m.mode == "pager" && m.pager != nil && m.pagerStep(1) {
+			deferred = true
+		}
+	case "prev-mail":
+		if m.mode == "pager" && m.pager != nil && m.pagerStep(-1) {
+			deferred = true
 		}
 	case "open-headers":
 		// the h key: the index flips the flag and opens; in the pager
@@ -1412,9 +1419,16 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 		// staged tag ops (and undo) advance the cursor one row - the
 		// next keypress acts on the next message (mutt's auto-advance).
-		// A no-op action (ghost row, unknown action) does not move.
+		// In the pager they stage and stay: J/K move between messages,
+		// the status bar's edited marker shows the pending op. A no-op
+		// action (ghost row, unknown action) does not move.
 		if m.stage(action) {
-			m.moveCursor(1)
+			if m.mode == "pager" {
+				deferPaint()
+				deferred = true
+			} else {
+				m.moveCursor(1)
+			}
 		}
 	}
 	var cmds []Cmd
@@ -1996,6 +2010,21 @@ func (m *Model) cursorThread() (tid, msgID, subject string) {
 		msgID = row.Msg.ID
 	}
 	return tid, msgID, subject
+}
+
+// pagerStep advances the index cursor by dir rows and, if it landed on
+// a different message, reloads the open pager to it (J/K and enter in
+// the pager). The walk is the active view's rows - the view the pager
+// was launched from - never a global next. A press that did not move
+// (edge of the view) reports false.
+func (m *Model) pagerStep(dir int) bool {
+	m.moveCursor(dir)
+	if tid, mid, _ := m.cursorThread(); tid != "" && (tid != pagerThreadID(m.pager) || mid != pagerMsgID(m.pager)) {
+		onOpen(tid, mid, false, m.showHeaders, m.width)
+		m.paint, m.renderDue = false, true
+		return true
+	}
+	return false
 }
 
 // openCursorThread hands the cursor row's thread to the open seam (the
@@ -3070,7 +3099,7 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
 	}
 	sig += "|" + d.legend + "|" + d.account + "|" + d.mime + "|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
-		"|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+		"|" + strconv.FormatBool(d.edited) + "|" + d.flags + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
 
@@ -3096,6 +3125,13 @@ func (m Model) statusData() statusData {
 	d.account = m.account
 	if m.mode == "pager" {
 		d.mime = m.renderMime
+	}
+	if idx := m.activeView().CursorRowIndex(); idx >= 0 && idx < len(m.rows) {
+		r := m.rows[idx]
+		if r.Staged {
+			d.edited = true
+			d.flags = flagChars(r.StagedTags)
+		}
 	}
 	d.msg = m.statusMsg
 	d.msgErr = m.statusMsgErr

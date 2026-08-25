@@ -55,18 +55,18 @@ opener = ["xdg-open"]
 "enter" = { fun = "open", desc = "Open the message under the cursor" }
 "H" = { fun = "open-headers", desc = "Open the message with the full headers", show = true }
 "q" = { fun = "quit", desc = "Quit notmutt", show = true }
-"r" = { fun = "reply", desc = "Reply to the sender", show = true }
-"R" = { fun = "reply-all", desc = "Reply to all recipients", show = true }
-"f" = { fun = "forward", desc = "Forward the message", show = true }
-"m" = { fun = "compose", desc = "Write a new message", show = true }
-"t" = { fun = "toggle-read", show = true }
-"a" = { fun = "archive", show = true }
-"I" = { fun = "inbox", desc = "Move the message back to the inbox", show = true }
-"d" = { fun = "delete", show = true }
-"u" = { fun = "undo", desc = "Discard the staged tag ops on this message", show = true }
+"r" = { fun = "reply", desc = "Reply to the sender", show = true, inherit = true }
+"R" = { fun = "reply-all", desc = "Reply to all recipients", show = true, inherit = true }
+"f" = { fun = "forward", desc = "Forward the message", show = true, inherit = true }
+"m" = { fun = "compose", desc = "Write a new message", show = true, inherit = true }
+"t" = { fun = "toggle-read", show = true, inherit = true }
+"a" = { fun = "archive", show = true, inherit = true }
+"I" = { fun = "inbox", desc = "Move the message back to the inbox", show = true, inherit = true }
+"d" = { fun = "delete", show = true, inherit = true }
+"u" = { fun = "undo", desc = "Discard the staged tag ops on this message", show = true, inherit = true }
 "$" = { fun = "apply", desc = "Apply the staged tag ops", show = true }
-"y" = { fun = "spam", show = true }
-"p" = { fun = "pending", show = true }
+"y" = { fun = "spam", show = true, inherit = true }
+"p" = { fun = "pending", show = true, inherit = true }
 "P" = { fun = "preview", desc = "Preview the message under the cursor", show = true }
 "F" = { fun = "filter", desc = "Live-filter the index rows", show = true }
 "/" = { fun = "search", desc = "Search the index", show = true }
@@ -118,6 +118,8 @@ opener = ["xdg-open"]
 "pgup" = { fun = "page-up" }
 "g" = { fun = "scroll-top", desc = "Jump to the top" }
 "G" = { fun = "scroll-bottom", desc = "Jump to the bottom" }
+"J" = { fun = "next-mail", desc = "Next message" }
+"K" = { fun = "prev-mail", desc = "Previous message" }
 "q" = { fun = "back", desc = "Return to the message list", show = true }
 "alt+i" = { fun = "load-remote-images", desc = "Load remote images", show = true }
 "v" = { fun = "attachments", desc = "List the message's attachments", show = true }
@@ -225,6 +227,8 @@ opener = ["xdg-open"]
 ":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
+"J" = { fun = "next-mail", desc = "Next message" }
+"K" = { fun = "prev-mail", desc = "Previous message" }
 "pgdown" = { fun = "page-down" }
 "pgup" = { fun = "page-up" }
 "ctrl+g" = { fun = "back", show = true }

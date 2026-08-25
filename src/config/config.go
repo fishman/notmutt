@@ -53,6 +53,12 @@ type Binding struct {
 	Fun  string
 	Desc string
 	Show bool
+	// Inherit opts a key INTO context inheritance (the hierarchical key
+	// layout): the pager inherits only the index mail actions marked
+	// true. Deny by default - a view or navigation action never reaches
+	// the pager unless deliberately opted in; the child can always bind
+	// the key itself.
+	Inherit bool
 }
 
 func (b *Binding) UnmarshalTOML(v any) error {
@@ -84,8 +90,11 @@ func (b *Binding) UnmarshalTOML(v any) error {
 		if show, ok := t["show"].(bool); ok {
 			b.Show = show
 		}
+		if inh, ok := t["inherit"].(bool); ok {
+			b.Inherit = inh
+		}
 		for k := range t {
-			if k != "fun" && k != "desc" && k != "show" {
+			if k != "fun" && k != "desc" && k != "show" && k != "inherit" {
 				return fmt.Errorf("binding: unknown key %q", k)
 			}
 		}
@@ -1076,20 +1085,50 @@ func sortedKeys[V any](m map[string]V) []string {
 // is opt-in - only show = true entries hit the keyhint. The result is
 // always a fresh map set - a caller's rebind never touches the store
 // or the next Default.
+// contextParents is the hierarchical key layout (R9): a context inherits
+// every key its parent does not itself bind. The pager overrides the
+// index's scroll/navigation keys but falls back to it for the mail
+// actions (r, d, a, ...), so they work in the pager too.
+var contextParents = map[string]string{"pager": "index"}
+
 func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[string]string, map[string]map[string]bool) {
 	out := make(map[string]map[string]string, len(scheme))
 	shown := make(map[string]map[string]bool, len(scheme))
+	inherit := make(map[string]map[string]bool, len(scheme))
 	for ctx, km := range scheme {
 		m := make(map[string]string, len(km))
 		s := make(map[string]bool, len(km))
+		ih := make(map[string]bool, len(km))
 		for k, b := range km {
 			m[k] = b.Fun
+			ih[k] = b.Inherit
 			if b.Show {
 				s[k] = true
 			}
 		}
 		out[ctx] = m
 		shown[ctx] = s
+		inherit[ctx] = ih
+	}
+	// inheritance: parent's dispatch map first, the context's own keys
+	// win. Only inheritable parent keys copy over (the entry's inherit
+	// flag); `shown` (the keyhint) stays context-local so the pager hint
+	// never bloats with index actions - inherited keys fire without
+	// advertising themselves.
+	for ctx, parent := range contextParents {
+		pm, ok := out[parent]
+		if !ok {
+			continue
+		}
+		ph := inherit[parent]
+		m := make(map[string]string, len(out[ctx])+len(pm))
+		for k, v := range pm {
+			if ph[k] {
+				m[k] = v
+			}
+		}
+		maps.Copy(m, out[ctx])
+		out[ctx] = m
 	}
 	return out, shown
 }

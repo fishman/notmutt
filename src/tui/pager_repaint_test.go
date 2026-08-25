@@ -154,7 +154,15 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	cfg := config.Default()
 	st := ResolveStyles(cfg.Theme, cfg.Palette)
 	ui := cfg.UI
-	km := config.Default().Bindings["pager"]
+	// the pager hint is the shown-filtered set (visibleBindings), not the
+	// full inherited map - inherited index actions fire but never advertise
+	km := cfg.Bindings["pager"]
+	vkm := make(map[string]string, len(cfg.Shown["pager"]))
+	for k := range cfg.Shown["pager"] {
+		if a, ok := km[k]; ok {
+			vkm[k] = a
+		}
+	}
 	d := statusData{view: "inbox", visible: 100}
 
 	// an index-like full frame first, so the screen has a previous paint
@@ -172,7 +180,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 	// empty thread: pager renders 22 blank rows, keyhint and status anchored at the bottom - a 24-line frame every time
 	p := newPager("t1", "", nil)
 	p.setSize(80, 22, st)
-	frame := pagerFrame(p, km, st, ui, d)
+	frame := pagerFrame(p, vkm, st, ui, d)
 	if got := strings.Count(frame, "\n") + 1; got != 24 {
 		t.Fatalf("empty pager frame must be exactly 24 lines, got %d:\n%s", got, show(frame))
 	}
@@ -188,7 +196,7 @@ func TestRepaintEmptyPagerFrame(t *testing.T) {
 			t.Fatalf("row %d must be blank after the empty pager (the stale-row bug): %q", r, got)
 		}
 	}
-	if got := rowText(cs, 80, 22); !strings.Contains(got, "scroll-bottom") {
+	if got := rowText(cs, 80, 22); !strings.Contains(got, "open-links") {
 		t.Fatalf("keyhint clobbered: %q", got)
 	}
 	if got := rowText(cs, 80, 23); !strings.Contains(got, "inbox") {

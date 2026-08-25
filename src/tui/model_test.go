@@ -490,6 +490,44 @@ func ghostModel() Model {
 	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
+// TestPagerStatusShowsEditedMarker pins the edited status segment: a
+// staged tag op in the pager (stage-and-stay) must flip the edited
+// marker on the status line - a layer-cache regression (the cache
+// signature omitted edited, so the stale row survived the repaint).
+func TestPagerStatusShowsEditedMarker(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	path := fixtureMsg(t, "body line\n")
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
+		}})
+		m = next
+	})
+	press(t, m, "enter")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	// the deferred paint lands on the frame tick in the loop; force it
+	// here to exercise the render path the tick would drive
+	status := func() string {
+		lines := strings.Split(stripANSI(m.View()), "\n")
+		return lines[len(lines)-1]
+	}
+	if before := status(); strings.Contains(before, "*") {
+		t.Fatalf("no edited marker before staging:\n%q", before)
+	}
+	m = press(t, m, "d") // stage delete, cursor stays on the message
+	m.paint = true
+	if after := status(); !strings.Contains(after, "*D") {
+		t.Fatalf("a staged delete must flip the edited marker and its flag letter in the pager status:\n%q", after)
+	}
+}
+
 func press(t *testing.T, m Model, key string) Model {
 	t.Helper()
 	next, _ := m.Update(KeyPressMsg{Text: key, Code: tcell.KeyRune})

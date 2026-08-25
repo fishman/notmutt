@@ -1,0 +1,54 @@
+From c93a55537c61aed2ee06c1867ec3fa969b3b7862 Mon Sep 17 00:00:00 2001
+From: Reza Jelveh <>
+Date: Tue, 25 Aug 2026 11:51:04 +0800
+Subject: [PATCH] fix(input): skip invalid kitty text codepoints and empty
+ modifiers
+
+---
+ input.go      | 5 ++++-
+ input_test.go | 6 ++++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/input.go b/input.go
+index 342806a..47228fd 100644
+--- a/input.go
++++ b/input.go
+@@ -867,6 +867,9 @@ func (ip *inputParser) handleXda(str string) {
+ }
+ 
+ func calcModifier(n int) ModMask {
++	if n < 1 {
++		return ModNone
++	}
+ 	n--
+ 	m := ModNone
+ 	if n&1 != 0 {
+@@ -998,7 +1001,7 @@ func kittyKeyText(params string) string {
+ 	}
+ 	var b strings.Builder
+ 	for cp := range strings.SplitSeq(fields[2], ":") {
+-		if n, err := strconv.ParseInt(cp, 10, 32); err == nil && n > 0 {
++		if n, err := strconv.ParseInt(cp, 10, 32); err == nil && n > 0 && utf8.ValidRune(rune(n)) {
+ 			b.WriteRune(rune(n))
+ 		}
+ 	}
+diff --git a/input_test.go b/input_test.go
+index 6e86b7d..c1af19f 100644
+--- a/input_test.go
++++ b/input_test.go
+@@ -667,6 +667,12 @@ func TestSpecialKeys(t *testing.T) {
+ 		{"XTerm-Alt-CJK", []byte{'\x1b', '[', '2', '7', ';', '3', ';', '2', '0', '3', '2', '0', '~'}, KeyRune, ModAlt, "你"},
+ 		{"Kitty-Esc", []byte{'\x1b', '[', '2', '7', 'u'}, KeyEsc, ModNone, ""},
+ 		{"Kitty-Control-I", []byte{'\x1b', '[', '1', '0', '5', ';', '5', 'u'}, 'I', ModCtrl, ""},
++		{"Kitty-Text-Empty-Mod", []byte{'\x1b', '[', '0', ';', ';', '2', '2', '9', 'u'}, KeyRune, ModNone, "å"},
++		{"Kitty-Text-Invalid-Codepoints", []byte{
++			'\x1b', '[', '2', '2', '9', ';', ';', '5', '5', '2', '9', '6',
++			':', '1', '1', '1', '4', '1', '1', '2',
++			':', '6', '5', 'u',
++		}, KeyRune, ModNone, "A"},
+ 		{"Win-Shift-A", []byte{'\x1b', '[', '6', '5', ';', '0', ';', '6', '5', ';', '1', ';', '1', '6', '_'}, KeyRune, ModNone, "A"},
+ 		{"Win-Ctrl-1", []byte{'\x1b', '[', '4', '9', ';', '0', ';', '4', '9', ';', '1', ';', '8', '_'}, KeyRune, ModCtrl, "1"},
+ 		{"Win-Ctrl-A", []byte{'\x1b', '[', '6', '5', ';', '0', ';', '1', ';', '1', ';', '8', '_'}, KeyCtrlA, ModCtrl, ""},
+-- 
+2.55.0
+

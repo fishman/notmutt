@@ -14,10 +14,10 @@ PREFIX="$HOME/notmuch-static"
 echo "$PREFIX/bin" >> "$GITHUB_PATH"
 echo "CGO_CFLAGS=-I$PREFIX/include" >> "$GITHUB_ENV"
 if [ "$STATIC" = 1 ]; then
-    # -l: forces the archive even if a libnotmuch.so sits on the search
-    # path; the -l* after it are the archive's own (shared) dependencies.
+    # Link the archive by full path - a static .a is an input file, no
+    # search needed. -L just satisfies the binding's own -lnotmuch.
     # -lstdc++ because the archive's .cc members are C++.
-    echo "CGO_LDFLAGS=-L$PREFIX/lib -l:libnotmuch.a -lgmime-3.0 -lgobject-2.0 -lglib-2.0 -ltalloc -lxapian -lz -lstdc++" >> "$GITHUB_ENV"
+    echo "CGO_LDFLAGS=-L$PREFIX/lib $PREFIX/lib/libnotmuch.a -lgmime-3.0 -lgobject-2.0 -lglib-2.0 -ltalloc -lxapian -lz -lstdc++" >> "$GITHUB_ENV"
 else
     echo "CGO_LDFLAGS=-L$PREFIX/lib" >> "$GITHUB_ENV"
 fi
@@ -34,5 +34,7 @@ cd /tmp/notmuch
 make -j "$(nproc)"
 make install
 if [ "$STATIC" = 1 ]; then
+    # make install ships only the .so + headers, not the archive
+    cp lib/libnotmuch.a "$PREFIX/lib/"
     rm -f "$PREFIX"/lib/libnotmuch.so*
 fi

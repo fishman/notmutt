@@ -1,0 +1,108 @@
+From 3710a9e837cfb9fa7d21db0939751d95bedacb3f Mon Sep 17 00:00:00 2001
+From: Reza Jelveh <>
+Date: Tue, 18 Aug 2026 14:10:30 +0800
+Subject: [PATCH] feat: fold negotiated terminal capabilities into a bitfield
+
+Replace the new Sixel() with a Capabilities() bitfield so future
+negotiated capabilities are new bits, not new interface methods.
+HasClipboard() is retained, backed by the CapabilityClipboard bit.
+---
+ screen.go  | 26 ++++++++++++++++++++++----
+ tscreen.go | 15 ++++++++++++---
+ 2 files changed, 34 insertions(+), 7 deletions(-)
+
+diff --git a/screen.go b/screen.go
+index 553709c..114afca 100644
+--- a/screen.go
++++ b/screen.go
+@@ -20,6 +20,18 @@ import (
+ 	"github.com/gdamore/tcell/v3/color"
+ )
+ 
++// Capabilities is a bitfield of terminal capabilities reported during Init.
++type Capabilities uint
++
++const (
++	// CapabilityClipboard: OSC 52 support.  Many terminals support the
++	// clipboard without reporting it, so a false bit is not conclusive.
++	CapabilityClipboard Capabilities = 1 << iota
++
++	// CapabilitySixel: sixel graphics support (DA1, param 4).
++	CapabilitySixel
++)
++
+ // Screen represents the physical (or emulated) screen.
+ // This can be a terminal window or a physical console.  Platforms implement
+ // this differently.
+@@ -239,10 +251,15 @@ type Screen interface {
+ 	// prevent this for security reasons.
+ 	GetClipboard()
+ 
+-	// HasClipboard is true if the screen claims to support the clipboard.
+-	// Note that GetClipboard may still not work, but SetClipboard should be functional.
+-	// Note that many terminals that support the clipboard don't actually report that they
+-	// do, so a false indication is not necessarily conclusive.
++	// Capabilities returns the capabilities reported during Init.
++	// Negotiation completes before Init returns, so this is a
++	// synchronous query, not an event: an event would only delay an
++	// already-known answer until the event queue is drained, and the
++	// app needs it before rendering its first frame.
++	Capabilities() Capabilities
++
++	// HasClipboard reports OSC 52 clipboard support; equivalent to
++	// Capabilities()&CapabilityClipboard != 0.
+ 	HasClipboard() bool
+ 
+ 	// ShowNotification is used to show a desktop notification, when the terminal
+@@ -356,6 +373,7 @@ type screenImpl interface {
+ 	Tty() (Tty, bool)
+ 	SetClipboard([]byte)
+ 	GetClipboard()
++	Capabilities() Capabilities
+ 	HasClipboard() bool
+ 	ShowNotification(string, string)
+ 	KeyboardProtocol() KeyProtocol
+diff --git a/tscreen.go b/tscreen.go
+index 9d1a257..182f9fe 100644
+--- a/tscreen.go
++++ b/tscreen.go
+@@ -241,7 +241,7 @@ type tScreen struct {
+ 	truecolor          bool
+ 	noColor            bool
+ 	legacy             bool
+-	hasClipboard       bool // true if OSC 52 reported via DA1
++	caps               Capabilities // capabilities reported via DA1
+ 	finiOnce           sync.Once
+ 	initFiniLock       sync.Mutex
+ 	enterUrl           string
+@@ -509,7 +509,12 @@ func (t *tScreen) processInitQ() {
+ 				if ev.Clipboard && t.setClipboard == "" {
+ 					t.setClipboard = setClipboard
+ 				}
+-				t.hasClipboard = ev.Clipboard
++				if ev.Clipboard {
++					t.caps |= CapabilityClipboard
++				}
++				if ev.Sixel {
++					t.caps |= CapabilitySixel
++				}
+ 				t.initted = true
+ 				return
+ 			case *eventTermName:
+@@ -1813,8 +1818,12 @@ func (t *tScreen) GetClipboard() {
+ 	t.Unlock()
+ }
+ 
++func (t *tScreen) Capabilities() Capabilities {
++	return t.caps
++}
++
+ func (t *tScreen) HasClipboard() bool {
+-	return t.hasClipboard
++	return t.caps&CapabilityClipboard != 0
+ }
+ 
+ func (t *tScreen) ShowNotification(title string, body string) {
+-- 
+2.55.0
+

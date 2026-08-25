@@ -1,0 +1,74 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Reza Jelveh <>
+Date: Tue, 25 Aug 2026 12:00:00 +0800
+Subject: [PATCH] fix: request kitty associated text for shifted keys
+
+Enable kitty mode 16 and post the terminal-sent text as the rune,
+clearing the shift that is already expressed in it. Without it the
+shifted character is only recoverable per keyboard layout.
+
+---
+ input.go   | 26 ++++++++++++++++++++++++++
+ tscreen.go |  2 +-
+ 2 files changed, 27 insertions(+), 1 deletion(-)
+
+diff --git a/input.go b/input.go
+index 0c279f9..342806a 100644
+--- a/input.go
++++ b/input.go
+@@ -987,6 +987,24 @@ func kittyModifierKey(code int) ModMask {
+ 	}
+ }
+
++// kittyKeyText extracts the associated text (kitty mode 16) from a csi-u
++// event's params: the third ;-field, codepoints :separated. Empty when
++// the event carries no text (control keys, specials, terminals without
++// mode 16), so callers fall back to the base key.
++func kittyKeyText(params string) string {
++	fields := strings.Split(params, ";")
++	if len(fields) < 3 || fields[2] == "" {
++		return ""
++	}
++	var b strings.Builder
++	for cp := range strings.SplitSeq(fields[2], ":") {
++		if n, err := strconv.ParseInt(cp, 10, 32); err == nil && n > 0 {
++			b.WriteRune(rune(n))
++		}
++	}
++	return b.String()
++}
++
+ func (ip *inputParser) handleMouse(mode rune, params []int) {
+
+ 	// XTerm mouse events only report at most one button at a time,
+@@ -1421,6 +1439,15 @@ func (ip *inputParser) handleCsi(mode rune, params []byte, intermediate []byte)
+ 			if mod1 := kittyModifierKey(P0); mod1 != ModNone {
+ 				mod |= mod1
+ 			}
++			// kitty mode 16: a terminal that sends associated text reports
++			// the key's layout-correct output, already shifted - trust it
++			// over the base key. No text (e.g. terminals without mode 16)
++			// falls through to base key + modifiers.
++			if text := kittyKeyText(pstr); text != "" {
++				mod &^= ModShift // the shift is expressed in the text
++				ip.postKeyEx(KeyRune, text, mod, pressed, physical, repeat)
++				return
++			}
+ 			if key != KeyRune {
+ 				ip.postKeyEx(key, "", mod, pressed, physical, repeat)
+ 			} else if chr != 0 {
+diff --git a/tscreen.go b/tscreen.go
+index 11b993f..0ee361d 100644
+--- a/tscreen.go
++++ b/tscreen.go
+@@ -179,7 +179,7 @@ const (
+ 	notifyDesktop777  = "\x1b]777;notify;%s;%s\x1b\\"       // Most commonly supported
+ 	queryKittyKbd     = "\x1b[?u"                           // Query for Kitty keyboard support
+ 	enableKittyKbd    = "\x1b[=1u"                          // Technically this pushes
+-	enableKittyKbdAdv = "\x1b[=15u"                         // disambiguation, events, alternate keys, all keys
++	enableKittyKbdAdv = "\x1b[=31u"                         // disambiguation, events, alternate keys, all keys, text
+ 	disableKittyKbd   = "\x1b[=0u"                          // Technically this means pop previous mode
+ 	queryXTermKbd     = "\x1b[?4m"                          // Query for XTerm modify other keys support
+ 	enableXTermKbd    = "\x1b[>4;2m"                        // Enable modify other keys protocol
+--
+2.46.0

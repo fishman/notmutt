@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-runewidth"
 
 	"notmutt/compose"
@@ -362,7 +363,7 @@ func TestLogOverlayScroll(t *testing.T) {
 	if m.logView.offset != 0 {
 		t.Fatalf("g must scroll the log to the top, offset=%d", m.logView.offset)
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	next, _ = m.Update(KeyPressMsg{Text: "d", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.logView.offset != 10 {
 		t.Fatalf("ctrl+d must scroll the log back half a window, offset=%d", m.logView.offset)
@@ -491,13 +492,13 @@ func ghostModel() Model {
 
 func press(t *testing.T, m Model, key string) Model {
 	t.Helper()
-	next, _ := m.Update(KeyPressMsg{Text: key, Code: []rune(key)[0]})
+	next, _ := m.Update(KeyPressMsg{Text: key, Code: tcell.KeyRune})
 	return next
 }
 
 // pressType presses a special key (arrows, ctrl+...): actionForKey
 // resolves the canonical name via msg.String() ("up", "down", "ctrl+d").
-func pressType(t *testing.T, m Model, k rune) Model {
+func pressType(t *testing.T, m Model, k tcell.Key) Model {
 	t.Helper()
 	next, _ := m.Update(KeyPressMsg{Code: k})
 	return next
@@ -658,11 +659,11 @@ func TestFilterPrompt(t *testing.T) {
 	if len(m.rows) != 0 {
 		t.Fatalf("'bobx' must match nothing: %d rows", len(m.rows))
 	}
-	m = pressType(t, m, KeyBackspace)
+	m = pressType(t, m, tcell.KeyBackspace)
 	if len(m.rows) != 1 {
 		t.Fatalf("backspace must widen again: %d rows", len(m.rows))
 	}
-	m = pressType(t, m, KeyEsc)
+	m = pressType(t, m, tcell.KeyEsc)
 	if m.dialogue != nil {
 		t.Fatal("esc must close the prompt")
 	}
@@ -676,7 +677,7 @@ func TestFilterPrompt(t *testing.T) {
 	if len(m.rows) != 1 {
 		t.Fatalf("typing 'a' must narrow to Ann: %d rows", len(m.rows))
 	}
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.dialogue != nil {
 		t.Fatal("enter must close the prompt")
 	}
@@ -688,7 +689,7 @@ func TestFilterPrompt(t *testing.T) {
 	if len(m.rows) != 0 {
 		t.Fatalf("the reopened prompt must prefill 'a': %d rows", len(m.rows))
 	}
-	m = pressType(t, m, KeyEsc)
+	m = pressType(t, m, tcell.KeyEsc)
 	if m.dialogue != nil {
 		t.Fatal("esc must close the prompt")
 	}
@@ -713,7 +714,7 @@ func TestCommandPromptRunsLua(t *testing.T) {
 		t.Fatalf(": must open the command line: %+v", m.dialogue)
 	}
 	m = press(t, m, "lua print(1)")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.dialogue != nil {
 		t.Fatal("enter must close the command line")
 	}
@@ -736,7 +737,7 @@ func TestLuaPromptRoundTrip(t *testing.T) {
 		t.Fatalf("PromptRequest must open the prompt: %+v", m.dialogue)
 	}
 	m = press(t, m, "glish") // the prefill is editable: "en" + "glish"
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	select {
 	case e := <-ch:
 		r, ok := e.(core.PromptResult)
@@ -748,7 +749,7 @@ func TestLuaPromptRoundTrip(t *testing.T) {
 	}
 
 	m = pressEvent(t, m, core.PromptRequest{ID: "p2", Label: "Confirm:"})
-	m = pressType(t, m, KeyEsc)
+	m = pressType(t, m, tcell.KeyEsc)
 	select {
 	case e := <-ch:
 		r, ok := e.(core.PromptResult)
@@ -771,7 +772,7 @@ func TestLuaPromptTabCommits(t *testing.T) {
 
 	m = pressEvent(t, m, core.PromptRequest{ID: "p1", Label: "Language:", Prefill: "en"})
 	m = press(t, m, "glish") // the prefill is editable: "en" + "glish"
-	m = pressType(t, m, KeyTab)
+	m = pressType(t, m, tcell.KeyTab)
 	if m.dialogue != nil {
 		t.Fatalf("Tab must close the lua prompt, dialogue = %+v", m.dialogue)
 	}
@@ -791,7 +792,7 @@ func TestLuaPromptTabCommits(t *testing.T) {
 func TestCommandTabCloses(t *testing.T) {
 	m := model()
 	m.dialogue = &textDialogue{field: "command", label: ": "}
-	m = pressType(t, m, KeyTab)
+	m = pressType(t, m, tcell.KeyTab)
 	if m.dialogue != nil {
 		t.Fatalf("Tab must close the command prompt, dialogue = %+v", m.dialogue)
 	}
@@ -1690,7 +1691,7 @@ func TestPagerPageKeys(t *testing.T) {
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	// a real ctrl+d key: KeyMsg.String() resolves to "ctrl+d" and the
 	// dispatch finds the half-page-down binding
-	next, _ := m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "d", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.pager.vp.offset != 3 {
 		t.Fatalf("ctrl+d must scroll half a window, offset=%d", m.pager.vp.offset)
@@ -1784,11 +1785,11 @@ func TestNumberColumnGrows(t *testing.T) {
 // the user's config file adds the keys).
 func TestArrowKeysMoveCursor(t *testing.T) {
 	m := rowsModel(3)
-	m = pressType(t, m, KeyDown)
+	m = pressType(t, m, tcell.KeyDown)
 	if m.CursorIndex() != 1 {
 		t.Fatalf("down must move the cursor down, got %d", m.CursorIndex())
 	}
-	m = pressType(t, m, KeyUp)
+	m = pressType(t, m, tcell.KeyUp)
 	if m.CursorIndex() != 0 {
 		t.Fatalf("up must move the cursor up, got %d", m.CursorIndex())
 	}
@@ -1806,11 +1807,11 @@ func TestArrowKeysScrollPager(t *testing.T) {
 	}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
 	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
-	m = pressType(t, m, KeyDown)
+	m = pressType(t, m, tcell.KeyDown)
 	if m.pager.vp.offset != 1 {
 		t.Fatalf("down in pager mode must scroll down, offset=%d", m.pager.vp.offset)
 	}
-	m = pressType(t, m, KeyUp)
+	m = pressType(t, m, tcell.KeyUp)
 	if m.pager.vp.offset != 0 {
 		t.Fatalf("up in pager mode must scroll back, offset=%d", m.pager.vp.offset)
 	}
@@ -2057,10 +2058,10 @@ func TestTabSwitchShowsAttachedView(t *testing.T) {
 		t.Fatalf("inbox rows: %+v", m.rows)
 	}
 	// a search tab with its own row
-	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
 		{ID: "m9", Timestamp: 9, Author: "Acme", Subject: "search mail"},
 	})})
@@ -2098,10 +2099,10 @@ func TestGotoSwitchesToMailSurface(t *testing.T) {
 	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
 
 	m := model()
-	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.tabIdx != 1 || m.activeSearchIdx() != 0 {
 		t.Fatalf("the search tab must be attached: idx %d", m.tabIdx)
 	}
@@ -2134,10 +2135,10 @@ func TestApplyTargetsActiveView(t *testing.T) {
 		t.Fatalf("apply on the mail surface must target the mail view")
 	}
 	got = nil
-	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	m = press(t, m, "$")
 	if got == nil || got != m.searchTabs[0] {
 		t.Fatalf("apply in a search tab must target that tab's view")
@@ -2154,13 +2155,13 @@ func TestSearchTabOpen(t *testing.T) {
 	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
 
 	m := model()
-	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if d := textD(m); d == nil || d.field != "searchtab" || d.label != "search: " {
 		t.Fatalf("ctrl+f must open the search prompt: %+v", m.dialogue)
 	}
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if got == nil || got.ViewName() != "tag:acme" || got.ViewQuery() != "tag:acme" {
 		t.Fatalf("commit must create the query view: %+v", got)
 	}
@@ -2204,13 +2205,13 @@ func TestSearchTabFromPager(t *testing.T) {
 	if m.mode != "pager" {
 		t.Fatalf("the thread load must open the pager, mode %q", m.mode)
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ = m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if d := textD(m); d == nil || d.field != "searchtab" {
 		t.Fatalf("ctrl+f in the pager must open the search prompt: %+v", m.dialogue)
 	}
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if got == nil || got.ViewQuery() != "tag:acme" {
 		t.Fatalf("commit must create the query view: %+v", got)
 	}
@@ -2231,10 +2232,10 @@ func TestSearchTabBackground(t *testing.T) {
 	cfg.UI.SearchOpen = "background"
 	m := model()
 	m.ui = cfg.UI
-	next, _ := m.Update(KeyPressMsg{Code: 'f', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	m = press(t, m, "tag:acme")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if len(m.searchTabs) != 1 || m.tabIdx != 0 || m.mode != "index" {
 		t.Fatalf("background search-open must keep the surface: tabs %d idx %d mode %q", len(m.searchTabs), m.tabIdx, m.mode)
 	}
@@ -2387,7 +2388,7 @@ func TestComposeSchedulePrompt(t *testing.T) {
 	got := ""
 	SetScheduleHandler(func(st compose.State, at string) { got = at })
 	m = press(t, m, "tomorrow")
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.dialogue != nil {
 		t.Fatalf("enter must close the schedule prompt: %+v", m.dialogue)
 	}
@@ -2449,7 +2450,7 @@ func TestScheduledListPicker(t *testing.T) {
 	if len(d.f.entries) != 2 || !strings.Contains(d.f.entries[0], "hello") || !strings.Contains(d.f.entries[1], "(no subject)") {
 		t.Fatalf("entries = %v", d.f.entries)
 	}
-	m = pressType(t, m, KeyEnter) // read-only: enter just closes
+	m = pressType(t, m, tcell.KeyEnter) // read-only: enter just closes
 	if m.dialogue != nil {
 		t.Fatalf("enter must close the read-only list: %+v", m.dialogue)
 	}
@@ -2476,7 +2477,7 @@ func TestScheduledEdit(t *testing.T) {
 	t.Cleanup(func() { SetScheduledEditHandler(func(string) {}) })
 	m := model()
 	m = press(t, m, "s")
-	m = pressType(t, m, 'e')
+	m = press(t, m, "e")
 	if edited != "tabA" {
 		t.Fatalf("e must hand the selected entry's id (the list sorts by display, tabA first), got %q", edited)
 	}
@@ -2488,7 +2489,7 @@ func TestScheduledEdit(t *testing.T) {
 	m = model()
 	m = press(t, m, "s")
 	m = press(t, m, "world") // filter to the second entry
-	m = pressType(t, m, 'e')
+	m = press(t, m, "e")
 	if edited != "tabB" {
 		t.Fatalf("e must edit the filtered selection, got %q", edited)
 	}
@@ -2731,7 +2732,7 @@ func TestAttachPromptAndDetach(t *testing.T) {
 	for _, r := range path {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, KeyEnter) // String() resolves to "enter"
+	m = pressType(t, m, tcell.KeyEnter) // String() resolves to "enter"
 	if m.dialogue != nil {
 		t.Fatal("enter must close the prompt")
 	}
@@ -2802,13 +2803,13 @@ func TestFieldEditFrom(t *testing.T) {
 	if d := textD(m); d == nil || d.input != "Bob <bob@example.com>" {
 		t.Fatalf("the From field must pre-fill: %+v", m.dialogue)
 	}
-	m = pressType(t, m, KeyEsc)
+	m = pressType(t, m, tcell.KeyEsc)
 	if m.dialogue != nil || m.tabs[0].From != "Bob <bob@example.com>" {
 		t.Fatalf("esc must cancel the field edit: prompt=%v From=%q", m.dialogue != nil, m.tabs[0].From)
 	}
 	m = press(t, m, "f")
 	m = press(t, m, "x") // typing appends to the pre-filled input
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.dialogue != nil {
 		t.Fatal("enter must close the field prompt")
 	}
@@ -2829,7 +2830,7 @@ func TestFieldEditToSplitsAddrs(t *testing.T) {
 	for _, r := range ", d@e.f" {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if len(m.tabs[0].To) != 2 || m.tabs[0].To[0] != "a@b.c" || m.tabs[0].To[1] != "d@e.f" {
 		t.Fatalf("To = %v", m.tabs[0].To)
 	}
@@ -2975,7 +2976,7 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	for _, r := range "alpha" {
 		m = press(t, m, string(r))
 	}
-	m = pressType(t, m, KeyEnter) // enter selects
+	m = pressType(t, m, tcell.KeyEnter) // enter selects
 	if picker(m) != nil {
 		t.Fatal("enter must close the picker")
 	}
@@ -3319,7 +3320,7 @@ func TestAttachPromptCommandPicker(t *testing.T) {
 	if d := textD(m); d == nil || d.input != "@yazi" {
 		t.Fatalf("the selection must arm the prompt: %+v", m.dialogue)
 	}
-	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: tcell.KeyRune})
 	m = next
 	if cmd == nil {
 		t.Fatal("enter must return the command exec")
@@ -3335,7 +3336,7 @@ func TestAttachCmdUnknownKeepsPrompt(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "a")
 	m = press(t, m, "@nope")
-	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: []rune("enter")[0]})
+	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: tcell.KeyRune})
 	m = next
 	if cmd != nil {
 		t.Fatal("an unknown command must not exec")
@@ -3913,12 +3914,12 @@ func TestComposePreviewScrolls(t *testing.T) {
 	if m.previewPager == nil || len(m.previewPager.lines) < 200 {
 		t.Fatalf("the preview pager must hold the body lines: %d", len(m.previewPager.lines))
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'd', Mod: modCtrl})
+	next, _ = m.Update(KeyPressMsg{Text: "d", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.previewPager.vp.offset <= 0 {
 		t.Fatal("ctrl+d must scroll the compose preview")
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'u', Mod: modCtrl})
+	next, _ = m.Update(KeyPressMsg{Text: "u", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.previewPager.vp.offset != 0 {
 		t.Fatalf("ctrl+u must scroll back, offset=%d", m.previewPager.vp.offset)
@@ -3990,7 +3991,7 @@ func TestSendTickReArmsWhileSending(t *testing.T) {
 func TestSendErrorDialogue(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "y") // the send press
-	m = pressType(t, m, 'x')
+	m = press(t, m, "x")
 	calls := 0
 	SetSendHandler(func(st compose.State) { calls++ })
 	defer SetSendHandler(func(st compose.State) {})
@@ -4128,9 +4129,9 @@ func TestAddrCompletion(t *testing.T) {
 	}
 	// a multi-sender line completes only the section after the last
 	// comma: the earlier senders stay, and the gate counts the section
-	m = press(t, m, "enter")    // select bob@x.io, closing the picker
-	m = pressType(t, m, KeyEsc) // close the Bcc field
-	m = press(t, m, "t")        // the To field, prefilled with the dialogue's To
+	m = press(t, m, "enter")          // select bob@x.io, closing the picker
+	m = pressType(t, m, tcell.KeyEsc) // close the Bcc field
+	m = press(t, m, "t")              // the To field, prefilled with the dialogue's To
 	for _, r := range ", b" {
 		m = press(t, m, string(r))
 	}
@@ -4152,7 +4153,7 @@ func TestAddrCompletion(t *testing.T) {
 	// the section under completion follows the edit cursor, not the last
 	// comma: with the cursor inside the middle section, the picker
 	// completes that one and preserves the trailing section
-	m = pressType(t, m, KeyEsc) // close the To field
+	m = pressType(t, m, tcell.KeyEsc) // close the To field
 	m = press(t, m, "t")
 	for _, r := range ", bob@, ca" {
 		m = press(t, m, string(r))
@@ -4198,7 +4199,7 @@ func TestDialogueCursorEditing(t *testing.T) {
 	if d.input != "abXe" || d.cur != 3 {
 		t.Fatalf("right then backspace must delete the moved-to char: %q cur=%d", d.input, d.cur)
 	}
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if m.dialogue != nil {
 		t.Fatal("enter must close the prompt")
 	}
@@ -4281,7 +4282,7 @@ func TestCtrlGCancels(t *testing.T) {
 	if len(m.rows) != 1 {
 		t.Fatalf("typing must narrow live: %d rows", len(m.rows))
 	}
-	next, _ := m.Update(KeyPressMsg{Code: 'g', Mod: modCtrl})
+	next, _ := m.Update(KeyPressMsg{Text: "g", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.dialogue != nil {
 		t.Fatal("ctrl+g must cancel the filter prompt")
@@ -4297,7 +4298,7 @@ func TestCtrlGCancels(t *testing.T) {
 	if d := textD(m); d == nil || d.input != before+"x" {
 		t.Fatalf("the subject prompt must be open with input: %+v", m.dialogue)
 	}
-	next, _ = m.Update(KeyPressMsg{Code: 'g', Mod: modCtrl})
+	next, _ = m.Update(KeyPressMsg{Text: "g", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
 	m = next
 	if m.dialogue != nil {
 		t.Fatal("ctrl+g must cancel the subject prompt")
@@ -4383,7 +4384,7 @@ func TestAddrCompletionLengthGate(t *testing.T) {
 	}}})
 	m = next
 	m = press(t, m, "b") // the Bcc field, empty
-	m = pressType(t, m, 'a')
+	m = press(t, m, "a")
 	m = press(t, m, "tab")
 	if picker(m) != nil {
 		t.Fatalf("Tab with < 4 chars must not open the picker")
@@ -4401,7 +4402,7 @@ func TestAddrCompletionLazyDebounce(t *testing.T) {
 	for _, r := range "bob@" {
 		m = press(t, m, string(r))
 	}
-	next, cmd := m.Update(KeyPressMsg{Code: KeyTab})
+	next, cmd := m.Update(KeyPressMsg{Code: tcell.KeyTab})
 	m = next
 	if cmd == nil {
 		t.Fatal("a first trigger without a corpus must arm the debounce tick")
@@ -4937,7 +4938,7 @@ func TestOpenLinksHTML(t *testing.T) {
 	// F again exits without opening; a dead digit is ignored
 	m = press(t, m, "F")
 	inject(core.RenderHTML, true)
-	m = pressType(t, m, KeyEsc)
+	m = pressType(t, m, tcell.KeyEsc)
 	if opened != "https://beta.example.com/b" || m.linkInput != "" {
 		t.Fatalf("esc must exit the label mode without opening: %q input=%q", opened, m.linkInput)
 	}
@@ -5202,7 +5203,7 @@ func TestEasyjumpHighlight(t *testing.T) {
 		t.Fatalf("backspace must drop the digits and the highlight: input=%q sel=%q", m.linkInput, m.pager.linkSel)
 	}
 	m = press(t, m, "2") // enter confirms the highlighted link
-	m = pressType(t, m, KeyEnter)
+	m = pressType(t, m, tcell.KeyEnter)
 	if opened != "https://example.com/2" {
 		t.Fatalf("enter must open the highlighted link: %q", opened)
 	}
@@ -5426,7 +5427,7 @@ func TestAttachChooseReArmsBus(t *testing.T) {
 	defer func() { pluginActions = old }()
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "a")
-	next, cmd := m.Update(KeyPressMsg{Text: "tab", Code: []rune("tab")[0]})
+	next, cmd := m.Update(KeyPressMsg{Text: "tab", Code: tcell.KeyRune})
 	m = next
 	if cmd == nil {
 		t.Fatal("the attach-choose Tab must re-arm the event channel")
@@ -5575,15 +5576,15 @@ func TestFilePickerRightLeft(t *testing.T) {
 	m.fileDir = root
 	m = press(t, m, "a")
 	m = press(t, m, "tab")
-	m = pressType(t, m, KeyRight)
+	m = pressType(t, m, tcell.KeyRight)
 	if p := picker(m); p == nil || strings.Join(p.entries, ",") != "" {
 		t.Fatalf("right must enter the folder: %+v", picker(m))
 	}
-	m = pressType(t, m, KeyLeft)
+	m = pressType(t, m, tcell.KeyLeft)
 	if p := picker(m); p == nil || strings.Join(p.entries, ",") != "d1/,f1.txt" {
 		t.Fatalf("left must walk back up: %+v", picker(m))
 	}
-	m = pressType(t, m, KeyLeft)
+	m = pressType(t, m, tcell.KeyLeft)
 	if picker(m) == nil {
 		t.Fatal("left at the root must stay in the picker")
 	}

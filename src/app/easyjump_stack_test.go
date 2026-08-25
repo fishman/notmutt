@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gdamore/tcell/v3"
+
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/tui"
@@ -73,7 +75,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 		}
 	}
 	press := func(key string) {
-		m, _ = m.Update(tui.KeyPressMsg{Text: key, Code: []rune(key)[0]})
+		m, _ = m.Update(tui.KeyPressMsg{Text: key, Code: tcell.KeyRune})
 	}
 	press("enter") // open the thread
 	pump()

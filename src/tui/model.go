@@ -459,6 +459,9 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		// after chainTimeout. A bound key wins over the prefix. A
 		// counted "g" keeps its jump semantic (12g = row 12).
 		r := msg.Text
+		if !msg.Typed() {
+			r = ""
+		}
 		cand := m.pendingPrefix + " " + r
 		if km[r] == "" && len(r) == 1 && r[0] >= '0' && r[0] <= '9' &&
 			!(km[cand] != "" || chainContinuation(km, cand)) {
@@ -1491,7 +1494,7 @@ func (m *Model) exitLinkMode() {
 // feedback): digits extend, backspace drops, enter opens, esc/F leave,
 // and the pager scroll keys stay live - labels below the fold reachable.
 func (m *Model) linkKey(msg KeyPressMsg) {
-	if t := msg.Text; len(t) == 1 && t[0] >= '0' && t[0] <= '9' {
+	if t := msg.Text; msg.Typed() && len(t) == 1 && t[0] >= '0' && t[0] <= '9' {
 		m.linkDigit(t)
 		return
 	}
@@ -2110,8 +2113,10 @@ func (m Model) previewContentSize() (int, int) {
 // then BubbleTea's canonical name ("ctrl+n", "alt+v", ...) so control
 // keys are bindable.
 func actionForKey(msg KeyPressMsg, km map[string]string) string {
-	if a, ok := km[msg.Text]; ok {
-		return a
+	if msg.Typed() {
+		if a, ok := km[msg.Text]; ok {
+			return a
+		}
 	}
 	return km[msg.String()]
 }
@@ -3233,7 +3238,7 @@ func (d *textDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	case "alt+b": // back a word
 		d.backWord()
 	default:
-		if msg.Text != "" {
+		if msg.Typed() && msg.Text != "" {
 			d.input = d.input[:d.cur] + msg.Text + d.input[d.cur:]
 			d.cur += len(msg.Text)
 			d.changed(m)
@@ -3336,7 +3341,7 @@ func (d *listDialogue) typeKey(msg KeyPressMsg) bool {
 		if d.f.query != "" {
 			d.f.query = d.f.query[:len(d.f.query)-1]
 		}
-	case msg.Text != "":
+	case msg.Typed() && msg.Text != "":
 		d.f.query += msg.Text
 	default:
 		return false
@@ -3428,7 +3433,7 @@ func (d *fileDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 	// a typed path owns single-char keys: once the query looks like a
 	// path, letters type (a "t" in "/tmp/" is a literal, never the
 	// fuzzy-mark binding); arrows and enter keep dispatching
-	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" && !(isPathQuery(d.f.query) && len(msg.Text) == 1) {
+	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" && !(isPathQuery(d.f.query) && msg.Typed() && len(msg.Text) == 1) {
 		switch a {
 		case "fuzzy-down":
 			d.f.move(1)

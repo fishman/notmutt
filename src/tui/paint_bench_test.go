@@ -21,7 +21,7 @@ func benchPaint(b *testing.B, rows int) {
 	m, _ = m.Update(WindowSizeMsg{Width: 120, Height: 40})
 	s := newFakeScreen()
 	s.SetSize(120, 40)
-	move := KeyPressMsg{Code: KeyDown}
+	move := KeyPressMsg{Code: tcell.KeyDown}
 	// warm: one full paint so the row caches and the sim buffer settle
 	frame := m.View()
 	x, y, show := m.textCursor()

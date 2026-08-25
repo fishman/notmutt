@@ -58,8 +58,9 @@ jobs:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Package rpm
-        run: nfpm package --packager rpm --config packaging/notmutt.yaml \
-          --target dist/notmutt-${VERSION}-1.x86_64.rpm
+        run: |
+          nfpm package --packager rpm --config packaging/notmutt.yaml \
+            --target dist/notmutt-${VERSION}-1.x86_64.rpm
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 

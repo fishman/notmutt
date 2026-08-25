@@ -59,7 +59,7 @@ github.com/fishman/zaman
 # github.com/gdamore/encoding v1.0.1
 ## explicit; go 1.9
 github.com/gdamore/encoding
-# github.com/gdamore/tcell/v3 v3.4.1
+# github.com/gdamore/tcell/v3 v3.4.2
 ## explicit; go 1.25.0
 github.com/gdamore/tcell/v3
 github.com/gdamore/tcell/v3/color
@@ -84,7 +84,7 @@ github.com/google/uuid
 # github.com/jackmordaunt/icns/v3 v3.0.1
 ## explicit; go 1.21.5
 github.com/jackmordaunt/icns/v3
-# github.com/lucasb-eyer/go-colorful v1.4.0
+# github.com/lucasb-eyer/go-colorful v1.4.1
 ## explicit; go 1.12
 github.com/lucasb-eyer/go-colorful
 # github.com/mark3labs/mcp-go v0.58.0

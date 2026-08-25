@@ -1,0 +1,120 @@
+# Build deb/rpm (nfpm) + Arch (makepkg) packages from a vMAJOR.MINOR.PATCH tag.
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  deb-rpm:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: src/go.mod
+
+      - name: Install libnotmuch runtime deps
+        run: sudo apt-get update && sudo apt-get install -y libxapian-dev libtalloc-dev libgmime-3.0-dev libz-dev
+
+      - name: Cache libnotmuch
+        uses: actions/cache@v6
+        with:
+          path: ~/notmuch-install
+          key: notmuch-0.40-${{ runner.os }}-${{ runner.image }}
+
+      - name: Install libnotmuch
+        run: .github/install-libnotmuch.sh
+
+      - name: Derive and validate version
+        id: ver
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          v="${REF#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+            { echo "tag $REF is not vMAJOR.MINOR.PATCH" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build binary
+        run: make build
+
+      - name: Install nfpm
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
+
+      - name: Package deb
+        run: nfpm package --packager deb --config packaging/notmutt.yaml --target dist/
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Package rpm
+        run: nfpm package --packager rpm --config packaging/notmutt.yaml --target dist/
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-rpm
+          path: dist/
+
+  arch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Derive and validate version
+        id: ver
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          v="${REF#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+            { echo "tag $REF is not vMAJOR.MINOR.PATCH" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Build Arch package
+        working-directory: packaging/notmutt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD:/pkg" -e VERSION="$VERSION" \
+            archlinux/archlinux:base-devel bash -c '
+            pacman -Syu --noconfirm >/dev/null
+            pacman -S --noconfirm --needed git go notmuch >/dev/null
+            useradd -m builder
+            sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
+            mv PKGBUILD.ci PKGBUILD
+            chown -R builder /pkg
+            su builder -c "cd /pkg && makepkg -f --noconfirm"
+          '
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch
+          path: packaging/notmutt/*.pkg.tar.zst
+
+  release:
+    needs: [deb-rpm, arch]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

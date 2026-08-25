@@ -1,0 +1,31 @@
+# nfpm config: one description for both deb and rpm. Needs
+# VERSION=<x.y.z> (release workflow) and ./notmutt (make build).
+name: notmutt
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: mail
+priority: optional
+maintainer: Reza Jelveh <git@jelveh.me>
+description: |
+  Async terminal mail client on notmuch. Tags are the logical model,
+  folders are storage; every view, filter and trigger is a notmuch
+  query or tag op.
+homepage: https://github.com/fishman/notmutt
+license: Apache-2.0
+contents:
+  - src: ./notmutt
+    dst: /usr/bin/notmutt
+    file_info:
+      mode: 0755
+  - src: ./README.md
+    dst: /usr/share/doc/notmutt/README.md
+    file_info:
+      mode: 0644
+overrides:
+  deb:
+    depends:
+      - libnotmuch5 | libnotmuch5t64
+  rpm:
+    depends:
+      - libnotmuch

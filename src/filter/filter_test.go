@@ -213,6 +213,52 @@ func TestEntryPriority(t *testing.T) {
 	}
 }
 
+// TestEntryNotify pins the default notification scope: only a message
+// carrying every [notify] tags entry (default inbox + unread) fires a
+// notification - read inbox mail and sent mail stay quiet. Empty tags
+// (the escape hatch) notifies on every entry.
+func TestEntryNotify(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = true
+	newMail := &fakeWorker{
+		delta:  []core.Message{{ID: "m1"}},
+		snaps:  []core.Message{{ID: "m1", Tags: []string{"inbox", "unread"}, Paths: []string{"gmail/INBOX/cur/2"}}},
+		header: map[string]bool{"m1": true},
+	}
+	rep, err := New(newMail, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 || !rep.Entries[0].Notify {
+		t.Fatalf("unread inbox entry must notify: %+v", rep.Entries)
+	}
+	// already-read inbox mail is not new mail
+	read := &fakeWorker{
+		delta:  []core.Message{{ID: "m2"}},
+		snaps:  []core.Message{{ID: "m2", Tags: []string{"inbox"}, Paths: []string{"gmail/INBOX/cur/2"}}},
+		header: map[string]bool{"m2": true},
+	}
+	rep, err = New(read, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 || rep.Entries[0].Notify {
+		t.Fatalf("read inbox entry must not notify: %+v", rep.Entries)
+	}
+	// empty tags notifies on every entry
+	cfg.Notify.Tags = nil
+	rep, err = New(read, cfg, root).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 1 || !rep.Entries[0].Notify {
+		t.Fatalf("empty notify tags must notify on every entry: %+v", rep.Entries)
+	}
+}
+
 func TestMover(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")

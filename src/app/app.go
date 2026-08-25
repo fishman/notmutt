@@ -346,7 +346,7 @@ func Run() error {
 		ch := bus.Subscribe()
 		for e := range ch {
 			if d, ok := e.(core.FilterDone); ok && !d.DryRun {
-				go notifyNewMail(st.Config(), backend, d.Entries, d.Priority)
+				go notifyNewMail(st.Config(), backend, d.Notify, d.Priority)
 			}
 		}
 	}()

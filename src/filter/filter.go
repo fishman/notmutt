@@ -114,6 +114,7 @@ type Entry struct {
 	Subject   string
 	Timestamp int64
 	Priority  bool // carries a [notify] priority tag after classification
+	Notify    bool // carries every [notify] tags entry after classification (default: unread inbox)
 	Account   string
 	Folder    string       // the resolved folder-group winner with move candidates; empty = no move
 	Paths     []string     // the message's files, as notmuch reported them
@@ -309,6 +310,16 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 			}
 		}
 	}
+	notif := len(e.cfg.Notify.Tags) == 0
+	if !notif {
+		notif = true
+		for _, t := range e.cfg.Notify.Tags {
+			if !slices.Contains(final, t) {
+				notif = false
+				break
+			}
+		}
+	}
 	acc := ""
 	folder := ""
 	if ar != nil {
@@ -338,7 +349,7 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	if len(ops) == 0 && folder == "" {
 		return Entry{}
 	}
-	return Entry{ID: m.ID, Sender: m.Author, Subject: m.Subject, Timestamp: m.Timestamp, Priority: prio, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
+	return Entry{ID: m.ID, Sender: m.Author, Subject: m.Subject, Timestamp: m.Timestamp, Priority: prio, Notify: notif, Account: acc, Folder: folder, Paths: m.Paths, Ops: resolved}
 }
 
 // RelPath strips the mail root prefix for the path rules: the root

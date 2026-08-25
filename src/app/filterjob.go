@@ -58,7 +58,8 @@ func (j *filterJob) run() {
 	}
 	reportFilterDiag(rep, mr)
 	moved, skipped := moveCounts(mr)
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Moves: moved, Skips: skipped, Priority: notifyHeadlines(cfg, rep)})
+	notifiable := notifyEntries(cfg, rep)
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Notify: len(notifiable), Moves: moved, Skips: skipped, Priority: notifyHeadlines(cfg, notifiable)})
 }
 
 // moveCounts splits a move report into executed moves and skips -
@@ -103,17 +104,34 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	return rep, mr, nil
 }
 
+// notifyEntries is the notification scope: only entries that carry
+// every [notify] tags entry (the classifier's Notify flag) fire - by
+// default unread inbox mail, so a poll that only reclassified deleted,
+// sent, or archive mail stays quiet. Empty tags notifies on every entry.
+func notifyEntries(cfg config.Config, rep *filter.Report) []filter.Entry {
+	if len(cfg.Notify.Tags) == 0 {
+		return rep.Entries
+	}
+	out := make([]filter.Entry, 0, len(rep.Entries))
+	for _, e := range rep.Entries {
+		if e.Notify {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // notifyHeadlines builds the [notify] summary payload: priority-tagged
 // entries first, the rest filling the cap - the count line never ships
 // alone (F6: no ids, no bodies). max <= 0 disables the rows, the count
 // stays.
-func notifyHeadlines(cfg config.Config, rep *filter.Report) []core.NotifyHeadline {
+func notifyHeadlines(cfg config.Config, entries []filter.Entry) []core.NotifyHeadline {
 	if cfg.Notify.Max <= 0 {
 		return nil
 	}
 	out := make([]core.NotifyHeadline, 0, cfg.Notify.Max)
 	for _, pass := range []bool{true, false} {
-		for _, e := range rep.Entries {
+		for _, e := range entries {
 			if e.Priority == pass && e.Subject != "" {
 				out = append(out, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
 				if len(out) >= cfg.Notify.Max {

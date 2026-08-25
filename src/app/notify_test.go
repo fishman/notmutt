@@ -74,18 +74,38 @@ func TestNotifyHeadlines(t *testing.T) {
 		{Subject: "c", Sender: "Bob", Timestamp: 2000, Priority: true},
 		{Subject: "d", Sender: "Cid"},
 	}}
-	got := notifyHeadlines(cfg, rep)
+	got := notifyHeadlines(cfg, rep.Entries)
 	if len(got) != 2 || got[0].Sender != "Ann" || got[1].Subject != "c" {
 		t.Fatalf("headlines: %+v", got)
 	}
 	// no priority entries: the batch fills the cap, the count never ships alone
 	rep = &filter.Report{Entries: []filter.Entry{{Subject: "x", Sender: "Dana"}, {Subject: "y", Sender: "Eli"}}}
-	if got := notifyHeadlines(cfg, rep); len(got) != 2 || got[1].Sender != "Eli" {
+	if got := notifyHeadlines(cfg, rep.Entries); len(got) != 2 || got[1].Sender != "Eli" {
 		t.Fatalf("fallback fill: %+v", got)
 	}
 	cfg.Notify.Max = 0
-	if got := notifyHeadlines(cfg, rep); len(got) != 0 {
+	if got := notifyHeadlines(cfg, rep.Entries); len(got) != 0 {
 		t.Fatalf("max=0: %v", got)
+	}
+}
+
+// TestNotifyEntries: the notification scope is the classifier's Notify
+// flag - unread inbox mail by default; empty tags notifies on every
+// entry (the count that reaches the notifier, not the whole batch).
+func TestNotifyEntries(t *testing.T) {
+	cfg := config.Default() // tags = [inbox unread]
+	rep := &filter.Report{Entries: []filter.Entry{
+		{ID: "new", Notify: true},
+		{ID: "read", Notify: false},
+		{ID: "sent", Notify: false},
+	}}
+	got := notifyEntries(cfg, rep)
+	if len(got) != 1 || got[0].ID != "new" {
+		t.Fatalf("notifyEntries = %+v, want only the unread inbox entry", got)
+	}
+	cfg.Notify.Tags = nil
+	if got := notifyEntries(cfg, rep); len(got) != 3 {
+		t.Fatalf("empty notify tags must pass every entry through: %d", len(got))
 	}
 }
 

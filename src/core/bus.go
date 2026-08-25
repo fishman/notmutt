@@ -311,6 +311,7 @@ type JobError struct {
 type FilterDone struct {
 	DryRun   bool
 	Entries  int
+	Notify   int // entries that carry every [notify] tags entry (default: unread inbox)
 	Moves    int
 	Skips    int
 	Priority []NotifyHeadline // summary rows: priority entries first, the batch filling the cap (F6: no ids, no bodies)

@@ -558,6 +558,23 @@ func TestDefaultNotify(t *testing.T) {
 	if cfg.Notify.Backend != "" || cfg.Notify.Max != 3 {
 		t.Fatalf("default notify = %+v", cfg.Notify)
 	}
+	// the notification scope defaults to unread inbox mail
+	if len(cfg.Notify.Tags) != 2 || cfg.Notify.Tags[0] != "inbox" || cfg.Notify.Tags[1] != "unread" {
+		t.Fatalf("default notify tags = %v, want [inbox unread]", cfg.Notify.Tags)
+	}
+}
+
+// TestLoadNotifyTagsOverride: the user config's [notify] tags replace
+// the base.toml default (the whole section is user data, ready for
+// override - the same overlay the binding schemes use).
+func TestLoadNotifyTagsOverride(t *testing.T) {
+	cfg, err := Load(write(t, "[notify]\ntags = [\"work\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Notify.Tags) != 1 || cfg.Notify.Tags[0] != "work" {
+		t.Fatalf("notify tags override = %v, want [work]", cfg.Notify.Tags)
+	}
 }
 
 func TestLoadUnknownKeyErrors(t *testing.T) {

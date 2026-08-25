@@ -248,6 +248,7 @@ type Notify struct {
 	Backend  string   `toml:"backend" enum:"command,beeep"` // empty = auto-detect
 	Command  []string `toml:"command"`
 	Priority []string `toml:"priority"`
+	Tags     []string `toml:"tags"` // tags a message must carry (all) to notify; empty = every classified message
 	Max      int      `toml:"max"`
 }
 
@@ -1531,6 +1532,11 @@ func validate(cfg Config) error {
 	for _, t := range cfg.Notify.Priority {
 		if strings.TrimSpace(t) == "" {
 			return fmt.Errorf("notify: priority tag must not be empty")
+		}
+	}
+	for _, t := range cfg.Notify.Tags {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("notify: tags entry must not be empty")
 		}
 	}
 	for i, r := range cfg.Filter.HeaderRules {

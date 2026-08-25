@@ -42,6 +42,16 @@ allow-tracking-images = false
 [tag-groups.folder]
 tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 
+# the new-mail notification side effect (R2): the backend (beeep or a
+# command) and its payload. tags is the notification scope - only mail
+# carrying EVERY tag here fires, so the default (inbox + unread) means a
+# poll that only reclassified deleted, sent, or archive mail stays
+# quiet. Empty tags = notify on every classified message. Override any
+# of these in the user config; the scheme section below shows how user
+# data overlays this builtin.
+[notify]
+tags = ["inbox", "unread"]
+
 # the link opener (the pager F key): argv, the url is appended as the
 # last element (F4 - never shell-interpolated)
 opener = ["xdg-open"]

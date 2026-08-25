@@ -24,14 +24,14 @@ jobs:
       - name: Install libnotmuch runtime deps
         run: sudo apt-get update && sudo apt-get install -y libxapian-dev libtalloc-dev libgmime-3.0-dev libz-dev
 
-      - name: Cache libnotmuch
+      - name: Cache libnotmuch (static)
         uses: actions/cache@v6
         with:
-          path: ~/notmuch-install
-          key: notmuch-0.40-${{ runner.os }}-${{ runner.image }}
+          path: ~/notmuch-static
+          key: notmuch-0.40-static-${{ runner.os }}-${{ runner.image }}
 
-      - name: Install libnotmuch
-        run: .github/install-libnotmuch.sh
+      - name: Install libnotmuch (static)
+        run: .github/install-libnotmuch.sh --static
 
       - name: Derive and validate version
         id: ver
@@ -50,12 +50,16 @@ jobs:
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 
       - name: Package deb
-        run: nfpm package --packager deb --config packaging/notmutt.yaml --target dist/
+        run: |
+          mkdir -p dist
+          nfpm package --packager deb --config packaging/notmutt.yaml \
+            --target dist/notmutt_${VERSION}_amd64.deb
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
       - name: Package rpm
-        run: nfpm package --packager rpm --config packaging/notmutt.yaml --target dist/
+        run: nfpm package --packager rpm --config packaging/notmutt.yaml \
+          --target dist/notmutt-${VERSION}-1.x86_64.rpm
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
@@ -90,6 +94,7 @@ jobs:
             archlinux/archlinux:base-devel bash -c '
             pacman -Syu --noconfirm >/dev/null
             pacman -S --noconfirm --needed git go notmuch >/dev/null
+            cd /pkg
             useradd -m builder
             sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
             mv PKGBUILD.ci PKGBUILD

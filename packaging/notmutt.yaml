@@ -23,9 +23,12 @@ contents:
     file_info:
       mode: 0644
 overrides:
+  # The binary embeds libnotmuch (static) but shells out to the notmuch
+  # CLI for database.path (src/notmuch/cgo.go), which pulls the shared
+  # libs it needs at runtime.
   deb:
     depends:
-      - libnotmuch5 | libnotmuch5t64
+      - notmuch
   rpm:
     depends:
-      - libnotmuch
+      - notmuch

@@ -39,7 +39,9 @@ jobs:
             cd /pkg
             sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
             mv PKGBUILD.ci PKGBUILD
-            makepkg --printsrcinfo > .SRCINFO
+            useradd -m builder
+            chown -R builder /pkg
+            runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
           '
 
       - name: Push to AUR

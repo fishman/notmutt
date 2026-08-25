@@ -100,7 +100,7 @@ jobs:
             sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
             mv PKGBUILD.ci PKGBUILD
             chown -R builder /pkg
-            su builder -c "cd /pkg && makepkg -f --noconfirm"
+            runuser -u builder -- makepkg -f --noconfirm
           '
 
       - name: Upload Arch package

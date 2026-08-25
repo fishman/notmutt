@@ -21,6 +21,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-sixel"
 	"testing"
 
@@ -263,10 +264,15 @@ func TestDecodeImage(t *testing.T) {
 	}
 }
 
-// stubCaps is the negotiated-capability stand-in: Sixel answers from a field, so a test pins the screen's DA reply.
+// stubCaps is the negotiated-capability stand-in: the sixel bit answers from a field, so a test pins the screen's DA reply.
 type stubCaps struct{ sixel bool }
 
-func (s stubCaps) Sixel() bool { return s.sixel }
+func (s stubCaps) Capabilities() tcell.Capabilities {
+	if s.sixel {
+		return tcell.CapabilitySixel
+	}
+	return 0
+}
 
 func TestDetectImageProtocol(t *testing.T) {
 	base := config.Default()

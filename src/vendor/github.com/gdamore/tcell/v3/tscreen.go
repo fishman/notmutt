@@ -241,8 +241,7 @@ type tScreen struct {
 	truecolor          bool
 	noColor            bool
 	legacy             bool
-	hasClipboard       bool // true if OSC 52 reported via DA1
-	sixel              bool // true if the terminal reported sixel graphics (DA1, param 4)
+	caps               Capabilities // capabilities reported via DA1
 	finiOnce           sync.Once
 	initFiniLock       sync.Mutex
 	enterUrl           string
@@ -510,8 +509,12 @@ func (t *tScreen) processInitQ() {
 				if ev.Clipboard && t.setClipboard == "" {
 					t.setClipboard = setClipboard
 				}
-				t.hasClipboard = ev.Clipboard
-				t.sixel = ev.Sixel
+				if ev.Clipboard {
+					t.caps |= CapabilityClipboard
+				}
+				if ev.Sixel {
+					t.caps |= CapabilitySixel
+				}
 				t.initted = true
 				return
 			case *eventTermName:
@@ -1804,12 +1807,12 @@ func (t *tScreen) GetClipboard() {
 	t.Unlock()
 }
 
-func (t *tScreen) HasClipboard() bool {
-	return t.hasClipboard
+func (t *tScreen) Capabilities() Capabilities {
+	return t.caps
 }
 
-func (t *tScreen) Sixel() bool {
-	return t.sixel
+func (t *tScreen) HasClipboard() bool {
+	return t.caps&CapabilityClipboard != 0
 }
 
 func (t *tScreen) ShowNotification(title string, body string) {

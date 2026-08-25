@@ -30,6 +30,7 @@ import (
 
 	_ "golang.org/x/image/webp" // decoder registrations: mail charts arrive as jpeg/gif/webp
 
+	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-sixel"
 	"golang.org/x/image/draw"
 
@@ -72,7 +73,7 @@ func detectImageProtocol(p config.Pager, s sixelCapable) string {
 	if os.Getenv("TMUX") != "" && tmuxSixel() {
 		return "sixel"
 	}
-	if s != nil && s.Sixel() {
+	if s != nil && s.Capabilities()&tcell.CapabilitySixel != 0 {
 		return "sixel"
 	}
 	return ""
@@ -89,9 +90,10 @@ func setCellSize(cols, rows, pxW, pxH int) {
 	}
 }
 
-// sixelCapable is the negotiated sixel flag the screen exposes (the tcell Screen.Sixel seam; tests stub it).
+// sixelCapable is the negotiated-capability seam: the app reads the sixel bit
+// from the screen's Capabilities bitfield (tests stub it).
 type sixelCapable interface {
-	Sixel() bool
+	Capabilities() tcell.Capabilities
 }
 
 // tmuxSixel asks tmux for its sixel support (the server format; tmux's own DA1 reply to panes is fixed at build time and omits it).

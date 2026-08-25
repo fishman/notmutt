@@ -11,7 +11,7 @@ import (
 )
 
 // TestProbeSixel engages a real terminal and reports the negotiated
-// sixel capability (the vendored fork's Screen.Sixel seam). Init's
+// sixel capability (the vendored fork's Capabilities bitfield). Init's
 // negotiation sends the primary DA query itself - no manual probe - so
 // the value is exactly what notmutt would see. Gated on
 // NOTMUTT_PROBE_SIXEL=1 (the test grabs the controlling terminal).
@@ -26,5 +26,5 @@ func TestProbeSixel(t *testing.T) {
 	if err := s.Init(); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	t.Logf("Sixel() = %v", s.Sixel())
+	t.Logf("Sixel() = %v", s.Capabilities()&tcell.CapabilitySixel != 0)
 }

@@ -2965,6 +2965,21 @@ func TestEditGatedDuringSending(t *testing.T) {
 	}
 }
 
+func TestComposeShiftAOpensAccounts(t *testing.T) {
+	// kitty mode 16 (the terminal's associated text) delivers the shifted
+	// text with the shift modifier still set; keyPressOf passes the text
+	// through and the "A" binding resolves.
+	press, _, ok := keyPressOf(tcell.NewEventKeyEx(tcell.KeyRune, "A", tcell.ModShift, true, 0, 1))
+	if !ok {
+		t.Fatal("shift+A must map to a press")
+	}
+	m := openDialogue(t, model(), "t1")
+	next, _ := m.Update(press)
+	if p := picker(next); p == nil || p.kind != "account" {
+		t.Fatalf("shift+A must open the account picker: %+v", next.dialogue)
+	}
+}
+
 func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m = press(t, m, "A")

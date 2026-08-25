@@ -36,6 +36,42 @@ a plain Go build). `make test` runs the suite under the same tags. The
 binary lands at `./notmutt`. Run it from anywhere; your configuration
 is read from `~/.config/notmutt/config.toml`.
 
+## Packages
+
+The release workflow builds three packages from a `vMAJOR.MINOR.PATCH`
+tag (`packaging/`): a deb and an rpm via nfpm, and an Arch package via
+makepkg. All three wrap the same Go binary; they split only on the link
+model.
+
+### deb and rpm
+
+The deb and rpm embed libnotmuch **statically**: the release workflow
+builds notmuch 0.40 and links its archives into the binary. Static is
+forced, not chosen - the cgo binding calls `notmuch_threads_status`,
+which needs libnotmuch >= 0.40, and the default distro libnotmuch is
+older (Ubuntu ships 0.37/0.38). Embedding 0.40 statically is the only
+way the binary's own libnotmuch calls compile and run there.
+
+The packages still `Depends: notmuch`, because the binary shells out to
+the `notmuch` CLI for `database.path` (see `packaging/notmutt.yaml`).
+That runtime `notmuch` comes from the distro - on stock Ubuntu still
+0.37/0.38, older than the 0.40 the client targets.
+
+**The deb and rpm are untested.** CI builds and packages them but never
+runs them on a real system, and no stock distro ships libnotmuch 0.40,
+so the runtime dependency chain cannot be satisfied there. They are
+buildable artifacts, not validated installs. Use the Arch package, or
+build from source against your distro's libnotmuch, if you need
+something you can run.
+
+### Arch
+
+The Arch package is the usable path. Its PKGBUILD builds against the
+distro's current libnotmuch (`go build -tags lua`, shared linking) -
+Arch's rolling notmuch is new enough to satisfy the 0.40 requirement -
+and the runtime `notmuch` CLI matches. The release workflow also pushes
+it to the AUR; see `packaging/notmutt/PKGBUILD`.
+
 ## Configuration
 
 The client ships with its defaults as data: `src/config/base.toml` is

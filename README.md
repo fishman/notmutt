@@ -35,6 +35,16 @@ author, timestamp, tags, message count, references, never mail
 content. See [docs/usage.md](docs/usage.md) for registration and the
 metadata-only privacy rule.
 
+## Packages
+
+The release workflow builds a deb, an rpm (nfpm), and an Arch package
+(makepkg) from a `vMAJOR.MINOR.PATCH` tag. The deb and rpm embed
+libnotmuch statically and are buildable but **untested**: the client
+targets libnotmuch 0.40, which no stock distro ships, so the runtime
+`notmuch` dependency cannot be satisfied there. The Arch package is the
+usable one - it links the distro's current libnotmuch. See
+[docs/installation.md](docs/installation.md).
+
 If notmuch sees your mail, notmutt reads it. Your tags, views, and
 queries stay yours and stay queryable by every other notmuch tool. The
 built-in defaults live in `src/config/base.toml` (search it first);

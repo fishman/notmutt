@@ -1,0 +1,64 @@
+# Push PKGBUILD + .SRCINFO to the AUR on a version tag. DISABLED: drop
+# the job-level if: false and set the AUR_SSH_KEY secret to enable.
+name: AUR push
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  aur:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Derive and validate version
+        id: ver
+        env:
+          REF: ${{ github.ref_name }}
+        run: |
+          v="${REF#v}"
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || \
+            { echo "tag $REF is not vMAJOR.MINOR.PATCH" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Generate PKGBUILD + .SRCINFO
+        working-directory: packaging/notmutt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD:/pkg" -e VERSION="$VERSION" \
+            archlinux/archlinux:base-devel bash -c '
+            pacman -Syu --noconfirm >/dev/null
+            pacman -S --noconfirm --needed git >/dev/null
+            cd /pkg
+            sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
+            mv PKGBUILD.ci PKGBUILD
+            useradd -m builder
+            chown -R builder /pkg
+            runuser -u builder -- makepkg --printsrcinfo > .SRCINFO
+          '
+
+      - name: Push to AUR
+        run: |
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$AUR_SSH_KEY" > "$HOME/.ssh/aur"
+          chmod 600 "$HOME/.ssh/aur"
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          rm -rf /tmp/aur-notmutt
+          git clone "ssh://aur@aur.archlinux.org/notmutt.git" /tmp/aur-notmutt
+          cp packaging/notmutt/PKGBUILD packaging/notmutt/.SRCINFO /tmp/aur-notmutt/
+          cd /tmp/aur-notmutt
+          git config user.name "notmutt release"
+          git config user.email "reza.jelveh+git@gmail.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "notmutt $VERSION"
+          git push
+        env:
+          AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
+          VERSION: ${{ steps.ver.outputs.version }}

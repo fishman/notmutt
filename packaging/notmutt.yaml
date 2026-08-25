@@ -1,0 +1,32 @@
+# nfpm config: one description for both deb and rpm. Needs
+# VERSION=<x.y.z> (release workflow) and ./notmutt (make build).
+name: notmutt
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: mail
+priority: optional
+maintainer: Reza Jelveh <reza.jelveh+git@gmail.com>
+description: |
+  Async terminal email client built on notmuch.
+homepage: https://github.com/fishman/notmutt
+license: Apache-2.0
+contents:
+  - src: ./notmutt
+    dst: /usr/bin/notmutt
+    file_info:
+      mode: 0755
+  - src: ./README.md
+    dst: /usr/share/doc/notmutt/README.md
+    file_info:
+      mode: 0644
+overrides:
+  # The binary embeds libnotmuch (static) but shells out to the notmuch
+  # CLI for database.path (src/notmuch/cgo.go), which pulls the shared
+  # libs it needs at runtime.
+  deb:
+    depends:
+      - notmuch
+  rpm:
+    depends:
+      - notmuch

@@ -391,6 +391,31 @@ sanitized as single path segments (separators become `_`, control
 runes dropped), so no name can traverse the tree. Files are 0600,
 directories 0700.
 
+## Notifications
+
+New-mail notifications are the filter job's side effect: the backend
+resolves once at startup (auto-detected by default - the platform
+backend when the session can show notifications, else `notify-send`),
+and a poll that classified mail fires it. The payload is the count
+plus a subject summary, never bodies or ids.
+
+By default only **new unread inbox mail** notifies. The `tags` list is
+the scope: a message must carry every tag in it to fire. A poll that
+only reclassified deleted, sent, or archive mail stays quiet. Empty
+`tags` notifies on every classified message.
+
+```toml
+[notify]
+tags = ["inbox", "unread"]   # the scope; empty = notify on everything
+# backend = "beeep"          # "beeep" | "command"; empty = auto-detect
+# command = ["notify-send", "notmutt", "{count} new mail"]  # {count}, {subjects}
+# priority = ["urgent"]      # tags whose mail leads the summary
+# max = 3                    # summary rows cap
+```
+
+The default `tags` lives in `src/config/base.toml` like the rest of
+the builtin config - your file overrides it wholesale.
+
 ## MCP server
 
 An optional Model Context Protocol server lets LLM clients query the

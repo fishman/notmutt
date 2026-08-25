@@ -849,7 +849,12 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.st.SetActiveView(strings.TrimPrefix(action, "goto-"))
 		}
 		// the goto re-points the mail surface's view: land on it, or
-		// the switch hides behind the attached search tab
+		// the switch hides behind the attached search tab. Drop the
+		// previous view's pager - it shows a message from the old
+		// folder, and attachTab would re-enter pager mode over the new
+		// view's list (the wrong-mail regression).
+		m.preview, m.previewThread, m.previewTitle = false, "", ""
+		m.pager = nil
 		m.tabIdx = 0
 		m.attachTab()
 		return m, nil

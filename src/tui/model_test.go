@@ -680,6 +680,39 @@ func TestGotoDispatch(t *testing.T) {
 	}
 }
 
+// TestGotoClearsPager pins the goto regression: a goto-<view> chain (g a,
+// g i, g 1) switches the folder but must NOT leave the pager open on a
+// stale message. A message open before the goto (then backed out with q)
+// must not survive the switch - the goto lands on the index surface of
+// the new view.
+func TestGotoClearsPager(t *testing.T) {
+	m := model()
+	path := fixtureMsg(t, "body line\n")
+	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID: threadID,
+			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
+		}})
+		m = next
+	})
+	press(t, m, "enter")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	m = press(t, m, "q") // back to the index list
+	if m.mode != "index" {
+		t.Fatalf("q must return to the index, mode=%q", m.mode)
+	}
+	m = press(t, m, "g")
+	m = press(t, m, "a")
+	if m.st.Config().ActiveView != "archive" {
+		t.Fatalf("g a must switch to archive, active = %q", m.st.Config().ActiveView)
+	}
+	if m.mode != "index" || m.pager != nil {
+		t.Fatalf("goto must land on the index surface of the new view, mode=%q pager=%v", m.mode, m.pager != nil)
+	}
+}
+
 // TestFilterPrompt pins the live F filter: the prompt narrows the view
 // on every key, backspace widens, esc restores the pre-open filter and
 // closes, and the rows the model renders are the filtered set.

@@ -582,6 +582,36 @@ func TestRenderThreadHeaders(t *testing.T) {
 	}
 }
 
+// TestRenderThreadHeadersHTML pins the h toggle on an html mail: the full
+// raw header block must show in the html view too, not only text/plain.
+func TestRenderThreadHeadersHTML(t *testing.T) {
+	msg := "Return-Path: <bounce@example.com>\n" +
+		"From: alpha@example.com\n" +
+		"Content-Type: multipart/alternative; boundary=\"altb\"\n\n" +
+		"--altb\nContent-Type: text/plain\n\nplain body\n" +
+		"--altb\nContent-Type: text/html\n\n<html><body>html body</body></html>\n" +
+		"--altb--\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "html"}}
+
+	for _, mode := range []core.RenderMode{core.RenderPlain, core.RenderHTML} {
+		lines, _, _, err := RenderThread(msgs, mode, true, 0, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := joinText(lines)
+		if !strings.Contains(out, "Return-Path: <bounce@example.com>") {
+			t.Fatalf("mode %d: the h toggle must show the full header block on html mail:\n%s", mode, out)
+		}
+		if !strings.Contains(out, "From: alpha@example.com") {
+			t.Fatalf("mode %d: the header block must carry From:\n%s", mode, out)
+		}
+	}
+}
+
 // TestHTMLPartListsAsAttachment pins the html part as a download entry:
 // both walks count it with the same ordinal, so the v dialog's "N.
 // html" and the extract/save seams index the same part stream.

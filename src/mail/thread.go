@@ -381,8 +381,8 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
 	// the curated header block (Date/From/To/Subject) tops every view;
-	// the h key replaces it with the full raw block in the plain view
-	if headers && mode == core.RenderPlain {
+	// the h key replaces it with the full raw block in every view
+	if headers {
 		lines = append(lines, headerLines(m)...)
 	} else {
 		add(fmt.Sprintf("%-8s %s", "Date:", m.Date), core.LineHeader, 0)

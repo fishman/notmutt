@@ -19,6 +19,7 @@ require (
 	github.com/sahilm/fuzzy v0.1.3
 	github.com/yuin/gopher-lua v1.1.2
 	go.etcd.io/bbolt v1.3.11
+	go.mozilla.org/pkcs7 v0.9.0
 	golang.org/x/image v0.45.0
 	golang.org/x/net v0.58.0
 	golang.org/x/sys v0.47.0

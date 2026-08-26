@@ -263,7 +263,23 @@ type ThreadLoaded struct {
 	// for the status bar - what is on screen, never the requested view.
 	Mime  string
 	Lines []Line
+	// SMIME is the opened message's S/MIME verdict (R10), nil when unsigned
+	// or no verifier is configured.
+	SMIME *SMIMEStatus
 	Err   error
+}
+
+// SMIMEStatus is the read-path S/MIME verdict. Crypto validity and signer
+// identity are separate (R10): a valid signature from an unexpected cert
+// must render as a warning, never green. Err is set when verification could
+// not run (no roots, unparseable CMS) - distinct from a failed signature.
+type SMIMEStatus struct {
+	Present bool
+	Valid   bool
+	Signer  string
+	Revoked bool
+	Checked bool
+	Err     string
 }
 
 // AttachmentLoaded carries the attachment view (the v dialog's enter):

@@ -64,6 +64,29 @@ func newPager(threadID, msgID string, lines []core.Line) *pager {
 // body edit, the AI summary swap): the expanded layout drops with the
 // lines - a stale doc maps old rows into the new list; ensureStyled
 // rebuilds it.
+// setSMIME prepends the S/MIME verdict banner (R10) when the opened message
+// carried a signature. Crypto validity and signer identity are separate: the
+// banner names the cert, the user judges it against the From header. No-op
+// for unsigned messages.
+func (p *pager) setSMIME(s *core.SMIMEStatus) {
+	if s == nil || !s.Present {
+		return
+	}
+	banner := core.Line{Text: "[S/MIME] invalid or untrusted signature", Kind: core.LineSecurity}
+	switch {
+	case s.Err != "":
+		banner.Text = "[S/MIME] could not verify: " + s.Err
+	case s.Valid:
+		banner.Text = "[S/MIME] valid signature from " + s.Signer
+		if s.Checked && s.Revoked {
+			banner.Text += " (revoked)"
+		}
+		banner.OK = true
+	}
+	p.lines = append([]core.Line{banner}, p.lines...)
+	p.setLines(p.lines)
+}
+
 func (p *pager) setLines(lines []core.Line) {
 	p.lines = lines
 	p.doc = nil
@@ -335,6 +358,14 @@ func (p *pager) styleLine(li int) string {
 		g = sg.pagerAtt
 	case core.LineError:
 		g = sg.pagerErr
+	case core.LineSecurity:
+		// the S/MIME verdict (R10): green when the signature + chain to
+		// the pinned roots held, red on a failed verify or no roots
+		if l.OK {
+			g = sg.pagerSig
+		} else {
+			g = sg.pagerErr
+		}
 	default:
 		g = sg.normal
 	}

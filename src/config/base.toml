@@ -52,6 +52,17 @@ tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 [notify]
 tags = ["inbox", "unread"]
 
+# the S/MIME verifier (R10): in-process pkcs7. An empty ca-file trusts the
+# system CA pool - the mainstream out-of-the-box posture (Thunderbird/Outlook
+# trust OS roots; the emailProtection EKU gate still applies). Set ca-file to
+# a PEM bundle to pin mail trust to specific roots - the strict posture, for
+# high-assurance mail. use-system-pool = false with an empty ca-file fails
+# closed: no system pool, no verification. The gpg subprocess is for PGP, not
+# S/MIME.
+[crypto]
+ca-file = ""
+use-system-pool = true
+
 # the link opener (the pager F key): argv, the url is appended as the
 # last element (F4 - never shell-interpolated)
 opener = ["xdg-open"]

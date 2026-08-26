@@ -14,6 +14,7 @@ const (
 	LineSignature
 	LineAttachment
 	LineError
+	LineSecurity
 )
 
 // LineAttrs is a bitmask of run emphasis - the renderer-visible subset
@@ -71,7 +72,10 @@ type Line struct {
 	Text   string
 	Kind   LineKind
 	Quoted int // LineBody only, 0..5 (capped)
-	Runs   []Run
+	// OK is LineSecurity only: the S/MIME signature verified (valid + chain
+	// to pinned roots); the pager renders it green, a failed verify red.
+	OK   bool
+	Runs []Run
 	// Bg is the line's default background (#rrggbb, "" = theme): the
 	// html view's mail-declared <body> color, respected by the whole
 	// rendered region - pad and blank lines included. Run backgrounds

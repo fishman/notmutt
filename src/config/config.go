@@ -128,6 +128,7 @@ type Config struct {
 	Schedule       Schedule                   `toml:"schedule"`
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
+	Crypto         Crypto                     `toml:"crypto"`
 	Attachments    Attachments                `toml:"attachments"`
 	MCP            MCP                        `toml:"mcp"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
@@ -250,6 +251,16 @@ type Notify struct {
 	Priority []string `toml:"priority"`
 	Tags     []string `toml:"tags"` // tags a message must carry (all) to notify; empty = every classified message
 	Max      int      `toml:"max"`
+}
+
+// Crypto configures the S/MIME verifier (R10): the in-process pkcs7
+// backend. A ca-file pins mail trust to that bundle; with an empty ca-file,
+// UseSystemPool trusts the system CA pool (default) or fails closed when
+// false. The gpg subprocess is reserved for PGP, a separate backend, not
+// S/MIME.
+type Crypto struct {
+	CAFile        string `toml:"ca-file"`
+	UseSystemPool bool   `toml:"use-system-pool"`
 }
 
 // Attachments configures the local attachment download pass

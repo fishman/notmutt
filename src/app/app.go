@@ -26,6 +26,7 @@ import (
 	"notmutt/core"
 	"notmutt/filter"
 	"notmutt/i18n"
+	"notmutt/lib/crypto"
 	"notmutt/lib/xdg"
 	"notmutt/mail"
 	"notmutt/notmuch"
@@ -165,7 +166,7 @@ func Run() error {
 		// RenderAuto resolves per sender domain ([pager] default-views)
 		// once the message is in hand - the domain is message data, only
 		// the fetch has it
-		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews)
+		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, cfg.Crypto)
 	})
 
 	// the render toggle (the v key), the source view (ctrl+u), and the
@@ -176,7 +177,7 @@ func Run() error {
 	// "[N]" label and the target list rides the reply. The explicit
 	// modes never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil)
+		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil, config.Crypto{})
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key in
@@ -434,7 +435,7 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 // read with an ActTag -unread (R1 - read is a tag; the refresh cycle
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string) {
+func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, cryptoCfg config.Crypto) {
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
@@ -476,13 +477,23 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 			}
 		}
 	}
+	// S/MIME verdict (R10): detect + verify on the async open path, off the
+	// UI. A valid signature and its signer identity are separate - the pager
+	// shows the cert the user must judge against the From header.
+	// Detect always - the banner must appear for any S/MIME-signed message.
+	// An empty ca-file verifies against the system pool unless use-system-pool
+	// is off (fail-closed); a set ca-file pins to that bundle.
+	var smime *core.SMIMEStatus
+	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
+		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
+	}
 	lines, mime, links, err := mail.RenderThread(msgs, mode, headers, width, labelLinks)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, SMIME: smime})
 	// the read mark names the opened message, never the whole thread
 	if !preview && msgID != "" {
 		rpl, err := worker.Call(notmuch.Action{
@@ -504,6 +515,26 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 			}
 		}
 	}
+}
+
+// verifySMIME detects an S/MIME signature in the opened message and verifies
+// it against the configured roots (R10), mapping the verdict for the bus. It
+// returns nil when the message is not S/MIME-signed or unreadable - nothing
+// to report, the pager shows no banner.
+func verifySMIME(cfg config.Crypto, path string) *core.SMIMEStatus {
+	sig, err := mail.ParseSignature(path)
+	if err != nil || sig == nil {
+		return nil
+	}
+	v, err := crypto.New(cfg.CAFile, cfg.UseSystemPool)
+	if err != nil {
+		return &core.SMIMEStatus{Present: true, Err: err.Error()}
+	}
+	res, err := v.Verify(sig.CMS, sig.Content)
+	if err != nil {
+		return &core.SMIMEStatus{Present: true, Err: err.Error()}
+	}
+	return &core.SMIMEStatus{Present: true, Valid: res.Valid, Signer: res.Signer, Revoked: res.Revoked, Checked: res.Checked}
 }
 
 // withoutTag returns tags with one entry removed (the open path's

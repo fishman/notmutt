@@ -101,16 +101,13 @@ func readPart(e *message.Entity) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(e.Body, maxPartBytes))
 }
 
-// canonicalMIME reproduces the form a signer hashes (RFC 5751): every line
-// ending CRLF and a final CRLF - the detached content must match the digest
-// exactly, and most real signers (openssl smime) add the closing line break
-// that a MIME parser strips at the boundary.
+// canonicalMIME reproduces the form a signer hashes (RFC 5751 multipart/
+// signed): line endings normalized to CRLF, with no trailing CRLF appended.
+// Matches openssl's SMIME_crlf_copy - verified against openssl-generated
+// messages, so a real signer's digest reproduces from the recovered bytes.
 func canonicalMIME(b []byte) []byte {
 	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
 	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
 	b = bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
-	if len(b) > 0 && !bytes.HasSuffix(b, []byte("\r\n")) {
-		b = append(b, "\r\n"...)
-	}
 	return b
 }

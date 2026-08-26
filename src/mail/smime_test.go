@@ -34,12 +34,13 @@ func TestSMIMEValidation(t *testing.T) {
 	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// no trailing CRLF: go-message strips the boundary's CRLF from the part
-	// body, so the signer must sign exactly the body the parser recovers
-	content := []byte("hello alpha\r\nsecond line")
+	// realistic content ends with a newline, as real mail does: go-message
+	// keeps the boundary's CRLF as the content's own, matching what openssl
+	// (crlf_copy) hashed
+	content := []byte("hello alpha\r\nsecond line\r\n")
 
-	// detached multipart/signed: sign the canonical (final-CRLF) form, the
-	// same bytes extraction reproduces for the digest
+	// detached multipart/signed: sign the canonical CRLF form, the same bytes
+	// extraction reproduces for the digest
 	cms := signCMS(t, canonicalMIME(content), leaf, leafKey, true)
 	detached := filepath.Join(dir, "signed.eml")
 	writeDetached(t, detached, content, cms)
@@ -107,16 +108,24 @@ func TestSMIMEValidation(t *testing.T) {
 
 	// nested-multipart content must still locate the signature - the BER
 	// regression: a flattened part read took a content leaf (the html) as the
-	// CMS, which pkcs7.Parse rejects as "BER tag length too long".
-	nestedCMS := signCMS(t, []byte("signed subtree"), leaf, leafKey, true)
+	// CMS, which pkcs7.Parse rejects as "BER tag length too long". The signed
+	// subtree is the alternative body only; signers hash it without the part's
+	// own Content-Type header, and extraction reproduces it byte-exact.
+	subtree := []byte("--altb\r\nContent-Type: text/plain\r\n\r\ntext body\r\n" +
+		"--altb\r\nContent-Type: text/html\r\n\r\n<html><body>html</body></html>\r\n" +
+		"--altb--\r\n")
+	nestedCMS := signCMS(t, canonicalMIME(subtree), leaf, leafKey, true)
 	nested := filepath.Join(dir, "nested.eml")
-	writeDetachedNested(t, nested, nestedCMS)
+	writeDetachedNested(t, nested, subtree, nestedCMS)
 	sig, err = ParseSignature(nested)
 	if err != nil || sig == nil || !sig.Detached {
 		t.Fatalf("nested signed message must detect, sig=%+v err=%v", sig, err)
 	}
 	if _, err := pkcs7.Parse(sig.CMS); err != nil {
 		t.Fatalf("nested message CMS must be the real signature, not a content leaf: %v", err)
+	}
+	if res, err := v.Verify(sig.CMS, sig.Content); err != nil || !res.Valid {
+		t.Fatalf("nested signed content must verify (body-only canonicalization): %+v err=%v", res, err)
 	}
 
 	// unsigned message is not detected
@@ -129,12 +138,12 @@ func TestSMIMEValidation(t *testing.T) {
 	}
 }
 
-// TestCanonicalMIME pins the S/MIME canonical form: line endings normalize
-// to CRLF and a final CRLF is appended - the detached content must match the
-// signed digest exactly, whatever a sender's line endings were.
+// TestCanonicalMIME pins the S/MIME canonical form: line endings normalize to
+// CRLF with no trailing CRLF appended (openssl SMIME_crlf_copy behavior) - a
+// signer's digest must reproduce from exactly the recovered bytes.
 func TestCanonicalMIME(t *testing.T) {
 	got := canonicalMIME([]byte("a\r\nb\nc\rd"))
-	want := "a\r\nb\r\nc\r\nd\r\n"
+	want := "a\r\nb\r\nc\r\nd"
 	if string(got) != want {
 		t.Fatalf("canonicalMIME = %q, want %q", got, want)
 	}
@@ -239,14 +248,11 @@ func writeDetached(t *testing.T, path string, content, cms []byte) {
 
 // writeDetachedNested writes a multipart/signed whose signed content part is
 // itself a multipart/alternative - the real-world shape that used to defeat
-// CMS extraction.
-func writeDetachedNested(t *testing.T, path string, cms []byte) {
+// CMS extraction. content is the alternative subtree body; the part's own
+// Content-Type header is written separately because signers hash the body
+// only, never the part's MIME headers.
+func writeDetachedNested(t *testing.T, path string, content, cms []byte) {
 	t.Helper()
-	content := "Content-Type: multipart/alternative; boundary=\"altb\"\r\n" +
-		"\r\n" +
-		"--altb\r\nContent-Type: text/plain\r\n\r\ntext body\r\n" +
-		"--altb\r\nContent-Type: text/html\r\n\r\n<html><body>html</body></html>\r\n" +
-		"--altb--\r\n"
 	b := "From: alpha@example.com\r\n" +
 		"To: beta@example.com\r\n" +
 		"Subject: nested signed test\r\n" +
@@ -254,7 +260,9 @@ func writeDetachedNested(t *testing.T, path string, cms []byte) {
 		"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; micalg=sha-256; boundary=\"sigb\"\r\n" +
 		"\r\n" +
 		"--sigb\r\n" +
-		content + "\r\n" +
+		"Content-Type: multipart/alternative; boundary=\"altb\"\r\n" +
+		"\r\n" +
+		string(content) + "\r\n" +
 		"--sigb\r\n" +
 		"Content-Type: application/pkcs7-signature; name=\"smime.p7s\"\r\n" +
 		"Content-Transfer-Encoding: base64\r\n" +

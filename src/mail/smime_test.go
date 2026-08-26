@@ -234,12 +234,12 @@ func writeDetached(t *testing.T, path string, content, cms []byte) {
 		"To: beta@example.com\r\n" +
 		"Subject: signed test\r\n" +
 		"MIME-Version: 1.0\r\n" +
-		"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; micalg=sha-256; boundary=\"sigb\"\r\n" +
+		"Content-Type: multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=sha-256; boundary=\"sigb\"\r\n" +
 		"\r\n" +
 		"--sigb\r\n" +
 		string(content) + "\r\n" +
 		"--sigb\r\n" +
-		"Content-Type: application/pkcs7-signature; name=\"smime.p7s\"\r\n" +
+		"Content-Type: application/x-pkcs7-signature; name=\"smime.p7s\"\r\n" +
 		"Content-Transfer-Encoding: base64\r\n" +
 		"Content-Disposition: attachment; filename=\"smime.p7s\"\r\n" +
 		"\r\n" +
@@ -259,12 +259,12 @@ func writeDetachedNested(t *testing.T, path string, content, cms []byte) {
 		"To: beta@example.com\r\n" +
 		"Subject: nested signed test\r\n" +
 		"MIME-Version: 1.0\r\n" +
-		"Content-Type: multipart/signed; protocol=\"application/pkcs7-signature\"; micalg=sha-256; boundary=\"sigb\"\r\n" +
+		"Content-Type: multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=sha-256; boundary=\"sigb\"\r\n" +
 		"\r\n" +
 		"--sigb\r\n" +
 		string(content) + "\r\n" +
 		"--sigb\r\n" +
-		"Content-Type: application/pkcs7-signature; name=\"smime.p7s\"\r\n" +
+		"Content-Type: application/x-pkcs7-signature; name=\"smime.p7s\"\r\n" +
 		"Content-Transfer-Encoding: base64\r\n" +
 		"\r\n" +
 		base64.StdEncoding.EncodeToString(cms) + "\r\n" +

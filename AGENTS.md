@@ -185,16 +185,50 @@ overrides on top. Every action must be bound in default scheme - works
 with zero keybinding config. Keyhint/help derives from binding map;
 rebinding updates hints.
 
-### R10. PGP and S/MIME via system tools, not libraries
+### R10. PGP and S/MIME
 
-Crypto = Provider interface with CLI backends - zero crypto code in the
-client. PGP via `gpg` CLI (aerc gpgbin pattern: `--status-fd`, parsed
-status); S/MIME via `openssl smime` or gpg CMS mode. Trust boundary =
-system tool, never a vendored crypto dep.
+Crypto = Provider interface, backend per algorithm by the real constraint
+(secret handling, not tooling symmetry). Trust boundary = system tool for
+anything touching a private key; S/MIME verification has no secret, so it
+runs in-process and the client owns its trust policy.
+
+PGP via `gpg` CLI (aerc gpgbin pattern: `--status-fd`, parsed status): the
+agent/passphrase machinery is the reason for the subprocess - that backend
+is for PGP only. S/MIME is internal-only: `go.mozilla.org/pkcs7` + stdlib
+`crypto/x509`, in-process, roots from `[crypto] ca-file` when set (strict
+pinning); an empty ca-file with `[crypto] use-system-pool = true` (default)
+trusts the system CA pool - the mainstream out-of-the-box posture, the
+emailProtection EKU gate still enforced. `use-system-pool = false` fails
+closed: no system pool, no verification. No gpgsm backend - a gpg
+subprocess would reintroduce the CLI/argv path and a second trust model
+with no benefit on the verify path (no secret, no agent). The CMS parse and
+the cert policy are the S/MIME trust boundary (R7 fuzz targets cover the
+parse; the policy below is normative).
+
+S/MIME verification policy (in-process, owned here, never openssl defaults):
+- Trust roots: an empty `[crypto] ca-file` trusts the system CA pool - the
+  mainstream default (Thunderbird/Outlook trust OS roots), acceptable because
+  the emailProtection EKU gate and identity-match below bound it. Set
+  ca-file to a PEM bundle to pin mail trust to specific roots for
+  high-assurance mail - never rely on the bare system pool for a trust
+  decision you care about (web PKI proves nothing about a sender). PGP
+  web-of-trust and S/MIME CA hierarchy are not interchangeable.
+- EKU `emailProtection` enforced on every verification (openssl's
+  `-purpose smimesign` equivalent) - a TLS/CA cert must never pass as a mail
+  signer.
+- Revocation policy chosen explicitly and rendered honestly: CRL/OCSP
+  (stdlib + golang.org/x/crypto/ocsp), fail-open vs fail-closed decided per
+  account, and an unsigned "revocation not checked" state when skipped -
+  never claim a check you did not run.
+- Verification is two independent results: crypto-valid AND
+  identity-match (signer cert email vs the From/Sender header). A valid
+  signature from someone else's cert renders as a warning, not green.
 
 - Sign/encrypt = transform stage between MIME assembly and the send job:
   assemble -> sign/encrypt per dialogue flags -> fcc -> send. Key
-  resolution (locate/recv) async - can hit key servers.
+  resolution (locate/recv) async - can hit key servers. S/MIME sign/encrypt
+  uses pkcs7 in-process; passphrase-protected keys route through the shared
+  prompt path (below) like gpg.
 - Decrypt/verify = async job on the read path; view model carries
   decrypted body + signature status; pager renders both.
 - Passphrase: gpg-agent + external pinentry with TUI suspend/resume -

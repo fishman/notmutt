@@ -55,8 +55,11 @@ revision-keyed, invalidated by lastmod, rebuilt from query output only.
 Stale read re-syncs (startup O(changed); full walk only on cache miss
 or revision mismatch).
 
-cgo = the runtime backend (record 3); CLI behind `-tags cli` as the F10
-escape hatch - same code, one build tag away. Index fill = FULL walk
+cgo = the runtime backend (record 3); CLI behind `-tags cli` (the F10
+escape hatch). The two backends are build-exclusive (`!cli` / `cli`) for
+license separation: the cgo variant links GPL libnotmuch and is released
+GPL-3.0, the CLI variant links nothing and is released Apache-2.0 (see
+docs/licensing.md). Index fill = FULL walk
 (record 29), one C pass, no stubs. In-reply-to refs ride the per-thread
 fetch (refsfromterms build, record 30). cgo handle read-only; Tag
 reopens read-write for the op only (persistent write handle blocks

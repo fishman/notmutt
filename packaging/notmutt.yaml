@@ -8,9 +8,12 @@ section: mail
 priority: optional
 maintainer: Reza Jelveh <reza.jelveh+git@gmail.com>
 description: |
-  Async terminal email client built on notmuch.
+  Async terminal email client built on notmuch (cgo backend).
 homepage: https://github.com/fishman/notmutt
-license: Apache-2.0
+# The cgo backend links libnotmuch statically: this binary is GPL-3.0,
+# NOT Apache-2.0. The Apache-clean CLI variant ships as notmutt-cli
+# (notmutt-cli.yaml).
+license: GPL-3.0
 contents:
   - src: ./notmutt
     dst: /usr/bin/notmutt

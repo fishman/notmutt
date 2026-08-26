@@ -25,9 +25,10 @@ make
 ```
 
 The Makefile drives build and test (`make build`, `make test`, `make
-fuzz`, `make vet`); its default build carries the Lua runtime
-(R8), override with `make build TAGS="cli"` for a Lua-free build or
-the CLI backend.
+fuzz`, `make vet`); `make build` carries the Lua runtime and the cgo
+backend (R8), `make build-cli` produces the Apache-clean CLI variant.
+Both ship at release: `notmutt` (cgo, GPL-3.0) and `notmutt-cli`
+(subprocess backend, Apache-2.0) - see [docs/licensing.md](docs/licensing.md).
 
 An optional MCP server (`make build TAGS="lua mcp"`, then `./notmutt
 mcp`) exposes read-only thread metadata to LLM clients - subject,
@@ -180,8 +181,10 @@ The full records with measurements live in
 - cgo binding over the notmuch CLI (record 3): a batched threads walk
   closed the gap - 1.645s full walk vs the CLI's 1.534s on a 33k-thread
   inbox, with an 11ms peek. The CLI backend survives behind the `-tags
-  cli` build tag as the escape hatch; the cgo handle stays read-only,
-  reopening read-write only for a tag op.
+  cli` build tag; the two backends are build-exclusive for license
+  separation - cgo links GPL libnotmuch (released GPL-3.0), the CLI
+  variant links nothing and ships Apache-2.0 (`make build-cli`). The
+  cgo handle stays read-only, reopening read-write only for a tag op.
 - Render coalescing: state updates land at input rate, paints coalesce
   at an 8ms cadence, a content-addressed row cache restyles only the
   rows whose selection flips. Measured on the 33k-thread inbox:

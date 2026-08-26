@@ -1,0 +1,30 @@
+# nfpm config for the Apache-clean CLI variant (no libnotmuch link).
+# Needs VERSION=<x.y.z> (release workflow) and ./notmutt-cli (make build-cli).
+name: notmutt-cli
+arch: amd64
+platform: linux
+version: ${VERSION}
+section: mail
+priority: optional
+maintainer: Reza Jelveh <reza.jelveh+git@gmail.com>
+description: |
+  Async terminal email client built on notmuch (CLI backend, Apache-clean).
+homepage: https://github.com/fishman/notmutt
+license: Apache-2.0
+contents:
+  - src: ./notmutt-cli
+    dst: /usr/bin/notmutt-cli
+    file_info:
+      mode: 0755
+  - src: ./README.md
+    dst: /usr/share/doc/notmutt-cli/README.md
+    file_info:
+      mode: 0644
+overrides:
+  # The CLI backend shells out to notmuch for every query and tag op.
+  deb:
+    depends:
+      - notmuch
+  rpm:
+    depends:
+      - notmuch

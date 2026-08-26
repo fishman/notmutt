@@ -37,6 +37,7 @@ afew/
 
 # build artifacts
 /notmutt
+/notmutt-cli
 /docs/_site/
 
 # release packaging artifacts (nfpm + makepkg)
@@ -45,6 +46,10 @@ packaging/notmutt/src/
 packaging/notmutt/pkg/
 packaging/notmutt/*.pkg.tar.zst
 packaging/notmutt/.SRCINFO
+packaging/notmutt-cli/src/
+packaging/notmutt-cli/pkg/
+packaging/notmutt-cli/*.pkg.tar.zst
+packaging/notmutt-cli/.SRCINFO
 
 # read-only reference material (external clones) - never commit
 /references/

@@ -43,13 +43,16 @@ jobs:
             { echo "tag $REF is not vMAJOR.MINOR.PATCH" >&2; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      - name: Build binary
+      - name: Build binary (cgo, GPL)
         run: make build
+
+      - name: Build binary (cli, Apache-clean)
+        run: make build-cli
 
       - name: Install nfpm
         run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.47.0
 
-      - name: Package deb
+      - name: Package deb (cgo, GPL)
         run: |
           mkdir -p dist
           nfpm package --packager deb --config packaging/notmutt.yaml \
@@ -57,10 +60,24 @@ jobs:
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
-      - name: Package rpm
+      - name: Package rpm (cgo, GPL)
         run: |
           nfpm package --packager rpm --config packaging/notmutt.yaml \
             --target dist/notmutt-${VERSION}-1.x86_64.rpm
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Package deb (cli, Apache-clean)
+        run: |
+          nfpm package --packager deb --config packaging/notmutt-cli.yaml \
+            --target dist/notmutt-cli_${VERSION}_amd64.deb
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+
+      - name: Package rpm (cli, Apache-clean)
+        run: |
+          nfpm package --packager rpm --config packaging/notmutt-cli.yaml \
+            --target dist/notmutt-cli-${VERSION}-1.x86_64.rpm
         env:
           VERSION: ${{ steps.ver.outputs.version }}
 
@@ -86,8 +103,25 @@ jobs:
             { echo "tag $REF is not vMAJOR.MINOR.PATCH" >&2; exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      - name: Build Arch package
+      - name: Build Arch package (cgo, GPL)
         working-directory: packaging/notmutt
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          docker run --rm -v "$PWD:/pkg" -e VERSION="$VERSION" \
+            archlinux/archlinux:base-devel bash -c '
+            pacman -Syu --noconfirm >/dev/null
+            pacman -S --noconfirm --needed git go notmuch >/dev/null
+            cd /pkg
+            useradd -m builder
+            sed "s/@PKGVER@/$VERSION/" PKGBUILD > PKGBUILD.ci
+            mv PKGBUILD.ci PKGBUILD
+            chown -R builder /pkg
+            runuser -u builder -- makepkg -f --noconfirm
+          '
+
+      - name: Build Arch package (cli, Apache-clean)
+        working-directory: packaging/notmutt-cli
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
@@ -107,7 +141,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: arch
-          path: packaging/notmutt/*.pkg.tar.zst
+          path: |
+            packaging/notmutt/*.pkg.tar.zst
+            packaging/notmutt-cli/*.pkg.tar.zst
 
   release:
     needs: [deb-rpm, arch]

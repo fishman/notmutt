@@ -25,6 +25,12 @@ all: build
 build:
 	$(GO_CMD) build $(GO_TAGS) -o ../$(BIN) .
 
+# build-cli: the Apache-clean variant (no libnotmuch link). cgo (default)
+# links GPL libnotmuch; the cli tag drops go.notmuch entirely, so the
+# binary calls the notmuch CLI as a subprocess. Both ship at release.
+build-cli:
+	$(GO_CMD) build -tags "$(TAGS) cli" -o ../notmutt-cli .
+
 test:
 	$(GO_CMD) test $(GO_TAGS) ./...
 

@@ -16,8 +16,9 @@ import (
 )
 
 // Run: NOTMUCH_BENCH=1 go test -tags cli ./notmuch/ -run TestBench -v
-// Requires notmuch dev headers on the default include/link paths (the
-// binding links plain -lnotmuch, no pkg-config). Prints a comparison report.
+// Requires the notmuch CLI on PATH. The backends are build-tag exclusive
+// (license separation: cgo links GPL libnotmuch, cli is Apache-clean), so
+// the cli-tagged build benches the CLI backend only.
 func TestBench(t *testing.T) {
 	if os.Getenv("NOTMUCH_BENCH") == "" {
 		t.Skip("set NOTMUCH_BENCH=1 to run")
@@ -28,11 +29,6 @@ func TestBench(t *testing.T) {
 	cli := NewCLI()
 	cli.Open(ctx, db)
 	defer cli.Close(ctx)
-	cgoB := NewCGO()
-	if err := cgoB.Open(ctx, db); err != nil {
-		t.Fatalf("cgo open: %v", err)
-	}
-	defer cgoB.Close(ctx)
 
 	report := func(name string, fn func() (int, error)) {
 		t0 := time.Now()
@@ -55,21 +51,11 @@ func TestBench(t *testing.T) {
 	report("cli peek (50)", func() (int, error) {
 		return collect(cli, "tag:inbox", 50)
 	})
-	report("cgo peek (50)", func() (int, error) {
-		return collect(cgoB, "tag:inbox", 50)
-	})
 	report("cli full inbox", func() (int, error) {
 		return collect(cli, "tag:inbox", 0)
 	})
-	report("cgo full inbox", func() (int, error) {
-		return collect(cgoB, "tag:inbox", 0)
-	})
 	report("cli thread fetch", func() (int, error) {
 		msgs, err := cli.Thread(ctx, firstThreadID(t, ctx, cli))
-		return len(msgs), err
-	})
-	report("cgo thread fetch", func() (int, error) {
-		msgs, err := cgoB.Thread(ctx, firstThreadID(t, ctx, cgoB))
 		return len(msgs), err
 	})
 }

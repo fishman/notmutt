@@ -219,11 +219,6 @@ type Model struct {
 	// legendTickOn gates the debounce to a single tick in flight:
 	// holding a key never piles timers up.
 	legendTickOn bool
-	// keyReleases records whether the terminal answers with release
-	// reporting (KeyboardEnhancementsMsg). While true, movement never
-	// arms the legend tick - KeyReleaseMsg resolves it. False until
-	// the terminal answers, safe for tests.
-	keyReleases bool
 	// paint is the ShouldRender gate: a navigation defers it (false)
 	// and the frame tick re-arms it one interval later, so a hold
 	// paints once per frame window, not per keypress.
@@ -535,27 +530,6 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			return m, nil
 		}
 		return m.dispatchAction(a, n)
-	case KeyReleaseMsg:
-		// the real keyup (kitty release reporting): the legend resolves
-		// at the release, no debounce. Terminals without it never send
-		// this; the legendTick fallback covers them.
-		if m.legendPending {
-			m.legend, m.account = m.resolveStatus()
-			m.legendPending = false
-			m.legendTickOn = false
-		}
-		// the release paints immediately and settles the press's
-		// deferred paint - the in-flight frame tick must not land a
-		// second paint
-		m.renderDue = false
-		return m, nil
-	case KeyboardEnhancementsMsg:
-		// the terminal's answer to the ReportEventTypes request:
-		// release reporting on means KeyReleaseMsg resolves the legend,
-		// so movement must never arm the debounce tick. Non-answering
-		// terminals keep keyReleases false and the tick fallback.
-		m.keyReleases = msg.SupportsEventTypes()
-		return m, nil
 	case editorDoneMsg:
 		if msg.err == nil {
 			for i := range m.tabs {
@@ -785,7 +759,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		m.refreshProgress()
 		m.rows = m.activeView().Rows()
-		if m.legendPending && !m.legendTickOn && !m.keyReleases {
+		if m.legendPending && !m.legendTickOn {
 			m.legendTickOn = true
 			return m, batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
 		}
@@ -1440,7 +1414,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	if deferred {
 		cmds = append(cmds, m.armFrameTick())
 	}
-	if m.legendPending && !m.legendTickOn && !m.keyReleases {
+	if m.legendPending && !m.legendTickOn {
 		m.legendTickOn = true
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
 	}
@@ -2188,25 +2162,6 @@ func (m *Model) refreshProgress() {
 // WindowSizeMsg is the terminal size report: the loop's resize events
 // and its initial size query.
 type WindowSizeMsg struct{ Width, Height int }
-
-// KeyboardEnhancementsMsg mirrors the tea v2 shape (the release path
-// stays wired and tested). tcell delivers no such message - no kitty
-// keyboard protocol (verified at implementation time, record 23) -
-// the legendTick fallback covers terminals without it.
-type KeyboardEnhancementsMsg struct {
-	Flags uint32
-}
-
-func (m KeyboardEnhancementsMsg) SupportsEventTypes() bool {
-	return m.Flags&kittyReportEventTypes != 0
-}
-
-// kitty enhancement flags the message carries; only the release
-// reporting bit gates the release path.
-const (
-	kittyReportEventTypes uint32 = 1 << iota
-	kittyDisambiguateEscapeCodes
-)
 
 type progressTick struct{}
 

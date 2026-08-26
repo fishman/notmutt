@@ -3040,7 +3040,7 @@ func TestComposeShiftAOpensAccounts(t *testing.T) {
 	// kitty mode 16 (the terminal's associated text) delivers the shifted
 	// text with the shift modifier still set; keyPressOf passes the text
 	// through and the "A" binding resolves.
-	press, _, ok := keyPressOf(tcell.NewEventKeyEx(tcell.KeyRune, "A", tcell.ModShift, true, 0, 1))
+	press, ok := keyPressOf(tcell.NewEventKeyEx(tcell.KeyRune, "A", tcell.ModShift, true, 0, 1))
 	if !ok {
 		t.Fatal("shift+A must map to a press")
 	}
@@ -3170,44 +3170,14 @@ func TestFuzzyQueryRowSurvivesManyMatches(t *testing.T) {
 	}
 }
 
-// TestLegendNoTickWithReleaseReporting pins the FIX2 gate: on a
-// terminal that reports key releases, movement never arms the legend
-// debounce tick - the real KeyReleaseMsg resolves the legend, so a
-// held key no longer churns the tick's 80-100 render cycles/sec.
-func TestLegendNoTickWithReleaseReporting(t *testing.T) {
-	m := stubModel()
-	m.keyReleases = true
-	m = press(t, m, "j")
-	if m.legendTickOn {
-		t.Fatal("movement must not arm the legend tick when the terminal reports releases")
-	}
-	if !m.legendPending {
-		t.Fatal("movement must still mark the legend pending")
-	}
-	// a sequence of presses stays tick-free (the hold)
-	m = press(t, m, "j")
-	m = press(t, m, "j")
-	if m.legendTickOn {
-		t.Fatal("a hold must never arm the legend tick with release reporting on")
-	}
-	next, _ := m.Update(KeyReleaseMsg{})
-	m = next
-	if m.legendPending || m.legendTickOn {
-		t.Fatal("the release must resolve the legend")
-	}
-	if m.legend == "" {
-		t.Fatal("the release must resolve the cursor's tag icons")
-	}
-}
-
-// TestLegendTickFallbackResolves pins the no-release-reporting path:
+// TestLegendTickFallbackResolves pins the debounce path:
 // movement arms the debounce tick, and the settled tick (its move
 // count matching) resolves the legend.
 func TestLegendTickFallbackResolves(t *testing.T) {
 	m := stubModel()
 	m = press(t, m, "j")
 	if !m.legendTickOn {
-		t.Fatal("without release reporting, movement must arm the debounce tick")
+		t.Fatal("movement must arm the debounce tick")
 	}
 	if !m.legendPending {
 		t.Fatal("the press must mark the legend pending")
@@ -3219,28 +3189,6 @@ func TestLegendTickFallbackResolves(t *testing.T) {
 	}
 	if m.legend == "" {
 		t.Fatal("the tick must resolve the cursor's tag icons")
-	}
-}
-
-// TestKeyboardEnhancementsMsgSetsReleasePath pins the wiring: the
-// terminal's answer to the ReportEventTypes request flips the model's
-// keyReleases flag, which gates the legend tick arming.
-func TestKeyboardEnhancementsMsgSetsReleasePath(t *testing.T) {
-	m := stubModel()
-	next, _ := m.Update(KeyboardEnhancementsMsg{Flags: kittyReportEventTypes})
-	m = next
-	if !m.keyReleases {
-		t.Fatal("release reporting must be recorded from the enhancement message")
-	}
-	// a terminal answering without release reporting keeps the tick path
-	next, _ = m.Update(KeyboardEnhancementsMsg{Flags: kittyDisambiguateEscapeCodes})
-	m = next
-	if m.keyReleases {
-		t.Fatal("a disambiguation-only answer must not enable the release path")
-	}
-	m = press(t, m, "j")
-	if !m.legendTickOn {
-		t.Fatal("without release reporting the tick fallback must stay armed")
 	}
 }
 
@@ -3325,21 +3273,15 @@ func TestPaintGateImmediacy(t *testing.T) {
 	if !m.paint {
 		t.Fatal("a refresh event must paint immediately")
 	}
-	// a navigation defers, then the release paints immediately and
-	// settles the deferred paint - the in-flight tick lands as a no-op
+	// a navigation defers, then the tick re-arms the gate once
 	m = press(t, m, "j")
 	if m.paint {
 		t.Fatal("the navigation must have deferred")
 	}
-	next, _ = m.Update(KeyReleaseMsg{})
-	m = next
-	if !m.paint || m.renderDue {
-		t.Fatalf("the release must paint immediately and settle the deferral: paint=%v renderDue=%v", m.paint, m.renderDue)
-	}
 	next, _ = m.Update(frameTick{})
 	m = next
-	if m.paint {
-		t.Fatal("the settled tick must not paint a second time")
+	if !m.paint || m.renderDue {
+		t.Fatalf("the tick must re-arm the gate once: paint=%v renderDue=%v", m.paint, m.renderDue)
 	}
 }
 

@@ -69,11 +69,8 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			var msg any
 			switch e := ev.(type) {
 			case *tcell.EventKey:
-				// v3 delivers key releases (kitty protocol); the release path is not wired, so drop them.
-				if e.Pressed() {
-					if press, _, ok := keyPressOf(e); ok {
-						msg = press
-					}
+				if press, ok := keyPressOf(e); ok {
+					msg = press
 				}
 			case *tcell.EventResize:
 				probeCellSize()

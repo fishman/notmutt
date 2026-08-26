@@ -54,12 +54,6 @@ func (k KeyPressMsg) String() string {
 	return b.String()
 }
 
-// KeyReleaseMsg is a key release (kitty protocol release reporting).
-// tcell does not deliver release events (record 23); the type survives
-// so the model's release path stays wired, and the legendTick fallback
-// settles terminals without it.
-type KeyReleaseMsg KeyPressMsg
-
 // specialKeyName is the canonical binding name for tcell's special
 // keys. tcell's KeyNames uses display casing; these are the binding
 // vocabularies ("pgup", "backspace", "f1") that actionForKey resolves.
@@ -73,26 +67,25 @@ var specialKeyName = map[tcell.Key]string{
 	tcell.KeyF11: "f11", tcell.KeyF12: "f12",
 }
 
-// keyPressOf maps a tcell key event to a press (or release) message.
-// Rune keys carry their text verbatim (tcell Str()); the shift
-// modifier rides Mod, never folded into the letter - legacy terminals
-// deliver the shifted character itself ('H'), the kitty protocol the
-// base key ('h' + ModShift). Special keys map to the tcell special
-// key; the mod mask folds tcell's left/right variants onto the
-// aggregate bits.
+// keyPressOf maps a tcell key event to a press. Rune keys carry their
+// text verbatim (tcell Str()); the shift modifier rides Mod, never
+// folded into the letter - legacy terminals deliver the shifted
+// character itself ('H'), the kitty protocol the base key ('h' +
+// ModShift). Special keys map to the tcell special key; the mod mask
+// folds tcell's left/right variants onto the aggregate bits.
 //
 // The screen opens with OptAdvancedKeys (loop.go): tcell reports
 // ctrl+letter as KeyRune with ModCtrl on every input path, so the
 // legacy KeyCtrlA..KeyCtrlZ folding never reaches this mapping.
-func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
+func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, bool) {
 	mod := ev.Modifiers() & (tcell.ModCtrl | tcell.ModAlt | tcell.ModShift)
 	code := ev.Key()
 	if code == tcell.KeyRune {
 		r, _ := utf8.DecodeRuneInString(ev.Str())
 		if r == ' ' {
-			return KeyPressMsg{Text: " ", Code: tcell.KeySpace, Mod: mod}, KeyReleaseMsg{}, true
+			return KeyPressMsg{Text: " ", Code: tcell.KeySpace, Mod: mod}, true
 		}
-		return KeyPressMsg{Text: string(r), Code: tcell.KeyRune, Mod: mod}, KeyReleaseMsg{}, true
+		return KeyPressMsg{Text: string(r), Code: tcell.KeyRune, Mod: mod}, true
 	}
 	// fold legacy aliases onto the canonical special keys
 	switch code {
@@ -102,7 +95,7 @@ func keyPressOf(ev *tcell.EventKey) (KeyPressMsg, KeyReleaseMsg, bool) {
 		code = tcell.KeyBackspace
 	}
 	if _, ok := specialKeyName[code]; ok {
-		return KeyPressMsg{Code: code, Mod: mod}, KeyReleaseMsg{}, true
+		return KeyPressMsg{Code: code, Mod: mod}, true
 	}
-	return KeyPressMsg{}, KeyReleaseMsg{}, false
+	return KeyPressMsg{}, false
 }

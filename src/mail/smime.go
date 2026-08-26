@@ -33,7 +33,11 @@ func ParseSignature(path string) (*Signature, error) {
 		return nil, err
 	}
 	defer f.Close()
-	e, err := message.Read(f)
+	raw, err := io.ReadAll(io.LimitReader(f, maxPartBytes))
+	if err != nil {
+		return nil, err
+	}
+	e, err := message.Read(bytes.NewReader(raw))
 	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 		return nil, err
 	}
@@ -43,7 +47,7 @@ func ParseSignature(path string) (*Signature, error) {
 	}
 	switch {
 	case media == "multipart/signed" && isPkcs7Signature(params["protocol"]):
-		return parseDetached(e)
+		return parseDetached(e, raw, params["boundary"])
 	case media == "application/pkcs7-mime" && params["smime-type"] == "signed-data":
 		return parseAttached(e)
 	}
@@ -56,22 +60,27 @@ func isPkcs7Signature(protocol string) bool {
 	return protocol == "application/pkcs7-signature" || protocol == "application/x-pkcs7-signature"
 }
 
-// parseDetached reads the multipart/signed structure at the ENTITY level
-// (not the flattened mail.Reader, which turns a nested-multipart content
-// into several leaves and moves the signature): child one is the whole
-// signed content subtree, child two the detached CMS signature.
-func parseDetached(e *message.Entity) (*Signature, error) {
+// parseDetached extracts the raw signed content and the detached CMS. The
+// content is the FULL first part (its MIME headers plus body) as transmitted,
+// line-normalized - the exact bytes a signer hashes (neomutt crypt_write_signed
+// + openssl crlf_copy). The CMS is read at the entity level so its base64
+// transfer encoding decodes.
+func parseDetached(e *message.Entity, raw []byte, boundary string) (*Signature, error) {
+	content, err := signedContent(raw, boundary)
+	if err != nil {
+		return nil, err
+	}
 	mr := e.MultipartReader()
 	if mr == nil {
 		return nil, errors.New("mail: multipart/signed has no parts")
 	}
 	defer mr.Close()
-	content, err := mr.NextPart()
+	c, err := mr.NextPart()
 	if err != nil {
 		return nil, err
 	}
-	body, err := readPart(content)
-	if err != nil {
+	// drain the content part so the reader advances to the signature part
+	if _, err := io.Copy(io.Discard, c.Body); err != nil {
 		return nil, err
 	}
 	sig, err := mr.NextPart()
@@ -82,7 +91,7 @@ func parseDetached(e *message.Entity) (*Signature, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Signature{Detached: true, CMS: cms, Content: canonicalMIME(body)}, nil
+	return &Signature{Detached: true, CMS: cms, Content: content}, nil
 }
 
 // parseAttached reads an application/pkcs7-mime signed-data body: the whole
@@ -101,13 +110,49 @@ func readPart(e *message.Entity) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(e.Body, maxPartBytes))
 }
 
-// canonicalMIME reproduces the form a signer hashes (RFC 5751 multipart/
-// signed): line endings normalized to CRLF, with no trailing CRLF appended.
-// Matches openssl's SMIME_crlf_copy - verified against openssl-generated
-// messages, so a real signer's digest reproduces from the recovered bytes.
-func canonicalMIME(b []byte) []byte {
-	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
-	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
-	b = bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
-	return b
+// signedContent extracts the raw first part of a multipart/signed - its MIME
+// headers and body as transmitted, ending before the CRLF that precedes the
+// signature boundary - and normalizes line endings as a signer hashes them.
+func signedContent(raw []byte, boundary string) ([]byte, error) {
+	marker := []byte("--" + boundary)
+	idx := bytes.Index(raw, marker)
+	if idx < 0 {
+		return nil, errors.New("mail: boundary not found")
+	}
+	start := idx + len(marker)
+	if nl := bytes.IndexByte(raw[start:], '\n'); nl >= 0 {
+		start += nl + 1
+	} else {
+		return nil, errors.New("mail: unterminated boundary line")
+	}
+	next := bytes.Index(raw[start:], marker)
+	if next < 0 {
+		return nil, errors.New("mail: signature part not found")
+	}
+	end := start + next
+	if end >= 2 && raw[end-2] == '\r' && raw[end-1] == '\n' {
+		end -= 2
+	}
+	return canonicalWire(raw[start:end]), nil
+}
+
+// canonicalWire normalizes line endings as a signer hashes them (neomutt
+// crypt_write_signed): a lone LF becomes CRLF, while existing CRLF and lone CR
+// are left untouched.
+func canonicalWire(b []byte) []byte {
+	var out []byte
+	hadcr := false
+	for _, c := range b {
+		if c == '\r' {
+			hadcr = true
+			out = append(out, c)
+			continue
+		}
+		if c == '\n' && !hadcr {
+			out = append(out, '\r')
+		}
+		hadcr = false
+		out = append(out, c)
+	}
+	return out
 }

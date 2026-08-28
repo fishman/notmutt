@@ -125,6 +125,47 @@ func TestFlattenTreeConnectors(t *testing.T) {
 	}
 }
 
+// TestFlattenNewestFirstNested pins the desc order when the newest message
+// is nested (a child of a sibling), the case a plain row reversal gets
+// wrong: a->(b->c, d) with c newest must read c first, not d. Desc orders
+// children by subtree max so the newest message is visited last and lands
+// at the top after the reverse.
+func TestFlattenNewestFirstNested(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	// a(1) root; b(2) and d(3) reply to a; c(4) replies to b - c is newest.
+	th := NewThread("t1", []*Message{msg("a", 1), msg("b", 2, "a"), msg("c", 4, "b"), msg("d", 3, "a")})
+	v.MergeThreads([]*Thread{th})
+
+	rows := v.Rows()
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		if r.Msg != nil {
+			ids[i] = r.Msg.ID
+		}
+	}
+	if want := []string{"a", "b", "c", "d"}; !slices.Equal(ids, want) {
+		t.Fatalf("asc flatten = %v (want %v)", ids, want)
+	}
+
+	v.SetMsgDesc(true)
+	rows = v.Rows()
+	for i := range rows {
+		if rows[i].Msg != nil {
+			ids[i] = rows[i].Msg.ID
+		}
+	}
+	if want := []string{"c", "b", "d", "a"}; !slices.Equal(ids, want) {
+		t.Fatalf("desc flatten = %v (want %v, newest c first)", ids, want)
+	}
+	// the newest row is on top and connects as a leaf of b.
+	if rows[0].Msg.ID != "c" || rows[0].Siblings[0] {
+		t.Fatalf("desc: newest c must be the top leaf: %+v", rows[0])
+	}
+	if rows[1].Msg.ID != "b" || !rows[1].Siblings[0] {
+		t.Fatalf("desc: b must have c's sibling below it (branch): %+v", rows[1])
+	}
+}
+
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})

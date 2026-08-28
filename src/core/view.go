@@ -404,13 +404,13 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 	walk = func(node *Node, depth int, siblings []bool) {
 		if node.Msg == nil {
 			if node.Forest {
-				for _, c := range node.Children {
+				for _, c := range orderedChildren(node, desc) {
 					walk(c, depth, nil)
 				}
 				return
 			}
 			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count})
-			for i, c := range node.Children {
+			for i, c := range orderedChildren(node, desc) {
 				walk(c, depth+1, child(siblings, i, len(node.Children)))
 			}
 			return
@@ -419,7 +419,7 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 			return
 		}
 		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
-		for i, c := range node.Children {
+		for i, c := range orderedChildren(node, desc) {
 			walk(c, depth+1, child(siblings, i, len(node.Children)))
 		}
 	}
@@ -428,6 +428,35 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 		slices.Reverse(rows)
 	}
 	return rows
+}
+
+// orderedChildren returns the node's children for the flatten walk. Desc
+// reads newest-first, so children are ordered by their subtree's newest
+// timestamp ascending - the newest message is visited last and, after the
+// row reversal, lands at the top. Asc keeps the stored chronological order.
+func orderedChildren(n *Node, desc bool) []*Node {
+	if !desc || len(n.Children) <= 1 {
+		return n.Children
+	}
+	kids := append([]*Node(nil), n.Children...)
+	sort.SliceStable(kids, func(i, j int) bool { return subtreeMax(kids[i]) < subtreeMax(kids[j]) })
+	return kids
+}
+
+// subtreeMax is the newest timestamp anywhere in the subtree (the
+// [index.thread] desc ordering key): a node's own message or the newest of
+// its descendants.
+func subtreeMax(n *Node) int64 {
+	var m int64
+	if n.Msg != nil {
+		m = n.Msg.Timestamp
+	}
+	for _, c := range n.Children {
+		if v := subtreeMax(c); v > m {
+			m = v
+		}
+	}
+	return m
 }
 
 // window bounds one thread's flattened rows to [start, start+winRows).

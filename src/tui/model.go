@@ -559,6 +559,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 					break
 				}
 			}
+			m.dialogue = nil // a successful attach closes the prompt
 		} else {
 			// the chooser failed: the error box offers a retry (y
 			// re-runs the command - the tab may have closed meanwhile)
@@ -672,11 +673,13 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.dialogue = d
 			m.paint = true
 		case core.AttachFiles:
-			// the Lua action's attach_add drain: attach to the active
-			// compose tab (none open = dropped)
+			// the Lua attach_add drain; a successful attach closes the prompt
 			if m.tabIdx > 0 {
 				for _, p := range e.Paths {
 					m.tabs[m.tabIdx-1].AddAttachment(p)
+				}
+				if d, ok := m.dialogue.(*textDialogue); ok && d.field == "attach" {
+					m.dialogue = nil
 				}
 				m.paint = true
 			}
@@ -3366,13 +3369,13 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		}
 		return nil, nil
 	case "attachcmd":
-		back, ok := d.back.(*textDialogue)
-		if !ok {
-			return nil, nil
+		// enter runs the chosen attach command and closes: the exec takes
+		// over, the chooser result re-opens the error box on failure
+		cmd := m.runAttachCommand(entry)
+		if cmd == nil {
+			return d, nil // the send gate is armed or no such command: stay
 		}
-		back.input = "@" + entry
-		back.cur = len(back.input)
-		return back, nil
+		return nil, cmd
 	case "address":
 		back, ok := d.back.(*textDialogue)
 		if !ok {
@@ -3990,11 +3993,16 @@ func (m *Model) openReply(mode string) {
 			}
 		}
 	} else if m.mode == "pager" && m.pager != nil {
+		// reply to the pager's message, not the first row of its thread
 		for _, r := range m.rows {
-			if r.Msg != nil && r.ThreadID == m.pager.threadID {
+			if r.Msg != nil && r.Msg.ID == m.pager.msgID {
 				msg = r.Msg
 				break
 			}
+		}
+		if msg == nil {
+			// opened via link/jump: the app's thread fetch rehydrates it
+			msg = &core.Message{ThreadID: m.pager.threadID, ID: m.pager.msgID}
 		}
 	}
 	if mode == "reply" || mode == "reply-all" || mode == "forward" {

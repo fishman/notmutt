@@ -134,6 +134,17 @@ func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, ms
 		return nil, fmt.Errorf("thread %s: %v %v", msg.ThreadID, err, rpl.Err)
 	}
 	sort.Slice(rpl.Msgs, func(i, j int) bool { return rpl.Msgs[i].Timestamp > rpl.Msgs[j].Timestamp })
+	// prefer the requested msgID, then the newest parseable
+	if msg.ID != "" {
+		for i := range rpl.Msgs {
+			if rpl.Msgs[i].ID == msg.ID {
+				if st := buildCompose(cfg, view, &rpl.Msgs[i], mode, root); st != nil {
+					return st, nil
+				}
+				break
+			}
+		}
+	}
 	for i := range rpl.Msgs {
 		if st := buildCompose(cfg, view, &rpl.Msgs[i], mode, root); st != nil {
 			return st, nil

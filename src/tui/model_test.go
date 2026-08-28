@@ -490,6 +490,28 @@ func ghostModel() Model {
 	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
 }
 
+// TestOpenReplyPagerTargetsVisibleMsg: the reply original must be the
+// pager's message (msgID), not the first row of the thread.
+func TestOpenReplyPagerTargetsVisibleMsg(t *testing.T) {
+	var gotMsg *core.Message
+	old := onReply
+	onReply = func(msg *core.Message, mode string) { gotMsg = msg }
+	defer func() { onReply = old }()
+
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello"},
+		{ID: "b", Timestamp: 200, Author: "Bob", Subject: "re: hello"},
+	})})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	m.pager = newPager("t1", "b", nil)
+	m.mode = "pager"
+	press(t, m, "r")
+	if gotMsg == nil || gotMsg.ID != "b" {
+		t.Fatalf("pager reply must target the visible message b, got msg=%+v", gotMsg)
+	}
+}
+
 // TestPagerStatusShowsEditedMarker pins the edited status segment: a
 // staged tag op in the pager (stage-and-stay) must flip the edited
 // marker on the status line - a layer-cache regression (the cache
@@ -3341,20 +3363,16 @@ func TestAttachPromptCommandPicker(t *testing.T) {
 		t.Fatalf("entries = %q, want sorted fzf,yazi", got)
 	}
 	m = press(t, m, "j") // fzf -> yazi
-	m = press(t, m, "enter")
+	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: tcell.KeyRune})
+	m = next
 	if picker(m) != nil {
 		t.Fatal("select must close the picker")
 	}
-	if d := textD(m); d == nil || d.input != "@yazi" {
-		t.Fatalf("the selection must arm the prompt: %+v", m.dialogue)
-	}
-	next, cmd := m.Update(KeyPressMsg{Text: "enter", Code: tcell.KeyRune})
-	m = next
 	if cmd == nil {
-		t.Fatal("enter must return the command exec")
+		t.Fatal("enter on the command picker must arm the command exec")
 	}
 	if m.dialogue != nil {
-		t.Fatal("the command run must close the prompt")
+		t.Fatal("enter must close the attach prompt")
 	}
 }
 
@@ -3399,6 +3417,36 @@ func TestAttachCmdResultAddsFiles(t *testing.T) {
 	}
 	if _, err := os.Stat(chooser.Name()); !os.IsNotExist(err) {
 		t.Fatal("the chooser file must be removed after the read")
+	}
+	if m.dialogue != nil {
+		t.Fatalf("a successful attach must close the attach prompt: %+v", m.dialogue)
+	}
+}
+
+// TestAttachFilesClosesPrompt: the Lua attach-choose drain must close the
+// attach prompt once the files attach.
+func TestAttachFilesClosesPrompt(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m = press(t, m, "a") // the attach prompt
+	if d := textD(m); d == nil || d.field != "attach" {
+		t.Fatalf("a must open the attach prompt: %+v", m.dialogue)
+	}
+	f, _ := os.CreateTemp("", "notmutt-attach-*")
+	defer os.Remove(f.Name())
+	m = pressEvent(t, m, core.AttachFiles{Paths: []string{f.Name()}})
+	if m.dialogue != nil {
+		t.Fatalf("AttachFiles must close the attach prompt: %+v", m.dialogue)
+	}
+	if len(m.tabs[m.tabIdx-1].Attachments) != 1 {
+		t.Fatalf("the file must attach: %+v", m.tabs[m.tabIdx-1].Attachments)
+	}
+
+	// an AttachFiles drain on a non-attach prompt must not drop it
+	m = openDialogue(t, model(), "t2")
+	m.dialogue = &textDialogue{field: "to"}
+	m = pressEvent(t, m, core.AttachFiles{Paths: []string{f.Name()}})
+	if d := textD(m); d == nil || d.field != "to" {
+		t.Fatalf("AttachFiles on a non-attach prompt must leave it open: %+v", m.dialogue)
 	}
 }
 

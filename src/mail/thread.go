@@ -388,6 +388,9 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		add(fmt.Sprintf("%-8s %s", "Date:", m.Date), core.LineHeader, 0)
 		add(fmt.Sprintf("%-8s %s", "From:", m.From), core.LineHeader, 0)
 		add(fmt.Sprintf("%-8s %s", "To:", strings.Join(m.To, ", ")), core.LineHeader, 0)
+		if len(m.Cc) > 0 {
+			add(fmt.Sprintf("%-8s %s", "Cc:", strings.Join(m.Cc, ", ")), core.LineHeader, 0)
+		}
 		add(fmt.Sprintf("%-8s %s", "Subject:", subject), core.LineSubject, 0)
 	}
 	hasPlain, hasHTML := partFlags(m)

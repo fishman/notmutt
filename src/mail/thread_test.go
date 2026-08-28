@@ -582,6 +582,51 @@ func TestRenderThreadHeaders(t *testing.T) {
 	}
 }
 
+// TestEnvelopeShowsCc pins the curated pager envelope: a Cc header renders
+// as a Cc: row (between To and Subject) by default, absent when no Cc.
+func TestEnvelopeShowsCc(t *testing.T) {
+	msg := "From: alpha@example.com\nTo: beta@example.com\nCc: carol@example.com\n" +
+		"Subject: cc test\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
+		"Content-Type: text/plain; charset=utf-8\n\nbody\n"
+	p := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "cc test"}}
+
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := joinText(lines)
+	to := strings.Index(out, "To:")
+	cc := strings.Index(out, "Cc:")
+	subj := strings.Index(out, "Subject:")
+	if cc < 0 || !strings.Contains(out, "carol@example.com") {
+		t.Fatalf("the envelope must show the Cc row by default:\n%s", out)
+	}
+	if cc < to || subj < cc {
+		t.Fatalf("Cc must sit between To and Subject:\n%s", out)
+	}
+
+	// a message without Cc must not emit the row
+	plain := "From: alpha@example.com\nTo: beta@example.com\n" +
+		"Subject: no cc\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
+		"Content-Type: text/plain; charset=utf-8\n\nbody\n"
+	p2 := filepath.Join(t.TempDir(), "msg2")
+	if err := os.WriteFile(p2, []byte(plain), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	msgs2 := []core.Message{{ID: "m2", ThreadID: "t2", Paths: []string{p2}, Subject: "no cc"}}
+	lines, _, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := joinText(lines); strings.Contains(out, "Cc:") {
+		t.Fatalf("a message without Cc must not emit a Cc row:\n%s", out)
+	}
+}
+
 // TestRenderThreadHeadersHTML pins the h toggle on an html mail: the full
 // raw header block must show in the html view too, not only text/plain.
 func TestRenderThreadHeadersHTML(t *testing.T) {

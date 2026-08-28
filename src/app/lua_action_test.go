@@ -197,7 +197,7 @@ func TestLuaActionPicker(t *testing.T) {
 	dir := t.TempDir()
 	writePlugin(t, dir, "act.lua", `
 register_action("act-pick", function(ctx)
-    local files = picker_yazi()
+    local files = picker_argv({ "yazi", "--chooser-file" })
     print(files and files[1] or "none")
 end)
 `)

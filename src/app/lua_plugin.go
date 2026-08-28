@@ -15,7 +15,6 @@ package app
 
 import (
 	"context"
-	_ "embed"
 	"fmt"
 	"log"
 	"os"
@@ -31,15 +30,6 @@ import (
 	"notmutt/core"
 	"notmutt/i18n"
 )
-
-// pickersLib is the bundled Lua library (pickers.lua): the
-// tool-specific chooser wrappers (picker_yazi, picker_ranger) over the
-// core's picker_argv primitive. The core never hardcodes a client; the
-// lib is DoFile'd into every action invocation before the plugin file
-// (lua_action.go), so scripts call the wrappers like built-ins.
-//
-//go:embed lua/pickers.lua
-var pickersLib string
 
 // luaPlugin is one loaded plugin file: its VM and body_render function.
 // A VM is not concurrency-safe, so every call serializes on mu

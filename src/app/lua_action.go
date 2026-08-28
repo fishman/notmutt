@@ -335,13 +335,6 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 		ac.print.WriteString(strings.Join(parts, "\t") + "\n")
 		return 0
 	}))
-	// the bundled library runs first: picker_yazi/picker_ranger (and a
-	// plugin's overrides) land in the VM globals before the plugin file
-	if err := vm.DoString(pickersLib); err != nil {
-		vm.Close()
-		cancel()
-		return nil, nil, nil, err
-	}
 	return vm, reg, cancel, nil
 }
 
@@ -373,12 +366,9 @@ func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 	return ctx
 }
 
-// picker blocks the VM on the picker round trip: the request rides the
-// bus to the TUI (the attach-command exec path), the TUI publishes the
-// selection back, the waiter resolves. The wait selects on the action
-// deadline - a stalled chooser cannot wedge the plugin past its budget.
-// The tool wrappers (picker_yazi, picker_ranger) live in the bundled
-// pickers.lua - the core only exposes the argv primitive.
+// picker blocks the VM on the picker round trip (bus request/selection),
+// bounded by the action deadline. Only picker_argv is exposed; the tool
+// wrapper is the user's plugin.
 func (ac *actionCtx) picker(L *lua.LState, argv []string) int {
 	id := fmt.Sprintf("%d", time.Now().UnixNano())
 	ch := make(chan pickerReply, 1)

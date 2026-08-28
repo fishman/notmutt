@@ -95,6 +95,36 @@ func TestFlattenSortOrder(t *testing.T) {
 	}
 }
 
+// TestFlattenTreeConnectors pins the tree glyph direction: the Siblings
+// chain means "a sibling below in the DISPLAY order". Asc is top-down (a
+// child has one below iff not the last at its level); desc is bottom-up
+// (iff not the first), so the reversed rows keep the correct branch/leaf
+// glyphs instead of mirroring the asc connectors.
+func TestFlattenTreeConnectors(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	th := NewThread("t1", []*Message{msg("a", 1), msg("b", 2, "a"), msg("c", 3, "a")})
+	v.MergeThreads([]*Thread{th})
+
+	// asc: a, b, c top-down - b has c below it, c is the last sibling
+	rows := v.Rows()
+	if rows[1].Msg.ID != "b" || !rows[1].Siblings[0] {
+		t.Fatalf("asc: b must have a sibling below (branch): %+v", rows[1])
+	}
+	if rows[2].Msg.ID != "c" || rows[2].Siblings[0] {
+		t.Fatalf("asc: c must be a leaf (no sibling below): %+v", rows[2])
+	}
+
+	// desc: c, b, a bottom-up - c is now the top sibling with b below it
+	v.SetMsgDesc(true)
+	rows = v.Rows()
+	if rows[0].Msg.ID != "c" || !rows[0].Siblings[0] {
+		t.Fatalf("desc: c must have a sibling below (branch): %+v", rows[0])
+	}
+	if rows[1].Msg.ID != "b" || rows[1].Siblings[0] {
+		t.Fatalf("desc: b must be a leaf (no sibling below): %+v", rows[1])
+	}
+}
+
 func TestMergeInsertsIntoExistingThread(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	v.MergeThreads([]*Thread{NewThread("t1", []*Message{msg("root", 100)})})

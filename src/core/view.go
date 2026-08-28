@@ -386,9 +386,18 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 		rows = append(rows, Row{Msg: collapseMsg(t.Root, skipDeleted), ThreadID: t.ID, Count: count, Collapsed: true})
 		return rows
 	}
-	child := func(siblings []bool, last bool) []bool {
+	// child marks whether this child has a sibling below it in the DISPLAY
+	// order. Asc draws the tree top-down, so a child has one below iff it is
+	// not the last at its level. Desc flips the flatten (newest-first), so a
+	// child has one below iff it is not the first - the reversed rows must
+	// keep the correct branch/leaf glyphs, not mirror the asc connectors.
+	child := func(siblings []bool, i, n int) []bool {
+		hasBelow := i != n-1
+		if desc {
+			hasBelow = i != 0
+		}
 		s := make([]bool, 0, len(siblings)+1)
-		s = append(s, !last)
+		s = append(s, hasBelow)
 		return append(s, siblings...)
 	}
 	var walk func(*Node, int, []bool)
@@ -402,7 +411,7 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 			}
 			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count})
 			for i, c := range node.Children {
-				walk(c, depth+1, child(siblings, i == len(node.Children)-1))
+				walk(c, depth+1, child(siblings, i, len(node.Children)))
 			}
 			return
 		}
@@ -411,7 +420,7 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 		}
 		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
 		for i, c := range node.Children {
-			walk(c, depth+1, child(siblings, i == len(node.Children)-1))
+			walk(c, depth+1, child(siblings, i, len(node.Children)))
 		}
 	}
 	walk(t.Root, 0, nil)

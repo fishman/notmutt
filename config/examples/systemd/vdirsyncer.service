@@ -3,10 +3,11 @@ Description=Sync vdir (contacts/calendars)
 After=network.target network-online.target
 Wants=network-online.target
 StartLimitBurst=2
+StartLimitIntervalSec=5m
 
 [Service]
 ExecStart=/usr/bin/vdirsyncer sync
-RuntimeMaxSec=5m
+RuntimeMaxSec=2m
 Restart=on-failure
 
 [Install]

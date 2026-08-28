@@ -185,9 +185,8 @@ flushes; Lua never writes notmuch directly.
 
 Runs a chooser (the attach-command exec path) and blocks the VM on the
 TUI's reply, under the action deadline. Returns the selection as a
-table of paths. The bundled `pickers.lua` provides the
-client-specific wrappers `picker_yazi` and `picker_ranger` on top;
-the core only exposes the argv primitive.
+table of paths. This is the only picker primitive; the client-specific
+wrapper is your plugin (see `lua-picker.md`).
 
 ### prompt(...)
 
@@ -207,16 +206,8 @@ returns. On failure it raises.
 Captures into the run's output (rides `LuaResult`, shown to the user) -
 never a log line.
 
-## Bundled library
+## Pickers
 
-`pickers.lua` is DoFile'd into every invocation VM before the plugin
-file, so the chooser wrappers read like built-ins:
-
-```lua
-local files = picker_yazi()   -- yazi with --chooser-file
-local files = picker_ranger() -- ranger with --choosefile
-```
-
-They call `picker_argv` under the hood with the client's argv from the
-`[attach-commands]` config; a plugin can override them by defining the
-same names in its own file.
+No picker is bundled: the core exposes only `picker_argv`, and the
+chooser wrapper lives in your plugin. See `lua-picker.md` for the
+`attach-choose` action pattern and a `chooser.lua` example.

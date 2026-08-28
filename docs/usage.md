@@ -157,7 +157,9 @@ tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 opener = ["xdg-open"]
 
 # attach commands for the compose prompt: '?' lists them, '@name' runs
-# one (argv only; a chooser file path is appended as the last element)
+# one (argv only; a chooser file path is appended as the last element).
+# The attach prompt's tab prefers the Lua attach-choose action (see
+# docs/lua-picker.md); these are the config-command fallback.
 [attach-commands]
 yazi = ["yazi", "--chooser-file"]
 

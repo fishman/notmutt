@@ -140,9 +140,13 @@ The points that matter to notmutt:
   those names - do not rename them away.
 - `PassCmd` runs a command that prints the credential on stdout;
   nothing secret sits in the config. The reference uses `oama` (an
-  OAuth token helper) with `AuthMechs XOAUTH2` - the Gmail shape.
-  App passwords work the same way: `PassCmd "echo ..."` is the
-  mechanism, oama is just the reference's command.
+  OAuth token helper, the successor of mailctl) with `AuthMechs
+  XOAUTH2` - the Gmail shape. oama is not on Homebrew; install it
+  from its GitHub releases (purpleidea/oama), the AUR (`oama-bin`),
+  or `go install`, then authorize your account once and oama renews
+  the token in the background. App passwords work the same way:
+  `PassCmd "echo ..."` is the mechanism, oama is just the reference's
+  command.
 - `Patterns` lists the folders to mirror. Everything the client's
   tag pipeline classifies (see the mail concept) must be mirrored;
   the Gmail special folders are the bracketed names above.

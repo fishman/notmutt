@@ -344,6 +344,49 @@ func TestLogOverlay(t *testing.T) {
 	}
 }
 
+// TestStatusTimeout pins the status auto-clear: a non-error message
+// arms a one-shot tick that clears it statusTimeout later; a fresh
+// message re-arms without clearing, an error never clears.
+func TestStatusTimeout(t *testing.T) {
+	m := model()
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+
+	next, _ = m.Update(EventMsg{Event: core.LuaLog{Text: "sync dynamia"}})
+	m = next
+	if m.statusMsg != "sync dynamia" || !m.statusClearOn || !m.statusTickOn {
+		t.Fatalf("a non-error message must arm the clear tick: msg=%q clear=%v tick=%v", m.statusMsg, m.statusClearOn, m.statusTickOn)
+	}
+
+	// fresh: the tick re-arms, the message stays
+	next, _ = m.Update(statusTick{})
+	m = next
+	if m.statusMsg != "sync dynamia" {
+		t.Fatalf("a fresh message must not clear, got %q", m.statusMsg)
+	}
+
+	// stale: the tick clears
+	m.statusAt = m.statusAt.Add(-2 * statusTimeout)
+	next, _ = m.Update(statusTick{})
+	m = next
+	if m.statusMsg != "" || m.statusClearOn || m.statusTickOn {
+		t.Fatalf("a stale non-error message must clear: msg=%q clear=%v tick=%v", m.statusMsg, m.statusClearOn, m.statusTickOn)
+	}
+
+	// an error persists: no clear on the tick
+	next, _ = m.Update(EventMsg{Event: core.LuaLog{Text: "boom", Err: true}})
+	m = next
+	if m.statusMsg != "boom" || !m.statusMsgErr || m.statusClearOn {
+		t.Fatalf("an error must persist with no clear armed: msg=%q err=%v clear=%v", m.statusMsg, m.statusMsgErr, m.statusClearOn)
+	}
+	m.statusAt = m.statusAt.Add(-2 * statusTimeout)
+	next, _ = m.Update(statusTick{})
+	m = next
+	if m.statusMsg != "boom" || m.statusTickOn {
+		t.Fatalf("an error must never clear: msg=%q tick=%v", m.statusMsg, m.statusTickOn)
+	}
+}
+
 // TestLogOverlayScroll pins the overlay's viewport: enough entries to
 // overflow, opened pinned to the tail, g scrolls to the top, ctrl+d
 // returns half a window.

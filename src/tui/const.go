@@ -22,6 +22,10 @@ const (
 	// addrDebounce: a Tab storm coalesces into one address harvest after
 	// the last trigger (the legendDebounce pattern).
 	addrDebounce = 40 * time.Millisecond
+	// statusTimeout: a non-error status message clears after this long;
+	// an error persists for investigation. The status line is transient
+	// (mutt's message window); the ~ overlay keeps the full ring.
+	statusTimeout = 5 * time.Second
 )
 
 // Layout.

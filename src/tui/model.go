@@ -181,6 +181,12 @@ type Model struct {
 	// R8 lua results, job errors, lock timeouts); msgErr styles it.
 	statusMsg    string
 	statusMsgErr bool
+	// statusAt/statusClearOn/statusTickOn: a non-error status message
+	// auto-clears statusTimeout after it was set (errors persist). The
+	// tick is one-shot, armed on the set (the legendTickOn gate).
+	statusAt      time.Time
+	statusClearOn bool
+	statusTickOn  bool
 	// log is the session log ring; logOpen the ~ overlay flag, logView
 	// its viewport (the pager widget).
 	log     []logLine
@@ -672,6 +678,21 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.paint = true
 		}
 		return m, nil
+	case statusTick:
+		// the status message's clear timer: a fresh non-error message
+		// re-arms it, an error or a cleared message disarms it, and a
+		// stale non-error message clears the status line.
+		if !m.statusClearOn || m.statusMsgErr {
+			m.statusTickOn = false
+			return m, nil
+		}
+		if time.Since(m.statusAt) < statusTimeout {
+			return m, statusTickCmd()
+		}
+		m.statusMsg, m.statusMsgErr = "", false
+		m.statusClearOn, m.statusTickOn = false, false
+		m.paint = true
+		return m, nil
 	case legendTick:
 		// fallback for terminals without release reporting: the tick
 		// carries the armed-at move count - newer moves re-arm it, so
@@ -847,6 +868,10 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		if m.legendPending && !m.legendTickOn {
 			m.legendTickOn = true
 			return m, batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
+		}
+		if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
+			m.statusTickOn = true
+			return m, batch(EventCmd(m.ch), statusTickCmd())
 		}
 		if m.progressOn {
 			return m, batch(EventCmd(m.ch), progressTickCmd())
@@ -1519,6 +1544,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	if m.anySending() && !m.sendTickOn {
 		m.sendTickOn = true
 		cmds = append(cmds, sendTickCmd())
+	}
+	if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
+		m.statusTickOn = true
+		cmds = append(cmds, statusTickCmd())
 	}
 	if len(cmds) > 0 {
 		return m, batch(cmds...)
@@ -2301,6 +2330,15 @@ type chainTick struct{}
 
 func chainTickCmd() Cmd {
 	return tickCmd(chainTimeout, func(time.Time) any { return chainTick{} })
+}
+
+// statusTick expires the status message on its timer: a fresh non-error
+// message re-arms the tick, a stale one clears the status line (errors
+// never clear - they persist for investigation).
+type statusTick struct{}
+
+func statusTickCmd() Cmd {
+	return tickCmd(statusTimeout, func(time.Time) any { return statusTick{} })
 }
 
 // ShouldRender is the loop's paint gate: false skips the render after

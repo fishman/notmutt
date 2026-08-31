@@ -34,6 +34,13 @@ func (m *Model) logEntry(text string, err bool) {
 	if n := len(m.log) - logCap; n > 0 {
 		m.log = m.log[n:]
 	}
+	if err {
+		// an error persists for investigation: no auto-clear
+		m.statusClearOn = false
+	} else {
+		m.statusAt = time.Now()
+		m.statusClearOn = true
+	}
 	m.statusMsg = text
 	m.statusMsgErr = err
 }
@@ -55,7 +62,7 @@ func (m Model) logBuild() string {
 	}
 	body := make([]string, 0, len(rows)+3)
 	body = append(body, m.tabBar())
-	body = append(body, "log")
+	body = append(body, "session log: "+strconv.Itoa(len(m.log))+" entries")
 	body = append(body, rows...)
 	body = append(body, m.logFooter())
 	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)

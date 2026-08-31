@@ -186,9 +186,8 @@ type LuaNetwork struct {
 	Paths   []string `toml:"paths"`
 }
 
-// AIProvider is one named AI backend ([ai.<name>], R8): Type selects
-// the wire protocol and its vendor default URL - "anthropic", "openai",
-// "deepseek", "openrouter" (the latter two OpenAI-compatible). BaseURL
+// AIProvider is one named AI backend ([ai.<name>], R8): Type names a
+// row in AIProviders - the wire protocol and vendor default URL. BaseURL
 // overrides the default for any type, so any protocol-compatible
 // endpoint works (local ollama, a proxy, ...). PassCmd is the argv that
 // prints the API key on stdout (F4: tokenized at load, never a shell
@@ -201,6 +200,27 @@ type AIProvider struct {
 	BaseURL   string   `toml:"base-url"`   // empty = provider default
 	Timeout   int      `toml:"timeout"`    // seconds, streaming budget; default 180
 	PassCmd   []string `toml:"pass_cmd"`
+}
+
+// AIProviderDef is one known provider type: the wire protocol and the
+// vendor default base URL. Type selects a row; a config base-url
+// overrides DefaultURL. Add a provider by adding a row - the config
+// validation and the ai backend both read this table, never a
+// hardcoded list.
+type AIProviderDef struct {
+	Protocol   string // "anthropic", or "openai" (OpenAI-compatible)
+	DefaultURL string
+}
+
+// AIProviders is the known provider registry (R8): name -> protocol and
+// default endpoint. Any OpenAI-compatible vendor is a one-row addition;
+// a genuinely new protocol means one new protocol branch in the ai
+// backend, not a list edit here.
+var AIProviders = map[string]AIProviderDef{
+	"anthropic":  {Protocol: "anthropic", DefaultURL: "https://api.anthropic.com/v1"},
+	"openai":     {Protocol: "openai", DefaultURL: "https://api.openai.com/v1"},
+	"deepseek":   {Protocol: "openai", DefaultURL: "https://api.deepseek.com/v1"},
+	"openrouter": {Protocol: "openai", DefaultURL: "https://openrouter.ai/api/v1"},
 }
 
 type UI struct {
@@ -1677,8 +1697,10 @@ func validate(cfg Config) error {
 		}
 	}
 	for name, p := range cfg.AI {
-		if p.Type != "anthropic" && p.Type != "openai" && p.Type != "deepseek" && p.Type != "openrouter" {
-			return fmt.Errorf("ai.%s: type must be one of \"anthropic\", \"openai\", \"deepseek\", \"openrouter\"", name)
+		if _, ok := AIProviders[p.Type]; !ok {
+			names := slices.Collect(maps.Keys(AIProviders))
+			sort.Strings(names)
+			return fmt.Errorf("ai.%s: unknown provider type %q (known: %s)", name, p.Type, strings.Join(names, ", "))
 		}
 		if strings.TrimSpace(p.Model) == "" {
 			return fmt.Errorf("ai.%s: model must not be blank", name)

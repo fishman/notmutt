@@ -39,21 +39,12 @@ const (
 	anthropicVersion = "2023-06-01"
 )
 
-// defaultBase maps a provider type onto its vendor base URL; the
-// config's base-url overrides it, so any type can point at any
-// protocol-compatible endpoint (local ollama, a proxy, DeepSeek's
-// Anthropic-compatible URL, ...).
+// defaultBase resolves a provider type's vendor base URL from the
+// AIProviders registry; the config's base-url overrides it, so any type
+// can point at any protocol-compatible endpoint (local ollama, a proxy,
+// DeepSeek's Anthropic-compatible URL, ...).
 func defaultBase(typ string) string {
-	switch typ {
-	case "anthropic":
-		return "https://api.anthropic.com/v1"
-	case "deepseek":
-		return "https://api.deepseek.com/v1"
-	case "openrouter":
-		return "https://openrouter.ai/api/v1"
-	default:
-		return "https://api.openai.com/v1" // openai and openai-compatible
-	}
+	return config.AIProviders[typ].DefaultURL
 }
 
 // FetchKey runs one pass_cmd argv (F4: tokenized at load, argv exec,
@@ -123,14 +114,16 @@ func Chat(ctx context.Context, p config.AIProvider, model, system, text string, 
 		return "", err
 	}
 	defer clear(key)
+	def, ok := config.AIProviders[p.Type]
+	if !ok {
+		return "", fmt.Errorf("ai: unknown provider type %q", p.Type)
+	}
 	var req *http.Request
-	switch p.Type {
+	switch def.Protocol {
 	case "anthropic":
 		req, err = anthropicRequest(ctx, p, model, system, text, key)
-	case "openai", "deepseek", "openrouter":
+	default: // "openai"
 		req, err = openAIRequest(ctx, p, model, system, text, key)
-	default:
-		return "", fmt.Errorf("ai: unknown provider type %q", p.Type)
 	}
 	if err != nil {
 		return "", err
@@ -147,7 +140,7 @@ func Chat(ctx context.Context, p config.AIProvider, model, system, text string, 
 		return "", fmt.Errorf("ai: %s", resp.Status)
 	}
 	var out strings.Builder
-	err = streamBody(resp.Body, p.Type, func(delta string) {
+	err = streamBody(resp.Body, def.Protocol, func(delta string) {
 		out.WriteString(delta)
 		if emit != nil {
 			emit(delta)
@@ -236,10 +229,11 @@ func openAIRequest(ctx context.Context, p config.AIProvider, model, system, text
 }
 
 // streamBody reads the provider's eventstream line-wise and hands each
-// text delta to emit. anthropic: NDJSON data: lines with
-// content_block_delta payloads; openai: SSE data: lines with
-// choices[0].delta.content, terminated by data: [DONE].
-func streamBody(r io.Reader, typ string, emit func(string)) error {
+// text delta to emit, dispatching on the wire protocol (the registry
+// row's Protocol): anthropic NDJSON data: lines with
+// content_block_delta payloads, or OpenAI SSE data: lines with
+// choices[0].delta.content terminated by data: [DONE].
+func streamBody(r io.Reader, protocol string, emit func(string)) error {
 	sc := newScanner(r)
 	for sc.Scan() {
 		line := strings.TrimSuffix(sc.Text(), "\r")
@@ -251,7 +245,7 @@ func streamBody(r io.Reader, typ string, emit func(string)) error {
 		if payload == "" {
 			continue
 		}
-		switch typ {
+		switch protocol {
 		case "anthropic":
 			var ev anthropicEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
@@ -260,7 +254,7 @@ func streamBody(r io.Reader, typ string, emit func(string)) error {
 			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
 				emit(ev.Delta.Text)
 			}
-		case "openai", "deepseek", "openrouter":
+		default: // "openai"
 			if payload == "[DONE]" {
 				return nil
 			}

@@ -142,6 +142,43 @@ func TestSMIMEValidation(t *testing.T) {
 	}
 }
 
+// TestSMIMEHeaderlessContentPart: openssl's default `smime -sign` emits
+// the signed content as a headerless first part - legal MIME (RFC 2046),
+// but a shape go-message's multipart reader rejects on the first part.
+// The parser must extract the CMS by raw position, never through that
+// reader.
+func TestSMIMEHeaderlessContentPart(t *testing.T) {
+	dir := t.TempDir()
+	caCert, caKey := testCA(t)
+	leaf, leafKey := testLeaf(t, caCert, caKey)
+	caPath := filepath.Join(dir, "ca.pem")
+	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caCert.Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rawBody := []byte("hello alpha\r\nsecond line\r\n")
+	cms := signCMS(t, canonicalWire(rawBody), leaf, leafKey, true)
+	msg := filepath.Join(dir, "openssl.eml")
+	writeDetachedRaw(t, msg, rawBody, cms)
+
+	v, err := crypto.New(caPath, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := ParseSignature(msg)
+	if err != nil {
+		t.Fatalf("openssl-shape message must parse: %v", err)
+	}
+	if sig == nil || !sig.Detached {
+		t.Fatalf("must detect, sig=%+v", sig)
+	}
+	if got, want := string(sig.Content), string(canonicalWire(rawBody)); got != want {
+		t.Fatalf("content = %q, want %q", got, want)
+	}
+	if res, err := v.Verify(sig.CMS, sig.Content); err != nil || !res.Valid {
+		t.Fatalf("must verify: %+v err=%v", res, err)
+	}
+}
+
 // TestCanonicalWire pins the S/MIME line normalization (neomutt
 // crypt_write_signed): a lone LF becomes CRLF, while CRLF and lone CR are
 // preserved - the digest must reproduce from exactly the recovered bytes.
@@ -245,6 +282,33 @@ func writeDetached(t *testing.T, path string, content, cms []byte) {
 		"\r\n" +
 		base64.StdEncoding.EncodeToString(cms) + "\r\n" +
 		"--sigb--\r\n"
+	if err := os.WriteFile(path, []byte(b), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// writeDetachedRaw writes a multipart/signed in openssl's default shape:
+// LF-delimited output, a preamble, a headerless signed first part (the raw
+// body keeps its own CRLF endings), then the base64 signature part.
+func writeDetachedRaw(t *testing.T, path string, body, cms []byte) {
+	t.Helper()
+	b := "To: beta@example.com\n" +
+		"From: alpha@example.com\n" +
+		"Subject: openssl-shape signed test\n" +
+		"MIME-Version: 1.0\n" +
+		"Content-Type: multipart/signed; protocol=\"application/x-pkcs7-signature\"; micalg=\"sha-256\"; boundary=\"----7A32246DCC4BEA4A949EE8FBB7DA2FE3\"\n" +
+		"\n" +
+		"This is an S/MIME signed message\n" +
+		"\n" +
+		"------7A32246DCC4BEA4A949EE8FBB7DA2FE3\n" +
+		string(body) + "\n" +
+		"------7A32246DCC4BEA4A949EE8FBB7DA2FE3\n" +
+		"Content-Type: application/x-pkcs7-signature; name=\"smime.p7s\"\n" +
+		"Content-Transfer-Encoding: base64\n" +
+		"Content-Disposition: attachment; filename=\"smime.p7s\"\n" +
+		"\n" +
+		base64.StdEncoding.EncodeToString(cms) + "\n" +
+		"------7A32246DCC4BEA4A949EE8FBB7DA2FE3--\n"
 	if err := os.WriteFile(path, []byte(b), 0o600); err != nil {
 		t.Fatal(err)
 	}

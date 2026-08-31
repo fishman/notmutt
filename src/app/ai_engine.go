@@ -7,6 +7,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -60,7 +61,7 @@ func runAICommand(name, threadID string, bus *core.Bus, cfg config.Config, worke
 	}
 	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
 	if err != nil || rpl.Err != nil {
-		bus.Publish(core.AiResult{Err: fmt.Errorf("thread %s: %v %v", threadID, err, rpl.Err)})
+		bus.Publish(core.AiResult{Err: fmt.Errorf("thread %s: %w", threadID, errors.Join(err, rpl.Err))})
 		return
 	}
 	account := ""
@@ -79,17 +80,14 @@ func runAICommand(name, threadID string, bus *core.Bus, cfg config.Config, worke
 	}
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	bus.Publish(core.AiStarted{JobID: jobID, ThreadID: threadID})
-	var chatErr error
-	defer func() { bus.Publish(core.AiResult{JobID: jobID, Err: chatErr}) }()
 	out, err := ai.Chat(context.Background(), p, p.Model, cmd.Body, ctxText, func(d string) {
 		bus.Publish(core.AiChunk{JobID: jobID, Text: core.SanitizeControls(d)})
 	})
-	chatErr = err
-	if err != nil || cmd.Action != "compose" {
-		return
+	if cmd.Action == "compose" && err == nil {
+		if st := aiDraftCompose(cfg, root, rpl.Msgs, out); st != nil {
+			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(st))
+		}
 	}
-	if st := aiDraftCompose(cfg, root, rpl.Msgs, out); st != nil {
-		st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-		bus.Publish(compose.ToEvent(st))
-	}
+	bus.Publish(core.AiResult{JobID: jobID, Err: err})
 }

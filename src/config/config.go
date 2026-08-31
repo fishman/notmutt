@@ -207,8 +207,16 @@ type AIProvider struct {
 // overrides DefaultURL. Add a provider by adding a row - the config
 // validation and the ai backend both read this table, never a
 // hardcoded list.
+// The AI wire protocols (the AIProviders Protocol field): anthropic's
+// native protocol, and the OpenAI-compatible protocol every other
+// vendor speaks.
+const (
+	ProtocolAnthropic = "anthropic"
+	ProtocolOpenAI    = "openai"
+)
+
 type AIProviderDef struct {
-	Protocol   string // "anthropic", or "openai" (OpenAI-compatible)
+	Protocol   string // ProtocolAnthropic, or ProtocolOpenAI
 	DefaultURL string
 }
 
@@ -217,10 +225,10 @@ type AIProviderDef struct {
 // a genuinely new protocol means one new protocol branch in the ai
 // backend, not a list edit here.
 var AIProviders = map[string]AIProviderDef{
-	"anthropic":  {Protocol: "anthropic", DefaultURL: "https://api.anthropic.com/v1"},
-	"openai":     {Protocol: "openai", DefaultURL: "https://api.openai.com/v1"},
-	"deepseek":   {Protocol: "openai", DefaultURL: "https://api.deepseek.com/v1"},
-	"openrouter": {Protocol: "openai", DefaultURL: "https://openrouter.ai/api/v1"},
+	"anthropic":  {Protocol: ProtocolAnthropic, DefaultURL: "https://api.anthropic.com/v1"},
+	"openai":     {Protocol: ProtocolOpenAI, DefaultURL: "https://api.openai.com/v1"},
+	"deepseek":   {Protocol: ProtocolOpenAI, DefaultURL: "https://api.deepseek.com/v1"},
+	"openrouter": {Protocol: ProtocolOpenAI, DefaultURL: "https://openrouter.ai/api/v1"},
 }
 
 type UI struct {
@@ -248,6 +256,11 @@ type Refresh struct {
 	// the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
 }
+
+// DefaultWrapWidth is the generated-draft line width when [compose]
+// wrap-width is 0 (mutt's wrap, the RFC 3676 norm); base.toml ships the
+// same default.
+const DefaultWrapWidth = 72
 
 // ComposeSection is the [compose] section: WrapWidth is the line width
 // generated draft bodies (the AI command drafts) hard-wrap to; 0 = the

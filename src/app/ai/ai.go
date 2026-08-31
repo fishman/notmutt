@@ -6,8 +6,7 @@
 // Package ai streams chat completions to the configured AI providers
 // (R8): the anthropic protocol (/v1/messages) and OpenAI-compatible
 // endpoints (/v1/chat/completions). The type selects protocol AND a
-// vendor default URL - anthropic, openai, deepseek, openrouter -
-// that
+// vendor default URL - anthropic, openai, deepseek, openrouter - that
 // base-url overrides (any protocol-compatible endpoint: local ollama,
 // a proxy, DeepSeek's Anthropic-compatible URL, ...). The client talks
 // HTTP itself - no SDKs (supply-chain policy, decision record 7):
@@ -69,9 +68,9 @@ func FetchKey(ctx context.Context, argv []string) ([]byte, error) {
 	return bytes.TrimRight(out.Bytes(), "\r\n"), nil
 }
 
-// boundedBuf caps a child's stdout at maxLine: a runaway tool must
-// not balloon memory - the timeout kills a child that blocks writing
-// past the cap.
+// boundedBuf caps a child's stdout at maxLine: writes past the cap are
+// dropped, so a runaway tool cannot balloon memory or block on a full
+// pipe.
 type boundedBuf struct {
 	bytes.Buffer
 	left int
@@ -95,7 +94,7 @@ func newClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
 			ForceAttemptHTTP2: true, // net/http bundles h2; no vendored x/net/http2 needed
-			DialContext:       (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+			DialContext:       (&net.Dialer{Timeout: keyTimeout}).DialContext,
 		},
 		Timeout: timeout,
 	}
@@ -120,9 +119,9 @@ func Chat(ctx context.Context, p config.AIProvider, model, system, text string, 
 	}
 	var req *http.Request
 	switch def.Protocol {
-	case "anthropic":
+	case config.ProtocolAnthropic:
 		req, err = anthropicRequest(ctx, p, model, system, text, key)
-	default: // "openai"
+	default: // config.ProtocolOpenAI
 		req, err = openAIRequest(ctx, p, model, system, text, key)
 	}
 	if err != nil {
@@ -204,7 +203,7 @@ func openAIRequest(ctx context.Context, p config.AIProvider, model, system, text
 	if err != nil {
 		return nil, err
 	}
-	messages := []map[string]string{}
+	var messages []map[string]string
 	if system != "" {
 		messages = append(messages, map[string]string{"role": "system", "content": system})
 	}
@@ -246,7 +245,7 @@ func streamBody(r io.Reader, protocol string, emit func(string)) error {
 			continue
 		}
 		switch protocol {
-		case "anthropic":
+		case config.ProtocolAnthropic:
 			var ev anthropicEvent
 			if err := json.Unmarshal([]byte(payload), &ev); err != nil {
 				return fmt.Errorf("ai: anthropic stream line: %w", err)
@@ -254,7 +253,7 @@ func streamBody(r io.Reader, protocol string, emit func(string)) error {
 			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
 				emit(ev.Delta.Text)
 			}
-		default: // "openai"
+		default: // config.ProtocolOpenAI
 			if payload == "[DONE]" {
 				return nil
 			}

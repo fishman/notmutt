@@ -128,8 +128,8 @@ func (m Model) sendOverlay(frame string) string {
 		return frame
 	}
 	content := []string{
-		"[" + " " + i18n.T("previous tab"),
-		"]" + " " + i18n.T("next tab"),
+		"[ " + i18n.T("previous tab"),
+		"] " + i18n.T("next tab"),
 	}
 	return strings.Join(spliceBox(lines, m.width, m.ui, m.styles, content), "\n")
 }

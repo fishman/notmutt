@@ -15,10 +15,6 @@ import (
 	"notmutt/mail"
 )
 
-// emailWrapWidth is the default generated-draft line width (mutt's
-// wrap, the RFC 3676 norm) when [compose] wrap-width is unset.
-const emailWrapWidth = 72
-
 // resolveAIProvider selects the [ai] provider a command runs on: an empty
 // name takes the first configured (sorted - deterministic). A missing or
 // empty provider set errors - the gate that keeps AI commands quiet until
@@ -57,7 +53,7 @@ func aiDraftCompose(cfg config.Config, root string, msgs []core.Message, body st
 	st.Subject = core.SanitizeControls(newest.Subject)
 	width := cfg.Compose.WrapWidth
 	if width <= 0 {
-		width = emailWrapWidth
+		width = config.DefaultWrapWidth
 	}
 	st.Body = wrapEmail(core.SanitizeControls(body), width)
 	refs := newest.References
@@ -85,21 +81,24 @@ func newestOf(msgs []core.Message) *core.Message {
 }
 
 // newestParseable returns the newest message that parses as mail, with its
-// parsed form; nil when none does.
+// parsed form; nil when none does. Parsing runs newest-first on a single
+// scan (no copy or sort): a message is only parsed when it could beat the
+// current best.
 func newestParseable(msgs []core.Message) (*core.Message, *mail.Message) {
-	sorted := make([]core.Message, len(msgs))
-	copy(sorted, msgs)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Timestamp > sorted[j].Timestamp })
-	for i := range sorted {
-		if len(sorted[i].Paths) == 0 {
+	var best *core.Message
+	var parsed *mail.Message
+	for i := range msgs {
+		if len(msgs[i].Paths) == 0 || best != nil && msgs[i].Timestamp <= best.Timestamp {
 			continue
 		}
-		p, err := mail.ParseMessage(sorted[i].Paths[0])
-		if err == nil {
-			return &sorted[i], p
+		p, err := mail.ParseMessage(msgs[i].Paths[0])
+		if err != nil {
+			continue
 		}
+		best = &msgs[i]
+		parsed = p
 	}
-	return nil, nil
+	return best, parsed
 }
 
 // threadSenders is the thread's distinct bare sender addresses, minus the

@@ -149,14 +149,28 @@ jobs:
     needs: [deb-rpm, arch]
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
       - name: Download packages
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist
           merge-multiple: true
 
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # the previous release tag, not the one just pushed (at a tag
+          # checkout `git describe` names the tag itself)
+          prev=$(git tag -l 'v*' --sort=-version:refname | sed -n 2p)
+          body="$(scripts/changelog.sh "$prev" "${GITHUB_REF_NAME}")"
+          { echo "body<<EOF"; printf '%s\n' "$body"; echo "EOF"; } >> "$GITHUB_OUTPUT"
+
       - name: Publish release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: dist/*
-          generate_release_notes: true
+          body: ${{ steps.changelog.outputs.body }}

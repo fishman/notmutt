@@ -293,6 +293,31 @@ the MCP server exposes); `mail_lines` (the full thread plain text) is
 absent, so a body cannot cross the allowlist. A plugin without a
 network section keeps the full ctx.
 
+### Pre-poll sync hook
+
+A plugin may declare `refresh(ctx)`: the client calls it before the
+normal refresh (the `=` key or the automatic `[refresh]` interval)
+and awaits it. It returns the argv to run first - an external sync,
+so the poll indexes fresh mail - or nil for a plain refresh. F4: the
+argv is used verbatim, never shell-interpolated.
+
+`ctx` carries `view` (the current view name), `account`, and
+`account_name`: on an account view the account tag and its config key
+(the mbsync channel); on inbox and named folders all are absent. The
+argv runs as a cancellable background job - the task view (`T`) can
+cancel it - and only when it completes (or is cancelled) does the
+normal refresh run.
+
+```lua
+-- refresh.lua: on an account view run mbsync first, then refresh
+function refresh(ctx)
+  if ctx.account then
+    log("sync " .. ctx.account_name)
+    return { "mbsync", ctx.account_name }
+  end
+end
+```
+
 ### Attachment categorization
 
 Attachment downloading is manual and local: a Lua plugin declares a
@@ -392,6 +417,43 @@ never overwritten - re-runs are safe. Filenames and categories are
 sanitized as single path segments (separators become `_`, control
 runes dropped), so no name can traverse the tree. Files are 0600,
 directories 0700.
+
+### S/MIME verification
+
+S/MIME verification runs in-process (R10): the client extracts the CMS
+from a signed message - detached `multipart/signed` with an
+`application/pkcs7-signature` part, or attached `application/pkcs7-mime`
+signed-data - and verifies it against its trust roots with the
+emailProtection EKU gate enforced. Opening a signed message shows the
+verdict banner in the pager: the signer, the validity, and whether the
+signature's certificate was checked for revocation. A valid signature
+from a cert that does not match the From header renders as a warning,
+never green - crypto validity and identity are separate results.
+
+The roots come from the config: a pinned PEM bundle when `ca-file` is
+set, else the system CA pool when `use-system-pool = true` (the
+default), and `use-system-pool = false` with no `ca-file` fails closed:
+
+```toml
+[crypto]
+# ca-file = "/path/to/roots.pem"   # pin mail trust to specific roots
+# use-system-pool = true           # default: trust the system CA pool
+```
+
+The headless command exposes the same verifier to scripts (the pager
+path and the CLI share one implementation):
+
+```sh
+./notmutt smime-verify signed.eml            # system pool
+./notmutt smime-verify signed.eml ca.pem     # pinned bundle
+```
+
+Exit 0 = valid signature or an unsigned message, 1 = invalid.
+`scripts/smime-compare.sh` runs both `openssl smime -verify` and
+`notmutt smime-verify` on the same .eml and reports agreement. One
+asymmetry by design: openssl bare checks the signature without the
+signer's chain, notmutt checks signature AND chain - an untrusted
+signer can pass openssl and fail notmutt.
 
 ## Notifications
 

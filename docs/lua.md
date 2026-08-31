@@ -11,8 +11,10 @@ filesystem) with a deadline kill. The library surface is the full set
 of globals the VM provides, split by where they exist:
 
 - **load-time globals** - available in every plugin file while it
-  loads: `re_match`, `get_attachments`, `date_str`, `json`, `http`
-  (gated), `register_attach_command`, `register_action`, `bind_key`,
+  loads, and in the hook functions it declares (`body_render`,
+  `categorize`, `refresh`), which run on the same loaded VM:
+  `re_match`, `get_attachments`, `date_str`, `json`, `http` (gated),
+  `log`, `register_attach_command`, `register_action`, `bind_key`,
   `translate`.
 - **invocation globals** - available in every action body and `:lua`
   chunk: `ctx`, `attach_add`, `tag_add`, `tag_remove`, `picker_argv`,
@@ -141,6 +143,22 @@ selected by the `[ui] language` setting, never plugin config.
 
 ```lua
 print(translate("save attachment to: "))
+```
+
+### log(msg, err)
+
+Appends to the session log - the same surface the `~` overlay and the
+status line show, shared with the client's own events. `log(msg)` is a
+normal entry, `log(msg, true)` an error line. Available in every
+plugin-declared hook (`body_render`, `categorize`, `refresh`); `:lua`
+chunks and action bodies have `print` instead, which captures into the
+run's output rather than the log. Never log mail content (F6) - the
+text is the plugin's own data, not message bodies.
+
+```lua
+function refresh(ctx)
+  log("sync " .. ctx.account_name)
+end
 ```
 
 ## Invocation globals

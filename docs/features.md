@@ -99,8 +99,10 @@ alignment never shifts per row.
   interpolated into shell strings
 - rendered mail content is control-character sanitized before it
   reaches the terminal
-- crypto via your system `gpg` (S/MIME via openssl), the trust
-  boundary is the system tool, passphrases through gpg-agent only
+- S/MIME verification in-process (pkcs7 + stdlib x509, emailProtection
+  EKU enforced, system roots or a pinned `[crypto] ca-file`); secret-
+  holding crypto (PGP) stays a system-tool seam - `gpg`, passphrases
+  through gpg-agent only - as a send-path follow-on
 - no message bodies or headers are ever logged
 - 0600 files, 0700 directories for everything written
 - the mail parser boundary is fuzz-exercised
@@ -112,4 +114,8 @@ transport (mbsync/vdirsyncer deliver), crypto integration is a
 display/cycle field in the compose dialogue (no signing engine wired
 to the send path yet), Lua scripting is a build-tag-gated layer with
 a minimal plugin surface, and the emacs keymap scheme exists but the
-vim scheme is the reference.
+vim scheme is the reference. A notification activate action that runs a
+Lua hook in the live client (an IPC channel - a same-user unix socket
+the client listens on, `notmutt lua '<chunk>'` on the notification side)
+is designed but not built. Hierarchical thread trees are still broken
+and need help.

@@ -5921,3 +5921,37 @@ func TestScrollSnapsToThreadHead(t *testing.T) {
 		t.Fatalf("page down must raw-scroll at the tail, got %s @ %d", cursorID(), m.indexOffset)
 	}
 }
+
+// TestTaskOverlay: the task view (T) lists the running background tasks
+// from TaskChanged events, x cancels the cursor task on the bus, and a
+// completion event removes the row.
+func TestTaskOverlay(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	cfg := config.Default()
+	bus := core.NewBus()
+	m := sized(New(view, nil, testBindings(), testTagActions(), bus, config.NewStore(cfg), cfg.UI))
+
+	m = pressEvent(t, m, core.TaskChanged{ID: "t1", Label: "sync gmail", Active: true})
+	if len(m.tasks) != 1 || m.tasks["t1"].Label != "sync gmail" {
+		t.Fatalf("tasks = %+v", m.tasks)
+	}
+	m = press(t, m, "T")
+	if !m.taskOpen {
+		t.Fatal("T must open the task view")
+	}
+	ch := bus.Subscribe()
+	m = press(t, m, "x")
+	select {
+	case e := <-ch:
+		ct, ok := e.(core.CancelTask)
+		if !ok || ct.ID != "t1" {
+			t.Fatalf("cancel event = %+v", e)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("x must publish a CancelTask for the cursor task")
+	}
+	m = pressEvent(t, m, core.TaskChanged{ID: "t1", Label: "sync gmail", Cancelled: true})
+	if len(m.tasks) != 0 {
+		t.Fatalf("tasks after completion = %+v", m.tasks)
+	}
+}

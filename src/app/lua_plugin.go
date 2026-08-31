@@ -31,6 +31,14 @@ import (
 	"notmutt/i18n"
 )
 
+// luaLogBus is where a plugin's log() lands: the session log the TUI
+// shows (the status line + ~ overlay). Set by the app at startup; nil
+// until then - a plugin cannot log before the bus exists. The diag
+// pattern: a package-level write path, set once.
+var luaLogBus *core.Bus
+
+func setLuaLogBus(b *core.Bus) { luaLogBus = b }
+
 // luaPlugin is one loaded plugin file: its VM and body_render function.
 // A VM is not concurrency-safe, so every call serializes on mu
 // (decision-record 20 one-VM-one-goroutine).
@@ -39,6 +47,7 @@ type luaPlugin struct {
 	mu         sync.Mutex
 	bodyRender *lua.LFunction
 	categorize *lua.LFunction
+	refresh    *lua.LFunction
 }
 
 // loadLuaPlugins loads every *.lua file in dir (sorted, so the render
@@ -146,6 +155,16 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		L.Push(tbl)
 		return 1
 	}))
+	// log appends to the session log the TUI shows (the status line and
+	// the ~ overlay) - the same surface the client's own events use.
+	// log(msg) is a normal entry, log(msg, true) an error. Never mail
+	// content (F6 - the plugin authors the text, not message bodies).
+	vm.SetGlobal("log", vm.NewFunction(func(L *lua.LState) int {
+		if luaLogBus != nil {
+			luaLogBus.Publish(core.LuaLog{Text: L.CheckString(1), Err: L.OptBool(2, false)})
+		}
+		return 0
+	}))
 	// date_str formats a unix timestamp by the YYYY/MM/DD token pattern
 	// (the same tokens as the [attachments] layout): date_str(msg.date,
 	// "YYYY/MM") -> "2026/08". Literal text passes through; the default
@@ -187,7 +206,18 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 			})
 		}
 	}
-	if p.bodyRender == nil && p.categorize == nil {
+	if fn := vm.GetGlobal("refresh"); fn != lua.LNil {
+		lf, ok := fn.(*lua.LFunction)
+		if !ok {
+			log.Printf("lua plugin %s: refresh must be a function", path)
+		} else {
+			p.refresh = lf
+			RegisterRefreshHook(func(ctx context.Context, rc RefreshCtx) ([]string, error) {
+				return p.refreshCmd(ctx, rc)
+			})
+		}
+	}
+	if p.bodyRender == nil && p.categorize == nil && p.refresh == nil {
 		// a hook-less plugin (http helpers, actions, attach commands)
 		// loaded its side effects during DoFile; nothing to register
 		vm.Close()
@@ -351,4 +381,57 @@ func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]stri
 		return out, verr
 	}
 	return nil, fmt.Errorf("categorize must return a table or nil, got %s", ret.Type().String())
+}
+
+// refreshCmd runs the plugin's refresh(ctx) under the hook deadline: ctx
+// carries the active view and, for an account view, the account tag and
+// config name. The return is an argv table to run before the poll (mbsync
+// <account>), or nil/false for a plain poll. A deadline kill closes the VM
+// and disables the plugin (the render path's fail-fast).
+func (p *luaPlugin) refreshCmd(ctx context.Context, rc RefreshCtx) ([]string, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.vm == nil {
+		return nil, fmt.Errorf("lua plugin disabled after a deadline kill")
+	}
+	p.vm.SetContext(ctx)
+	t := p.vm.NewTable()
+	t.RawSetString("view", lua.LString(rc.View))
+	if rc.Account != "" {
+		t.RawSetString("account", lua.LString(rc.Account))
+		t.RawSetString("account_name", lua.LString(rc.AccountName))
+	}
+	p.vm.Push(p.refresh)
+	p.vm.Push(t)
+	err := p.vm.PCall(1, 1, nil)
+	if err != nil && ctx.Err() != nil {
+		p.vm.Close()
+		p.vm = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ret := p.vm.Get(-1)
+	p.vm.Pop(1)
+	switch v := ret.(type) {
+	case *lua.LNilType:
+		return nil, nil
+	case *lua.LTable:
+		var argv []string
+		for i := 1; ; i++ {
+			item := v.RawGetInt(i)
+			if item == lua.LNil {
+				break
+			}
+			s, ok := item.(lua.LString)
+			if !ok {
+				return nil, fmt.Errorf("refresh argv entries must be strings, got %s", item.Type().String())
+			}
+			argv = append(argv, string(s))
+		}
+		return argv, nil
+	case *lua.LBool:
+		return nil, nil
+	}
+	return nil, fmt.Errorf("refresh must return a table or nil, got %s", ret.Type().String())
 }

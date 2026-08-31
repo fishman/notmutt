@@ -288,6 +288,7 @@ func attachmentsOnce() error {
 		return errors.New("attachments: no categorize hook - install a Lua plugin declaring a categorize function")
 	}
 	bus := core.NewBus()
+	setLuaLogBus(bus)
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

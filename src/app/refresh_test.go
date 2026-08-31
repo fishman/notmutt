@@ -4,6 +4,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"slices"
 	"strconv"
@@ -811,4 +812,57 @@ func rowIDs(rows []core.Row) []string {
 		}
 	}
 	return ids
+}
+
+// TestRefreshCtxFor resolves the pre-poll context: a view named by an
+// account tag IS that account's view (deriveAccountViews keys views by
+// tag), carrying both the tag and the config key (the mbsync channel).
+func TestRefreshCtxFor(t *testing.T) {
+	cfg := config.Default()
+	// the gmail placeholder: tag "gmail" (no Folder override)
+	if rc := refreshCtxFor(cfg, "gmail"); rc.Account != "gmail" || rc.AccountName != "gmail" || rc.View != "gmail" {
+		t.Fatalf("account view ctx = %+v", rc)
+	}
+	// an account with a folder override: the view is named by the tag,
+	// the config key is the mbsync channel
+	cfg.Accounts["personal"] = config.Account{Folder: ptr("pers")}
+	if rc := refreshCtxFor(cfg, "pers"); rc.Account != "pers" || rc.AccountName != "personal" {
+		t.Fatalf("folder-override account view ctx = %+v", rc)
+	}
+	// a plain named view is not an account view
+	if rc := refreshCtxFor(cfg, "inbox"); rc.Account != "" || rc.AccountName != "" || rc.View != "inbox" {
+		t.Fatalf("plain view ctx = %+v", rc)
+	}
+}
+
+func ptr(s string) *string { return &s }
+
+// TestRefreshHookRunsFirst: the pre-poll hook runs under the deadline,
+// its argv is the poll's command; a hook returning nil yields a plain
+// poll. The first non-empty argv wins.
+func TestRefreshHookRunsFirst(t *testing.T) {
+	saved := refreshHooks
+	defer func() { refreshHooks = saved }()
+	refreshHooks = nil
+
+	var got RefreshCtx
+	RegisterRefreshHook(func(ctx context.Context, rc RefreshCtx) ([]string, error) {
+		got = rc
+		return []string{"mbsync", rc.AccountName}, nil
+	})
+	argv := applyRefreshHooks(refreshCtxFor(config.Default(), "gmail"))
+	if len(argv) != 2 || argv[0] != "mbsync" || argv[1] != "gmail" {
+		t.Fatalf("argv = %v", argv)
+	}
+	if got.Account != "gmail" || got.AccountName != "gmail" {
+		t.Fatalf("hook saw %+v", got)
+	}
+
+	refreshHooks = nil
+	RegisterRefreshHook(func(ctx context.Context, rc RefreshCtx) ([]string, error) {
+		return nil, nil
+	})
+	if argv := applyRefreshHooks(refreshCtxFor(config.Default(), "inbox")); argv != nil {
+		t.Fatalf("a nil-returning hook must yield a plain poll, got %v", argv)
+	}
 }

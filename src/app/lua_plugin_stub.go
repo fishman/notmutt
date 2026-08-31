@@ -18,6 +18,10 @@ import (
 // the render boundary runs Go hooks only.
 func loadLuaPlugins(dir string, network map[string]config.LuaNetwork) {}
 
+// setLuaLogBus is a no-op in default builds: no Lua runtime, so no
+// plugin ever logs.
+func setLuaLogBus(b *core.Bus) {}
+
 // pluginActionNames is empty in default builds: no plugin registry, so
 // a binding naming a plugin action is rejected by validateBindings and
 // the dispatch fallthrough never fires.

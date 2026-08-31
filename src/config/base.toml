@@ -121,6 +121,7 @@ opener = ["xdg-open"]
 "]" = { fun = "tab-next", desc = "Switch to the next tab", show = true }
 "?" = { fun = "help", desc = "Show this help", show = true }
 "~" = { fun = "log", desc = "Show the session log", show = true }
+"T" = { fun = "tasks", desc = "Show running tasks", show = true }
 "=" = { fun = "refresh", desc = "Check for new mail now", show = true }
 
 [schemes.vim.pager]
@@ -155,6 +156,7 @@ opener = ["xdg-open"]
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
+"T" = { fun = "tasks" }
 
 [schemes.vim.compose]
 "j" = { fun = "form-down", desc = "Move to the next attachment" }
@@ -184,6 +186,7 @@ opener = ["xdg-open"]
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
+"T" = { fun = "tasks" }
 
 [schemes.vim.fuzzy]
 "j" = { fun = "fuzzy-down", desc = "Move to the next candidate" }

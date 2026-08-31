@@ -58,7 +58,7 @@ var Actions = map[string]map[string]bool{
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true, "scheduled-list": true,
-		"help": true, "log": true, "command": true,
+		"help": true, "log": true, "command": true, "tasks": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -77,7 +77,7 @@ var Actions = map[string]map[string]bool{
 		"toggle-read": true, "archive": true, "inbox": true, "delete": true,
 		"undo": true, "spam": true, "pending": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true, "log": true, "command": true,
+		"help": true, "log": true, "command": true, "tasks": true,
 	},
 	"compose": {
 		"form-down": true, "form-up": true,
@@ -92,7 +92,7 @@ var Actions = map[string]map[string]bool{
 		"account":  true, "signature": true,
 		"send": true, "schedule": true, "abort": true,
 		"tab-prev": true, "tab-next": true,
-		"help": true, "log": true, "command": true,
+		"help": true, "log": true, "command": true, "tasks": true,
 	},
 	"fuzzy": {
 		"fuzzy-down": true, "fuzzy-up": true,
@@ -186,6 +186,15 @@ type Model struct {
 	log     []logLine
 	logOpen bool
 	logView viewport
+	// task is the running background tasks overlay (the task view):
+	// taskOpen the flag, taskView its viewport, tasks the live set
+	// from TaskChanged events (active only), taskCursor the row the
+	// cancel key targets.
+	taskOpen   bool
+	taskView   viewport
+	taskLayer  *layer
+	tasks      map[string]core.TaskChanged
+	taskCursor int
 	// spin is the send dialogue spinner's frame index (sendTick
 	// advances it while a send is in flight).
 	spin int
@@ -317,7 +326,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -377,6 +386,13 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 			m.logView.setSize(m.width, h)
 		}
+		if m.taskOpen {
+			h := m.height - 4
+			if h < 1 {
+				h = 1
+			}
+			m.taskView.setSize(m.width, h)
+		}
 	case KeyPressMsg:
 		// the F key's label mode owns the keys (no dialogue - the
 		// selection is the live highlight): digits extend, backspace
@@ -417,6 +433,48 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			default:
 				m.logOpen = false
 				m.logView = viewport{}
+			}
+			return m, nil
+		}
+		if m.taskOpen {
+			// the task view: the cursor keys select the row, x cancels
+			// it (the app's task loop kills the sync), the pager scroll
+			// keys drive the viewport, anything else closes
+			switch actionForKey(msg, m.bindings["pager"]) {
+			case "scroll-down":
+				if m.taskCursor < len(m.tasks)-1 {
+					m.taskCursor++
+					m.taskView.ensureVisible(m.taskCursor)
+				}
+			case "scroll-up":
+				if m.taskCursor > 0 {
+					m.taskCursor--
+					m.taskView.ensureVisible(m.taskCursor)
+				}
+			case "scroll-top":
+				m.taskCursor = 0
+				m.taskView.scrollTop()
+			case "scroll-bottom":
+				m.taskCursor = len(m.tasks) - 1
+				m.taskView.scrollBottom()
+			case "page-down":
+				m.taskView.pageDown()
+			case "page-up":
+				m.taskView.pageUp()
+			case "half-page-down":
+				m.taskView.halfPageDown()
+			case "half-page-up":
+				m.taskView.halfPageUp()
+			default:
+				if msg.Typed() && (msg.Text == "x" || msg.Text == "d") && m.bus != nil {
+					if ids := taskIDs(m.tasks); m.taskCursor < len(ids) {
+						m.bus.Publish(core.CancelTask{ID: ids[m.taskCursor]})
+					}
+					break
+				}
+				m.taskOpen = false
+				m.taskView = viewport{}
+				m.taskCursor = 0
 			}
 			return m, nil
 		}
@@ -726,6 +784,11 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.onScheduledResult(e)
 		case core.AddressIndex:
 			m.onAddressIndex(e)
+		case core.LuaLog:
+			// a plugin's log() call: the text lands in the session log
+			// like any client event (R8 - plugin-authored, never mail
+			// content)
+			m.logEntry(e.Text, e.Err)
 		case core.LuaResult:
 			// the :lua command or plugin action result: the output or
 			// error goes to the session log and the status line (R8 -
@@ -759,6 +822,25 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.logEntry(e.Job+": "+e.Err.Error(), true)
 		case core.WorkerLockTimeout:
 			m.logEntry("lock timeout: "+e.Kind, true)
+		case core.TaskChanged:
+			// the task view's live set (active only); a completion logs
+			// its cancel or failure, never a clean end
+			if e.Active {
+				m.tasks[e.ID] = e
+			} else {
+				delete(m.tasks, e.ID)
+				switch {
+				case e.Cancelled:
+					m.logEntry("cancelled: "+e.Label, false)
+				case e.Err != "":
+					m.logEntry(e.Label+": "+e.Err, true)
+				}
+			}
+			if m.taskOpen {
+				m.taskView.setLines(m.taskRows())
+				m.taskView.setSize(m.width, m.height-4)
+				m.taskView.ensureVisible(m.taskCursor)
+			}
 		}
 		m.refreshProgress()
 		m.rows = m.activeView().Rows()
@@ -1340,6 +1422,17 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.logView.setLines(m.logRows())
 		m.logView.setSize(m.width, h)
 		m.logView.scrollBottom()
+	case "tasks":
+		m.taskOpen = true
+		m.help = false
+		m.logOpen = false
+		h := m.height - 4
+		if h < 1 {
+			h = 1
+		}
+		m.taskView.setLines(m.taskRows())
+		m.taskView.setSize(m.width, h)
+		m.taskView.ensureVisible(m.taskCursor)
 	case "command":
 		// the command line: ": lua <code>" runs a Lua chunk, plugin
 		// action names dispatch to their registered functions (R8)
@@ -2731,6 +2824,9 @@ func (m Model) renderBase() string {
 	}
 	if m.logOpen {
 		return m.renderLog()
+	}
+	if m.taskOpen {
+		return m.renderTasks()
 	}
 	if m.mode == "compose" {
 		return m.renderCompose()

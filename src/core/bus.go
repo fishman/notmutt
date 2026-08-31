@@ -447,3 +447,29 @@ type Progress struct {
 	Done  int
 	Total int
 }
+
+// TaskChanged reports a background task's lifecycle (the task view):
+// register (Active) and complete (inactive, with an error or a user
+// cancel). The TUI keeps its task list from these events and renders
+// the active set.
+type TaskChanged struct {
+	ID        string
+	Label     string
+	Active    bool
+	Cancelled bool
+	Err       string
+}
+
+// CancelTask asks the app to cancel a background task (the task view's
+// cancel key). The app's task loop cancels the task's context; a sync
+// task's exec.CommandContext kills the process.
+type CancelTask struct {
+	ID string
+}
+
+// LuaLog is a plugin's log() call (R8): the text lands in the session
+// log the TUI shows, like any client event. Never mail content (F6).
+type LuaLog struct {
+	Text string
+	Err  bool
+}

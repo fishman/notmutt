@@ -60,6 +60,9 @@ func Run() error {
 		// answer with the stub's not-built-in error
 		return serveMCP()
 	}
+	if len(os.Args) > 1 && os.Args[1] == "smime-verify" {
+		return smimeVerifyOnce()
+	}
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -215,6 +218,7 @@ func Run() error {
 	// registering its body_render as a render transform. The adapter
 	// compiles only under the lua build tag (the R12 pattern); default
 	// builds run the no-op stub.
+	setLuaLogBus(bus)
 	loadLuaPlugins(filepath.Join(configDir(), "lua"), cfg.Lua.Network)
 
 	// binding validation AFTER the plugin load: a binding may name a
@@ -336,6 +340,10 @@ func Run() error {
 	}
 
 	go runRefresher(ctx, bus, worker, refresher, st, fj)
+	// the task loop owns background-task cancellation (the task view):
+	// CancelTask from the TUI kills the running sync, independent of
+	// the refresher's poll select - a blocking sync never stalls it.
+	go taskLoop(ctx, bus.Subscribe())
 
 	// the new-mail notification (R2 side effect): the filter job's
 	// completion event, live runs only - a dry-run report is review
@@ -421,6 +429,75 @@ func applyBodyRenderHooks(lines []core.Line) []core.Line {
 		lines = out
 	}
 	return lines
+}
+
+// RefreshCtx is the pre-poll context a refresh hook sees (R8's Lua
+// layer): the active view and, when the view is an account view, the
+// account tag and the account's config name (the mbsync channel). A
+// plain view (inbox, archive, ...) carries empty Account fields.
+type RefreshCtx struct {
+	View        string
+	Account     string // account tag, "" when the view is not an account view
+	AccountName string // account config key, "" likewise
+}
+
+// RefreshHook is the pre-poll boundary: a hook run before the poll body,
+// returning an argv command to run first (e.g. mbsync <account>). The
+// client runs the argv argv-only (F4) and waits for it before the poll
+// proceeds - the account-refresh pattern (sync, then index). The argv is
+// user-configured, never mail content.
+type RefreshHook func(ctx context.Context, rc RefreshCtx) ([]string, error)
+
+var refreshHooks []RefreshHook
+
+// refreshHookBudget bounds one refresh hook. A hook that exceeds it is
+// killed and its command is skipped - a wedged plugin must not stall the
+// poll loop.
+var refreshHookBudget = time.Second
+
+// RegisterRefreshHook registers a pre-poll transform. The round trip is
+// free with no hooks registered: applyRefreshHooks is a no-op.
+func RegisterRefreshHook(fn RefreshHook) {
+	refreshHooks = append(refreshHooks, fn)
+}
+
+// applyRefreshHooks runs the registered hooks in order under one
+// deadline; the first non-empty argv wins (the refresh key's semantics:
+// one command, then the poll). A hook error or a deadline kill degrades
+// to a plain poll - the client never stalls on a plugin.
+func applyRefreshHooks(rc RefreshCtx) []string {
+	if len(refreshHooks) == 0 {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), refreshHookBudget)
+	defer cancel()
+	for _, h := range refreshHooks {
+		argv, err := h(ctx, rc)
+		if err != nil {
+			log.Printf("refresh hook: %v", err)
+			continue
+		}
+		if len(argv) > 0 {
+			return argv
+		}
+	}
+	return nil
+}
+
+// refreshCtxFor resolves the refresh context for the active view: an
+// account view is a tag query keyed by the account tag (deriveAccountViews),
+// so a view named by an account tag IS that account's view. The account
+// name (config key) is what the mbsync channel is called.
+func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
+	rc := RefreshCtx{View: view}
+	for name, a := range cfg.Accounts {
+		if a.Tag(name) == view {
+			rc.Account = a.Tag(name)
+			rc.AccountName = name
+			break
+		}
+	}
+	return rc
 }
 
 // openThread renders the opened message and publishes ThreadLoaded
@@ -714,6 +791,31 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 		tickCh = ticker.C
 	}
 	poll := func() {
+		// the pre-poll hook (R8's Lua layer): an account view's refresh
+		// can run a sync command first (mbsync <account>) - the argv is
+		// run argv-only (F4) and awaited, then the poll proceeds so
+		// notmuch new indexes what the sync delivered. The sync runs as
+		// a cancellable task: the task view lists it and a cancel kills
+		// the process (exec.CommandContext).
+		rc := refreshCtxFor(st.Config(), r.view.Name)
+		if argv := applyRefreshHooks(rc); len(argv) > 0 {
+			label := "sync"
+			if rc.Account != "" {
+				label = "sync " + rc.Account
+			}
+			tctx, cancel := context.WithCancel(ctx)
+			t := registerTask(bus, label, cancel)
+			err := exec.CommandContext(tctx, argv[0], argv[1:]...).Run()
+			if tctx.Err() != nil {
+				completeTask(bus, t.ID, true, nil) // a user cancel, not a failure
+				diag.Warn("refresh hook", "sync cancelled", label)
+			} else {
+				completeTask(bus, t.ID, false, err)
+				if err != nil {
+					diag.Warn("refresh hook", "err", err.Error())
+				}
+			}
+		}
 		if fj != nil && st.Config().Filter.Enabled {
 			// the filter job owns `notmuch new`; the view cycle comes
 			// from its ActNew's WorkerDone

@@ -6,6 +6,7 @@
 package app
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -312,6 +313,103 @@ end
 		t.Fatal("a busy loop must be killed by the budget")
 	}
 	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatal("a killed plugin must fail fast")
+	}
+}
+
+// TestLuaLog: a plugin's log() publishes a LuaLog event - the session
+// log the TUI shows; the error flag rides along.
+func TestLuaLog(t *testing.T) {
+	bus := core.NewBus()
+	saved := luaLogBus
+	luaLogBus = bus
+	defer func() { luaLogBus = saved }()
+	ch := bus.Subscribe()
+	hookSaved := renderHooks
+	defer restoreRenderHooks(hookSaved, renderHookBudget)
+	dir := pluginDir(t, map[string]string{"log.lua": `
+function body_render(lines)
+  log("indexed " .. #lines .. " lines")
+  log("a failure", true)
+  return lines
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if _, err := renderHooks[0](context.Background(), []core.Line{{Text: "x", Kind: core.LineBody}}); err != nil {
+		t.Fatal(err)
+	}
+	var got []core.LuaLog
+	for len(got) < 2 {
+		select {
+		case e := <-ch:
+			if le, ok := e.(core.LuaLog); ok {
+				got = append(got, le)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("no LuaLog events")
+		}
+	}
+	if got[0].Text != "indexed 1 lines" || got[0].Err {
+		t.Fatalf("first log = %+v", got[0])
+	}
+	if got[1].Text != "a failure" || !got[1].Err {
+		t.Fatalf("second log = %+v", got[1])
+	}
+}
+
+// TestLuaRefreshRegisters: a plugin's refresh(ctx) registers a
+// RefreshHook; the ctx carries the active view and, for an account view,
+// the account tag and config name. The return is the pre-poll argv.
+func TestLuaRefreshRegisters(t *testing.T) {
+	saved := refreshHooks
+	defer func() { refreshHooks = saved }()
+	dir := pluginDir(t, map[string]string{"r.lua": `
+function refresh(ctx)
+  if ctx.account then
+    return {"mbsync", ctx.account_name}
+  end
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if len(refreshHooks) != 1 {
+		t.Fatalf("refresh hooks = %d, want 1", len(refreshHooks))
+	}
+	cfg := config.Default()
+	// the gmail placeholder: the account view returns the mbsync argv
+	argv, err := refreshHooks[0](context.Background(), refreshCtxFor(cfg, "gmail"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(argv) != 2 || argv[0] != "mbsync" || argv[1] != "gmail" {
+		t.Fatalf("account view argv = %v", argv)
+	}
+	// a plain view carries no account: the hook returns nil - a plain poll
+	argv, err = refreshHooks[0](context.Background(), refreshCtxFor(cfg, "inbox"))
+	if err != nil || argv != nil {
+		t.Fatalf("plain view argv = %v, err = %v (want nil, nil)", argv, err)
+	}
+}
+
+// TestLuaRefreshDeadline: a busy-looping refresh is killed by the hook
+// budget, the VM is closed, and the disabled plugin fails fast.
+func TestLuaRefreshDeadline(t *testing.T) {
+	saved := refreshHooks
+	defer func() { refreshHooks = saved }()
+	savedBudget := refreshHookBudget
+	refreshHookBudget = 50 * time.Millisecond
+	defer func() { refreshHookBudget = savedBudget }()
+	dir := pluginDir(t, map[string]string{"busy.lua": `
+function refresh(ctx)
+  while true do end
+end
+`})
+	loadLuaPlugins(dir, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := refreshHooks[0](ctx, RefreshCtx{}); err == nil {
+		t.Fatal("a busy loop must be killed by the budget")
+	}
+	if _, err := refreshHooks[0](context.Background(), RefreshCtx{}); err == nil || !strings.Contains(err.Error(), "disabled") {
 		t.Fatal("a killed plugin must fail fast")
 	}
 }

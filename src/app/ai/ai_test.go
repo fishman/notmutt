@@ -105,6 +105,43 @@ func TestChatOpenAIStream(t *testing.T) {
 	}
 }
 
+// TestStreamBodyOrdering pins the OpenAI SSE arrival against reordering:
+// the deltas land in wire order whatever the framing quirks - CRLF
+// endings, a role-only first chunk, a finish_reason chunk, escaped
+// newlines, and empty deltas must not scramble or drop the text.
+func TestStreamBodyOrdering(t *testing.T) {
+	// realistic DeepSeek/OpenAI stream: role chunk, content with escaped
+	// newlines, trailing space deltas, finish_reason, CRLF + blank lines
+	wire := strings.Join([]string{
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"**Thread state:** followed\"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\\nAfter\"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" meeting \"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Re'za\"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"\\n\"},\"finish_reason\":null}]}",
+		"",
+		"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
+		"",
+		"data: [DONE]",
+		"",
+	}, "\r\n")
+	var got []string
+	err := streamBody(strings.NewReader(wire), config.ProtocolOpenAI, func(d string) { got = append(got, d) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(got, "")
+	want := "**Thread state:** followed\n\nAfter meeting Re'za\n"
+	if joined != want {
+		t.Fatalf("deltas = %q, want %q", got, want)
+	}
+}
+
 // TestDefaultBase pins the per-type vendor URLs: type selects the
 // protocol AND its default endpoint (the config's base-url overrides).
 func TestDefaultBase(t *testing.T) {

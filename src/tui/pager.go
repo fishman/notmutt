@@ -25,7 +25,9 @@ import (
 // bounded (one thread), so the window owns the scroll state (the index
 // stays windowed - 129k rows must never flatten). Long lines truncate
 // to the window width, never wrap (R11; wrapping is future work) - the
-// h/l keys pan horizontally past the truncation instead.
+// h/l keys pan horizontally past the truncation instead. The one
+// exception is the streamed AI summary (appendText): it wraps to the
+// window width as it arrives.
 type pager struct {
 	threadID string
 	// msgID is the opened message: the pager shows that message's
@@ -224,28 +226,163 @@ func (p *pager) append(l core.Line) {
 }
 
 // appendText merges a streamed delta into the pager (the AI summary's
-// token stream): whole lines split off and append, a trailing partial
-// extends the last line in place - a token-per-event stream renders as
-// flowing text, never one row per token.
+// token stream): complete lines (ending in \n) wrap to the window width
+// and append as rows; a trailing partial extends the last line in place
+// and wraps it when it overflows - a token-per-event stream renders as
+// flowing wrapped text, never one row per token. The summary is the
+// only streamed content: mail, html, and preview lines arrive
+// producer-wrapped and never re-wrap (R11).
 func (p *pager) appendText(text string) {
 	for len(text) > 0 {
 		i := strings.IndexByte(text, '\n')
 		if i < 0 {
-			n := len(p.lines)
-			if n > 0 && !strings.HasSuffix(p.lines[n-1].Text, "\n") {
+			// trailing partial: extend the open last line (or start
+			// one), then wrap it in place if it overflows
+			if n := len(p.lines); n > 0 && !strings.HasSuffix(p.lines[n-1].Text, "\n") {
 				p.lines[n-1].Text += text
-				if n-1 < len(p.styled) {
-					p.styled[n-1] = ""
-				}
-				p.ensureStyled()
-				return
+			} else {
+				p.append(core.Line{Text: text, Kind: core.LineBody})
 			}
-			p.append(core.Line{Text: text, Kind: core.LineBody})
+			p.wrapLast(false)
 			return
 		}
-		p.append(core.Line{Text: text[:i+1], Kind: core.LineBody})
-		text = text[i+1:]
+		seg, rest := text[:i], text[i+1:]
+		if n := len(p.lines); n > 0 && !strings.HasSuffix(p.lines[n-1].Text, "\n") {
+			// the newline closes the open line: extend it with the
+			// segment's text and mark it complete - appending a fresh
+			// row leaves the open line dangling and the next delta's
+			// text merges into it
+			p.lines[n-1].Text += seg
+			p.wrapLast(true)
+		} else {
+			p.appendWrapped(text[:i+1])
+		}
+		text = rest
 	}
+}
+
+// appendWrapped wraps one complete line (ends in \n) to the window
+// width and appends its rows; the last row keeps the \n marker so the
+// next delta starts a fresh line.
+func (p *pager) appendWrapped(line string) {
+	line = strings.TrimSuffix(line, "\n")
+	if line == "" {
+		p.append(core.Line{Text: "\n", Kind: core.LineBody})
+		return
+	}
+	rows := wrapText(line, p.width)
+	for i, r := range rows {
+		if i == len(rows)-1 {
+			r += "\n"
+		}
+		p.append(core.Line{Text: r, Kind: core.LineBody})
+	}
+}
+
+// wrapLast wraps the open last line (no trailing \n) in place when it
+// overflows the window width: the first row keeps the slot, the rest
+// append. With close the final row gets the \n - the line is complete
+// and the next delta starts fresh; without, the last row stays the open
+// continuation the next delta extends. The styled slot always drops -
+// the text changed whether or not it split.
+func (p *pager) wrapLast(close bool) {
+	n := len(p.lines)
+	if n == 0 || strings.HasSuffix(p.lines[n-1].Text, "\n") {
+		return
+	}
+	rows := wrapText(p.lines[n-1].Text, p.width)
+	if close {
+		rows[len(rows)-1] += "\n"
+	}
+	p.lines[n-1].Text = rows[0]
+	if n-1 < len(p.styled) {
+		p.styled[n-1] = ""
+	}
+	for _, r := range rows[1:] {
+		p.append(core.Line{Text: r, Kind: core.LineBody})
+	}
+	p.ensureStyled()
+}
+
+// wrapText word-wraps line to width display cells (wcwidth, R11): runs
+// of whitespace collapse to a single space separator, a word wider than
+// the row hard-breaks on a rune boundary. width <= 0 returns the line
+// as a single row (no wrap).
+//
+// The line's edge separator runs survive (collapsed to one space): the
+// streaming splitter leaves a trailing space on an open line, and
+// dropping it would concatenate the next token's word to the last one
+// ("brown" + "fox " + "jumps" -> "brown foxjumps").
+func wrapText(line string, width int) []string {
+	if width <= 0 {
+		return []string{line}
+	}
+	head := ""
+	if l := strings.TrimLeft(line, " \t"); l != line {
+		head = " "
+		line = l
+	}
+	tail := ""
+	if l := strings.TrimRight(line, " \t"); l != line {
+		tail = " "
+		line = l
+	}
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{head + line + tail}
+	}
+	var rows []string
+	var row []rune
+	col := 0
+	flush := func() {
+		if len(row) > 0 {
+			rows = append(rows, string(row))
+			row = nil
+			col = 0
+		}
+	}
+	for _, word := range words {
+		runes := []rune(word)
+		for runewidth.StringWidth(string(runes)) > width {
+			// hard-break: take cells up to the width, commit, repeat
+			var piece []rune
+			wc := 0
+			for _, r := range runes {
+				w := runewidth.RuneWidth(r)
+				if wc+w > width {
+					break
+				}
+				wc += w
+				piece = append(piece, r)
+			}
+			if len(piece) == 0 {
+				piece = runes[:1] // a single rune wider than the row
+			}
+			flush()
+			rows = append(rows, string(piece))
+			runes = runes[len(piece):]
+		}
+		if len(runes) == 0 {
+			continue
+		}
+		if col > 0 && col+1+runewidth.StringWidth(string(runes)) > width {
+			flush()
+		}
+		if col > 0 {
+			row = append(row, ' ')
+			col++
+		}
+		row = append(row, runes...)
+		col += runewidth.StringWidth(string(runes))
+	}
+	flush()
+	if head != "" && len(rows) > 0 {
+		rows[0] = head + rows[0]
+	}
+	if tail != "" && len(rows) > 0 {
+		rows[len(rows)-1] += tail
+	}
+	return rows
 }
 
 // setLinkSel points the easyjump highlight at the label marker under

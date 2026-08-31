@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"notmutt/app/ai"
@@ -37,12 +38,54 @@ func aiCommandList() []tui.AICommand {
 	return out
 }
 
+// chunkBatcher rate-limits streamed AI deltas to at most one publish per
+// minInterval - the frame budget: a provider can emit hundreds of tokens
+// per second, far faster than the TUI repaints, and the event bus drops
+// events that overflow its bounded channel (a silent loss that garbles
+// the summary). Deltas accumulate in a buffer and flush whole; nothing
+// is dropped, the final flush sends the last partial frame. The callback
+// runs on the single stream-read goroutine, so no lock is needed.
+type chunkBatcher struct {
+	minInterval time.Duration
+	last        time.Time
+	buf         strings.Builder
+	publish     func(string)
+}
+
+// add buffers one delta and flushes when the interval has elapsed; flush
+// is called once more after the stream ends.
+func (b *chunkBatcher) add(d string) {
+	b.buf.WriteString(d)
+	if time.Since(b.last) < b.minInterval {
+		return
+	}
+	b.flush()
+}
+
+func (b *chunkBatcher) flush() {
+	s := b.buf.String()
+	b.buf.Reset()
+	if s == "" {
+		return
+	}
+	b.last = time.Now()
+	b.publish(s)
+}
+
+// lastAIOutput is the most recent view-action command's full output (the
+// summary the user sees in the pager), retained so a later command that
+// declares summary_context can build on it - the AI-command chain. It is
+// AI output, not mail content, and only ever reaches the model through
+// BuildContext's single path. Session-local.
+var lastAIOutput string
+
 // runAICommand runs one command on a thread: fetch the thread messages,
 // build the context from the declared data, stream the completion as
-// AiChunk, and open a compose draft when the command drafts one. The
-// wiring runs it on its own goroutine; the summary pager is one-job at a
-// time (the TUI gates on m.summary before calling).
-func runAICommand(name, threadID string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {
+// AiChunk, and open a compose draft when the command drafts one. extra is
+// user text typed in the picker (the e key) and is appended to the prompt
+// body before sending. The wiring runs it on its own goroutine; the
+// summary pager is one job at a time (the TUI gates on m.summary).
+func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {
 	cmds, err := aicmd.LoadCommands(filepath.Join(configDir(), "ai"))
 	if err != nil {
 		bus.Publish(core.AiResult{Err: err})
@@ -73,16 +116,28 @@ func runAICommand(name, threadID string, bus *core.Bus, cfg config.Config, worke
 		bus.Publish(core.AiResult{Err: err})
 		return
 	}
+	if cmd.SummaryContext && lastAIOutput != "" {
+		ctxText += "\nPrevious AI summary:\n" + lastAIOutput + "\n"
+	}
 	p, err := resolveAIProvider(cfg, cmd.Provider)
 	if err != nil {
 		bus.Publish(core.AiResult{Err: err})
 		return
 	}
+	body := cmd.Body
+	if extra != "" {
+		body = cmd.Body + "\n\n" + extra
+	}
 	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
 	bus.Publish(core.AiStarted{JobID: jobID, ThreadID: threadID})
-	out, err := ai.Chat(context.Background(), p, p.Model, cmd.Body, ctxText, func(d string) {
-		bus.Publish(core.AiChunk{JobID: jobID, Text: core.SanitizeControls(d)})
-	})
+	batcher := &chunkBatcher{minInterval: 25 * time.Millisecond, publish: func(d string) {
+		bus.Publish(core.AiChunk{JobID: jobID, Text: core.SanitizeText(d)})
+	}}
+	out, err := ai.Chat(context.Background(), p, p.Model, body, ctxText, batcher.add)
+	batcher.flush()
+	if cmd.Action == "view" && err == nil {
+		lastAIOutput = out
+	}
 	if cmd.Action == "compose" && err == nil {
 		if st := aiDraftCompose(cfg, root, rpl.Msgs, out); st != nil {
 			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())

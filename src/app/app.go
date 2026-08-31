@@ -254,8 +254,8 @@ func Run() error {
 	// context, streams into the summary pager, and drafts a compose when
 	// the command drafts one
 	tui.SetAICommandSource(func() []tui.AICommand { return aiCommandList() })
-	tui.SetAICommandHandler(func(name, threadID string) {
-		go runAICommand(name, threadID, bus, cfg, worker, root)
+	tui.SetAICommandHandler(func(name, threadID, extra string) {
+		go runAICommand(name, threadID, extra, bus, cfg, worker, root)
 	})
 
 	// attach commands: config tables register first, then Lua plugin

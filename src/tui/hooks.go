@@ -244,9 +244,10 @@ func SetAICommandSource(fn func() []AICommand) {
 
 // onAICommand runs an AI command on a thread (the picker's enter): the
 // app builds the context, streams the completion as AiChunk, and opens a
-// compose draft when the command drafts one; a no-op default.
-var onAICommand = func(name, threadID string) {}
+// compose draft when the command drafts one; extra is the user's appended
+// prompt text from the picker's e key (empty when none); a no-op default.
+var onAICommand = func(name, threadID, extra string) {}
 
-func SetAICommandHandler(fn func(string, string)) {
+func SetAICommandHandler(fn func(string, string, string)) {
 	onAICommand = fn
 }

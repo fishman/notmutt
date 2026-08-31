@@ -4,9 +4,12 @@ description: Draft a reply to this thread into a compose dialogue
 action: compose
 data: [participants, subjects, count, last_body]
 account_context: true
+summary_context: true
 ---
 You are drafting a reply to the mail thread below: the sender participants,
-subjects, the message count, and the latest message body.
+subjects, the message count, and the latest message body. When a previous
+AI summary of the thread is included (the summary_context block), anchor the
+reply to the points it calls out.
 
 Write a professional reply that addresses the open points in the thread.
 Write in short paragraphs separated by blank lines - the client wraps

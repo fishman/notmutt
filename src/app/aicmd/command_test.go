@@ -48,18 +48,19 @@ func TestLoadCommand(t *testing.T) {
 func TestLoadCommandStrict(t *testing.T) {
 	dir := t.TempDir()
 	cases := map[string]string{
-		"no frontmatter": "name: x\n",
-		"no closing":     "---\nname: x\n",
-		"unknown key":    "---\nname: x\ndescription: y\naction: view\ndata: [count]\nbogus: 1\n---\nbody\n",
-		"missing name":   "---\ndescription: y\naction: view\ndata: [count]\n---\nbody\n",
-		"missing desc":   "---\nname: x\naction: view\ndata: [count]\n---\nbody\n",
-		"missing action": "---\nname: x\ndescription: y\ndata: [count]\n---\nbody\n",
-		"bad action":     "---\nname: x\ndescription: y\naction: fire\ndata: [count]\n---\nbody\n",
-		"bad data field": "---\nname: x\ndescription: y\naction: view\ndata: [count, headers]\n---\nbody\n",
-		"empty data":     "---\nname: x\ndescription: y\naction: view\ndata: []\n---\nbody\n",
-		"empty body":     "---\nname: x\ndescription: y\naction: view\ndata: [count]\n---\n",
-		"bad bool":       "---\nname: x\ndescription: y\naction: view\ndata: [count]\naccount_context: maybe\n---\nbody\n",
-		"duplicate key":  "---\nname: x\nname: z\ndescription: y\naction: view\ndata: [count]\n---\nbody\n",
+		"no frontmatter":   "name: x\n",
+		"no closing":       "---\nname: x\n",
+		"unknown key":      "---\nname: x\ndescription: y\naction: view\ndata: [count]\nbogus: 1\n---\nbody\n",
+		"missing name":     "---\ndescription: y\naction: view\ndata: [count]\n---\nbody\n",
+		"missing desc":     "---\nname: x\naction: view\ndata: [count]\n---\nbody\n",
+		"missing action":   "---\nname: x\ndescription: y\ndata: [count]\n---\nbody\n",
+		"bad action":       "---\nname: x\ndescription: y\naction: fire\ndata: [count]\n---\nbody\n",
+		"bad data field":   "---\nname: x\ndescription: y\naction: view\ndata: [count, headers]\n---\nbody\n",
+		"empty data":       "---\nname: x\ndescription: y\naction: view\ndata: []\n---\nbody\n",
+		"empty body":       "---\nname: x\ndescription: y\naction: view\ndata: [count]\n---\n",
+		"bad bool":         "---\nname: x\ndescription: y\naction: view\ndata: [count]\naccount_context: maybe\n---\nbody\n",
+		"bad summary bool": "---\nname: x\ndescription: y\naction: view\ndata: [count]\nsummary_context: maybe\n---\nbody\n",
+		"duplicate key":    "---\nname: x\nname: z\ndescription: y\naction: view\ndata: [count]\n---\nbody\n",
 	}
 	for label, content := range cases {
 		path := write(t, dir, label+".md", content)

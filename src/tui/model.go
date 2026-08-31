@@ -893,9 +893,12 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		return m, nil
 	case statusSpinTick:
 		// the status spinner's frame cadence: advance and re-arm while
-		// the client is busy, disarm when idle.
+		// the client is busy, disarm when idle. The tick owns the
+		// repaint - the frame advances on its cadence, never on the next
+		// event's coattails.
 		if m.busy() {
 			m.statusSpin++
+			m.paint = true
 			return m, batch(EventCmd(m.ch), statusSpinTickCmd())
 		}
 		m.statusSpinTickOn = false
@@ -1319,9 +1322,9 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "ai-commands":
 		// the A key: run a user-authored AI command on this thread (the
 		// picker's enter streams into the summary pager or drafts a
-		// compose). The summary pager is one job at a time - a stream
-		// already open must close first (q).
-		if m.summary != nil {
+		// compose). A stream in flight must finish first; a settled
+		// summary is replaced by the next job (the chaining path).
+		if m.summary != nil && !m.summary.done {
 			m.logEntry(i18n.T("close the current summary (q) first"), true)
 			break
 		}
@@ -1836,14 +1839,15 @@ type summary struct {
 	pager     *pager
 	mailPager *pager
 	first     bool // the first delta replaces the placeholder line
+	done      bool // the stream settled (error or success): a new job may replace it
 }
 
 // onAiStarted opens the summary as its own tab: the stack attaches the
 // summary pager and switches to it (the displaced message pager saved as
-// mailPager), chunks append as they arrive. A second job while one
-// streams is ignored - one summary at a time.
+// mailPager), chunks append as they arrive. A stream in flight is ignored
+// - one at a time - but a settled summary is replaced (the chaining path).
 func (m *Model) onAiStarted(e core.AiStarted) {
-	if m.summary != nil {
+	if m.summary != nil && !m.summary.done {
 		return
 	}
 	mailID := e.MsgID
@@ -1899,6 +1903,7 @@ func (m *Model) onAiResult(e core.AiResult) {
 		m.summary.pager.append(core.Line{Text: "ai: " + e.Err.Error(), Kind: core.LineError})
 		m.logEntry("ai: "+e.Err.Error(), true)
 	}
+	m.summary.done = true
 	m.paint = true
 }
 
@@ -3240,7 +3245,8 @@ func (m Model) statusLineWith(st Styles, ui config.UI) string {
 		sig += "|" + d.prog.Job + "|" + d.prog.View + "|" + strconv.Itoa(d.prog.Done) + "|" + strconv.Itoa(d.prog.Total)
 	}
 	sig += "|" + d.legend + "|" + d.account + "|" + d.mime + "|" + d.msg + "|" + strconv.FormatBool(d.msgErr) +
-		"|" + strconv.FormatBool(d.edited) + "|" + d.flags + "|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
+		"|" + strconv.FormatBool(d.edited) + "|" + d.flags + "|" + strconv.Itoa(d.spinFrame) + "|" + strconv.FormatBool(d.spin) +
+		"|" + strconv.Itoa(m.width) + "|" + strconv.Itoa(m.styleVer)
 	return m.statusLayer.get(sig, func() string { return statusLineWidth(st, ui, d, m.width) })
 }
 
@@ -3317,6 +3323,9 @@ type textDialogue struct {
 	// promptID is the Lua prompt() round trip (field "luaprompt"): the
 	// committed text (or the cancel) rides PromptResult back to the VM
 	promptID string
+	// aicmdName is the selected AI command (field "aiextra"): the appended
+	// prompt text runs that command on the current thread
+	aicmdName string
 }
 
 // cancelDialogue resets the abort gate (q opened the confirm with the
@@ -3494,6 +3503,14 @@ func (d *listDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return nil, nil
 		}
 	}
+	// the aicmd picker's e key: append extra prompt text on top of the
+	// selected command's body (the prompt opens, enter runs the command)
+	if d.f.kind == "aicmd" && msg.String() == "e" {
+		if name, ok := d.f.selectedPayload(); ok && name != "" {
+			m.cancelDialogue()
+			return &textDialogue{field: "aiextra", label: i18n.T("extra prompt: "), aicmdName: name}, nil
+		}
+	}
 	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
 		switch a {
 		case "fuzzy-down":
@@ -3589,7 +3606,7 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		name, ok := d.f.selectedPayload()
 		if ok {
 			m.cancelDialogue()
-			onAICommand(name, m.aiThreadID())
+			onAICommand(name, m.aiThreadID(), "")
 		}
 		return nil, nil
 	}
@@ -3843,9 +3860,28 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 			onSchedule(m.tabs[m.tabIdx-1], input)
 		}
 		return nil, nil
+	case "aiextra":
+		// the picker's e key: run the selected command with the extra text
+		// appended to its prompt body (empty input still runs - the plain
+		// command)
+		m.cancelDialogue()
+		onAICommand(d.aicmdName, m.aiThreadID(), input)
+		return nil, nil
+	default:
+		// the compose-header fields - the default arm keeps a single switch
+		// over the field; the index prompts (filter/search) return above, so
+		// a tab is open when we get here
+		if m.tabIdx > 0 {
+			applyComposeHeader(&m.tabs[m.tabIdx-1], d.field, input)
+		}
+		return nil, nil
 	}
-	st := &m.tabs[m.tabIdx-1]
-	switch d.field {
+}
+
+// applyComposeHeader writes one committed compose-header field onto the
+// tab: the address fields parse through SplitAddrs, the rest are plain.
+func applyComposeHeader(st *compose.State, field, input string) {
+	switch field {
 	case "from":
 		st.From = input
 	case "subject":
@@ -3859,7 +3895,6 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 	case "replyto":
 		st.ReplyTo = compose.SplitAddrs(input)
 	}
-	return nil, nil
 }
 
 func (d *errorDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
@@ -4165,10 +4200,14 @@ func (m *Model) openPicker(kind string) {
 	m.dialogue = &listDialogue{f: newFuzzy("signature", "signature:", names)}
 }
 
-// aiThreadID is the thread an AI command runs on: the open pager's
-// thread wins, else the index cursor's. Empty when neither is available -
-// the seam no-ops.
+// aiThreadID is the thread an AI command runs on: an open summary pins
+// its thread (the chaining path - a follow-up command builds on the same
+// thread the summary described), else the open pager's, else the index
+// cursor's. Empty when none is available - the seam no-ops.
 func (m *Model) aiThreadID() string {
+	if m.summary != nil {
+		return m.summary.threadID
+	}
 	if m.mode == "pager" && m.pager != nil {
 		return pagerThreadID(m.pager)
 	}

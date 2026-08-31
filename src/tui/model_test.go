@@ -4117,6 +4117,26 @@ func TestStatusSpinTickReArmsWhileBusy(t *testing.T) {
 	}
 }
 
+// TestStatusSpinFrameRepaints pins the status spinner's animation on the
+// AI path (R15): the status row is layer-cached, so the frame index must
+// be part of the cache signature - a tick that advances the frame must
+// change the rendered row, or the spinner freezes at frame 0.
+func TestStatusSpinFrameRepaints(t *testing.T) {
+	m := model()
+	next, _ := m.Update(EventMsg{Event: core.AiStarted{JobID: "j1", ThreadID: "t1"}})
+	m = next
+	frame0 := string(statusSpinFramesRunes[0])
+	if line := m.statusLineWith(m.styles, m.ui); !strings.Contains(line, frame0) {
+		t.Fatalf("busy status line must show frame 0, got %q", line)
+	}
+	next, _ = m.Update(statusSpinTick{})
+	m = next
+	frame1 := string(statusSpinFramesRunes[1])
+	if line := m.statusLineWith(m.styles, m.ui); !strings.Contains(line, frame1) {
+		t.Fatalf("a tick must advance the rendered spinner to frame 1, got %q", line)
+	}
+}
+
 // TestSendErrorDialogue pins the failure half: the result opens the
 // error dialogue with the output for review and flags the status
 // message; esc dismisses, y re-enters the send gate on the failed
@@ -5611,8 +5631,8 @@ func TestAICommands(t *testing.T) {
 	})
 	t.Cleanup(func() { SetAICommandSource(func() []AICommand { return nil }) })
 	var gotName, gotThread string
-	SetAICommandHandler(func(name, threadID string) { gotName, gotThread = name, threadID })
-	t.Cleanup(func() { SetAICommandHandler(func(string, string) {}) })
+	SetAICommandHandler(func(name, threadID, _ string) { gotName, gotThread = name, threadID })
+	t.Cleanup(func() { SetAICommandHandler(func(string, string, string) {}) })
 
 	m := model()
 	m = press(t, m, "A")
@@ -5659,6 +5679,38 @@ func TestAICommands(t *testing.T) {
 	m = press(t, m, "A")
 	if m.dialogue != nil || !strings.Contains(m.statusMsg, "no AI commands configured") {
 		t.Fatalf("empty source: dialogue=%+v status=%q", m.dialogue, m.statusMsg)
+	}
+}
+
+// TestAICommandExtraPrompt pins the picker's e key: it opens the extra
+// prompt (the command body untouched) instead of running the command, and
+// the committed text runs the selected command with the extra text as the
+// third seam argument - the amendment, not a prefill.
+func TestAICommandExtraPrompt(t *testing.T) {
+	SetAICommandSource(func() []AICommand {
+		return []AICommand{{Name: "Thread next steps", Desc: "Summarize the thread"}}
+	})
+	t.Cleanup(func() { SetAICommandSource(func() []AICommand { return nil }) })
+	var gotName, gotThread, gotExtra string
+	SetAICommandHandler(func(name, threadID, extra string) { gotName, gotThread, gotExtra = name, threadID, extra })
+	t.Cleanup(func() { SetAICommandHandler(func(string, string, string) {}) })
+
+	m := model()
+	m = press(t, m, "A")
+	m = press(t, m, "e")
+	d, ok := m.dialogue.(*textDialogue)
+	if !ok || d.field != "aiextra" {
+		t.Fatalf("e must open the extra prompt: %+v", m.dialogue)
+	}
+	for _, r := range "make it concise" {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, tcell.KeyEnter)
+	if m.dialogue != nil {
+		t.Fatalf("enter must close the prompt: %+v", m.dialogue)
+	}
+	if gotName != "Thread next steps" || gotThread != "t1" || gotExtra != "make it concise" {
+		t.Fatalf("seam got %q/%q/%q, want Thread next steps/t1/make it concise", gotName, gotThread, gotExtra)
 	}
 }
 

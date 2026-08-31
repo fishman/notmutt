@@ -41,6 +41,9 @@ type Command struct {
 	Action         string // "view" | "compose"
 	Data           []string
 	AccountContext bool
+	// SummaryContext appends the previous AI summary (the last view
+	// command's output) to the prompt context - the chaining opt-in.
+	SummaryContext bool
 	Body           string
 }
 
@@ -118,6 +121,15 @@ func parseCommand(data []byte, path string) (*Command, error) {
 				cmd.AccountContext = false
 			default:
 				return nil, fmt.Errorf("%s:%d: account_context must be true or false", path, i+1)
+			}
+		case "summary_context":
+			switch value {
+			case "true":
+				cmd.SummaryContext = true
+			case "false":
+				cmd.SummaryContext = false
+			default:
+				return nil, fmt.Errorf("%s:%d: summary_context must be true or false", path, i+1)
 			}
 		default:
 			return nil, fmt.Errorf("%s:%d: unknown key %q", path, i+1, key)

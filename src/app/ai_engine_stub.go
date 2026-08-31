@@ -15,5 +15,5 @@ import (
 func aiCommandList() []tui.AICommand { return nil }
 
 // runAICommand without the lua build: no-op.
-func runAICommand(name, threadID string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {
+func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {
 }

@@ -10,6 +10,7 @@ import (
 
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/i18n"
 )
 
 // statusSegment is one composable cell of the status line: content,
@@ -23,17 +24,19 @@ type statusSegment struct {
 
 // statusData is the status line's input state, built from the view and progress state.
 type statusData struct {
-	view    string
-	visible int
-	prog    *core.Progress // nil = no job on
-	on      bool
-	legend  string // icon library: "icon name" pairs for the view's tags
-	account string // the cursor message's account tag (R2), empty on none
-	mime    string // the pager's rendered mime label, empty outside pager mode
-	edited  bool   // the cursor message has staged tag ops (R14), index or pager
-	flags   string // the staged flag letters (flagChars of the staged display tags), empty on none
-	msg     string // the status line's last log entry, empty on none
-	msgErr  bool   // styles the status message with the error style
+	view      string
+	visible   int
+	prog      *core.Progress // nil = no job on
+	on        bool
+	legend    string // icon library: "icon name" pairs for the view's tags
+	account   string // the cursor message's account tag (R2), empty on none
+	mime      string // the pager's rendered mime label, empty outside pager mode
+	edited    bool   // the cursor message has staged tag ops (R14), index or pager
+	flags     string // the staged flag letters (flagChars of the staged display tags), empty on none
+	msg       string // the status line's last log entry, empty on none
+	msgErr    bool   // styles the status message with the error style
+	spin      bool   // background work in flight (the status spinner)
+	spinFrame int    // the spinner's current frame index
 }
 
 // statusLine renders the status row at the default width.
@@ -49,7 +52,7 @@ func statusLine(st Styles, ui config.UI, d statusData) string {
 // survives. The row always covers the full width (R11 slot
 // reservation).
 func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
-	left := []statusSegment{viewSegment(d.view, st), countSegment(d.visible, st)}
+	left := []statusSegment{spinnerSegment(d.spin, d.spinFrame, st), viewSegment(d.view, st), countSegment(d.visible, st)}
 	if d.account != "" {
 		left = append(left, accountSegment(d.account, st))
 	}
@@ -258,6 +261,9 @@ func (m Model) tabNames() []string {
 	}
 	for _, v := range m.searchTabs {
 		names = append(names, capName(core.SanitizeControls(v.ViewName())))
+	}
+	if m.summary != nil {
+		names = append(names, capName(i18n.T("summary")))
 	}
 	return names
 }

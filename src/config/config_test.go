@@ -354,9 +354,9 @@ yazi = []
 }
 
 // TestLoadAIProviders pins the [ai.<name>] section (R8): type is the
-// wire protocol enum, pass_cmd is a tokenized argv (F4 - each element
-// one argv word, never a shell string), zero max-tokens/timeout keep
-// the call-site defaults.
+// protocol enum (the four vendors), pass_cmd is a tokenized argv (F4 -
+// each element one argv word, never a shell string), zero
+// max-tokens/timeout keep the call-site defaults.
 func TestLoadAIProviders(t *testing.T) {
 	cfg, err := Load(write(t, `
 [ai.claude]
@@ -368,6 +368,14 @@ pass_cmd = ["gpg", "-q", "-d", "/home/alpha/.ai/key.gpg"]
 type = "openai"
 model = "qwen3:8b"
 base-url = "http://localhost:11434/v1"
+
+[ai.ds]
+type = "deepseek"
+model = "deepseek-v4-flash"
+
+[ai.router]
+type = "openrouter"
+model = "anthropic/claude-sonnet-4-5"
 `))
 	if err != nil {
 		t.Fatal(err)
@@ -381,6 +389,24 @@ base-url = "http://localhost:11434/v1"
 	}
 	if cfg.AI["local"].BaseURL != "http://localhost:11434/v1" {
 		t.Fatalf("local = %+v", cfg.AI["local"])
+	}
+	if cfg.AI["ds"].Type != "deepseek" || cfg.AI["router"].Type != "openrouter" {
+		t.Fatalf("deepseek/openrouter = %+v / %+v", cfg.AI["ds"], cfg.AI["router"])
+	}
+}
+
+// TestLoadComposeWrapWidth pins the [compose] wrap-width section: the
+// default is mutt's 72, a user value loads.
+func TestLoadComposeWrapWidth(t *testing.T) {
+	if got := Default().Compose.WrapWidth; got != 72 {
+		t.Fatalf("default wrap-width = %d, want 72", got)
+	}
+	cfg, err := Load(write(t, "[compose]\nwrap-width = 100\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Compose.WrapWidth != 100 {
+		t.Fatalf("wrap-width = %d, want 100", cfg.Compose.WrapWidth)
 	}
 }
 

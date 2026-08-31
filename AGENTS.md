@@ -399,7 +399,12 @@ notmutt, never cite authority.
   (pattern: `references/muttrc/bin/dedupe-mail`), pass only the extracted value.
   Include a checksum (sha256, or faster md5/xxhash) when correlating or
   verifying message identity. Config files are not mail content and may
-  be read freely; mail files are not.
+  be read freely; mail files are not. ONE controlled exception: the AI
+  command context builder (`src/app/aicmd/context.go`) - the only path
+  mail content takes toward an LLM, gated by a per-command field
+  allowlist, explicit picker invocation, and a configured `[ai]`
+  provider (docs/usage.md "AI commands"). Anything outside that builder
+  stays forbidden.
 - Commits: Conventional Commits (`type(scope): subject`), brief lowercase
   imperative. ALL code owned by the human author - code commits carry no
   AI marker and no co-author line, whether or not AI drafted them (an AI

@@ -24,6 +24,8 @@ jobs:
             pkg: ./mail/
           - target: FuzzCSSDeclarations
             pkg: ./lib/html/
+          - target: FuzzLoadCommand
+            pkg: ./app/aicmd/
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

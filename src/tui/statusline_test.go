@@ -134,3 +134,28 @@ func TestStatusLineMessage(t *testing.T) {
 		t.Fatalf("the view must survive a narrow fit: %q", narrow)
 	}
 }
+
+// TestStatusLineSpinner pins the front-of-row working indicator (R15):
+// the idle glyph at rest, a braille frame while busy. Both are width 1,
+// so idle -> busy replaces the glyph cell and nothing shifts (R11).
+func TestStatusLineSpinner(t *testing.T) {
+	ui := config.Default().UI
+	st := DefaultStyles()
+	idle := statusLine(st, ui, statusData{view: "inbox", visible: 2})
+	busy := statusLine(st, ui, statusData{view: "inbox", visible: 2, spin: true, spinFrame: 3})
+	ia, ba := stripANSI(idle), stripANSI(busy)
+	if !strings.Contains(ia, statusIdleGlyph) {
+		t.Fatalf("idle must show the fixed glyph: %q", ia)
+	}
+	frame := string(statusSpinFramesRunes[3%len(statusSpinFramesRunes)])
+	if !strings.Contains(ba, frame) {
+		t.Fatalf("busy must show the current frame: %q", ba)
+	}
+	if strings.Contains(ia, frame) {
+		t.Fatalf("idle must not show a busy frame: %q", ia)
+	}
+	// the rows differ only in the glyph cell - the swap never shifts
+	if strings.ReplaceAll(ia, statusIdleGlyph, "?") != strings.ReplaceAll(ba, frame, "?") {
+		t.Fatalf("idle and busy rows must differ only in the glyph:\n%q\n%q", ia, ba)
+	}
+}

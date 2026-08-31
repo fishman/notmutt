@@ -193,6 +193,13 @@ base row style. The subject tint keys: `[theme.dark.pager]`
 other-side tint) - the tint paints the marked message's subject run
 and its tree indicator, the fixed slots keep their colors.
 
+### Status line
+
+The status row leads with a working indicator: a fixed glyph at rest,
+an animated spinner while background work is in flight (a sync, a
+refresh, a filter job, a send, the AI stream). Both occupy one cell -
+the row never shifts between idle and busy.
+
 ### Staged operations
 
 `t` / `a` / `d` / `y` / `p` stage a tag op - the row renders the
@@ -550,3 +557,126 @@ boundary of the server: results carry thread metadata only. Bodies,
 raw maildir paths, and headers are never projected, and no tool reads
 them; the gated `attachments` tool projects attachment metadata only,
 never bytes.
+
+## AI commands
+
+The `A` key (index and pager) opens a picker of user-authored AI
+commands: markdown prompt files in `<configdir>/ai/`. On first run the
+client seeds two prompts - "Thread next steps" (a summary) and "Draft
+reply" (a compose draft) - plus an `accounts/` directory for
+per-account notes and a `context/` directory for the default style
+note. The files are yours: edit or replace them, the seed never
+overwrites.
+
+### The prompt format
+
+A file is a strict frontmatter block plus a markdown body. The
+frontmatter declares the data the command may access - the allowlist
+is enforced structurally, a field you do not declare never reaches the
+model.
+
+```yaml
+---
+name: Thread next steps
+description: Summarize the next actionable steps for this thread
+action: view          # view = summary pager, compose = draft a reply
+data: [participants, subjects, count, last_body]
+account_context: true # optional: inject the account note
+---
+You are an executive assistant reading a mail thread. Below is the
+thread data: participants, subjects, count, and the latest message.
+Summarize the current state and list the concrete next steps.
+```
+
+- `name` and `description` fill the picker; `name` is what the
+  selection runs.
+- `action` is `view` (stream into the summary, which opens as its own
+  tab the client switches to - the message stays intact underneath) or
+  `compose` (draft into a new compose dialogue - recipient and subject
+  prefilled, you review before sending).
+- `data` is the scope: `participants`, `subjects`, `dates`, `count`,
+  `bodies`, `last_body`, `structure`. Sender metadata is bare
+  addresses only; `bodies`/`last_body` strip quoted lines, signatures,
+  and html, and cap at 4000 chars per message (20000 total).
+- `provider` (optional) names an `[ai]` provider; empty uses the first
+  configured. An unknown key, a missing `name`/`description`/`action`/
+  `data`, or a data field outside the allowlist fails the load - a
+  broken file stops the picker, never silently drops the command.
+
+### The provider
+
+Commands run against an `[ai]` provider (the Lua `ai_chat` backend):
+type, model, and the key's `pass_cmd` argv. Nothing runs until one is
+configured - the picker says so.
+
+`type` selects both the wire protocol and its default URL - four
+vendors are built in, and `base-url` overrides the URL for any of them,
+so any protocol-compatible endpoint works (a local ollama, a proxy, a
+vendor's alternate-compat URL).
+
+| type | protocol | default URL |
+| --- | --- | --- |
+| `anthropic` | Anthropic `/v1/messages` | `https://api.anthropic.com/v1` |
+| `openai` | OpenAI `/v1/chat/completions` | `https://api.openai.com/v1` |
+| `deepseek` | OpenAI (compatible) | `https://api.deepseek.com/v1` |
+| `openrouter` | OpenAI (compatible) | `https://openrouter.ai/api/v1` |
+
+```toml
+[ai.default]
+type = "anthropic"
+model = "claude-sonnet-5"
+pass_cmd = ["pass", "show", "llm/anthropic"]   # argv only, F4
+```
+
+A 401 almost always means the request went to the wrong host - the
+`type` must match the key's vendor, or point `base-url` at it:
+
+```toml
+[ai.deepseek]
+type = "deepseek"
+model = "deepseek-v4-flash"
+pass_cmd = ["pass", "show", "llm/deepseek"]
+
+[ai.openrouter]
+type = "openrouter"
+model = "anthropic/claude-sonnet-5"
+pass_cmd = ["pass", "show", "llm/openrouter"]
+
+# any OpenAI-compatible endpoint, custom URL
+[ai.local]
+type = "openai"
+model = "qwen3:8b"
+base-url = "http://localhost:11434/v1"
+```
+
+The key's `pass_cmd` argv prints the key on stdout (`pass`, `gpg -d`,
+any command). Empty `pass_cmd` sends no auth header - fine for a
+keyless local endpoint, a guaranteed 401 against a hosted vendor.
+
+### The privacy carve-out
+
+The hard rule "never submit mail content to an LLM" is exactly as hard
+here - this feature is its one controlled exception. The context
+builder is the only path mail takes toward a provider; it runs only on
+an explicit picker invocation with a provider configured, enforces the
+frontmatter allowlist, and never logs or caches the prompt or the
+output. Attachments never appear; body text is cleaned (quoted lines,
+signatures, html) and capped; the output is control-stripped before it
+renders in the pager or a draft.
+
+### Per-account context
+
+`<configdir>/ai/accounts/<account>.md` holds a note about that account
+(usual correspondents, standing policy). A command whose frontmatter
+sets `account_context: true` injects the note into its prompt when run
+on that account's thread. The note is sent to the provider with the
+thread data - keep it non-confidential.
+
+### Default context
+
+`<configdir>/ai/context/default.md` is the default style note: seeded
+with a brief-style instruction, it is injected into every command's
+prompt regardless of `account_context`. Switch the AI's speaking style
+by editing this file - the change applies from the next command run.
+The note is sent to the provider with every prompt, so keep it
+non-confidential.

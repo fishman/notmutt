@@ -4,13 +4,17 @@
 //go:build lua
 
 // Package ai streams chat completions to the configured AI providers
-// (R8): anthropic (/v1/messages) and OpenAI-compatible endpoints
-// (/v1/chat/completions). The client talks HTTP itself - no SDKs
-// (supply-chain policy, decision record 7): stdlib net/http with http2
-// forced (Go's net/http bundles h2), manual eventstream line parsing
-// (NDJSON for anthropic, SSE for openai). API keys come from the
-// provider's pass_cmd argv, fetched per request, held only for that
-// request, never logged (F6).
+// (R8): the anthropic protocol (/v1/messages) and OpenAI-compatible
+// endpoints (/v1/chat/completions). The type selects protocol AND a
+// vendor default URL - anthropic, openai, deepseek, openrouter -
+// that
+// base-url overrides (any protocol-compatible endpoint: local ollama,
+// a proxy, DeepSeek's Anthropic-compatible URL, ...). The client talks
+// HTTP itself - no SDKs (supply-chain policy, decision record 7):
+// stdlib net/http with http2 forced (Go's net/http bundles h2), manual
+// eventstream line parsing (NDJSON for anthropic, SSE for openai). API
+// keys come from the provider's pass_cmd argv, fetched per request,
+// held only for that request, never logged (F6).
 package ai
 
 import (
@@ -30,11 +34,27 @@ import (
 )
 
 const (
-	defaultBase      = "https://api.anthropic.com/v1" // openai default: https://api.openai.com/v1
 	keyTimeout       = 10 * time.Second
 	maxLine          = 1 << 20 // one streamed delta line cap (the summary is text)
 	anthropicVersion = "2023-06-01"
 )
+
+// defaultBase maps a provider type onto its vendor base URL; the
+// config's base-url overrides it, so any type can point at any
+// protocol-compatible endpoint (local ollama, a proxy, DeepSeek's
+// Anthropic-compatible URL, ...).
+func defaultBase(typ string) string {
+	switch typ {
+	case "anthropic":
+		return "https://api.anthropic.com/v1"
+	case "deepseek":
+		return "https://api.deepseek.com/v1"
+	case "openrouter":
+		return "https://openrouter.ai/api/v1"
+	default:
+		return "https://api.openai.com/v1" // openai and openai-compatible
+	}
+}
 
 // FetchKey runs one pass_cmd argv (F4: tokenized at load, argv exec,
 // never the sh -c of the matcha precedent) and returns the trimmed
@@ -107,7 +127,7 @@ func Chat(ctx context.Context, p config.AIProvider, model, system, text string, 
 	switch p.Type {
 	case "anthropic":
 		req, err = anthropicRequest(ctx, p, model, system, text, key)
-	case "openai":
+	case "openai", "deepseek", "openrouter":
 		req, err = openAIRequest(ctx, p, model, system, text, key)
 	default:
 		return "", fmt.Errorf("ai: unknown provider type %q", p.Type)
@@ -158,7 +178,7 @@ func baseURL(p config.AIProvider, def string) (string, error) {
 }
 
 func anthropicRequest(ctx context.Context, p config.AIProvider, model, system, text string, key []byte) (*http.Request, error) {
-	u, err := baseURL(p, defaultBase)
+	u, err := baseURL(p, defaultBase(p.Type))
 	if err != nil {
 		return nil, err
 	}
@@ -187,7 +207,7 @@ func anthropicRequest(ctx context.Context, p config.AIProvider, model, system, t
 }
 
 func openAIRequest(ctx context.Context, p config.AIProvider, model, system, text string, key []byte) (*http.Request, error) {
-	u, err := baseURL(p, "https://api.openai.com/v1")
+	u, err := baseURL(p, defaultBase(p.Type))
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +260,7 @@ func streamBody(r io.Reader, typ string, emit func(string)) error {
 			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" {
 				emit(ev.Delta.Text)
 			}
-		case "openai":
+		case "openai", "deepseek", "openrouter":
 			if payload == "[DONE]" {
 				return nil
 			}

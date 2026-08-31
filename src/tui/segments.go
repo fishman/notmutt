@@ -24,6 +24,29 @@ func viewSegment(name string, st Styles) statusSegment {
 	return statusSegment{content: name, style: st.View, priority: 10}
 }
 
+// statusIdleGlyph and statusSpinFrames are the status spinner's fixed
+// idle marker and UTF-8 animation frames. Hardcoded like the send
+// spinner (R15 glyphs are config data, the spinner is not themed); both
+// are width 1, so idle -> busy never shifts the row (R11).
+const (
+	statusIdleGlyph  = "●"
+	statusSpinFrames = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+)
+
+var statusSpinFramesRunes = []rune(statusSpinFrames)
+
+// spinnerSegment is the front-of-row working indicator: the idle glyph
+// at rest, the animated frame while the client is busy. Priority 9 -
+// drops before the view name on a narrow row, outlives the count and
+// account.
+func spinnerSegment(busy bool, frame int, st Styles) statusSegment {
+	content := statusIdleGlyph
+	if busy {
+		content = string(statusSpinFramesRunes[frame%len(statusSpinFramesRunes)])
+	}
+	return statusSegment{content: content, style: st.Status, priority: 9}
+}
+
 // countSegment is the visible thread count.
 func countSegment(visible int, st Styles) statusSegment {
 	return statusSegment{content: strconv.Itoa(visible), style: st.Count, priority: 5}

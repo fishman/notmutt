@@ -105,6 +105,53 @@ func TestChatOpenAIStream(t *testing.T) {
 	}
 }
 
+// TestDefaultBase pins the per-type vendor URLs: type selects the
+// protocol AND its default endpoint (the config's base-url overrides).
+func TestDefaultBase(t *testing.T) {
+	cases := map[string]string{
+		"anthropic":  "https://api.anthropic.com/v1",
+		"openai":     "https://api.openai.com/v1",
+		"deepseek":   "https://api.deepseek.com/v1",
+		"openrouter": "https://openrouter.ai/api/v1",
+	}
+	for typ, want := range cases {
+		if got := defaultBase(typ); got != want {
+			t.Errorf("defaultBase(%q) = %q, want %q", typ, got, want)
+		}
+	}
+}
+
+// TestChatOpenAICompatTypes covers the deepseek/openrouter
+// types: they route to the OpenAI protocol (SSE parsing), with their
+// vendor URL as the default base.
+func TestChatOpenAICompatTypes(t *testing.T) {
+	for _, typ := range []string{"deepseek", "openrouter"} {
+		var gotPath, gotKey string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			gotKey = r.Header.Get("authorization")
+			w.Header().Set("content-type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+		}))
+		argv := writeKeyScript(t, t.TempDir())
+		p := config.AIProvider{Type: typ, Model: "test-model", BaseURL: srv.URL, PassCmd: argv}
+		out, err := Chat(context.Background(), p, "test-model", "S", "T", nil)
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%s: %v", typ, err)
+		}
+		if gotPath != "/chat/completions" {
+			t.Errorf("%s: path = %q, want /chat/completions", typ, gotPath)
+		}
+		if gotKey != "Bearer "+secret {
+			t.Errorf("%s: authorization = %q", typ, gotKey)
+		}
+		if out != "ok" {
+			t.Errorf("%s: out = %q", typ, out)
+		}
+	}
+}
+
 // TestChatAnthropicStream covers the anthropic protocol: x-api-key +
 // anthropic-version headers, NDJSON content_block_delta extraction.
 func TestChatAnthropicStream(t *testing.T) {

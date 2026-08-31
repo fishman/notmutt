@@ -58,7 +58,8 @@ var Actions = map[string]map[string]bool{
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true, "scheduled-list": true,
-		"help": true, "log": true, "command": true, "tasks": true,
+		"ai-commands": true,
+		"help":        true, "log": true, "command": true, "tasks": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -76,7 +77,7 @@ var Actions = map[string]map[string]bool{
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"toggle-read": true, "archive": true, "inbox": true, "delete": true,
 		"undo": true, "spam": true, "pending": true,
-		"tab-prev": true, "tab-next": true,
+		"tab-prev": true, "tab-next": true, "ai-commands": true,
 		"help": true, "log": true, "command": true, "tasks": true,
 	},
 	"compose": {
@@ -201,12 +202,12 @@ type Model struct {
 	taskLayer  *layer
 	tasks      map[string]core.TaskChanged
 	taskCursor int
-	// spin is the send dialogue spinner's frame index (sendTick
-	// advances it while a send is in flight).
-	spin int
-	// sendTickOn gates the spinner tick to one in flight (the
-	// legendTickOn pattern).
-	sendTickOn bool
+	// statusSpin is the status-line spinner's frame index (statusSpinTick
+	// advances it while the client is busy - the front-of-row working
+	// indicator).
+	statusSpin int
+	// statusSpinTickOn gates the status spinner to one tick in flight.
+	statusSpinTickOn bool
 	// addrs is the harvested sender corpus for the compose Tab address
 	// completion (lazy, debounced, loaded once per session).
 	addrs []core.AddressEntry
@@ -865,35 +866,39 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		m.refreshProgress()
 		m.rows = m.activeView().Rows()
+		// every pending tick arms in one batch: the ticks self-rearm, so
+		// a returned cmd stays alive until its condition clears
+		cmds := []Cmd{EventCmd(m.ch)}
 		if m.legendPending && !m.legendTickOn {
 			m.legendTickOn = true
-			return m, batch(EventCmd(m.ch), legendTickCmd(m.legendMoves))
+			cmds = append(cmds, legendTickCmd(m.legendMoves))
 		}
 		if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
 			m.statusTickOn = true
-			return m, batch(EventCmd(m.ch), statusTickCmd())
+			cmds = append(cmds, statusTickCmd())
 		}
 		if m.progressOn {
-			return m, batch(EventCmd(m.ch), progressTickCmd())
+			cmds = append(cmds, progressTickCmd())
 		}
-		return m, EventCmd(m.ch)
+		if m.busy() && !m.statusSpinTickOn {
+			m.statusSpinTickOn = true
+			cmds = append(cmds, statusSpinTickCmd())
+		}
+		return m, batch(cmds...)
 	case progressTick:
 		m.refreshProgress()
 		if m.progressOn {
 			return m, progressTickCmd()
 		}
 		return m, nil
-	case sendTick:
-		// the send spinner's frame cadence: the tick re-arms itself
-		// and the event channel while a send is in flight, so the
-		// result lands even between keypresses (the event channel is
-		// otherwise only re-armed by events and the progress tick)
-		if m.anySending() {
-			m.spin++
-			m.sendTickOn = true
-			return m, batch(EventCmd(m.ch), sendTickCmd())
+	case statusSpinTick:
+		// the status spinner's frame cadence: advance and re-arm while
+		// the client is busy, disarm when idle.
+		if m.busy() {
+			m.statusSpin++
+			return m, batch(EventCmd(m.ch), statusSpinTickCmd())
 		}
-		m.sendTickOn = false
+		m.statusSpinTickOn = false
 		return m, nil
 	case addrReqTick:
 		// the debounce settle guard (the legendDebounce pattern): the
@@ -919,6 +924,13 @@ func (m *Model) anySending() bool {
 		}
 	}
 	return false
+}
+
+// busy reports background work in flight - the status spinner's signal:
+// the task registry (a sync run), a progress job (refresh, cache scan,
+// filter, send/crypto), the AI summary stream, or a send in flight.
+func (m Model) busy() bool {
+	return len(m.tasks) > 0 || m.progressOn || m.summary != nil || m.anySending()
 }
 
 // dispatchAction runs a bound action with its count, then the
@@ -1181,20 +1193,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				break
 			}
 			if m.summary != nil {
-				// the q key in the summary view restores the mail: the
-				// displaced lines replace the summary body; a summary
-				// opened from the index has nothing to restore
-				if m.summary.saved != nil {
-					m.pager = newPager(m.summary.threadID, m.summary.msgID, m.summary.saved)
-					w, h := m.pagerSize()
-					m.pager.setSize(w, h, m.styles)
-				} else {
-					m.mode = "index"
-				}
-				if m.bus != nil {
-					m.bus.ClearAiResult(m.summary.jobID)
-				}
-				m.summary = nil
+				// the q key closes the summary tab: the displaced
+				// message pager returns (closeTab's restore); a summary
+				// opened from the index lands on the index
+				m.closeTab(m.summaryIdx(), false)
 				deferPaint()
 				deferred = true
 				break
@@ -1314,6 +1316,31 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			names = append(names, "(nothing scheduled)")
 		}
 		m.dialogue = &listDialogue{f: newFuzzyPayload("scheduled", "scheduled:", names, ids)}
+	case "ai-commands":
+		// the A key: run a user-authored AI command on this thread (the
+		// picker's enter streams into the summary pager or drafts a
+		// compose). The summary pager is one job at a time - a stream
+		// already open must close first (q).
+		if m.summary != nil {
+			m.logEntry(i18n.T("close the current summary (q) first"), true)
+			break
+		}
+		cmds := aiCommands()
+		if len(cmds) == 0 {
+			m.logEntry(i18n.T("no AI commands configured"), true)
+			break
+		}
+		names := make([]string, 0, len(cmds))
+		payload := make([]string, 0, len(cmds))
+		for _, c := range cmds {
+			name := c.Name
+			payload = append(payload, name)
+			if c.Desc != "" {
+				name += " - " + c.Desc
+			}
+			names = append(names, name)
+		}
+		m.dialogue = &listDialogue{f: newFuzzyPayload("aicmd", i18n.T("AI command:"), names, payload)}
 	case "form-down":
 		// navigation lives in the message-text row and the attachment
 		// list only; settings rows are never focused
@@ -1539,11 +1566,11 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.legendTickOn = true
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
 	}
-	// a send press (or a retry) arms the spinner tick while the job is
-	// in flight - the single-in-flight gate keeps re-arms from piling up
-	if m.anySending() && !m.sendTickOn {
-		m.sendTickOn = true
-		cmds = append(cmds, sendTickCmd())
+	// background work in flight (a send press, a retry) arms the status
+	// spinner tick - the single-in-flight gate keeps re-arms from piling up
+	if m.busy() && !m.statusSpinTickOn {
+		m.statusSpinTickOn = true
+		cmds = append(cmds, statusSpinTickCmd())
 	}
 	if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
 		m.statusTickOn = true
@@ -1798,34 +1825,41 @@ type attView struct {
 	name     string
 }
 
-// summary is the pager's AI summary state (R8): the streaming job that
-// owns the pager and the mail lines it displaced (nil when opened from
-// the index - back goes straight back).
+// summary is the AI summary tab state (R8): the streaming job behind one
+// tab. pager is the summary's own pager - a stable object that survives
+// tab switches (m.pager swaps between it and mailPager); mailPager is the
+// message pager the summary displaced (nil when opened from the index).
 type summary struct {
-	jobID    string
-	threadID string
-	msgID    string
-	saved    []core.Line
-	first    bool // the first delta replaces the placeholder line
+	jobID     string
+	threadID  string
+	msgID     string
+	pager     *pager
+	mailPager *pager
+	first     bool // the first delta replaces the placeholder line
 }
 
-// onAiStarted opens the summary view: the pager's lines are saved and
-// swapped for a placeholder, chunks append as they arrive. A second
-// job while one streams is ignored - one summary at a time.
+// onAiStarted opens the summary as its own tab: the stack attaches the
+// summary pager and switches to it (the displaced message pager saved as
+// mailPager), chunks append as they arrive. A second job while one
+// streams is ignored - one summary at a time.
 func (m *Model) onAiStarted(e core.AiStarted) {
 	if m.summary != nil {
 		return
 	}
-	var saved []core.Line
+	mailID := e.MsgID
 	if m.mode == "pager" && m.pager != nil && pagerThreadID(m.pager) == e.ThreadID {
-		saved = m.pager.lines
-		e.MsgID = pagerMsgID(m.pager)
+		mailID = pagerMsgID(m.pager)
 	}
-	m.summary = &summary{jobID: e.JobID, threadID: e.ThreadID, msgID: e.MsgID, saved: saved, first: true}
-	m.pager = newPager(e.ThreadID, e.MsgID, []core.Line{{Text: i18n.T("summarizing...")}})
+	s := &summary{jobID: e.JobID, threadID: e.ThreadID, msgID: mailID, first: true}
+	s.pager = newPager(e.ThreadID, mailID, []core.Line{{Text: i18n.T("summarizing...")}})
 	w, h := m.pagerSize()
-	m.pager.setSize(w, h, m.styles)
-	m.mode = "pager"
+	s.pager.setSize(w, h, m.styles)
+	m.summary = s
+	// the summary tab attaches last and active: the displaced message
+	// pager is saved as mailPager when attachTab swaps the summary
+	// pager in (nil when opened from the index)
+	m.tabIdx = m.summaryIdx()
+	m.attachTab()
 	m.legendPending = true
 	m.paint = true
 }
@@ -1840,21 +1874,29 @@ func (m *Model) onAiChunk(e core.AiChunk) {
 	if m.summary.first {
 		// the first delta replaces the placeholder line
 		m.summary.first = false
-		m.pager.setLines(nil)
+		m.summary.pager.setLines(nil)
 	}
-	m.pager.appendText(e.Text)
+	m.summary.pager.appendText(e.Text)
 	m.paint = true
 }
 
 // onAiResult settles the summary stream: a failure appends an error
 // line and logs the reason. The summary stays until back restores the
-// mail - the text streamed so far stays reviewable.
+// mail - the text streamed so far stays reviewable. An empty JobID is
+// an error raised before any stream began (no provider, bad command):
+// no summary is open, so it lands on the message line.
 func (m *Model) onAiResult(e core.AiResult) {
+	if e.JobID == "" {
+		if e.Err != nil {
+			m.logEntry("ai: "+e.Err.Error(), true)
+		}
+		return
+	}
 	if m.summary == nil || e.JobID != m.summary.jobID {
 		return
 	}
 	if e.Err != nil {
-		m.pager.append(core.Line{Text: "ai: " + e.Err.Error(), Kind: core.LineError})
+		m.summary.pager.append(core.Line{Text: "ai: " + e.Err.Error(), Kind: core.LineError})
 		m.logEntry("ai: "+e.Err.Error(), true)
 	}
 	m.paint = true
@@ -2294,10 +2336,10 @@ func progressTickCmd() Cmd {
 	return tickCmd(progressTickInterval, func(time.Time) any { return progressTick{} })
 }
 
-type sendTick struct{}
+type statusSpinTick struct{}
 
-func sendTickCmd() Cmd {
-	return tickCmd(sendTickInterval, func(time.Time) any { return sendTick{} })
+func statusSpinTickCmd() Cmd {
+	return tickCmd(statusSpinTickInterval, func(time.Time) any { return statusSpinTick{} })
 }
 
 // addrReqTick is the address harvest trigger's debounce tick (the
@@ -3210,7 +3252,8 @@ func (m Model) statusData() statusData {
 	if m.mode == "compose" {
 		st := m.tabs[m.tabIdx-1]
 		return statusData{view: "compose", visible: len(m.tabs), account: st.Account,
-			msg: m.statusMsg, msgErr: m.statusMsgErr}
+			msg: m.statusMsg, msgErr: m.statusMsgErr,
+			spin: m.busy(), spinFrame: m.statusSpin}
 	}
 	d := statusData{view: m.activeView().Name, visible: len(m.rows), on: m.progressOn}
 	if m.progressOn {
@@ -3234,6 +3277,7 @@ func (m Model) statusData() statusData {
 	}
 	d.msg = m.statusMsg
 	d.msgErr = m.statusMsgErr
+	d.spin, d.spinFrame = m.busy(), m.statusSpin
 	return d
 }
 
@@ -3538,6 +3582,15 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		return nil, nil
 	case "scheduled":
 		// the read-only scheduled list: enter or esc closes
+		return nil, nil
+	case "aicmd":
+		// the AI-command picker: enter runs the chosen command on the
+		// current thread (the app streams the summary or drafts a compose)
+		name, ok := d.f.selectedPayload()
+		if ok {
+			m.cancelDialogue()
+			onAICommand(name, m.aiThreadID())
+		}
 		return nil, nil
 	}
 	st := &m.tabs[m.tabIdx-1]
@@ -4112,6 +4165,19 @@ func (m *Model) openPicker(kind string) {
 	m.dialogue = &listDialogue{f: newFuzzy("signature", "signature:", names)}
 }
 
+// aiThreadID is the thread an AI command runs on: the open pager's
+// thread wins, else the index cursor's. Empty when neither is available -
+// the seam no-ops.
+func (m *Model) aiThreadID() string {
+	if m.mode == "pager" && m.pager != nil {
+		return pagerThreadID(m.pager)
+	}
+	if row, ok := m.activeView().CursorRow(); ok {
+		return row.ThreadID
+	}
+	return ""
+}
+
 // openReply hands the reply context to the app seam: the cursor row's
 // message in the index, the open thread's first message in the
 // pager, nil for a blank compose.
@@ -4177,9 +4243,28 @@ func (m *Model) tabPrev() {
 }
 
 // tabCount is the combined stack size: the mail surface, every compose
-// tab, every search tab.
+// tab, every search tab, and the summary when one is open.
 func (m *Model) tabCount() int {
+	n := 1 + len(m.tabs) + len(m.searchTabs)
+	if m.summary != nil {
+		n++
+	}
+	return n
+}
+
+// summaryIdx is the summary tab's position in the stack, or -1 when no
+// summary is open. It sits LAST (after the search tabs), which keeps
+// activeSearchIdx and openSearchTab's index math working unchanged.
+func (m *Model) summaryIdx() int {
+	if m.summary == nil {
+		return -1
+	}
 	return 1 + len(m.tabs) + len(m.searchTabs)
+}
+
+// summaryActive reports whether the stack sits on the summary tab.
+func (m *Model) summaryActive() bool {
+	return m.summary != nil && m.tabIdx == m.summaryIdx()
 }
 
 // openSearchTab opens a raw notmuch query in a new search tab (the
@@ -4227,6 +4312,18 @@ func (m *Model) composeTab() *compose.State {
 func (m *Model) attachTab() {
 	m.dialogue = nil
 	switch {
+	case m.summaryActive():
+		// the summary tab: its own pager, installed for the pager mode.
+		// The displaced message pager is re-saved on every entry, so it
+		// stays fresh if the user opened new mail while away (nil when
+		// the summary was opened from the index).
+		m.mode = "pager"
+		if m.pager != m.summary.pager {
+			m.summary.mailPager = m.pager
+			m.pager = m.summary.pager
+		}
+		w, h := m.pagerSize()
+		m.pager.setSize(w, h, m.styles)
 	case m.activeSearchIdx() >= 0:
 		// the search tabs reuse the index surface: activeView routes
 		// the query's rows under the index bindings (q closes the tab,
@@ -4238,6 +4335,11 @@ func (m *Model) attachTab() {
 		m.mode = "pager"
 	default:
 		m.mode = "index"
+	}
+	// a tab switch off the summary leaves its pager installed: restore
+	// the displaced message pager before the surface routes on it
+	if m.summary != nil && !m.summaryActive() && m.pager == m.summary.pager {
+		m.pager = m.summary.mailPager
 	}
 	// the render reads m.rows: every attach re-points it at the
 	// attached view, or the frame shows the previous view's rows until
@@ -4251,7 +4353,18 @@ func (m *Model) attachTab() {
 // follows attachTab - closing the active tab leaves the one that
 // slides into its place.
 func (m *Model) closeTab(i int, search bool) {
-	if search {
+	if !search && m.summary != nil && i == m.summaryIdx() {
+		// the summary tab: restore the displaced message pager (nil
+		// when opened from the index - the surface lands on the index)
+		// and clear the streamed job
+		if m.pager == m.summary.pager {
+			m.pager = m.summary.mailPager
+		}
+		if m.bus != nil {
+			m.bus.ClearAiResult(m.summary.jobID)
+		}
+		m.summary = nil
+	} else if search {
 		m.searchTabs = append(m.searchTabs[:i], m.searchTabs[i+1:]...)
 		i += len(m.tabs)
 	} else {

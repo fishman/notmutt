@@ -4058,48 +4058,62 @@ func TestComposeContentTypeRow(t *testing.T) {
 	}
 }
 
-// TestSendOverlaySpinner pins the sending overlay: a tab in
-// PhaseSending renders the "Sending" row with the spinner frame and
-// the switch-tabs note above the status line; the overlay is
-// phase-based, never a modal - the tab strip keeps its tabs.
-func TestSendOverlaySpinner(t *testing.T) {
+// TestSendOverlayHints pins the sending overlay: a tab in PhaseSending
+// renders the tab-prev/next keys, one per line, above the status line;
+// the overlay is phase-based, never a modal - the tab strip keeps its
+// tabs. The send state itself shows in the status line's spinner, not
+// in the box.
+func TestSendOverlayHints(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
-	m = press(t, m, "y") // arms PhaseSending + the spinner tick
+	m = press(t, m, "y") // arms PhaseSending + the status spinner tick
 	if !m.anySending() {
 		t.Fatal("the send press must leave the tab in PhaseSending")
 	}
-	frame := stripANSI(m.render())
-	if !strings.Contains(frame, "Sending "+spinnerChar(m.spin)) {
-		t.Fatalf("the overlay must show the spinner:\n%s", frame)
+	if !m.statusSpinTickOn {
+		t.Fatal("the send press must arm the status spinner tick")
 	}
-	if !strings.Contains(frame, "switch tabs while sending") {
-		t.Fatalf("the overlay must carry the switch-tabs note:\n%s", frame)
+	frame := stripANSI(m.render())
+	if !strings.Contains(frame, "[ previous tab") {
+		t.Fatalf("the overlay must show the tab-prev key on its own line:\n%s", frame)
+	}
+	if !strings.Contains(frame, "] next tab") {
+		t.Fatalf("the overlay must show the tab-next key on its own line:\n%s", frame)
+	}
+	if strings.Contains(frame, "Sending") {
+		t.Fatalf("the send state must not render in the overlay:\n%s", frame)
 	}
 }
 
-// TestSendTickReArmsWhileSending pins the spinner tick gate: a tick
-// while a send is in flight advances the frame and re-arms itself (a
-// non-nil cmd); a tick with no send in flight dies silently.
-func TestSendTickReArmsWhileSending(t *testing.T) {
-	m := openDialogue(t, model(), "t1")
-	next, cmd := m.Update(sendTick{})
-	if cmd != nil {
-		t.Fatalf("no send in flight: the tick must die, got %v", cmd)
+// TestStatusSpinTickReArmsWhileBusy pins the status spinner tick gate
+// (R15): a tick while the client is busy advances the frame and re-arms
+// itself (a non-nil cmd); a tick while idle dies and leaves the gate
+// disarmed.
+func TestStatusSpinTickReArmsWhileBusy(t *testing.T) {
+	m := model()
+	if next, cmd := m.Update(statusSpinTick{}); cmd != nil {
+		t.Fatalf("idle: the tick must die, got %v", cmd)
+	} else {
+		m = next
 	}
-	m = press(t, m, "y") // arms PhaseSending + the tick
-	before := m.spin
-	next, cmd = m.Update(sendTick{})
+	if m.statusSpinTickOn {
+		t.Fatal("idle: the gate must stay disarmed")
+	}
+	m.progressOn = true // a refresh job marks the client busy
+	next, cmd := m.Update(statusSpinTick{})
 	m = next
-	if m.spin != before+1 {
-		t.Fatalf("the tick must advance the frame: %d -> %d", before, m.spin)
+	if m.statusSpin != 1 {
+		t.Fatalf("the tick must advance the frame: %d", m.statusSpin)
 	}
 	if cmd == nil {
-		t.Fatal("a tick during a send must re-arm itself")
+		t.Fatal("a tick while busy must re-arm itself")
 	}
-	m.onSendResult(core.SendResult{TabID: "t1", OK: true})
-	next, cmd = m.Update(sendTick{})
+	m.progressOn = false
+	next, cmd = m.Update(statusSpinTick{})
 	if cmd != nil {
-		t.Fatalf("the tick must die once the send completes, got %v", cmd)
+		t.Fatalf("the tick must die once idle, got %v", cmd)
+	}
+	if m.statusSpinTickOn {
+		t.Fatal("the idle tick must disarm the gate")
 	}
 }
 
@@ -5479,10 +5493,11 @@ func pagerText(p *pager) string {
 	return b.String()
 }
 
-// TestSummaryView pins the AI summary view (R8): AiStarted saves the
-// pager's lines and swaps in the placeholder, chunks append in order,
-// a stale chunk from another job drops, a failure appends an error
-// line, and the back key restores the mail.
+// TestSummaryView pins the AI summary view (R8): AiStarted opens the
+// summary as the last, active tab (the message pager saved as mailPager,
+// never replaced), chunks append in order, a stale chunk from another
+// job drops, a failure appends an error line, and the back key closes
+// the tab and restores the mail.
 func TestSummaryView(t *testing.T) {
 	m := model()
 	m.pager = newPager("t1", "", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
@@ -5493,6 +5508,13 @@ func TestSummaryView(t *testing.T) {
 	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
 	if m.summary == nil || m.summary.jobID != "j1" {
 		t.Fatalf("summary not open: %v", m.summary)
+	}
+	si := m.summaryIdx()
+	if m.tabIdx != si || si != m.tabCount()-1 {
+		t.Fatalf("summary must attach last and active: tab=%d idx=%d count=%d", m.tabIdx, si, m.tabCount())
+	}
+	if m.summary.mailPager == nil || pagerText(m.summary.mailPager) != "the mail body" {
+		t.Fatalf("the message pager must be saved, not replaced: %q", pagerText(m.summary.mailPager))
 	}
 	if got := pagerText(m.pager); got != "summarizing..." {
 		t.Fatalf("pager must show the placeholder, got %q", got)
@@ -5528,9 +5550,115 @@ func TestSummaryViewFromIndex(t *testing.T) {
 	if m.mode != "pager" {
 		t.Fatalf("summary must open the pager, mode=%q", m.mode)
 	}
+	if m.summary.mailPager != nil {
+		t.Fatalf("a summary from the index has no displaced pager: %v", m.summary.mailPager)
+	}
 	m, _ = m.dispatchAction("back", 1)
 	if m.summary != nil || m.mode != "index" {
 		t.Fatalf("back must return to the index, summary=%v mode=%q", m.summary, m.mode)
+	}
+}
+
+// TestSummaryTabSurvivesSwitch pins the tab semantics: the summary is a
+// real tab - tabbing away restores the message pager (the summary stays
+// open), tabbing back re-installs the summary's streamed content, and q
+// closes the tab and restores the mail.
+func TestSummaryTabSurvivesSwitch(t *testing.T) {
+	m := model()
+	m.pager = newPager("t1", "", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+	m.mode = "pager"
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	m.onAiChunk(core.AiChunk{JobID: "j1", Text: "Summary part"})
+	if got := pagerText(m.pager); got != "Summary part" {
+		t.Fatalf("the summary pager must be installed: %q", got)
+	}
+	// tab next wraps to the surface: the message pager returns
+	m.tabNext()
+	if m.summary == nil {
+		t.Fatal("the summary must stay open across tab switches")
+	}
+	if pagerText(m.pager) != "the mail body" {
+		t.Fatalf("tabbing off must restore the message pager: %q", pagerText(m.pager))
+	}
+	// tab back re-installs the summary pager, content intact
+	m.tabNext()
+	if !m.summaryActive() || pagerText(m.pager) != "Summary part" {
+		t.Fatalf("tabbing back must restore the summary: active=%v pager=%q", m.summaryActive(), pagerText(m.pager))
+	}
+	if pagerText(m.summary.mailPager) != "the mail body" {
+		t.Fatalf("the message pager must be re-saved fresh: %q", pagerText(m.summary.mailPager))
+	}
+	// q closes the tab and restores the mail
+	m, _ = m.dispatchAction("back", 1)
+	if m.summary != nil || m.tabIdx != 0 || pagerText(m.pager) != "the mail body" {
+		t.Fatalf("back must close the summary tab: summary=%v tab=%d pager=%q", m.summary, m.tabIdx, pagerText(m.pager))
+	}
+}
+
+// TestAICommands pins the A key: it opens the aicmd picker with the
+// source's names, enter runs the chosen command on the current thread
+// (the cursor thread in the index, the open thread in the pager), a
+// stream already open blocks the picker, and an empty source explains
+// itself on the message line.
+func TestAICommands(t *testing.T) {
+	SetAICommandSource(func() []AICommand {
+		return []AICommand{
+			{Name: "Thread next steps", Desc: "Summarize the thread"},
+			{Name: "Draft reply", Desc: "Draft a reply"},
+		}
+	})
+	t.Cleanup(func() { SetAICommandSource(func() []AICommand { return nil }) })
+	var gotName, gotThread string
+	SetAICommandHandler(func(name, threadID string) { gotName, gotThread = name, threadID })
+	t.Cleanup(func() { SetAICommandHandler(func(string, string) {}) })
+
+	m := model()
+	m = press(t, m, "A")
+	d, ok := m.dialogue.(*listDialogue)
+	if !ok {
+		t.Fatalf("A must open the aicmd picker: %+v", m.dialogue)
+	}
+	if d.f.kind != "aicmd" || len(d.f.entries) != 2 || d.f.entries[0] != "Draft reply - Draft a reply" {
+		t.Fatalf("picker kind=%q entries=%v", d.f.kind, d.f.entries)
+	}
+	m = pressType(t, m, tcell.KeyEnter) // the first sorted entry: Draft reply
+	if m.dialogue != nil {
+		t.Fatalf("enter must close the picker: %+v", m.dialogue)
+	}
+	if gotName != "Draft reply" || gotThread != "t1" {
+		t.Fatalf("seam got %q/%q, want Draft reply/t1", gotName, gotThread)
+	}
+
+	// the open pager wins the thread
+	gotName, gotThread = "", ""
+	m = model()
+	m.pager = newPager("t9", "", nil)
+	m.mode = "pager"
+	m = press(t, m, "A")
+	m = pressType(t, m, tcell.KeyEnter)
+	if gotName == "" || gotThread != "t9" {
+		t.Fatalf("pager seam got %q/%q, want thread t9", gotName, gotThread)
+	}
+
+	// a summary already open blocks the picker
+	m = model()
+	m.summary = &summary{jobID: "j1"}
+	m = press(t, m, "A")
+	if m.dialogue != nil {
+		t.Fatalf("A with a summary open must not open the picker: %+v", m.dialogue)
+	}
+	if !strings.Contains(m.statusMsg, "close the current summary") {
+		t.Fatalf("blocked picker must explain: %q", m.statusMsg)
+	}
+
+	// an empty source explains itself on the message line
+	SetAICommandSource(func() []AICommand { return nil })
+	m = model()
+	m = press(t, m, "A")
+	if m.dialogue != nil || !strings.Contains(m.statusMsg, "no AI commands configured") {
+		t.Fatalf("empty source: dialogue=%+v status=%q", m.dialogue, m.statusMsg)
 	}
 }
 

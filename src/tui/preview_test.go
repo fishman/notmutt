@@ -69,8 +69,10 @@ func TestPreviewStaysInIndexAndShowsBox(t *testing.T) {
 	}
 	out := stripANSI(m.View())
 	// the scroll hint lists every pager scroll key, arrows included
-	// (the live config's arrow overlay is part of the fixture)
-	wantAll(t, out, m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭"+strings.Repeat("─", 2), "╰─", "tab-prev")
+	// (the live config's arrow overlay is part of the fixture). The keyhint
+	// bar sorts by key and truncates at width - assert a pager-only key
+	// that stays visible ("F open-links"), not one displaced by earlier keys.
+	wantAll(t, out, m.previewTitle, "body line", "down/j/k/up scroll  enter open  q close", "╭"+strings.Repeat("─", 2), "╰─", "F open-links")
 	if strings.Contains(out, "cursor-down") {
 		t.Fatalf("the keyhint must derive the pager keys during preview:\n%s", out)
 	}

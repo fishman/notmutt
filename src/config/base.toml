@@ -37,6 +37,11 @@ language = "auto"
 image-protocol = "sixel"
 allow-tracking-images = false
 
+# generated draft bodies (the AI command drafts) hard-wrap to this line
+# width; 0 = the mutt default 72
+[compose]
+wrap-width = 72
+
 # exclusive folder tag group (R2): one message has exactly one home;
 # applying any member removes the other members present (inbox included)
 [tag-groups.folder]
@@ -93,6 +98,7 @@ opener = ["xdg-open"]
 "/" = { fun = "search", desc = "Search the index", show = true }
 "n" = { fun = "search-next", desc = "Jump to the next search match", show = true }
 "s" = { fun = "scheduled-list", desc = "List scheduled mail", show = true }
+"A" = { fun = "ai-commands", desc = "Run an AI command on this thread", show = true }
 "ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "c" = { fun = "categorize", desc = "Categorize the thread's attachments", show = true }
 "C" = { fun = "collapse-thread", desc = "Collapse or expand the thread under the cursor", show = true }
@@ -157,6 +163,7 @@ opener = ["xdg-open"]
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
 "T" = { fun = "tasks" }
+"A" = { fun = "ai-commands", desc = "Run an AI command on this thread", show = true }
 
 [schemes.vim.compose]
 "j" = { fun = "form-down", desc = "Move to the next attachment" }
@@ -238,6 +245,7 @@ opener = ["xdg-open"]
 "ctrl+r" = { fun = "refresh", desc = "Check for new mail now", show = true }
 "ctrl+s" = { fun = "search", desc = "Search the index", show = true }
 "ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
+"A" = { fun = "ai-commands", desc = "Run an AI command on this thread", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }
@@ -269,6 +277,7 @@ opener = ["xdg-open"]
 "]" = { fun = "tab-next", show = true }
 "?" = { fun = "help", show = true }
 "~" = { fun = "log", show = true }
+"A" = { fun = "ai-commands", desc = "Run an AI command on this thread", show = true }
 
 [schemes.emacs.compose]
 "ctrl+n" = { fun = "form-down" }

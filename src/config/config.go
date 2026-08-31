@@ -125,6 +125,7 @@ type Config struct {
 	Accounts       map[string]Account         `toml:"accounts"`
 	Send           Send                       `toml:"send"`
 	Refresh        Refresh                    `toml:"refresh"`
+	Compose        ComposeSection             `toml:"compose"`
 	Schedule       Schedule                   `toml:"schedule"`
 	Filter         Filter                     `toml:"filter"`
 	Notify         Notify                     `toml:"notify"`
@@ -186,11 +187,13 @@ type LuaNetwork struct {
 }
 
 // AIProvider is one named AI backend ([ai.<name>], R8): Type selects
-// the wire protocol - "anthropic" or "openai" (any OpenAI-compatible
-// endpoint via BaseURL - ollama, llama.cpp, groq, ...). PassCmd is
-// the argv that prints the API key on stdout (F4: tokenized at load,
-// never a shell string); empty = no auth header. The key is fetched
-// per request, held only for that request, never logged (F6).
+// the wire protocol and its vendor default URL - "anthropic", "openai",
+// "deepseek", "openrouter" (the latter two OpenAI-compatible). BaseURL
+// overrides the default for any type, so any protocol-compatible
+// endpoint works (local ollama, a proxy, ...). PassCmd is the argv that
+// prints the API key on stdout (F4: tokenized at load, never a shell
+// string); empty = no auth header. The key is fetched per request, held
+// only for that request, never logged (F6).
 type AIProvider struct {
 	Type      string   `toml:"type"`
 	Model     string   `toml:"model"`
@@ -224,6 +227,13 @@ type Refresh struct {
 	// Interval is the poll cadence in minutes (default 20; 0 disables
 	// the automatic poll - the refresh key still works).
 	Interval int `toml:"interval"`
+}
+
+// ComposeSection is the [compose] section: WrapWidth is the line width
+// generated draft bodies (the AI command drafts) hard-wrap to; 0 = the
+// default (mutt's wrap, 72).
+type ComposeSection struct {
+	WrapWidth int `toml:"wrap-width"`
 }
 
 // Filter configures the classification pipeline (R2): Enabled turns
@@ -1667,8 +1677,8 @@ func validate(cfg Config) error {
 		}
 	}
 	for name, p := range cfg.AI {
-		if p.Type != "anthropic" && p.Type != "openai" {
-			return fmt.Errorf("ai.%s: type must be \"anthropic\" or \"openai\"", name)
+		if p.Type != "anthropic" && p.Type != "openai" && p.Type != "deepseek" && p.Type != "openrouter" {
+			return fmt.Errorf("ai.%s: type must be one of \"anthropic\", \"openai\", \"deepseek\", \"openrouter\"", name)
 		}
 		if strings.TrimSpace(p.Model) == "" {
 			return fmt.Errorf("ai.%s: model must not be blank", name)

@@ -45,6 +45,11 @@ const pollWatchInterval = 5 * time.Second
 //go:embed lua/templates/*.lua
 var templateFS embed.FS
 
+//go:embed aicommands/*.md
+//go:embed aicommands/accounts/README.md
+//go:embed aicommands/context/default.md
+var aiSeedFS embed.FS
+
 func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		return setupAccounts()
@@ -63,6 +68,7 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "smime-verify" {
 		return smimeVerifyOnce()
 	}
+	seedAICommands(configDir())
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
@@ -241,6 +247,15 @@ func Run() error {
 	})
 	tui.SetLuaCommandHandler(func(command, threadID string) {
 		go runLuaCommand(command, threadID, bus, &cfg, worker)
+	})
+
+	// AI commands (the A key): the picker lists the prompt files from
+	// <configdir>/ai; running one fetches the thread, builds the declared
+	// context, streams into the summary pager, and drafts a compose when
+	// the command drafts one
+	tui.SetAICommandSource(func() []tui.AICommand { return aiCommandList() })
+	tui.SetAICommandHandler(func(name, threadID string) {
+		go runAICommand(name, threadID, bus, cfg, worker, root)
 	})
 
 	// attach commands: config tables register first, then Lua plugin
@@ -1008,6 +1023,47 @@ func seedTemplates(dir string) {
 		}
 		if err := os.WriteFile(path, src, 0600); err != nil {
 			log.Printf("setup: seed template %s: %v", e.Name(), err)
+		}
+	}
+}
+
+// seedAICommands writes the built-in AI prompt files into <dir>/ai on
+// first load (write-if-absent - a user's edits survive every restart).
+// The accounts/README documents the per-account notes; the prompt files
+// are the seed set the picker shows until the user edits or replaces them.
+func seedAICommands(dir string) {
+	dst := filepath.Join(dir, "ai")
+	if err := os.MkdirAll(filepath.Join(dst, "accounts"), 0700); err != nil {
+		log.Printf("setup: seed ai commands: %v", err)
+		return
+	}
+	for _, sub := range []string{"", "accounts", "context"} {
+		if sub != "" {
+			if err := os.MkdirAll(filepath.Join(dst, sub), 0700); err != nil {
+				log.Printf("setup: seed ai commands: %v", err)
+				return
+			}
+		}
+		entries, err := fs.ReadDir(aiSeedFS, filepath.Join("aicommands", sub))
+		if err != nil {
+			log.Printf("setup: seed ai commands: %v", err)
+			return
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			path := filepath.Join(dst, sub, e.Name())
+			if _, err := os.Stat(path); err == nil {
+				continue
+			}
+			src, err := fs.ReadFile(aiSeedFS, filepath.Join("aicommands", sub, e.Name()))
+			if err != nil {
+				continue
+			}
+			if err := os.WriteFile(path, src, 0600); err != nil {
+				log.Printf("setup: seed ai command %s: %v", e.Name(), err)
+			}
 		}
 	}
 }

@@ -224,3 +224,29 @@ var onLuaKey = func(key, area, threadID string) {}
 func SetLuaKeyHandler(fn func(key, area, threadID string)) {
 	onLuaKey = fn
 }
+
+// AICommand is one user-authored AI command for the picker (the A key):
+// the name shown in the fuzzy list and the description under it.
+type AICommand struct {
+	Name string
+	Desc string
+}
+
+// aiCommands is the AI-command source seam: the app wires it with
+// SetAICommandSource; nil = no commands.
+var aiCommands = func() []AICommand { return nil }
+
+func SetAICommandSource(fn func() []AICommand) {
+	if fn != nil {
+		aiCommands = fn
+	}
+}
+
+// onAICommand runs an AI command on a thread (the picker's enter): the
+// app builds the context, streams the completion as AiChunk, and opens a
+// compose draft when the command drafts one; a no-op default.
+var onAICommand = func(name, threadID string) {}
+
+func SetAICommandHandler(fn func(string, string)) {
+	onAICommand = fn
+}

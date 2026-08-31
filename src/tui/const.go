@@ -17,8 +17,9 @@ const (
 	legendDebounce = 100 * time.Millisecond
 	// progressTickInterval: the progress bar's repaint cadence while a job is on (R15).
 	progressTickInterval = 200 * time.Millisecond
-	// sendTickInterval: the send dialogue spinner's frame cadence while a send is in flight (R4).
-	sendTickInterval = 100 * time.Millisecond
+	// statusSpinTickInterval: the status-line spinner's frame cadence
+	// while the client is busy (R15).
+	statusSpinTickInterval = 120 * time.Millisecond
 	// addrDebounce: a Tab storm coalesces into one address harvest after
 	// the last trigger (the legendDebounce pattern).
 	addrDebounce = 40 * time.Millisecond

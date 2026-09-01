@@ -607,6 +607,15 @@ func pressType(t *testing.T, m Model, k tcell.Key) Model {
 	return next
 }
 
+// pressCtrlE presses ctrl+e (the list dialogues' amend/edit key): String()
+// resolves the ctrl+ modifier only when the press carries it - a plain "e"
+// must keep typing into the filter.
+func pressCtrlE(t *testing.T, m Model) Model {
+	t.Helper()
+	next, _ := m.Update(KeyPressMsg{Text: "e", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
+	return next
+}
+
 // sized returns m at the standard render window (80x24), the size the
 // frame assertions assume. Fixtures default to it; only tests with a
 // custom size set width/height explicitly.
@@ -5826,10 +5835,12 @@ func TestAICommands(t *testing.T) {
 	}
 }
 
-// TestAICommandExtraPrompt pins the picker's e key: it opens the extra
-// prompt (the command body untouched) instead of running the command, and
-// the committed text runs the selected command with the extra text as the
-// third seam argument - the amendment, not a prefill.
+// TestAICommandExtraPrompt pins the picker's ctrl+e key: it opens the
+// extra prompt (the command body untouched) instead of running the
+// command, and the committed text runs the selected command with the
+// extra text as the third seam argument - the amendment, not a prefill.
+// Plain e must keep typing into the filter (regression: e hijacked the
+// key, so no command name containing an e was filterable).
 func TestAICommandExtraPrompt(t *testing.T) {
 	withAICommands(t, AICommand{Name: "Thread next steps", Desc: "Summarize the thread"})
 	var gotName, gotThread, gotExtra string
@@ -5839,9 +5850,16 @@ func TestAICommandExtraPrompt(t *testing.T) {
 	m := model()
 	m = press(t, m, "A")
 	m = press(t, m, "e")
+	if d, ok := m.dialogue.(*listDialogue); !ok || d.f.query != "e" {
+		t.Fatalf("plain e must type into the filter: %+v", m.dialogue)
+	}
+	if gotName != "" {
+		t.Fatalf("typing e must not amend the command, seam called with %q", gotName)
+	}
+	m = pressCtrlE(t, m)
 	d, ok := m.dialogue.(*textDialogue)
 	if !ok || d.field != "aiextra" {
-		t.Fatalf("e must open the extra prompt: %+v", m.dialogue)
+		t.Fatalf("ctrl+e must open the extra prompt: %+v", m.dialogue)
 	}
 	for _, r := range "make it concise" {
 		m = press(t, m, string(r))

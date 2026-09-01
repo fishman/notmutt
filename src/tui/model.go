@@ -3520,9 +3520,10 @@ func (d *listDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return nil, nil
 		}
 	}
-	// the aicmd picker's e key: append extra prompt text on top of the
-	// selected command's body (the prompt opens, enter runs the command)
-	if d.f.kind == "aicmd" && msg.String() == "e" {
+	// the aicmd picker's ctrl+e key: append extra prompt text on top of
+	// the selected command's body (the prompt opens, enter runs the
+	// command). ctrl, not plain e: the filter must stay typable.
+	if d.f.kind == "aicmd" && msg.String() == "ctrl+e" {
 		if name, ok := d.f.selectedPayload(); ok && name != "" {
 			m.cancelDialogue()
 			return &textDialogue{field: "aiextra", label: i18n.T("extra prompt: "), aicmdName: name}, nil

@@ -421,6 +421,11 @@ notmutt, never cite authority.
   the failing test against the current code, running it to confirm it
   FAILS, then fixing. Never commit a regression fix without that red
   run - a test that passed before the fix proves nothing.
+- Regression tests are LOCKED: never edit, weaken, or remove an existing
+  regression test (a test pinned to a past fix) without explicit user
+  confirmation stated in the conversation - that holds in auto mode too.
+  A change to one must start with that approval, not end with a test
+  edit. Add new tests beside them; leave the pinned ones alone.
 - Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
   in all output and code. No unnecessary comments; only non-obvious
   constraints get a comment.

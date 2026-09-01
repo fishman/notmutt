@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -392,6 +393,62 @@ model = "anthropic/claude-sonnet-4-5"
 	}
 	if cfg.AI["ds"].Type != "deepseek" || cfg.AI["router"].Type != "openrouter" {
 		t.Fatalf("deepseek/openrouter = %+v / %+v", cfg.AI["ds"], cfg.AI["router"])
+	}
+}
+
+func TestAIDataGrantResolution(t *testing.T) {
+	cfg, err := Load(write(t, `
+[ai-data.gmail]
+data = ["participants", "subjects"]
+
+[ai-data."*"]
+data = ["count"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowed, ok := cfg.AIDataGrant("gmail"); !ok || !slices.Equal(allowed, []string{"participants", "subjects"}) {
+		t.Fatalf("gmail = %v, %v", allowed, ok)
+	}
+	// explicit account wins over the "*" account
+	if allowed, ok := cfg.AIDataGrant("gmail"); ok && slices.Equal(allowed, []string{"count"}) {
+		t.Fatal("wildcard account must not beat the explicit account")
+	}
+	if allowed, ok := cfg.AIDataGrant("outlook"); !ok || !slices.Equal(allowed, []string{"count"}) {
+		t.Fatalf("unlisted account = %v, %v (want the \"*\" fallback)", allowed, ok)
+	}
+	if _, ok := cfg.AIDataGrant(""); ok {
+		t.Fatal("empty account must deny")
+	}
+}
+
+func TestAIDataGrantDenyByDefault(t *testing.T) {
+	cfg, err := Load(write(t, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.AIDataGrant("gmail"); ok {
+		t.Fatal("no [ai-data] section must deny every account")
+	}
+}
+
+func TestAIDataGrantWildcardField(t *testing.T) {
+	cfg, err := Load(write(t, "[ai-data.gmail]\ndata = [\"*\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := slices.Collect(maps.Keys(AIDataFields))
+	sort.Strings(want)
+	allowed, ok := cfg.AIDataGrant("gmail")
+	if !ok || !slices.Equal(allowed, want) {
+		t.Fatalf("wildcard field = %v, %v; want every AIDataFields", allowed, ok)
+	}
+}
+
+func TestLoadAIDataUnknownFieldErrors(t *testing.T) {
+	_, err := Load(write(t, "[ai-data.gmail]\ndata = [\"subjects\", \"headers\"]\n"))
+	if err == nil || !strings.Contains(err.Error(), "ai-data.gmail") {
+		t.Fatalf("unknown field must be a load error, got: %v", err)
 	}
 }
 
@@ -831,6 +888,7 @@ func TestDefaultBindings(t *testing.T) {
 		"c": "edit-cc", "b": "edit-bcc", "r": "edit-replyto", "S": "security",
 		"e": "edit", "a": "attach", "tab": "attach", "d": "detach",
 		"A": "account", "C": "signature", "y": "send", "P": "schedule", "q": "abort",
+		"pgdown": "page-down", "pgup": "page-up",
 		"[": "tab-prev", "]": "tab-next",
 		"?": "help", "~": "log", ":": "command", "T": "tasks",
 	}
@@ -892,7 +950,9 @@ func TestKeymapSchemes(t *testing.T) {
 		t.Fatalf("emacs compose movement missing: %v", cfg.Bindings["compose"])
 	}
 	if cfg.Bindings["compose"]["ctrl+v"] != "page-down" ||
-		cfg.Bindings["compose"]["alt+v"] != "page-up" {
+		cfg.Bindings["compose"]["alt+v"] != "page-up" ||
+		cfg.Bindings["compose"]["pgdown"] != "page-down" ||
+		cfg.Bindings["compose"]["pgup"] != "page-up" {
 		t.Fatalf("emacs compose scroll keys missing: %v", cfg.Bindings["compose"])
 	}
 	for _, tc := range []struct{ key, fun string }{

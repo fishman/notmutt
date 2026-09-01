@@ -216,7 +216,7 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root strin
 	}
 	defer cancel()
 	defer vm.Close()
-	ctx := metadataCtxTable(vm, worker, scope)
+	ctx := metadataCtxTable(vm, worker, scope, nil)
 	// the attachments binding is the MCP-only surface extension,
 	// registered here and never in metadataCtxTable: a network-enabled
 	// plugin VM (which shares that table) must not see it. It lists

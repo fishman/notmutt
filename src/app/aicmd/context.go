@@ -8,6 +8,7 @@ import (
 	netmail "net/mail"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -26,9 +27,10 @@ const (
 // cleaned (quoted lines, signatures, and html dropped; capped), sender
 // metadata is bare addresses only, attachments never appear. This is the
 // only path mail content takes toward an LLM - the Data allowlist is
-// enforced here, structurally. own is the account's own bare lowercase
-// addresses (empty = no exclusion).
-func BuildContext(cmd *Command, msgs []core.Message, own []string, styleNote, accountNote string) (string, error) {
+// enforced here, structurally. allowed is the account's [ai-data] grant:
+// a declared field not in it renders no section (nil = no gate). own is
+// the account's own bare lowercase addresses (empty = no exclusion).
+func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []string, styleNote, accountNote string) (string, error) {
 	if len(msgs) == 0 {
 		return "", fmt.Errorf("empty thread")
 	}
@@ -39,35 +41,37 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, styleNote, ac
 	for _, f := range cmd.Data {
 		declared[f] = true
 	}
+	// a field must be declared AND granted (nil grant = unconstrained)
+	allows := func(f string) bool { return declared[f] && (allowed == nil || slices.Contains(allowed, f)) }
 	var b strings.Builder
-	if declared["count"] {
+	if allows("count") {
 		fmt.Fprintf(&b, "Message count: %d\n\n", len(sorted))
 	}
-	if declared["participants"] {
+	if allows("participants") {
 		b.WriteString("Participants: " + strings.Join(participants(sorted, own), ", ") + "\n\n")
 	}
-	if declared["subjects"] {
+	if allows("subjects") {
 		b.WriteString("Subjects:\n")
 		for i, m := range sorted {
 			fmt.Fprintf(&b, "%d. %s\n", i+1, core.SanitizeControls(m.Subject))
 		}
 		b.WriteString("\n")
 	}
-	if declared["dates"] {
+	if allows("dates") {
 		b.WriteString("Dates:\n")
 		for i, m := range sorted {
 			fmt.Fprintf(&b, "%d. %s\n", i+1, dateOf(m))
 		}
 		b.WriteString("\n")
 	}
-	if declared["structure"] {
+	if allows("structure") {
 		b.WriteString("Messages:\n")
 		for i, m := range sorted {
 			fmt.Fprintf(&b, "%d. %s | %s | %s\n", i+1, senderOf(m), core.SanitizeControls(m.Subject), dateOf(m))
 		}
 		b.WriteString("\n")
 	}
-	if declared["bodies"] {
+	if allows("bodies") {
 		b.WriteString("Messages:\n")
 		remaining := totalBodyCap
 		for i, m := range sorted {
@@ -84,7 +88,7 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, styleNote, ac
 				i+1, senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), body)
 		}
 	}
-	if declared["last_body"] {
+	if allows("last_body") {
 		m := sorted[len(sorted)-1]
 		fmt.Fprintf(&b, "Latest message:\nFrom: %s\nSubject: %s\nDate: %s\nBody:\n%s\n",
 			senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), bodyText(m, perBodyCap))

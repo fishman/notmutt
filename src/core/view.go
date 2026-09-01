@@ -409,7 +409,7 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 				}
 				return
 			}
-			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count})
+			rows = append(rows, Row{Ghost: true, ThreadID: t.ID, Depth: depth, Siblings: siblings, Count: count, Desc: desc})
 			for i, c := range orderedChildren(node, desc) {
 				walk(c, depth+1, child(siblings, i, len(node.Children)))
 			}
@@ -418,7 +418,7 @@ func flattenThread(t *Thread, collapsed, skipDeleted, desc bool) []Row {
 		if skipDeleted && slices.Contains(node.Msg.Tags, "deleted") && len(node.Children) == 0 {
 			return
 		}
-		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count})
+		rows = append(rows, Row{Msg: node.Msg, ThreadID: t.ID, Depth: depth, Root: depth == 0, Siblings: siblings, Count: count, Desc: desc})
 		for i, c := range orderedChildren(node, desc) {
 			walk(c, depth+1, child(siblings, i, len(node.Children)))
 		}

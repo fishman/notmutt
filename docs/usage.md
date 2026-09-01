@@ -664,6 +664,40 @@ output. Attachments never appear; body text is cleaned (quoted lines,
 signatures, html) and capped; the output is control-stripped before it
 renders in the pager or a draft.
 
+### Per-account data grants
+
+Each account additionally gates what commands may send: the
+`[ai-data.<account>]` section grants a data-field allowlist,
+deny-by-default. A command's `data` runs through the account's grant
+(BuildContext, the chokepoint above) - a declared field the account
+does not grant renders no section. Independent of `[mcp]`: an account
+can be MCP-denied and AI-allowed, or the reverse.
+
+```toml
+[ai-data.gmail]
+data = ["participants", "subjects", "count"]
+
+[ai-data."*"]          # fallback for every unlisted account
+data = ["count"]
+```
+
+`data = ["*"]` grants every field. Precedence: the explicit account
+wins over the `"*"` account; no entry at all denies. The known fields
+are the command `data` set (`participants`, `subjects`, `dates`,
+`count`, `bodies`, `last_body`, `structure`); anything else is a load
+error.
+
+The default is deny. Migrating existing config: add
+
+```toml
+[ai-data."*"]
+data = ["*"]
+```
+
+to restore the pre-grant behavior (every field on every account). An AI
+command on an account with no grant refuses with a clear error instead
+of running.
+
 ### Per-account context
 
 `<configdir>/ai/accounts/<account>.md` holds a note about that account

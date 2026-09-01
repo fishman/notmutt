@@ -134,6 +134,10 @@ type Config struct {
 	MCP            MCP                        `toml:"mcp"`
 	AttachCommands map[string][]string        `toml:"attach-commands"`
 	AI             map[string]AIProvider      `toml:"ai"`
+	// AIAccounts is the per-account AI data grant ([ai-data.<account>]):
+	// the fields an account permits toward an LLM, deny-by-default; "*"
+	// grants every account or field. Independent of [mcp].
+	AIAccounts map[string]AIDataGrant `toml:"ai-data"`
 	// Opener is the link opener argv (pager F key): the url is appended
 	// as the final argv element (F4 - argv only, never a shell string).
 	// Empty = xdg-open.
@@ -229,6 +233,48 @@ var AIProviders = map[string]AIProviderDef{
 	"openai":     {Protocol: ProtocolOpenAI, DefaultURL: "https://api.openai.com/v1"},
 	"deepseek":   {Protocol: ProtocolOpenAI, DefaultURL: "https://api.deepseek.com/v1"},
 	"openrouter": {Protocol: ProtocolOpenAI, DefaultURL: "https://openrouter.ai/api/v1"},
+}
+
+// AIDataFields is the AI data-field allowlist: the only thread data a
+// command can declare or an account can grant (the privacy boundary).
+// Single source for aicmd's frontmatter and config's [ai-data].
+var AIDataFields = map[string]bool{
+	"participants": true,
+	"subjects":     true,
+	"dates":        true,
+	"count":        true,
+	"bodies":       true,
+	"last_body":    true,
+	"structure":    true,
+}
+
+// AIDataGrant is one [ai-data.<account>] entry: the data fields that
+// account permits toward an LLM, deny-by-default (no entry = nothing).
+type AIDataGrant struct {
+	Data []string `toml:"data"`
+}
+
+// AIDataGrant resolves an account's allowlist: its own entry, else the
+// "*" account, else deny. A "*" data element expands to every field.
+func (c Config) AIDataGrant(account string) (allowed []string, ok bool) {
+	if account == "" {
+		return nil, false
+	}
+	g, ok := c.AIAccounts[account]
+	if !ok {
+		g, ok = c.AIAccounts["*"]
+		if !ok {
+			return nil, false
+		}
+	}
+	for _, f := range g.Data {
+		if f == "*" {
+			all := slices.Collect(maps.Keys(AIDataFields))
+			sort.Strings(all)
+			return all, true
+		}
+	}
+	return g.Data, true
 }
 
 type UI struct {
@@ -369,6 +415,10 @@ type Glyphs struct {
 	TreeChild  string `toml:"tree_child"`
 	TreeBranch string `toml:"tree_branch"`
 	TreeLeaf   string `toml:"tree_leaf"`
+	// TreeLeafDesc is the leaf marker in a desc (bottom-up) thread - the
+	// mirrored corner: a top-down leaf points down (`-), the newest-first
+	// leaf points up (/-). Branch and child glyphs are the same both ways.
+	TreeLeafDesc string `toml:"tree_leaf_desc"`
 }
 
 // Style is one theme style: palette names or raw hex for fg/bg, a
@@ -1214,7 +1264,7 @@ func Default() Config {
 				Staged: "*", Cursor: "▌", ProgressFill: "#", ProgressEmpty: "-",
 				BorderTL: "╭", BorderTR: "╮", BorderBL: "╰", BorderBR: "╯",
 				BorderH: "─", BorderV: "│",
-				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-",
+				Tree: "+ ", TreeChild: "| ", TreeBranch: "|-", TreeLeaf: "`-", TreeLeafDesc: "/-",
 			},
 		},
 		// only inbox/archive are threaded (the rest are flat lists)
@@ -1472,12 +1522,14 @@ func applyGlyphSet(cfg *Config, merged map[string]any) {
 		apply(&cfg.UI.Glyphs.TreeChild, "tree_child", "| ")
 		apply(&cfg.UI.Glyphs.TreeBranch, "tree_branch", "|-")
 		apply(&cfg.UI.Glyphs.TreeLeaf, "tree_leaf", "`-")
+		apply(&cfg.UI.Glyphs.TreeLeafDesc, "tree_leaf_desc", "/-")
 		return
 	}
 	apply(&cfg.UI.Glyphs.Tree, "tree", "▸ ")
 	apply(&cfg.UI.Glyphs.TreeChild, "tree_child", "│ ")
 	apply(&cfg.UI.Glyphs.TreeBranch, "tree_branch", "├─")
 	apply(&cfg.UI.Glyphs.TreeLeaf, "tree_leaf", "└─")
+	apply(&cfg.UI.Glyphs.TreeLeafDesc, "tree_leaf_desc", "┌─")
 }
 
 // configLast moves config.toml to the end of the load order: it wins
@@ -1721,6 +1773,18 @@ func validate(cfg Config) error {
 		for i, a := range p.PassCmd {
 			if strings.TrimSpace(a) == "" {
 				return fmt.Errorf("ai.%s: pass_cmd[%d] must not be blank", name, i)
+			}
+		}
+	}
+	for account, g := range cfg.AIAccounts {
+		if account == "" {
+			return fmt.Errorf("ai-data: account name must not be blank")
+		}
+		for _, f := range g.Data {
+			if !AIDataFields[f] && f != "*" {
+				fields := slices.Collect(maps.Keys(AIDataFields))
+				sort.Strings(fields)
+				return fmt.Errorf("ai-data.%s: unknown data field %q (known: %s)", account, f, strings.Join(fields, ", "))
 			}
 		}
 	}

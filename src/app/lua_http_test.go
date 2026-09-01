@@ -209,16 +209,59 @@ end)
 	}
 	loadLuaPlugins(dir, network)
 	fw := &fakeWorker{}
-	fw.setStubs([]core.Message{{ID: "m1", ThreadID: "t1", Subject: "alpha", Author: "sender@example.com", Tags: []string{"inbox"}}})
+	fw.setStubs([]core.Message{{ID: "m1", ThreadID: "t1", Subject: "alpha", Author: "sender@example.com", Tags: []string{"gmail", "inbox"}}})
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	runLuaAction("net", "t1", bus, &config.Config{Lua: config.Lua{Network: network}}, fw)
-	runLuaAction("plain", "t1", bus, &config.Config{Lua: config.Lua{Network: network}}, fw)
+	// the allow-all grant ([ai-data."*"] data = ["*"]): the metadata
+	// surface projects subject/author as before
+	cfg := &config.Config{
+		Accounts:   map[string]config.Account{"gmail": {}},
+		Lua:        config.Lua{Network: network},
+		AIAccounts: map[string]config.AIDataGrant{"*": {Data: []string{"*"}}},
+	}
+	runLuaAction("net", "t1", bus, cfg, fw)
+	runLuaAction("plain", "t1", bus, cfg, fw)
 	for i := 0; i < 2; i++ {
 		lr := (<-ch).(core.LuaResult)
 		if lr.Err != nil {
 			t.Fatalf("plugin %d: %v", i, lr.Err)
 		}
+	}
+}
+
+// TestPluginNetworkDataSurfaceGrantFiltered pins the deny-by-default
+// [ai-data] gate on the network metadata surface: without a grant, the
+// content fields (subject, author, timestamp) and thread_info's count
+// project nothing - only the structural identity (id, tags) survives.
+func TestPluginNetworkDataSurfaceGrantFiltered(t *testing.T) {
+	dir := t.TempDir()
+	writePlugin(t, dir, "net.lua", `
+register_action("net", function(ctx)
+    if ctx.thread_info == nil or ctx.search == nil then error("no metadata surface") end
+    local rows = ctx.search("tag:inbox", 10)
+    if rows == nil or #rows == 0 then error("search must work") end
+    if rows[1].subject ~= nil or rows[1].author ~= nil or rows[1].timestamp ~= nil then
+        error("denied account must not project content fields")
+    end
+    if rows[1].id == nil then error("identity must survive the grant") end
+    local info = ctx.thread_info("t1")
+    if info.count ~= nil then error("denied account must not expose count") end
+end)
+`)
+	network := map[string]config.LuaNetwork{"net": {Targets: []string{"127.0.0.1"}, Paths: []string{"GET /x"}}}
+	loadLuaPlugins(dir, network)
+	fw := &fakeWorker{}
+	fw.setStubs([]core.Message{{ID: "m1", ThreadID: "t1", Subject: "alpha", Author: "sender@example.com", Tags: []string{"gmail", "inbox"}}})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	cfg := &config.Config{
+		Accounts: map[string]config.Account{"gmail": {}},
+		Lua:      config.Lua{Network: network},
+	}
+	runLuaAction("net", "t1", bus, cfg, fw)
+	lr := (<-ch).(core.LuaResult)
+	if lr.Err != nil {
+		t.Fatalf("plugin: %v", lr.Err)
 	}
 }
 

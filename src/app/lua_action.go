@@ -25,7 +25,6 @@ import (
 
 	lua "github.com/yuin/gopher-lua"
 
-	"notmutt/app/ai"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/i18n"
@@ -183,17 +182,16 @@ func runLuaBind(key, area, threadID string, bus *core.Bus, cfg *config.Config, w
 // is called with the ctx table. The VM is sandboxed (the shared lib
 // whitelist) and dies with the deadline.
 func (ac *actionCtx) run(path string, lookup func(map[string]*lua.LFunction) *lua.LFunction) (string, error) {
-	vm, reg, cancel, err := ac.newVM()
+	// http and ai_chat only when the file has a [lua.network] section:
+	// the same gate downgrades the ctx to the metadata surface - content
+	// never enters a VM that can reach the network
+	rules := networkFor(ac.cfg.Lua.Network, path)
+	vm, reg, cancel, err := ac.newVM(rules != nil)
 	if err != nil {
 		return "", err
 	}
 	defer cancel()
 	defer vm.Close()
-	// the sandbox json/http modules: http only when the file has a
-	// [lua.network] section (the deny-by-default gate). The same section
-	// downgrades the ctx to the metadata surface (no mail_lines): the
-	// data policy - content never enters a VM that can reach the network
-	rules := networkFor(ac.cfg.Lua.Network, path)
 	setPluginNet(vm, rules)
 	if err := vm.DoFile(path); err != nil {
 		return "", err
@@ -221,7 +219,7 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 		return
 	}
 	ac := &actionCtx{bus: bus, cfg: cfg, worker: worker, tid: threadID}
-	vm, _, cancel, err := ac.newVM()
+	vm, _, cancel, err := ac.newVM(false)
 	if err != nil {
 		bus.Publish(core.LuaResult{Err: err})
 		return
@@ -235,7 +233,8 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 		// the chunk is a bare statement list, not function(ctx): the ctx
 		// table is a global it reads by name (and its first arg too).
 		// :lua chunks are user-typed, never plugin files - no network
-		// section exists for them, so they keep the full ctx
+		// section exists for them, so they keep the full ctx but never
+		// ai_chat
 		ctx := ac.ctxTable(vm, false)
 		vm.SetGlobal("ctx", ctx)
 		vm.Push(fn)
@@ -265,9 +264,10 @@ func newSandboxVM(deadline time.Duration) (*lua.LState, context.Context, func(),
 
 // newVM builds one invocation's VM: the sandboxed libs, the action
 // deadline (the SetContext kill), the API globals (the shared R8
-// surface - actions and :lua chunks see the same functions), and the
-// bundled picker library. The caller owns the returned cancel.
-func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), error) {
+// surface), and the bundled picker library. net registers ai_chat only
+// on a [lua.network] VM (the ai-data boundary). The caller owns the
+// returned cancel.
+func (ac *actionCtx) newVM(net bool) (*lua.LState, map[string]*lua.LFunction, func(), error) {
 	vm, dctx, cancel, err := newSandboxVM(actionDeadline)
 	if err != nil {
 		return nil, nil, nil, err
@@ -319,7 +319,9 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 		return ac.picker(L, argv)
 	}))
 	vm.SetGlobal("prompt", vm.NewFunction(func(L *lua.LState) int { return ac.promptDialog(L) }))
-	vm.SetGlobal("ai_chat", vm.NewFunction(func(L *lua.LState) int { return ac.aiChat(L) }))
+	if net {
+		vm.SetGlobal("ai_chat", vm.NewFunction(func(L *lua.LState) int { return ac.aiChat(L) }))
+	}
 	vm.SetGlobal("translate", vm.NewFunction(func(L *lua.LState) int {
 		L.Push(lua.LString(i18n.T(L.CheckString(1))))
 		return 1
@@ -341,13 +343,19 @@ func (ac *actionCtx) newVM() (*lua.LState, map[string]*lua.LFunction, func(), er
 // ctxTable is the invocation context the chunk or action receives: the
 // thread id and the lazy full-thread plain text (mail_lines). For a
 // network-enabled plugin (net) mail_lines is absent and only the
-// metadata surface (metadataCtxTable) is registered - bodies cannot
-// cross the network allowlist.
+// metadata surface (metadataCtxTable) is registered, filtered per
+// message by the account's [ai-data] grant.
 func (ac *actionCtx) ctxTable(vm *lua.LState, net bool) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_id", lua.LString(ac.tid))
 	if net {
-		meta := metadataCtxTable(vm, ac.worker, nil) // plugins carry their own config gates, no MCP scope
+		// plugins carry their own config gates, no MCP scope; the grant
+		// resolves each message's account from its own tags (deny = nil)
+		grant := func(m core.Message) []string {
+			allowed, _ := ac.cfg.AIDataGrant(resolveAccount(*ac.cfg, tagsOf(&m), nil))
+			return allowed
+		}
+		meta := metadataCtxTable(vm, ac.worker, nil, grant)
 		meta.ForEach(func(k, v lua.LValue) { ctx.RawSet(k, v) })
 		return ctx
 	}
@@ -399,14 +407,15 @@ func (ac *actionCtx) picker(L *lua.LState, argv []string) int {
 }
 
 // aiChat streams one completion to a configured provider: the streamed
-// deltas publish as AiChunk (the pager-inline summary), the full text
-// returns to the script. AiResult publishes on the way out - success,
-// failure, or a deadline kill - so the summary view always resolves.
+// deltas publish as AiChunk (the pager-inline summary, batched and
+// sanitized by aiStream), the full text returns to the script. AiResult
+// publishes on the way out - success, failure, or a deadline kill - so
+// the summary view always resolves.
 func (ac *actionCtx) aiChat(L *lua.LState) int {
 	name := L.CheckString(1)
-	p, ok := ac.cfg.AI[name]
-	if !ok {
-		L.RaiseError("ai: no provider %q configured", name)
+	p, err := resolveAIProvider(*ac.cfg, name)
+	if err != nil {
+		L.RaiseError("%v", err)
 	}
 	opts := L.OptTable(2, L.NewTable())
 	model := opts.RawGetString("model")
@@ -421,14 +430,8 @@ func (ac *actionCtx) aiChat(L *lua.LState) int {
 	if text == lua.LNil {
 		L.RaiseError("ai_chat: opts.text required")
 	}
-	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
-	ac.bus.Publish(core.AiStarted{JobID: jobID, ThreadID: ac.tid})
-	var chatErr error
-	defer func() { ac.bus.Publish(core.AiResult{JobID: jobID, Err: chatErr}) }()
-	out, err := ai.Chat(ac.ctx, p, model.String(), system.String(), text.String(), func(d string) {
-		ac.bus.Publish(core.AiChunk{JobID: jobID, Text: d})
-	})
-	chatErr = err
+	jobID, out, err := aiStream(ac.bus, ac.ctx, ac.tid, p, model.String(), system.String(), text.String())
+	ac.bus.Publish(core.AiResult{JobID: jobID, Err: err})
 	if err != nil {
 		L.RaiseError("%v", err)
 	}

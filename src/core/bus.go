@@ -381,9 +381,13 @@ type AiChunk struct {
 // AiResult reports a summary stream's completion: Err names the
 // failure - the view shows an error banner and back restores the mail.
 // The last value is snapshotted so a drop never wedges the view.
+// CloseSummary closes the summary when the job settles: a compose
+// command pasted its output into the draft, so the stream has served
+// its purpose as progress and the tab closes on its own.
 type AiResult struct {
-	JobID string
-	Err   error
+	JobID        string
+	Err          error
+	CloseSummary bool
 }
 
 // PickerRequest asks the TUI to run an external picker (R8): the Lua

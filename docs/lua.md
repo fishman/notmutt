@@ -189,6 +189,13 @@ A network-enabled plugin sees the metadata surface instead:
   (same row shape; `limit` 1-500, default 50).
 - `ctx.count(query)` - the message count of a query.
 
+The surface is filtered per message by the account's `[ai-data]` grant
+(`docs/usage.md` "Per-account data grants", deny by default): a message
+whose account grants `participants`/`subjects`/`dates` projects its
+`author`/`subject`/`timestamp`, and `thread_info`'s `count` appears only
+when the newest message's grant allows it. The structural identity
+(`id`, `thread_id`, `tags`, `references`) always renders.
+
 ### attach_add(path)
 
 Adds an attachment to the compose dialogue's attachment list.
@@ -218,6 +225,12 @@ Streams one completion to a configured `[ai.<name>]` provider. `opts`
 carries `model`, `system`, and `text` (required); the streamed deltas
 publish as `AiChunk` (the pager-inline summary) and the full text
 returns. On failure it raises.
+
+`ai_chat` is network egress, so it exists **only on a plugin with a
+`[lua.network.<name>]` section** - a no-network plugin or a `:lua` chunk
+calling it gets "attempt to call a nil value". A network plugin's ctx is
+already the metadata surface (no `mail_lines`), so a body can never
+reach the provider this way.
 
 ### print(...)
 

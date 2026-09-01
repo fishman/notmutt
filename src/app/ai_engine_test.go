@@ -7,10 +7,51 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"notmutt/config"
+	"notmutt/core"
 )
+
+// TestRunAICommandDenyNoGrant pins the deny-by-default [ai-data] gate on
+// the AI command path: an account without a grant refuses the run before
+// any provider contact - the grant error publishes as AiResult, no
+// stream starts.
+func TestRunAICommandDenyNoGrant(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "ai"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ai", "test.md"), []byte(
+		"---\nname: test-cmd\ndescription: test\naction: view\ndata: [count]\n---\nSummarize.\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NOTMUTT_CONFIG", dir)
+	cfg := config.Config{
+		Accounts: map[string]config.Account{"gmail": {}},
+		AI:       map[string]config.AIProvider{"local": {Type: "openai", Model: "m", BaseURL: "http://127.0.0.1:1"}},
+		// no AIAccounts: deny by default
+	}
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"gmail"}}})
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	runAICommand("test-cmd", "t1", "", bus, cfg, fw, "")
+	var res core.AiResult
+	for e := range ch {
+		if v, ok := e.(core.AiResult); ok {
+			res = v
+			break
+		}
+	}
+	if res.Err == nil || !strings.Contains(res.Err.Error(), "no AI data grant") {
+		t.Fatalf("deny error = %v", res.Err)
+	}
+}
 
 // TestChunkBatcherNoLoss pins the stream coalescer that keeps the AI
 // summary complete: the event bus drops events when its bounded channel

@@ -47,7 +47,7 @@ func TestBuildContextFields(t *testing.T) {
 		msg(pAlpha2, "alpha@example.com", 300),
 	}
 	cmd := bodyCmd("count", "participants", "subjects", "dates", "structure", "bodies", "last_body")
-	ctx, err := BuildContext(cmd, msgs, []string{"beta@example.com"}, "", "")
+	ctx, err := BuildContext(cmd, msgs, []string{"beta@example.com"}, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestBuildContextAllowlistBodies(t *testing.T) {
 	secret := "confidential payload text"
 	p := fixture(t, textBody+secret)
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("participants", "subjects"), msgs, nil, "", "")
+	ctx, err := BuildContext(bodyCmd("participants", "subjects"), msgs, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestBuildContextAttachmentLeak(t *testing.T) {
 		"--b--\n"
 	p := fixture(t, multipart)
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, "", "")
+	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func TestBuildContextHTMLOnly(t *testing.T) {
 		"<p>raw <b>markup</b></p>\n"
 	p := fixture(t, html)
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, "", "")
+	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestBuildContextCaps(t *testing.T) {
 	long := strings.Repeat("x", perBodyCap+1000)
 	p := fixture(t, textBody+long)
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, "", "")
+	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +170,7 @@ func TestBuildContextCaps(t *testing.T) {
 		p := fixture(t, textBody+long)
 		many = append(many, msg(p, "alpha@example.com", i))
 	}
-	ctx, err = BuildContext(bodyCmd("bodies"), many, nil, "", "")
+	ctx, err = BuildContext(bodyCmd("bodies"), many, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestBuildContextStripsControls(t *testing.T) {
 	evil := "evil\x1b[31mred\x07\n"
 	p := fixture(t, textBody+evil)
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, "", "")
+	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,7 +222,7 @@ func TestBuildContextAccountNote(t *testing.T) {
 	note := "I am the maintainer of this account."
 	with := bodyCmd("count")
 	with.AccountContext = true
-	ctx, err := BuildContext(with, msgs, nil, "", note)
+	ctx, err := BuildContext(with, msgs, nil, nil, "", note)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,12 +230,12 @@ func TestBuildContextAccountNote(t *testing.T) {
 		t.Errorf("note not injected:\n%s", ctx)
 	}
 	without := bodyCmd("count")
-	if ctx, err := BuildContext(without, msgs, nil, "", note); err != nil {
+	if ctx, err := BuildContext(without, msgs, nil, nil, "", note); err != nil {
 		t.Fatal(err)
 	} else if strings.Contains(ctx, "Account context:") {
 		t.Errorf("note injected without account_context:\n%s", ctx)
 	}
-	if ctx, err := BuildContext(with, msgs, nil, "", ""); err != nil {
+	if ctx, err := BuildContext(with, msgs, nil, nil, "", ""); err != nil {
 		t.Fatal(err)
 	} else if strings.Contains(ctx, "Account context:") {
 		t.Errorf("empty note produced a section:\n%s", ctx)
@@ -243,7 +243,7 @@ func TestBuildContextAccountNote(t *testing.T) {
 }
 
 func TestBuildContextEmpty(t *testing.T) {
-	if _, err := BuildContext(bodyCmd("count"), nil, nil, "", ""); err == nil {
+	if _, err := BuildContext(bodyCmd("count"), nil, nil, nil, "", ""); err == nil {
 		t.Fatal("expected empty-thread error")
 	}
 }
@@ -255,14 +255,14 @@ func TestBuildContextStyleNote(t *testing.T) {
 	p := fixture(t, textBody+"body\n")
 	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
 	note := "Be brief."
-	ctx, err := BuildContext(bodyCmd("count"), msgs, nil, note, "")
+	ctx, err := BuildContext(bodyCmd("count"), msgs, nil, nil, note, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(ctx, "Style:\n") || !strings.Contains(ctx, note) {
 		t.Errorf("style note not injected:\n%s", ctx)
 	}
-	if ctx, err := BuildContext(bodyCmd("count"), msgs, nil, "", ""); err != nil {
+	if ctx, err := BuildContext(bodyCmd("count"), msgs, nil, nil, "", ""); err != nil {
 		t.Fatal(err)
 	} else if strings.Contains(ctx, "Style:") {
 		t.Errorf("empty note produced a section:\n%s", ctx)
@@ -295,5 +295,43 @@ func TestLoadAccountNote(t *testing.T) {
 	}
 	if got := LoadAccountNote(dir, ""); got != "" {
 		t.Errorf("empty account = %q, want empty", got)
+	}
+}
+
+// TestBuildContextGrantIntersection pins the per-account [ai-data] gate:
+// a declared field outside the account's grant renders no section, a
+// granted one renders, and nil (no gate) lets every declared field pass.
+func TestBuildContextGrantIntersection(t *testing.T) {
+	p := fixture(t, textBody+"granted body\n")
+	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
+	cmd := bodyCmd("count", "bodies", "subjects")
+
+	ctx, err := BuildContext(cmd, msgs, nil, []string{"count", "bodies"}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx, "Message count: 1") || !strings.Contains(ctx, "granted body") {
+		t.Errorf("granted fields must render:\n%s", ctx)
+	}
+	if strings.Contains(ctx, "Subjects:") {
+		t.Errorf("ungranted subject field must not render:\n%s", ctx)
+	}
+
+	// nil grant = no per-account gate, everything declared passes.
+	ctx, err = BuildContext(cmd, msgs, nil, nil, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ctx, "Subjects:") {
+		t.Errorf("nil grant must not filter declared fields:\n%s", ctx)
+	}
+
+	// empty grant = deny every declared field.
+	ctx, err = BuildContext(cmd, msgs, nil, []string{}, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ctx, "Message count:") || strings.Contains(ctx, "Subjects:") {
+		t.Errorf("empty grant must render no data section:\n%s", ctx)
 	}
 }

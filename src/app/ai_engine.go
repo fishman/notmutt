@@ -10,10 +10,8 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 	"time"
 
-	"notmutt/app/ai"
 	"notmutt/app/aicmd"
 	"notmutt/compose"
 	"notmutt/config"
@@ -38,40 +36,6 @@ func aiCommandList() []tui.AICommand {
 	return out
 }
 
-// chunkBatcher rate-limits streamed AI deltas to at most one publish per
-// minInterval - the frame budget: a provider can emit hundreds of tokens
-// per second, far faster than the TUI repaints, and the event bus drops
-// events that overflow its bounded channel (a silent loss that garbles
-// the summary). Deltas accumulate in a buffer and flush whole; nothing
-// is dropped, the final flush sends the last partial frame. The callback
-// runs on the single stream-read goroutine, so no lock is needed.
-type chunkBatcher struct {
-	minInterval time.Duration
-	last        time.Time
-	buf         strings.Builder
-	publish     func(string)
-}
-
-// add buffers one delta and flushes when the interval has elapsed; flush
-// is called once more after the stream ends.
-func (b *chunkBatcher) add(d string) {
-	b.buf.WriteString(d)
-	if time.Since(b.last) < b.minInterval {
-		return
-	}
-	b.flush()
-}
-
-func (b *chunkBatcher) flush() {
-	s := b.buf.String()
-	b.buf.Reset()
-	if s == "" {
-		return
-	}
-	b.last = time.Now()
-	b.publish(s)
-}
-
 // lastAIOutput is the most recent view-action command's full output (the
 // summary the user sees in the pager), retained so a later command that
 // declares summary_context can build on it - the AI-command chain. It is
@@ -80,11 +44,12 @@ func (b *chunkBatcher) flush() {
 var lastAIOutput string
 
 // runAICommand runs one command on a thread: fetch the thread messages,
-// build the context from the declared data, stream the completion as
-// AiChunk, and open a compose draft when the command drafts one. extra is
-// user text typed in the picker (the e key) and is appended to the prompt
-// body before sending. The wiring runs it on its own goroutine; the
-// summary pager is one job at a time (the TUI gates on m.summary).
+// resolve the account's [ai-data] grant (no grant refuses - deny by
+// default), build the context from the declared data, stream the
+// completion as AiChunk, and open a compose draft when the command
+// drafts one. extra is user text typed in the picker (the e key),
+// appended to the prompt body. The wiring runs it on its own goroutine;
+// the summary pager is one job at a time (the TUI gates on m.summary).
 func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {
 	cmds, err := aicmd.LoadCommands(filepath.Join(configDir(), "ai"))
 	if err != nil {
@@ -111,7 +76,12 @@ func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config
 	if m := newestOf(rpl.Msgs); m != nil {
 		account = resolveAccount(cfg, tagsOf(m), nil)
 	}
-	ctxText, err := aicmd.BuildContext(cmd, rpl.Msgs, cfg.MyAddrs(), aicmd.LoadDefaultContext(configDir()), aicmd.LoadAccountNote(configDir(), account))
+	allowed, ok := cfg.AIDataGrant(account)
+	if !ok {
+		bus.Publish(core.AiResult{Err: fmt.Errorf("ai: account %q has no AI data grant ([ai-data])", account)})
+		return
+	}
+	ctxText, err := aicmd.BuildContext(cmd, rpl.Msgs, cfg.MyAddrs(), allowed, aicmd.LoadDefaultContext(configDir()), aicmd.LoadAccountNote(configDir(), account))
 	if err != nil {
 		bus.Publish(core.AiResult{Err: err})
 		return
@@ -128,21 +98,21 @@ func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config
 	if extra != "" {
 		body = cmd.Body + "\n\n" + extra
 	}
-	jobID := fmt.Sprintf("%d", time.Now().UnixNano())
-	bus.Publish(core.AiStarted{JobID: jobID, ThreadID: threadID})
-	batcher := &chunkBatcher{minInterval: 25 * time.Millisecond, publish: func(d string) {
-		bus.Publish(core.AiChunk{JobID: jobID, Text: core.SanitizeText(d)})
-	}}
-	out, err := ai.Chat(context.Background(), p, p.Model, body, ctxText, batcher.add)
-	batcher.flush()
-	if cmd.Action == "view" && err == nil {
-		lastAIOutput = out
-	}
-	if cmd.Action == "compose" && err == nil {
-		if st := aiDraftCompose(cfg, root, rpl.Msgs, out); st != nil {
-			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-			bus.Publish(compose.ToEvent(st))
+	jobID, out, err := aiStream(bus, context.Background(), threadID, p, p.Model, body, ctxText)
+	var pasted bool
+	switch cmd.Action {
+	case "view":
+		if err == nil {
+			lastAIOutput = out
+		}
+	case "compose":
+		if err == nil {
+			if st := aiDraftCompose(cfg, root, rpl.Msgs, out); st != nil {
+				st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+				bus.Publish(compose.ToEvent(st))
+				pasted = true
+			}
 		}
 	}
-	bus.Publish(core.AiResult{JobID: jobID, Err: err})
+	bus.Publish(core.AiResult{JobID: jobID, Err: err, CloseSummary: pasted})
 }

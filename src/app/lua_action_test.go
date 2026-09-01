@@ -155,9 +155,17 @@ register_action("act-ai", function(ctx)
 end)
 `)
 	loadLuaPlugins(dir, nil)
-	cfg := &config.Config{AI: map[string]config.AIProvider{
-		"local": {Type: "openai", Model: "qwen3:8b", BaseURL: srv.URL},
-	}}
+	cfg := &config.Config{
+		AI: map[string]config.AIProvider{
+			"local": {Type: "openai", Model: "qwen3:8b", BaseURL: srv.URL},
+		},
+		// ai_chat is the network egress: it requires the [lua.network] gate
+		// (the data policy - content never enters a VM that cannot reach
+		// the network)
+		Lua: config.Lua{Network: map[string]config.LuaNetwork{
+			"act": {Targets: []string{"127.0.0.1"}, Paths: []string{"POST /v1/*"}},
+		}},
+	}
 	bus := core.NewBus()
 	ch := bus.Subscribe()
 	runLuaAction("act-ai", "t1", bus, cfg, &fakeWorker{})

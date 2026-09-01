@@ -13,24 +13,13 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"notmutt/config"
 )
 
 // maxCommandSize bounds a prompt file: a runaway file must not balloon
 // memory or the assembled prompt.
 const maxCommandSize = 64 << 10
-
-// dataFields is the context allowlist: the ONLY thread data a command
-// can declare. Everything else - headers, attachment names, maildir
-// paths - never reaches the model (the privacy boundary).
-var dataFields = map[string]bool{
-	"participants": true,
-	"subjects":     true,
-	"dates":        true,
-	"count":        true,
-	"bodies":       true,
-	"last_body":    true,
-	"structure":    true,
-}
 
 // Command is one user-authored AI command: the frontmatter declares the
 // data scope (Data) and the action; Body is the prompt text.
@@ -148,7 +137,7 @@ func parseCommand(data []byte, path string) (*Command, error) {
 		return nil, fmt.Errorf("%s: missing data (the context allowlist)", path)
 	}
 	for _, f := range cmd.Data {
-		if !dataFields[f] {
+		if !config.AIDataFields[f] {
 			return nil, fmt.Errorf("%s: unknown data field %q", path, f)
 		}
 	}

@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -294,8 +295,10 @@ func underFolder(paths []string, folder string) bool {
 // plugin VMs share this surface: what may cross the network is exactly
 // what this table can see. The scope is the MCP boundary - the
 // id-addressed bindings per-message check it, the query bindings
-// intersect the user query with it.
-func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LTable {
+// intersect the user query with it. grant is the per-message [ai-data]
+// allowlist for network plugin VMs (nil = unconstrained, the MCP path
+// where scope alone governs).
+func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope, grant func(core.Message) []string) *lua.LTable {
 	ctx := vm.NewTable()
 	ctx.RawSetString("thread_info", vm.NewFunction(func(L *lua.LState) int {
 		tid := L.CheckString(1)
@@ -313,10 +316,14 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LT
 		}
 		tbl := L.NewTable()
 		tbl.RawSetString("thread_id", lua.LString(tid))
-		tbl.RawSetString("count", lua.LNumber(len(rows)))
+		if grant == nil {
+			tbl.RawSetString("count", lua.LNumber(len(rows)))
+		} else if n := newestOf(rows); n != nil && slices.Contains(grant(*n), "count") {
+			tbl.RawSetString("count", lua.LNumber(len(rows)))
+		}
 		msgs := L.NewTable()
 		for _, m := range rows {
-			msgs.Append(projectMessage(L, m))
+			msgs.Append(projectMessage(L, m, grant))
 		}
 		tbl.RawSetString("messages", msgs)
 		L.Push(tbl)
@@ -353,7 +360,7 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LT
 		}
 		tbl := L.NewTable()
 		for _, m := range rows {
-			tbl.Append(projectMessage(L, m))
+			tbl.Append(projectMessage(L, m, grant))
 		}
 		L.Push(tbl)
 		return 1
@@ -375,16 +382,29 @@ func metadataCtxTable(vm *lua.LState, worker workerAPI, scope *mcpScope) *lua.LT
 }
 
 // projectMessage converts one message to its metadata-only Lua table:
-// subject, author, timestamp, tags, references, id, thread_id. NEVER
-// Paths or Atts - mail content and filesystem paths stay out of the
-// network surface (the privacy rule).
-func projectMessage(L *lua.LState, m core.Message) *lua.LTable {
+// subject, author, timestamp, tags, references, id, thread_id - never
+// Paths or Atts (the privacy rule). grant (nil = unconstrained) filters
+// the content fields to the account's allowed data fields; the
+// structural identity always renders.
+func projectMessage(L *lua.LState, m core.Message, grant func(core.Message) []string) *lua.LTable {
+	allowed := func(f string) bool {
+		if grant == nil {
+			return true
+		}
+		return slices.Contains(grant(m), f)
+	}
 	t := L.NewTable()
 	t.RawSetString("id", lua.LString(m.ID))
 	t.RawSetString("thread_id", lua.LString(m.ThreadID))
-	t.RawSetString("timestamp", lua.LNumber(m.Timestamp))
-	t.RawSetString("author", lua.LString(m.Author))
-	t.RawSetString("subject", lua.LString(m.Subject))
+	if allowed("dates") {
+		t.RawSetString("timestamp", lua.LNumber(m.Timestamp))
+	}
+	if allowed("participants") {
+		t.RawSetString("author", lua.LString(m.Author))
+	}
+	if allowed("subjects") {
+		t.RawSetString("subject", lua.LString(m.Subject))
+	}
 	tags := L.NewTable()
 	for _, tag := range m.Tags {
 		tags.Append(lua.LString(tag))

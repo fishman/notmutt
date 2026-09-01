@@ -173,6 +173,8 @@ opener = ["xdg-open"]
 ":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+d" = { fun = "half-page-down" }
 "ctrl+u" = { fun = "half-page-up" }
+"pgdown" = { fun = "page-down" }
+"pgup" = { fun = "page-up" }
 "t" = { fun = "edit-to", desc = "Edit the To list", show = true }
 "s" = { fun = "edit-subject", desc = "Edit the subject", show = true }
 "f" = { fun = "edit-from", desc = "Edit the From address", show = true }
@@ -287,6 +289,8 @@ opener = ["xdg-open"]
 ":" = { fun = "command", desc = "Command line", show = true }
 "ctrl+v" = { fun = "page-down" }
 "alt+v" = { fun = "page-up" }
+"pgdown" = { fun = "page-down" }
+"pgup" = { fun = "page-up" }
 "t" = { fun = "edit-to", show = true }
 "s" = { fun = "edit-subject", show = true }
 "f" = { fun = "edit-from", show = true }

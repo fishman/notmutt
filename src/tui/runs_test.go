@@ -40,6 +40,20 @@ func TestStyleRunsTrailingBgResetsForPad(t *testing.T) {
 	}
 }
 
+// TestStyleRunsTrailingUnderlineResetsForPad pins the link-under pad leak:
+// a trailing underlined run (no bg, no selection) leaves its SGR open into
+// padRowSGR's padding spaces - underline is visible on a space, unlike a
+// bold or italic one, so it must close before the pad.
+func TestStyleRunsTrailingUnderlineResetsForPad(t *testing.T) {
+	runs := []core.Run{
+		{Text: "link", Attrs: core.AttrUnderline},
+	}
+	got := (&pager{}).styleRuns(runs)
+	if !strings.HasSuffix(got, "\x1b[0m") {
+		t.Fatalf("trailing underline run must close with a reset, got %q", got)
+	}
+}
+
 // TestSkipStyled pins the horizontal-pan cut: the first x visible
 // cells drop (a rune starting exactly at the cut renders), the last
 // completed SGR open re-emits when the cut lands inside its run, a

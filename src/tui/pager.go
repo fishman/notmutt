@@ -552,9 +552,11 @@ func (p *pager) styleRuns(runs []core.Run) string {
 			b.WriteString(r.Text)
 		}
 	}
-	// the trailing reset covers the selected marker's reverse too - a reverse pad row is visible, unlike a colored one
+	// the trailing reset closes any style visible on a space: bg, underline
+	// (the easyjump link leak) and reverse (the selected marker) - bold and
+	// italic have no glyph on a pad, a colored one is invisible, so they leak free
 	last := p.runSel(runs[len(runs)-1])
-	if last.Bg != "" || last.Attrs != runs[len(runs)-1].Attrs {
+	if last.Bg != "" || last.Attrs&(core.AttrUnderline|core.AttrReverse) != 0 {
 		b.WriteString("\x1b[0m")
 	}
 	return b.String()

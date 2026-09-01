@@ -1,21 +1,17 @@
 package aicmd
 
 import (
-	"os"
 	"path/filepath"
 	"testing"
+
+	"notmutt/lib/testutil"
 )
 
+// write is the aicmd package's file writer: testutil.WriteFile on a
+// joined path.
 func write(t *testing.T, dir, name, content string) string {
 	t.Helper()
-	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testutil.WriteFile(t, filepath.Join(dir, name), content)
 }
 
 // prompt builds a valid command file body for the tree-scan tests (name

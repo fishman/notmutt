@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"notmutt/core"
+	"notmutt/lib/testutil"
 )
 
 // fixture writes a synthetic message file and returns its path. No real
@@ -45,16 +46,6 @@ func mustContext(t *testing.T, cmd *Command, msgs []core.Message, own, allowed [
 		t.Fatal(err)
 	}
 	return ctx
-}
-
-// wantNot asserts none of nots appears in ctx.
-func wantNot(t *testing.T, ctx string, nots ...string) {
-	t.Helper()
-	for _, not := range nots {
-		if strings.Contains(ctx, not) {
-			t.Errorf("unexpected %q in:\n%s", not, ctx)
-		}
-	}
 }
 
 const textBody = "From: Alpha <alpha@example.com>\nTo: beta@example.com\n" +
@@ -98,7 +89,7 @@ func TestBuildContextFields(t *testing.T) {
 			t.Errorf("own address leaked into participants: %s", line)
 		}
 	}
-	wantNot(t, ctx, "quoted a", "sig line") // quoted + signature lines stripped
+	testutil.WantNot(t, ctx, "quoted a", "sig line") // quoted + signature lines stripped
 	// thread order: oldest first, newest message body last
 	if !(strings.Index(ctx, "line one") < strings.Index(ctx, "beta body") &&
 		strings.Index(ctx, "beta body") < strings.Index(ctx, "alpha newest")) {
@@ -132,7 +123,7 @@ func TestBuildContextAttachmentLeak(t *testing.T) {
 	if !strings.Contains(ctx, "body text here") {
 		t.Errorf("body part missing:\n%s", ctx)
 	}
-	wantNot(t, ctx, "secret.pdf", "application/pdf")
+	testutil.WantNot(t, ctx, "secret.pdf", "application/pdf")
 }
 
 // TestBuildContextHTMLOnly proves an html-only message yields no body

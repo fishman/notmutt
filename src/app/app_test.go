@@ -12,6 +12,7 @@ import (
 
 	"notmutt/app/aicmd"
 	"notmutt/config"
+	"notmutt/lib/testutil"
 )
 
 func TestValidateBindings(t *testing.T) {
@@ -59,29 +60,6 @@ func TestValidateBindings(t *testing.T) {
 	}
 }
 
-// readDirNames lists a directory's entry names, failing the test on error.
-func readDirNames(t *testing.T, path string) []string {
-	t.Helper()
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	names := make([]string, 0, len(entries))
-	for _, e := range entries {
-		names = append(names, e.Name())
-	}
-	return names
-}
-
-// wantMode asserts path exists with exactly the given permission bits.
-func wantMode(t *testing.T, path string, perm os.FileMode) {
-	t.Helper()
-	fi, err := os.Stat(path)
-	if err != nil || fi.Mode().Perm() != perm {
-		t.Errorf("%s mode = %v, want %04o", path, fi.Mode().Perm(), perm)
-	}
-}
-
 // assertSeedPreserves pins the write-if-absent contract: the user's file
 // at path survives a re-run of the seeding function.
 func assertSeedPreserves(t *testing.T, path string, reseed func()) {
@@ -99,7 +77,7 @@ func TestSeedTemplates(t *testing.T) {
 	dir := t.TempDir()
 	seedTemplates(dir)
 	dst := filepath.Join(dir, "lua", "templates")
-	if names := readDirNames(t, dst); len(names) != 5 {
+	if names := testutil.ReadDirNames(t, dst); len(names) != 5 {
 		t.Fatalf("seed must copy the 5 shipped templates, got %d", len(names))
 	}
 	// a customized file must survive a re-run
@@ -111,7 +89,7 @@ func TestSeedAICommands(t *testing.T) {
 	seedAICommands(dir)
 	dst := filepath.Join(dir, "ai")
 	want := []string{"accounts", "context", "prompts"}
-	if names := readDirNames(t, dst); !reflect.DeepEqual(names, want) {
+	if names := testutil.ReadDirNames(t, dst); !reflect.DeepEqual(names, want) {
 		t.Fatalf("seeded files = %v, want %v", names, want)
 	}
 	if fi, err := os.Stat(filepath.Join(dst, "prompts")); err != nil || !fi.IsDir() {
@@ -140,10 +118,10 @@ func TestSeedAICommands(t *testing.T) {
 	// a user edit must survive a re-run
 	assertSeedPreserves(t, filepath.Join(dst, "prompts", "next-steps.md"), func() { seedAICommands(dir) })
 	// permissions: dirs 0700, files 0600
-	wantMode(t, filepath.Join(dst, "accounts"), 0700)
-	wantMode(t, filepath.Join(dst, "context"), 0700)
-	wantMode(t, filepath.Join(dst, "context", "default.md"), 0600)
-	wantMode(t, filepath.Join(dst, "prompts", "draft-reply.md"), 0600)
+	testutil.WantMode(t, filepath.Join(dst, "accounts"), 0700)
+	testutil.WantMode(t, filepath.Join(dst, "context"), 0700)
+	testutil.WantMode(t, filepath.Join(dst, "context", "default.md"), 0600)
+	testutil.WantMode(t, filepath.Join(dst, "prompts", "draft-reply.md"), 0600)
 }
 
 // TestSeedFiles covers the single-file first-load seeds (config.toml,

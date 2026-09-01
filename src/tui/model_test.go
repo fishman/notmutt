@@ -4106,8 +4106,8 @@ func TestSendOverlayHints(t *testing.T) {
 	if !m.anySending() {
 		t.Fatal("the send press must leave the tab in PhaseSending")
 	}
-	if !m.statusSpinTickOn {
-		t.Fatal("the send press must arm the status spinner tick")
+	if !m.busy() {
+		t.Fatal("the send press must mark the client busy (the loop gates the spinner on busy)")
 	}
 	frame := stripANSI(m.render())
 	if !strings.Contains(frame, "[ previous tab") {
@@ -4121,36 +4121,40 @@ func TestSendOverlayHints(t *testing.T) {
 	}
 }
 
-// TestStatusSpinTickReArmsWhileBusy pins the status spinner tick gate
-// (R15): a tick while the client is busy advances the frame and re-arms
-// itself (a non-nil cmd); a tick while idle dies and leaves the gate
-// disarmed.
-func TestStatusSpinTickReArmsWhileBusy(t *testing.T) {
+// TestStatusSpinTickWhileBusy pins the status spinner tick contract
+// (R15): the loop owns the cadence (a busy-gated ticker), so the tick
+// never re-arms via cmds and never shares a batch with another message -
+// a tick while busy advances the frame and requests a repaint; a tick
+// while idle (a straggler after the task cleared) requests one full
+// repaint so the idle glyph swaps back in.
+func TestStatusSpinTickWhileBusy(t *testing.T) {
 	m := model()
-	if next, cmd := m.Update(statusSpinTick{}); cmd != nil {
-		t.Fatalf("idle: the tick must die, got %v", cmd)
-	} else {
-		m = next
+	next, cmd := m.Update(statusSpinTick{})
+	if cmd != nil {
+		t.Fatalf("the tick must not re-arm via cmds, got %v", cmd)
 	}
-	if m.statusSpinTickOn {
-		t.Fatal("idle: the gate must stay disarmed")
+	if !next.paint {
+		t.Fatalf("the idle straggler tick must request one full repaint")
 	}
 	m.progressOn = true // a refresh job marks the client busy
-	next, cmd := m.Update(statusSpinTick{})
+	next, cmd = m.Update(statusSpinTick{})
 	m = next
 	if m.statusSpin != 1 {
 		t.Fatalf("the tick must advance the frame: %d", m.statusSpin)
 	}
-	if cmd == nil {
-		t.Fatal("a tick while busy must re-arm itself")
+	if cmd != nil {
+		t.Fatalf("the busy tick must not re-arm via cmds, got %v", cmd)
+	}
+	if !m.paint {
+		t.Fatalf("the busy tick must request a repaint")
 	}
 	m.progressOn = false
 	next, cmd = m.Update(statusSpinTick{})
 	if cmd != nil {
-		t.Fatalf("the tick must die once idle, got %v", cmd)
+		t.Fatalf("the tick must not re-arm via cmds, got %v", cmd)
 	}
-	if m.statusSpinTickOn {
-		t.Fatal("the idle tick must disarm the gate")
+	if !next.paint {
+		t.Fatalf("the idle straggler tick must request one full repaint")
 	}
 }
 

@@ -5,6 +5,7 @@ package tui
 
 import (
 	"os"
+	"time"
 
 	"github.com/gdamore/tcell/v3"
 )
@@ -59,7 +60,30 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	pushFrame(s, m.View(), x, y, show)
 	// tcell v3's event pump: the Screen owns the EventQ channel (the ChannelEvents forwarder is gone in v3); it stays open until Fini, so quitting still comes from quitCh or the model's quitMsg.
 	evCh := s.EventQ()
+	// the status spinner's cadence: a loop-owned ticker gated by busy().
+	// A cmd-batched tick shared its goroutine with the bus reader, so an
+	// idle sync (quiet bus) froze the spinner and a tick delivered in
+	// the same batch as a real event ate that event's full-repaint
+	// request. Delivered on its own select arm, the tick is never
+	// batched - it can only drop the every-update paint default, never a
+	// real event's render request.
+	var spinC <-chan time.Time
+	var spinTicker *time.Ticker
+	stopSpin := func() {
+		if spinTicker != nil {
+			spinTicker.Stop()
+			spinTicker = nil
+			spinC = nil
+		}
+	}
+	defer stopSpin()
 	for {
+		if m.busy() && spinTicker == nil {
+			spinTicker = time.NewTicker(statusSpinTickInterval)
+			spinC = spinTicker.C
+		} else if !m.busy() && spinTicker != nil {
+			stopSpin()
+		}
 		var msgs []any
 		select {
 		case ev := <-evCh:
@@ -98,6 +122,9 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 				m, cmd = m.Update(msg)
 				run(cmd)
 			}
+		case <-spinC: // nil blocks; armed, fires the tick on its own cadence
+			m, cmd = m.Update(statusSpinTick{})
+			run(cmd)
 		case <-quitCh:
 			return nil
 		}
@@ -107,6 +134,10 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			x, y, show := m.textCursor()
 			pushFrame(s, m.View(), x, y, show)
 			m.paintImages(next) // pixels after the text frame, never before
+			// the render consumes the paint gate: paint is a render
+			// request, not a latch - clearing here keeps an idle model
+			// quiet, so the spinner ticker's repaints never accumulate.
+			m.paint = false
 		}
 	}
 }

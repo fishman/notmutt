@@ -202,12 +202,10 @@ type Model struct {
 	taskLayer  *layer
 	tasks      map[string]core.TaskChanged
 	taskCursor int
-	// statusSpin is the status-line spinner's frame index (statusSpinTick
-	// advances it while the client is busy - the front-of-row working
-	// indicator).
+	// statusSpin is the status-line spinner's frame index (the loop's
+	// statusSpinTick advances it while the client is busy - the
+	// front-of-row working indicator).
 	statusSpin int
-	// statusSpinTickOn gates the status spinner to one tick in flight.
-	statusSpinTickOn bool
 	// addrs is the harvested sender corpus for the compose Tab address
 	// completion (lazy, debounced, loaded once per session).
 	addrs []core.AddressEntry
@@ -880,10 +878,6 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		if m.progressOn {
 			cmds = append(cmds, progressTickCmd())
 		}
-		if m.busy() && !m.statusSpinTickOn {
-			m.statusSpinTickOn = true
-			cmds = append(cmds, statusSpinTickCmd())
-		}
 		return m, batch(cmds...)
 	case progressTick:
 		m.refreshProgress()
@@ -892,16 +886,16 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		return m, nil
 	case statusSpinTick:
-		// the status spinner's frame cadence: advance and re-arm while
-		// the client is busy, disarm when idle. The tick owns the
-		// repaint - the frame advances on its cadence, never on the next
-		// event's coattails.
+		// the status spinner's frame cadence: the loop owns the ticker
+		// (gated by busy), so this tick never shares a batch with another
+		// message and can only ADD a repaint request, never eat a real
+		// event's render. Busy advances the frame; an idle straggler (the
+		// task cleared between the loop's gate check and the tick) still
+		// repaints so the idle glyph swaps back in.
 		if m.busy() {
 			m.statusSpin++
-			m.paint = true
-			return m, batch(EventCmd(m.ch), statusSpinTickCmd())
 		}
-		m.statusSpinTickOn = false
+		m.paint = true
 		return m, nil
 	case addrReqTick:
 		// the debounce settle guard (the legendDebounce pattern): the
@@ -1568,12 +1562,6 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	if m.legendPending && !m.legendTickOn {
 		m.legendTickOn = true
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
-	}
-	// background work in flight (a send press, a retry) arms the status
-	// spinner tick - the single-in-flight gate keeps re-arms from piling up
-	if m.busy() && !m.statusSpinTickOn {
-		m.statusSpinTickOn = true
-		cmds = append(cmds, statusSpinTickCmd())
 	}
 	if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
 		m.statusTickOn = true
@@ -2355,10 +2343,6 @@ func progressTickCmd() Cmd {
 }
 
 type statusSpinTick struct{}
-
-func statusSpinTickCmd() Cmd {
-	return tickCmd(statusSpinTickInterval, func(time.Time) any { return statusSpinTick{} })
-}
 
 // addrReqTick is the address harvest trigger's debounce tick (the
 // legendDebounce settle guard): it fires the harvest request once the

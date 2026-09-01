@@ -208,8 +208,8 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 				prev := w.align
 				// only an explicit text-align sets the line's alignment;
 				// inherited align (button scaffolds) must not re-align
-				if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
-					w.align = a
+				if cs.AlignSet {
+					w.align = blockAlign(cs.Align)
 				}
 				switch tag {
 				case "ol", "ul":
@@ -338,12 +338,43 @@ func (w *htmlWalker) addWord(text string, st *html.Style, label bool) {
 	if w.cells > 0 && w.cells+1+tw > w.width {
 		w.flush()
 	}
-	if w.cells > 0 {
+	if w.cells > 0 && !bindsLeft(text) {
 		w.words = append(w.words, word{text: " ", st: w.words[len(w.words)-1].st})
 		w.cells++
 	}
 	w.words = append(w.words, word{text: text, st: st, label: label})
 	w.cells += tw
+}
+
+// blockAlign maps an explicit text-align to the walker's line alignment:
+// center/right carry through, left and justify land on the default ("").
+// An explicit left must clear an inherited center/right - the LinkedIn
+// footer declares left under a centered container.
+func blockAlign(a string) string {
+	switch a {
+	case "center", "right":
+		return a
+	case "left", "justify":
+		return ""
+	default:
+		return ""
+	}
+}
+
+// bindsLeft reports a word that must hug the preceding word: a comma or
+// period split from its word by an inline boundary ("GitHub ," and
+// "unsubscribe ." artifacts - the field join adds a space the source
+// lacked) and an underscore-leading fragment (a URL split across spans
+// into "email" + "_source"). These bind left typographically anyway.
+func bindsLeft(s string) bool {
+	if s == "" {
+		return false // a control-only node sanitizes to ""; the join must not index it
+	}
+	switch s[0] {
+	case ',', '.', ';', ':', '!', '?', '%', '_', ')', ']', '}':
+		return true
+	}
+	return false
 }
 
 // flush wraps the pending words into a line: trailing space drops, the
@@ -771,9 +802,8 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 					prev := align
 					// only an explicit text-align sets the alignment;
 					// inherited align must not re-align
-					if a := cs.Align; (a == "center" || a == "right") && cs.AlignSet {
-						align = a
-						lineAlign = "" // an explicit block alignment wins over a pending cell split
+					if cs.AlignSet {
+						align, lineAlign = blockAlign(cs.Align), "" // an explicit block alignment wins over a pending cell split
 					}
 					switch tag {
 					case "ol", "ul":
@@ -846,8 +876,15 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 						flush()
 					}
 					lineAlign = "right"
+					walk(c, tcs)
+					// the right cell's split is one-shot: flush its own content
+					// now and clear any leftover, or an empty right cell (a
+					// spacer) leaks the alignment onto the next cell's content
+					flush()
+					lineAlign = ""
+				} else {
+					walk(c, tcs)
 				}
-				walk(c, tcs)
 			}
 		}
 	}
@@ -878,7 +915,7 @@ func wrapWords(words []word, cap int) [][]word {
 			out = append(out, cur)
 			cur, cells = nil, 0
 		}
-		if cells > 0 {
+		if cells > 0 && !bindsLeft(wd.text) {
 			cur = append(cur, word{text: " ", st: wd.st})
 			cells++
 		}

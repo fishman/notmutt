@@ -168,7 +168,7 @@ type Setup struct {
 // remote images.
 type Pager struct {
 	DefaultViews        map[string]string `toml:"default-views"`
-	ImageProtocol       string            `toml:"image-protocol"`
+	ImageProtocol       string            `toml:"image-protocol" enum:"sixel,kitty"`
 	AllowTrackingImages bool              `toml:"allow-tracking-images"`
 }
 
@@ -314,12 +314,12 @@ type UI struct {
 	// GlyphSet selects the thread tree glyph set: "ascii" (default) or
 	// "utf-8" (box-drawing). Per-glyph [ui.glyphs] tree keys override
 	// the preset.
-	GlyphSet string `toml:"glyph-set"`
+	GlyphSet string `toml:"glyph-set" enum:"ascii,utf-8"`
 	Glyphs   Glyphs `toml:"glyphs"`
 	// SearchOpen is how the ctrl+f search tab activates: "active"
 	// (default) shows results; "background" runs the query while the
 	// current surface stays (the [ / ] keys cycle to it).
-	SearchOpen string `toml:"search-open"`
+	SearchOpen string `toml:"search-open" enum:"active,background"`
 }
 
 // Refresh is the [refresh] section (R2/R3): the periodic new-mail poll
@@ -976,7 +976,7 @@ type ThreadBudget struct {
 	MaxRows int `toml:"max-rows"`
 	// Sort is the flatten's message order inside a thread: "desc"
 	// (default) newest-first, "asc" the notmuch-native oldest-first.
-	Sort string `toml:"sort"`
+	Sort string `toml:"sort" enum:"asc,desc"`
 }
 
 // Send is the send transport argv (R4): ONE configurable command,
@@ -1610,13 +1610,13 @@ func validate(cfg Config) error {
 	if cfg.UI.Tags.Max < 1 {
 		return fmt.Errorf("ui.tags.max: must be >= 1, got %d", cfg.UI.Tags.Max)
 	}
-	if cfg.UI.GlyphSet != "ascii" && cfg.UI.GlyphSet != "utf-8" {
+	if !slices.Contains(enumOf(reflect.TypeOf(UI{}), "GlyphSet"), cfg.UI.GlyphSet) {
 		return fmt.Errorf("ui.glyph-set: must be ascii or utf-8, got %q", cfg.UI.GlyphSet)
 	}
-	if cfg.UI.SearchOpen != "active" && cfg.UI.SearchOpen != "background" {
+	if !slices.Contains(enumOf(reflect.TypeOf(UI{}), "SearchOpen"), cfg.UI.SearchOpen) {
 		return fmt.Errorf("ui.search-open: must be active or background, got %q", cfg.UI.SearchOpen)
 	}
-	if s := cfg.Index.Thread.Sort; s != "asc" && s != "desc" {
+	if s := cfg.Index.Thread.Sort; !slices.Contains(enumOf(reflect.TypeOf(ThreadBudget{}), "Sort"), s) {
 		return fmt.Errorf("index.thread.sort: must be asc or desc, got %q", s)
 	}
 	if cfg.Refresh.Interval < 0 {
@@ -1652,7 +1652,7 @@ func validate(cfg Config) error {
 			return fmt.Errorf("pager.default-views.%s: must be plain or html, got %q", d, v)
 		}
 	}
-	if v := cfg.Pager.ImageProtocol; v != "" && v != "sixel" && v != "kitty" {
+	if v := cfg.Pager.ImageProtocol; v != "" && !slices.Contains(enumOf(reflect.TypeOf(Pager{}), "ImageProtocol"), v) {
 		return fmt.Errorf("pager.image-protocol: must be sixel or kitty, got %q", v)
 	}
 	if v := cfg.HTML.DarkMode; !slices.Contains(enumOf(reflect.TypeOf(HTMLSection{}), "DarkMode"), v) {

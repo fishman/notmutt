@@ -866,3 +866,93 @@ func TestRefreshHookRunsFirst(t *testing.T) {
 		t.Fatalf("a nil-returning hook must yield a plain poll, got %v", argv)
 	}
 }
+
+// TestSyncRunsAsync pins the async sync exec: the refresh hook's argv
+// (mbsync) runs on its own goroutine, so a view switch lands while the
+// sync is still running instead of stalling behind a minutes-long exec.
+// The sync's completion still runs the new+cycle continuation on the
+// refresher's event loop. Regression for the "the sync locks the views
+// until it is done" report.
+func TestSyncRunsAsync(t *testing.T) {
+	saved := refreshHooks
+	defer func() { refreshHooks = saved }()
+	refreshHooks = nil
+	RegisterRefreshHook(func(ctx context.Context, rc RefreshCtx) ([]string, error) {
+		return []string{"sleep", "1"}, nil
+	})
+
+	bus := core.NewBus()
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
+	fw := &fakeWorker{}
+	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
+	r := newRefresher(bus, fw, view, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { runRefresher(ctx, bus, fw, r, st, nil); close(done) }()
+	defer func() { cancel(); <-done }()
+
+	// subscribe before the manual refresh; republish until the task
+	// registers - the bus drops on no subscribers, so the first publish
+	// can race the refresher's subscription. The refresh starts the sync
+	// exec async.
+	reg := bus.Subscribe()
+	var started bool
+	eventually(t, 2*time.Second, func() bool {
+		if !started {
+			bus.Publish(core.RefreshRequested{})
+		}
+		select {
+		case e := <-reg:
+			tc, ok := e.(core.TaskChanged)
+			if ok && tc.Active {
+				started = true
+			}
+			return ok && tc.Active
+		default:
+			return false
+		}
+	})
+
+	// while the exec is still running, switch the view: the switch must
+	// land (the refresher re-points r.view and reloads it) before the 1s
+	// exec finishes - a synchronous sync would keep the refresher blocked
+	// in the exec and miss this window.
+	if err := st.SetActiveView("unread"); err != nil {
+		t.Fatalf("SetActiveView: %v", err)
+	}
+	eventually(t, 400*time.Millisecond, func() bool {
+		q, _ := fw.lastQuery.Load().(string)
+		return q == "tag:unread"
+	})
+
+	// the sync completes and its continuation (notmuch new + cycle) runs;
+	// the active view stays the switched one
+	eventually(t, 2*time.Second, func() bool {
+		select {
+		case e := <-reg:
+			tc, ok := e.(core.TaskChanged)
+			return ok && !tc.Active
+		default:
+			return false
+		}
+	})
+	if r.view.ViewName() != "unread" {
+		t.Fatalf("the active view must stay the switched view: %q", r.view.ViewName())
+	}
+}
+
+func eventually(t *testing.T, d time.Duration, fn func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("condition not met before the deadline")
+}

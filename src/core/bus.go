@@ -149,6 +149,12 @@ type QueryBatch struct {
 
 type WorkerDone struct{ Job string }
 
+// SyncDone is the refresh hook's sync-task completion (the refresher's
+// async sync exec): the exec goroutine publishes it so the new+cycle
+// continuation runs on the refresher's event loop, keeping view
+// switches live while the exec runs.
+type SyncDone struct{}
+
 type WorkerLockTimeout struct{ Kind string }
 
 // RefreshRequested is the manual poll trigger (the refresh key); the

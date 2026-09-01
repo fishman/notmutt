@@ -815,32 +815,13 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 		defer ticker.Stop()
 		tickCh = ticker.C
 	}
-	poll := func() {
-		// the pre-poll hook (R8's Lua layer): an account view's refresh
-		// can run a sync command first (mbsync <account>) - the argv is
-		// run argv-only (F4) and awaited, then the poll proceeds so
-		// notmuch new indexes what the sync delivered. The sync runs as
-		// a cancellable task: the task view lists it and a cancel kills
-		// the process (exec.CommandContext).
-		rc := refreshCtxFor(st.Config(), r.view.Name)
-		if argv := applyRefreshHooks(rc); len(argv) > 0 {
-			label := "sync"
-			if rc.Account != "" {
-				label = "sync " + rc.Account
-			}
-			tctx, cancel := context.WithCancel(ctx)
-			t := registerTask(bus, label, cancel)
-			err := exec.CommandContext(tctx, argv[0], argv[1:]...).Run()
-			if tctx.Err() != nil {
-				completeTask(bus, t.ID, true, nil) // a user cancel, not a failure
-				diag.Warn("refresh hook", "sync cancelled", label)
-			} else {
-				completeTask(bus, t.ID, false, err)
-				if err != nil {
-					diag.Warn("refresh hook", "err", err.Error())
-				}
-			}
-		}
+	// pollRunning gates the sync exec to one in flight (single-flight):
+	// a poll while a sync runs absorbs the re-trigger - the sync's
+	// completion continuation covers the latest active view. Only the
+	// refresher goroutine reads or writes it (poll and the SyncDone
+	// case), so it needs no lock.
+	pollRunning := false
+	afterSync := func() {
 		if fj != nil && st.Config().Filter.Enabled {
 			// the filter job owns `notmuch new`; the view cycle comes
 			// from its ActNew's WorkerDone
@@ -855,6 +836,51 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 			}
 		}
 		r.cycle()
+	}
+	poll := func() {
+		// the pre-poll hook (R8's Lua layer): an account view's refresh
+		// can run a sync command first (mbsync <account>) - the argv is
+		// run argv-only (F4), then the poll proceeds so notmuch new
+		// indexes what the sync delivered. The sync runs as a
+		// cancellable task (the task view lists it; a cancel kills the
+		// process via exec.CommandContext) and ASYNC: the exec must not
+		// hold the refresher's event loop, or a view switch
+		// (ConfigChanged -> onConfig) stalls behind a minutes-long
+		// mbsync. The completion publishes SyncDone; the select's
+		// SyncDone case runs the new+cycle continuation on this
+		// goroutine, so cycle and onConfig stay serialized on the
+		// shared view pointer.
+		rc := refreshCtxFor(st.Config(), r.view.Name)
+		if argv := applyRefreshHooks(rc); len(argv) > 0 {
+			if pollRunning {
+				return
+			}
+			pollRunning = true
+			label := "sync"
+			if rc.Account != "" {
+				label = "sync " + rc.Account
+			}
+			tctx, cancel := context.WithCancel(ctx)
+			t := registerTask(bus, label, cancel)
+			go func() {
+				err := exec.CommandContext(tctx, argv[0], argv[1:]...).Run()
+				if tctx.Err() != nil {
+					completeTask(bus, t.ID, true, nil) // a user cancel, not a failure
+					diag.Warn("refresh hook", "sync cancelled", label)
+				} else {
+					completeTask(bus, t.ID, false, err)
+					if err != nil {
+						diag.Warn("refresh hook", "err", err.Error())
+					}
+				}
+				bus.Publish(core.SyncDone{})
+			}()
+			return
+		}
+		if pollRunning {
+			return // a sync's completion covers this poll's new+cycle
+		}
+		afterSync()
 	}
 	// the external-poll stamp: `notmutt poll` from another process
 	// touches it after a successful run; this watcher runs the poll
@@ -889,6 +915,9 @@ func runRefresher(ctx context.Context, bus *core.Bus, worker workerAPI, r *refre
 			switch e := e.(type) {
 			case core.RefreshRequested:
 				poll()
+			case core.SyncDone:
+				pollRunning = false
+				afterSync()
 			case core.WorkerDone:
 				r.cycle()
 			case core.ConfigChanged:

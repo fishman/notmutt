@@ -159,12 +159,10 @@ func (m Model) helpBuild() string {
 	for len(rows) < m.helpView.height {
 		rows = append(rows, "")
 	}
-	body := make([]string, 0, len(rows)+3)
-	body = append(body, m.tabBar())
-	body = append(body, "help: "+m.mode+" bindings")
-	body = append(body, rows...)
-	body = append(body, m.helpFooter())
-	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+	content := make([]string, 0, len(rows)+1)
+	content = append(content, "help: "+m.mode+" bindings")
+	content = append(content, rows...)
+	return m.frame(content, m.helpFooter())
 }
 
 // helpRows is the active context's binding rows, three neomutt help

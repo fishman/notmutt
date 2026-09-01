@@ -60,12 +60,10 @@ func (m Model) logBuild() string {
 	for len(rows) < m.logView.height {
 		rows = append(rows, "")
 	}
-	body := make([]string, 0, len(rows)+3)
-	body = append(body, m.tabBar())
-	body = append(body, "session log: "+strconv.Itoa(len(m.log))+" entries")
-	body = append(body, rows...)
-	body = append(body, m.logFooter())
-	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+	content := make([]string, 0, len(rows)+1)
+	content = append(content, "session log: "+strconv.Itoa(len(m.log))+" entries")
+	content = append(content, rows...)
+	return m.frame(content, m.logFooter())
 }
 
 // logRows renders the ring as viewport lines, oldest first: the stamp in the log.stamp style, the text truncated to the leftover width (R11 - the stamp never shifts the row).

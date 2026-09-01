@@ -148,6 +148,8 @@ func treePrefix(r core.Row, g config.Glyphs) string {
 	}
 	if len(r.Siblings) > 0 && r.Siblings[0] {
 		b.WriteString(g.TreeBranch)
+	} else if r.Desc {
+		b.WriteString(g.TreeLeafDesc)
 	} else {
 		b.WriteString(g.TreeLeaf)
 	}

@@ -1858,6 +1858,13 @@ func (m *Model) onAiStarted(e core.AiStarted) {
 	s.pager = newPager(e.ThreadID, mailID, []core.Line{{Text: i18n.T("summarizing...")}})
 	w, h := m.pagerSize()
 	s.pager.setSize(w, h, m.styles)
+	// a chained summary replaces a settled one: m.pager is the OLD
+	// summary's pager, not the mail it displaced - restore the true
+	// displaced pager first, or attachTab saves the stale summary as
+	// mailPager and leaving the tab renders it over the mail surface
+	if m.summary != nil && m.pager == m.summary.pager {
+		m.pager = m.summary.mailPager
+	}
 	m.summary = s
 	// the summary tab attaches last and active: the displaced message
 	// pager is saved as mailPager when attachTab swaps the summary
@@ -1904,6 +1911,12 @@ func (m *Model) onAiResult(e core.AiResult) {
 		m.logEntry("ai: "+e.Err.Error(), true)
 	}
 	m.summary.done = true
+	// a compose command's output landed in the draft: the summary has
+	// served its purpose as a live stream - close the tab (the draft
+	// holds the text; an error keeps the summary open for review)
+	if e.CloseSummary && e.Err == nil {
+		m.closeTab(m.summaryIdx(), false)
+	}
 	m.paint = true
 }
 
@@ -2903,6 +2916,35 @@ func (m Model) render() string {
 	return m.renderBase()
 }
 
+// frame assembles the chrome around a view's content rows: the tab bar
+// on top, the keyhint and status rows on the bottom - the single place
+// the chrome is built, so a new view cannot lose it (the summary
+// chrome regression). Every surface renders ONLY its content and passes
+// it here; content is padded or clipped to exactly m.height-3 rows so
+// the chrome always anchors to the screen bottom. hint replaces the
+// keyhint row for overlay surfaces (help/log/tasks render their own
+// footer; "" = keyhint).
+func (m Model) frame(content []string, hint string) string {
+	rows := m.height - 3
+	if rows < 1 {
+		rows = 1
+	}
+	for len(content) < rows {
+		content = append(content, padRow("", m.width, m.styles.Normal))
+	}
+	if len(content) > rows {
+		content = content[:rows]
+	}
+	if hint == "" {
+		hint = m.keyhint()
+	}
+	lines := make([]string, 0, rows+3)
+	lines = append(lines, m.tabBar())
+	lines = append(lines, content...)
+	lines = append(lines, hint, m.statusLineWith(m.styles, m.ui))
+	return strings.Join(lines, "\n")
+}
+
 func (m Model) renderBase() string {
 	if m.help {
 		return m.renderHelp()
@@ -2918,15 +2960,7 @@ func (m Model) renderBase() string {
 	}
 	if m.mode == "pager" && m.pager != nil {
 		m.prepareImages() // decode-gained expansion lands in THIS frame
-		var b strings.Builder
-		b.WriteString(m.tabBar())
-		b.WriteByte('\n')
-		b.WriteString(m.pager.render())
-		b.WriteString("\n")
-		b.WriteString(m.keyhint())
-		b.WriteString("\n")
-		b.WriteString(m.statusLineWith(m.styles, m.ui))
-		return b.String()
+		return m.frame(strings.Split(m.pager.render(), "\n"), "")
 	}
 	if m.rows == nil {
 		m.rows = m.activeView().Rows()
@@ -2940,23 +2974,18 @@ func (m Model) renderBase() string {
 		// never a surface state. The list area matches the filled path
 		// exactly; one line over and the renderer writes out of bounds.
 		listHeight := m.listHeight()
-		var b strings.Builder
-		b.WriteString(m.tabBar())
-		b.WriteByte('\n')
+		content := make([]string, 0, listHeight)
 		for i := 0; i < listHeight; i++ {
 			line := st.sgr.normal.render(" ")
 			if i == 0 {
 				line = st.sgr.indicator.render(m.ui.Glyphs.Cursor)
 			}
 			if m.width > 0 {
-				b.WriteString(padRow(line, m.width, st.Normal))
+				line = padRow(line, m.width, st.Normal)
 			}
-			b.WriteByte('\n')
+			content = append(content, line)
 		}
-		b.WriteString(m.keyhint())
-		b.WriteByte('\n')
-		b.WriteString(m.statusLineWith(st, m.ui))
-		return m.overlayPreview(b.String())
+		return m.overlayPreview(m.frame(content, ""))
 	}
 	cur := m.CursorIndex()
 	// the window is ANCHORED at indexOffset (the read-position model):
@@ -2987,12 +3016,10 @@ func (m Model) renderBase() string {
 	// the tree run lives in the subject slot (renderRow), so there is
 	// no tree width to align - the subject moves with the thread indent
 	sg := st.sgr
-	var b strings.Builder
-	b.WriteString(m.tabBar())
-	b.WriteByte('\n')
 	// the pan clamps in the dispatch against this measure (the widest
 	// row of the last-rendered page); after a refresh that narrowed
 	// the content the rows render blank past the end
+	content := make([]string, 0, listHeight)
 	for i := top; i < bottom; i++ {
 		// the row cache: a cursor move restyles only the two rows whose
 		// selected flag flips; the rest concatenate from the cache. The
@@ -3045,22 +3072,19 @@ func (m Model) renderBase() string {
 			// churns the cache
 			line = padRowSGR(skipStyled(line, m.indexX), m.width, outer)
 		}
-		b.WriteString(line)
-		b.WriteByte('\n')
+		content = append(content, line)
 	}
 	// pad a short list to the full window: the renderer diffs cells and
 	// never erases past the last frame line, so a short frame leaves
 	// the previous paint's rows on screen and the next diff misaligns.
 	for i := bottom; i < top+listHeight; i++ {
 		if m.width > 0 {
-			b.WriteString(padRow("", m.width, st.Normal))
+			content = append(content, padRow("", m.width, st.Normal))
+		} else {
+			content = append(content, "")
 		}
-		b.WriteByte('\n')
 	}
-	b.WriteString(m.keyhint())
-	b.WriteByte('\n')
-	b.WriteString(m.statusLineWith(st, m.ui))
-	return m.overlayPreview(b.String())
+	return m.overlayPreview(m.frame(content, ""))
 }
 
 // listFrame renders the list-choose dialogue (the fuzzy picker
@@ -3074,10 +3098,7 @@ func (m Model) listFrame(f *fuzzy) string {
 	if rows < 1 {
 		rows = 1
 	}
-	var b strings.Builder
-	b.WriteString(m.tabBar())
-	b.WriteByte('\n')
-	lines := []string{padRow(f.title+" "+f.query, m.width, m.styles.Indicator)}
+	content := []string{padRow(f.title+" "+f.query, m.width, m.styles.Indicator)}
 	matches := f.filtered()
 	matchRows := max(0, min(rows-1, len(matches)))
 	for i := 0; i < matchRows; i++ {
@@ -3092,19 +3113,9 @@ func (m Model) listFrame(f *fuzzy) string {
 		if f.marks != nil && f.marks[f.entries[matches[i]]] {
 			mark = g
 		}
-		lines = append(lines, padRow(mark+f.entries[matches[i]], m.width, outer))
+		content = append(content, padRow(mark+f.entries[matches[i]], m.width, outer))
 	}
-	for len(lines) < rows {
-		lines = append(lines, padRow("", m.width, m.styles.Normal))
-	}
-	for _, l := range lines[:rows] {
-		b.WriteString(l)
-		b.WriteByte('\n')
-	}
-	b.WriteString(keyhintRow(m.bindings["fuzzy"], m.width))
-	b.WriteByte('\n')
-	b.WriteString(m.statusLineWith(m.styles, m.ui))
-	return b.String()
+	return m.frame(content, keyhintRow(m.bindings["fuzzy"], m.width))
 }
 
 // dialogueBox splices the prompt dialogue box over the base frame: a
@@ -4350,6 +4361,13 @@ func (m *Model) composeTab() *compose.State {
 
 func (m *Model) attachTab() {
 	m.dialogue = nil
+	// a tab switch off the summary leaves its pager installed: restore
+	// the displaced message pager BEFORE the surface routes on it, or
+	// the mode switch sees the stale summary pager (nil pager, pager
+	// mode)
+	if m.summary != nil && !m.summaryActive() && m.pager == m.summary.pager {
+		m.pager = m.summary.mailPager
+	}
 	switch {
 	case m.summaryActive():
 		// the summary tab: its own pager, installed for the pager mode.
@@ -4374,11 +4392,6 @@ func (m *Model) attachTab() {
 		m.mode = "pager"
 	default:
 		m.mode = "index"
-	}
-	// a tab switch off the summary leaves its pager installed: restore
-	// the displaced message pager before the surface routes on it
-	if m.summary != nil && !m.summaryActive() && m.pager == m.summary.pager {
-		m.pager = m.summary.mailPager
 	}
 	// the render reads m.rows: every attach re-points it at the
 	// attached view, or the frame shows the previous view's rows until

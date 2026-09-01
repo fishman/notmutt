@@ -71,10 +71,8 @@ func (m Model) taskBuild() string {
 	for len(rows) < m.taskView.height {
 		rows = append(rows, "")
 	}
-	body := make([]string, 0, len(rows)+3)
-	body = append(body, m.tabBar())
-	body = append(body, "tasks")
-	body = append(body, rows...)
-	body = append(body, m.taskFooter())
-	return strings.Join(body, "\n") + "\n" + m.statusLineWith(m.styles, m.ui)
+	content := make([]string, 0, len(rows)+1)
+	content = append(content, "tasks")
+	content = append(content, rows...)
+	return m.frame(content, m.taskFooter())
 }

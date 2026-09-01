@@ -2986,7 +2986,7 @@ func TestAttachPromptRendersBox(t *testing.T) {
 		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
 	}
 	lines := strings.Split(stripANSI(frame), "\n")
-	if !strings.Contains(lines[1], ": command") {
+	if !strings.Contains(lines[len(lines)-2], ": command") {
 		t.Fatalf("the keyhint must stay on its row:\n%s", frame)
 	}
 	if !strings.Contains(lines[len(lines)-4], "attach path:") {
@@ -3534,9 +3534,10 @@ func TestAttachCmdClosedTabNoOp(t *testing.T) {
 }
 
 // TestComposeFrameMuttLayout pins the mutt frame: the tab bar on the
-// first line, the keyhint on the second, the sender-info rows (Bcc,
-// Reply-To, Fcc), the Security divider, the content-type entry, and
-// the prompt box splicing above the status line.
+// first line, the keyhint and status on the last two (the shared frame
+// contract - content between the tab bar and the keyhint), the
+// sender-info rows (Bcc, Reply-To, Fcc), the Security divider, the
+// content-type entry, and the prompt box splicing above the status line.
 func TestComposeFrameMuttLayout(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
@@ -3546,8 +3547,8 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 	if lines[0] != m.tabBar() {
 		t.Fatalf("line 0 must be the tab bar: %q", lines[0])
 	}
-	if !strings.Contains(stripANSI(lines[1]), ": command") {
-		t.Fatalf("line 1 must be the keyhint: %q", stripANSI(lines[1]))
+	if !strings.Contains(stripANSI(lines[len(lines)-2]), ": command") {
+		t.Fatalf("the keyhint must be the second-last line: %q", stripANSI(lines[len(lines)-2]))
 	}
 	wantAll(t, stripANSI(frame), "Bcc:", "Reply-To:", "Fcc:", "Security: none", "I    1", "[text/plain, quoted-printable, utf-8", "--- Attachments", "--- Preview")
 	// the message-text row shows the buffer file path (truncated to
@@ -3562,11 +3563,11 @@ func TestComposeFrameMuttLayout(t *testing.T) {
 		t.Fatalf("the attachment row must show the A marker with its wire facts:\n%s", frame)
 	}
 	// the prompt box splices above the status line; the keyhint stays
-	// on line 1
+	// above the status line
 	m = press(t, m, "a")
 	frame = m.render()
-	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[1]), ": command") {
-		t.Fatalf("the keyhint must stay on line 1: %q", stripANSI(strings.Split(frame, "\n")[1]))
+	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[22]), ": command") {
+		t.Fatalf("the keyhint must stay above the status line: %q", stripANSI(strings.Split(frame, "\n")[22]))
 	}
 	if !strings.Contains(stripANSI(strings.Split(frame, "\n")[20]), "attach path:") {
 		t.Fatalf("the attach prompt must splice into the box: %q", stripANSI(strings.Split(frame, "\n")[20]))
@@ -4042,6 +4043,33 @@ func TestComposePreviewScrolls(t *testing.T) {
 	m = next
 	if m.previewPager.vp.offset != 0 {
 		t.Fatalf("ctrl+u must scroll back, offset=%d", m.previewPager.vp.offset)
+	}
+}
+
+// TestComposePageScrolls pins the pgdown/pgup keys in the compose
+// context: they page the mail text (the preview pager), the same
+// surface the half-page keys drive.
+func TestComposePageScrolls(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Body = strings.Repeat("line\n", 200)
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	m = next
+	m.render() // the preview pager builds at render (syncPreviewPager)
+	if m.previewPager == nil || len(m.previewPager.lines) < 200 {
+		t.Fatalf("the preview pager must hold the body lines: %d", len(m.previewPager.lines))
+	}
+	first := m.previewPager.vp.offset
+	m = press(t, m, "pgdown")
+	if m.previewPager.vp.offset <= first {
+		t.Fatalf("pgdown must scroll the compose preview, offset=%d", m.previewPager.vp.offset)
+	}
+	mid := m.previewPager.vp.offset
+	m = press(t, m, "pgup")
+	if m.previewPager.vp.offset != first {
+		t.Fatalf("pgup must scroll back to %d, offset=%d", first, m.previewPager.vp.offset)
+	}
+	if mid == first {
+		t.Fatal("pgdown must actually move the window")
 	}
 }
 
@@ -5579,6 +5607,66 @@ func TestSummaryViewFromIndex(t *testing.T) {
 	}
 }
 
+// TestSummaryChainedMailPager: a chained summary replaces a settled one,
+// and the displaced mail pager carries forward - the old summary's pager
+// is NOT the mail it displaced. Regression for the multistep report: the
+// previous summary leaked as mailPager, so leaving the summary tab
+// rendered the stale summary over the inbox.
+func TestSummaryChainedMailPager(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		install bool // a message pager open before the first summary
+	}{
+		{"from index", false},
+		{"from pager", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := model()
+			mail := "the mail body"
+			if tc.install {
+				m.pager = newPager("t1", "", []core.Line{{Text: mail, Kind: core.LineBody}})
+				w, h := m.pagerSize()
+				m.pager.setSize(w, h, m.styles)
+				m.mode = "pager"
+			} else {
+				m.mode = "index"
+			}
+			m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+			m.onAiChunk(core.AiChunk{JobID: "j1", Text: "First"})
+			m.onAiResult(core.AiResult{JobID: "j1"})
+			m.onAiStarted(core.AiStarted{JobID: "j2", ThreadID: "t1"})
+			m.onAiChunk(core.AiChunk{JobID: "j2", Text: "Second"})
+			m.onAiResult(core.AiResult{JobID: "j2"})
+			if got := pagerText(m.summary.pager); got != "Second" {
+				t.Fatalf("chained summary pager = %q", got)
+			}
+			if tc.install {
+				if m.summary.mailPager == nil || pagerText(m.summary.mailPager) != mail {
+					t.Fatalf("chained mailPager must be the mail, got %v", m.summary.mailPager)
+				}
+			} else if m.summary.mailPager != nil {
+				t.Fatalf("chained from the index must keep mailPager nil, got %v", m.summary.mailPager)
+			}
+			// leaving the summary tab must restore the mail surface, not
+			// the previous summary
+			m.tabIdx = 0
+			m.attachTab()
+			if tc.install {
+				if m.mode != "pager" || m.pager == nil || pagerText(m.pager) != mail {
+					t.Fatalf("from a pager the inbox tab shows the mail, mode=%q pager=%v", m.mode, m.pager)
+				}
+			} else {
+				if m.mode != "index" {
+					t.Fatalf("from the index the inbox tab returns to the index, mode=%q", m.mode)
+				}
+				if m.pager != nil {
+					t.Fatalf("from the index the inbox tab drops the summary pager, got %v", m.pager)
+				}
+			}
+		})
+	}
+}
+
 // TestSummaryTabSurvivesSwitch pins the tab semantics: the summary is a
 // real tab - tabbing away restores the message pager (the summary stays
 // open), tabbing back re-installs the summary's streamed content, and q
@@ -5614,6 +5702,57 @@ func TestSummaryTabSurvivesSwitch(t *testing.T) {
 	m, _ = m.dispatchAction("back", 1)
 	if m.summary != nil || m.tabIdx != 0 || pagerText(m.pager) != "the mail body" {
 		t.Fatalf("back must close the summary tab: summary=%v tab=%d pager=%q", m.summary, m.tabIdx, pagerText(m.pager))
+	}
+}
+
+// TestSummaryComposeAutoClose: a compose command's summary closes itself
+// on settle - the output landed in the draft, the stream was progress.
+// The draft stays active and the displaced mail pager is restored
+// underneath. An error (nothing pasted) keeps the summary open for
+// review.
+func TestSummaryComposeAutoClose(t *testing.T) {
+	m := model()
+	m.pager = newPager("t1", "", []core.Line{{Text: "the mail body", Kind: core.LineBody}})
+	w, h := m.pagerSize()
+	m.pager.setSize(w, h, m.styles)
+	m.mode = "pager"
+
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	m.onAiChunk(core.AiChunk{JobID: "j1", Text: "Draft text"})
+	// the draft attaches over the streaming summary (the real ordering:
+	// the app opens the draft, then settles the stream)
+	m = openDialogue(t, m, "t2")
+	if m.mode != "compose" || m.summary == nil {
+		t.Fatalf("the draft must attach over the open summary: mode=%q summary=%v", m.mode, m.summary)
+	}
+	// a settled stream with the pasted flag closes the summary tab
+	m.onAiResult(core.AiResult{JobID: "j1", CloseSummary: true})
+	if m.summary != nil {
+		t.Fatal("a compose summary must close when the result is pasted")
+	}
+	if m.mode != "compose" {
+		t.Fatalf("the draft must stay active, mode=%q", m.mode)
+	}
+	if len(m.tabs) != 1 {
+		t.Fatalf("the draft tab must survive the close, tabs=%d", len(m.tabs))
+	}
+	if pagerText(m.pager) != "the mail body" {
+		t.Fatalf("the mail pager must be restored under the draft: %q", pagerText(m.pager))
+	}
+}
+
+// TestSummaryComposeAutoCloseError: an errored compose stream keeps the
+// summary open - nothing was pasted, the partial output stays reviewable.
+func TestSummaryComposeAutoCloseError(t *testing.T) {
+	m := model()
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	m.onAiChunk(core.AiChunk{JobID: "j1", Text: "Partial"})
+	m.onAiResult(core.AiResult{JobID: "j1", Err: errors.New("provider down"), CloseSummary: true})
+	if m.summary == nil {
+		t.Fatal("an errored compose stream must keep the summary open")
+	}
+	if got := pagerText(m.pager); !strings.Contains(got, "provider down") {
+		t.Fatalf("the error must stay visible: %q", got)
 	}
 }
 

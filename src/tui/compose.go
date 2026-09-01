@@ -39,22 +39,18 @@ func partCell(f compose.PartFacts, size int64) string {
 	return fmt.Sprintf("%s, %s]", s, sizeStr(size))
 }
 
-// renderCompose builds the compose frame (spec section 5, the mutt
-// layout): tab bar, keyhint, form rows (sender info, Security divider,
-// content-type, attachments), the preview pane (the pager widget),
-// status line last. The prompt splices as a boxed overlay above the
-// status when open. The frame is ALWAYS exactly m.height lines.
+// renderCompose builds the compose content (spec section 5, the mutt
+// layout): form rows (sender info, Security divider, content-type,
+// attachments), the preview pane (the pager widget), through the shared
+// frame - the keyhint and status rows below it like every view. The
+// prompt splices as a boxed overlay above the status when open. The
+// frame is ALWAYS exactly m.height lines.
 func (m *Model) renderCompose() string {
 	st := m.tabs[m.tabIdx-1]
 	rows := m.height - 3
 	if rows < 1 {
 		rows = 1
 	}
-	var b strings.Builder
-	b.WriteString(m.tabBar())
-	b.WriteByte('\n')
-	b.WriteString(m.keyhint())
-	b.WriteByte('\n')
 	// the cursor marker column: the index's selection marker cell is
 	// reserved on every row (R11), so the marker never shifts content;
 	// the row content is laid out for the frame minus the column and gap.
@@ -84,6 +80,7 @@ func (m *Model) renderCompose() string {
 			labelW = len(f.label) + 1
 		}
 	}
+	content := make([]string, 0, rows)
 	vis := m.formView.window()
 	for i := range vis {
 		f := form[m.formView.offset+i]
@@ -101,21 +98,19 @@ func (m *Model) renderCompose() string {
 			// reserved column (indicator style), never a full-line highlight
 			mark = m.styles.sgr.indicator.render(m.ui.Glyphs.Cursor)
 		}
-		b.WriteString(padRow(mark+" "+line, m.width, outer))
-		b.WriteByte('\n')
+		content = append(content, padRow(mark+" "+line, m.width, outer))
 	}
 	previewRows := rows - formRows
 	if previewRows > 0 {
 		m.syncPreviewPager(st)
 		m.previewPager.setSize(m.width, previewRows, m.styles)
-		b.WriteString(m.previewPager.render())
-		b.WriteByte('\n')
+		content = append(content, strings.Split(m.previewPager.render(), "\n")...)
 	}
-	b.WriteString(m.statusLineWith(m.styles, m.ui))
+	frame := m.frame(content, "")
 	if m.composeTab().Phase == compose.PhaseSending {
-		return m.sendOverlay(b.String())
+		return m.sendOverlay(frame)
 	}
-	return b.String()
+	return frame
 }
 
 // sendOverlay replaces the compose frame's body rows with the send box

@@ -5761,14 +5761,19 @@ func TestSummaryComposeAutoCloseError(t *testing.T) {
 // (the cursor thread in the index, the open thread in the pager), a
 // stream already open blocks the picker, and an empty source explains
 // itself on the message line.
+// withAICommands installs a fixed command source for a test and restores
+// the empty source on cleanup.
+func withAICommands(t *testing.T, cmds ...AICommand) {
+	t.Helper()
+	SetAICommandSource(func(account string) []AICommand { return cmds })
+	t.Cleanup(func() { SetAICommandSource(func(account string) []AICommand { return nil }) })
+}
+
 func TestAICommands(t *testing.T) {
-	SetAICommandSource(func() []AICommand {
-		return []AICommand{
-			{Name: "Thread next steps", Desc: "Summarize the thread"},
-			{Name: "Draft reply", Desc: "Draft a reply"},
-		}
-	})
-	t.Cleanup(func() { SetAICommandSource(func() []AICommand { return nil }) })
+	withAICommands(t,
+		AICommand{Name: "Thread next steps", Desc: "Summarize the thread"},
+		AICommand{Name: "Draft reply", Desc: "Draft a reply"},
+	)
 	var gotName, gotThread string
 	SetAICommandHandler(func(name, threadID, _ string) { gotName, gotThread = name, threadID })
 	t.Cleanup(func() { SetAICommandHandler(func(string, string, string) {}) })
@@ -5813,7 +5818,7 @@ func TestAICommands(t *testing.T) {
 	}
 
 	// an empty source explains itself on the message line
-	SetAICommandSource(func() []AICommand { return nil })
+	SetAICommandSource(func(account string) []AICommand { return nil })
 	m = model()
 	m = press(t, m, "A")
 	if m.dialogue != nil || !strings.Contains(m.statusMsg, "no AI commands configured") {
@@ -5826,10 +5831,7 @@ func TestAICommands(t *testing.T) {
 // the committed text runs the selected command with the extra text as the
 // third seam argument - the amendment, not a prefill.
 func TestAICommandExtraPrompt(t *testing.T) {
-	SetAICommandSource(func() []AICommand {
-		return []AICommand{{Name: "Thread next steps", Desc: "Summarize the thread"}}
-	})
-	t.Cleanup(func() { SetAICommandSource(func() []AICommand { return nil }) })
+	withAICommands(t, AICommand{Name: "Thread next steps", Desc: "Summarize the thread"})
 	var gotName, gotThread, gotExtra string
 	SetAICommandHandler(func(name, threadID, extra string) { gotName, gotThread, gotExtra = name, threadID, extra })
 	t.Cleanup(func() { SetAICommandHandler(func(string, string, string) {}) })

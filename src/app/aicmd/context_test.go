@@ -29,6 +29,34 @@ func bodyCmd(data ...string) *Command {
 	return &Command{Name: "x", Description: "d", Action: "view", Data: data}
 }
 
+// oneMsg builds a one-message thread from a plain-text body - the common
+// single-message fixture for the BuildContext tests.
+func oneMsg(t *testing.T, body string) []core.Message {
+	t.Helper()
+	return []core.Message{msg(fixture(t, textBody+body), "alpha@example.com", 100)}
+}
+
+// mustContext runs BuildContext and fails on error - the caller asserts on
+// the returned text.
+func mustContext(t *testing.T, cmd *Command, msgs []core.Message, own, allowed []string, style, account string) string {
+	t.Helper()
+	ctx, err := BuildContext(cmd, msgs, own, allowed, style, account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+// wantNot asserts none of nots appears in ctx.
+func wantNot(t *testing.T, ctx string, nots ...string) {
+	t.Helper()
+	for _, not := range nots {
+		if strings.Contains(ctx, not) {
+			t.Errorf("unexpected %q in:\n%s", not, ctx)
+		}
+	}
+}
+
 const textBody = "From: Alpha <alpha@example.com>\nTo: beta@example.com\n" +
 	"Subject: Project X\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
 	"MIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n"
@@ -47,10 +75,7 @@ func TestBuildContextFields(t *testing.T) {
 		msg(pAlpha2, "alpha@example.com", 300),
 	}
 	cmd := bodyCmd("count", "participants", "subjects", "dates", "structure", "bodies", "last_body")
-	ctx, err := BuildContext(cmd, msgs, []string{"beta@example.com"}, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, cmd, msgs, []string{"beta@example.com"}, nil, "", "")
 	for _, want := range []string{
 		"Message count: 3",
 		"Participants: alpha@example.com",
@@ -73,14 +98,7 @@ func TestBuildContextFields(t *testing.T) {
 			t.Errorf("own address leaked into participants: %s", line)
 		}
 	}
-	for _, not := range []string{
-		"quoted a", // quoted line stripped
-		"sig line", // signature stripped
-	} {
-		if strings.Contains(ctx, not) {
-			t.Errorf("unexpected %q in:\n%s", not, ctx)
-		}
-	}
+	wantNot(t, ctx, "quoted a", "sig line") // quoted + signature lines stripped
 	// thread order: oldest first, newest message body last
 	if !(strings.Index(ctx, "line one") < strings.Index(ctx, "beta body") &&
 		strings.Index(ctx, "beta body") < strings.Index(ctx, "alpha newest")) {
@@ -92,12 +110,7 @@ func TestBuildContextFields(t *testing.T) {
 // body content is absent when bodies/last_body are not declared.
 func TestBuildContextAllowlistBodies(t *testing.T) {
 	secret := "confidential payload text"
-	p := fixture(t, textBody+secret)
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("participants", "subjects"), msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, bodyCmd("participants", "subjects"), oneMsg(t, secret), nil, nil, "", "")
 	if strings.Contains(ctx, secret) {
 		t.Errorf("undeclared body leaked:\n%s", ctx)
 	}
@@ -115,20 +128,11 @@ func TestBuildContextAttachmentLeak(t *testing.T) {
 		"Content-Disposition: attachment; filename=\"secret.pdf\"\n" +
 		"Content-Transfer-Encoding: base64\n\nJVBERi0xLjQK\n" +
 		"--b--\n"
-	p := fixture(t, multipart)
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, bodyCmd("bodies"), []core.Message{msg(fixture(t, multipart), "alpha@example.com", 100)}, nil, nil, "", "")
 	if !strings.Contains(ctx, "body text here") {
 		t.Errorf("body part missing:\n%s", ctx)
 	}
-	for _, not := range []string{"secret.pdf", "application/pdf"} {
-		if strings.Contains(ctx, not) {
-			t.Errorf("attachment %q leaked:\n%s", not, ctx)
-		}
-	}
+	wantNot(t, ctx, "secret.pdf", "application/pdf")
 }
 
 // TestBuildContextHTMLOnly proves an html-only message yields no body
@@ -138,12 +142,7 @@ func TestBuildContextHTMLOnly(t *testing.T) {
 		"Subject: x\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
 		"MIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\n" +
 		"<p>raw <b>markup</b></p>\n"
-	p := fixture(t, html)
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, bodyCmd("bodies"), []core.Message{msg(fixture(t, html), "alpha@example.com", 100)}, nil, nil, "", "")
 	if strings.Contains(ctx, "markup") {
 		t.Errorf("html body leaked:\n%s", ctx)
 	}
@@ -153,12 +152,7 @@ func TestBuildContextHTMLOnly(t *testing.T) {
 // at perBodyCap, and many bodies together stay under totalBodyCap.
 func TestBuildContextCaps(t *testing.T) {
 	long := strings.Repeat("x", perBodyCap+1000)
-	p := fixture(t, textBody+long)
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, bodyCmd("bodies"), oneMsg(t, long), nil, nil, "", "")
 	// count only inside Body: sections - the metadata carries "x" in the
 	// example.com addresses and must not disturb the body-cap accounting
 	if n := bodyRunX(ctx); n > perBodyCap {
@@ -167,13 +161,9 @@ func TestBuildContextCaps(t *testing.T) {
 	// several long bodies stay within the total budget
 	var many []core.Message
 	for i := int64(0); i < 8; i++ {
-		p := fixture(t, textBody+long)
-		many = append(many, msg(p, "alpha@example.com", i))
+		many = append(many, msg(fixture(t, textBody+long), "alpha@example.com", i))
 	}
-	ctx, err = BuildContext(bodyCmd("bodies"), many, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx = mustContext(t, bodyCmd("bodies"), many, nil, nil, "", "")
 	if n := bodyRunX(ctx); n > totalBodyCap {
 		t.Errorf("bodies exceeded total cap: %d", n)
 	}
@@ -203,12 +193,7 @@ func bodyRunX(ctx string) int {
 // context: terminal escape bytes from a body never reach the prompt.
 func TestBuildContextStripsControls(t *testing.T) {
 	evil := "evil\x1b[31mred\x07\n"
-	p := fixture(t, textBody+evil)
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
-	ctx, err := BuildContext(bodyCmd("bodies"), msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, bodyCmd("bodies"), oneMsg(t, evil), nil, nil, "", "")
 	if strings.Contains(ctx, "\x1b") || strings.Contains(ctx, "\x07") {
 		t.Errorf("control bytes leaked:\n%q", ctx)
 	}
@@ -217,27 +202,19 @@ func TestBuildContextStripsControls(t *testing.T) {
 // TestBuildContextAccountNote proves the per-account note injection and
 // its gate on the account_context flag.
 func TestBuildContextAccountNote(t *testing.T) {
-	p := fixture(t, textBody+"body\n")
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
 	note := "I am the maintainer of this account."
 	with := bodyCmd("count")
 	with.AccountContext = true
-	ctx, err := BuildContext(with, msgs, nil, nil, "", note)
-	if err != nil {
-		t.Fatal(err)
-	}
+	msgs := oneMsg(t, "body\n")
+	ctx := mustContext(t, with, msgs, nil, nil, "", note)
 	if !strings.Contains(ctx, "Account context:") || !strings.Contains(ctx, note) {
 		t.Errorf("note not injected:\n%s", ctx)
 	}
 	without := bodyCmd("count")
-	if ctx, err := BuildContext(without, msgs, nil, nil, "", note); err != nil {
-		t.Fatal(err)
-	} else if strings.Contains(ctx, "Account context:") {
+	if ctx := mustContext(t, without, msgs, nil, nil, "", note); strings.Contains(ctx, "Account context:") {
 		t.Errorf("note injected without account_context:\n%s", ctx)
 	}
-	if ctx, err := BuildContext(with, msgs, nil, nil, "", ""); err != nil {
-		t.Fatal(err)
-	} else if strings.Contains(ctx, "Account context:") {
+	if ctx := mustContext(t, with, msgs, nil, nil, "", ""); strings.Contains(ctx, "Account context:") {
 		t.Errorf("empty note produced a section:\n%s", ctx)
 	}
 }
@@ -252,19 +229,13 @@ func TestBuildContextEmpty(t *testing.T) {
 // lands unconditionally (no flag gate - every command runs under it) and
 // an empty note produces no section.
 func TestBuildContextStyleNote(t *testing.T) {
-	p := fixture(t, textBody+"body\n")
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
 	note := "Be brief."
-	ctx, err := BuildContext(bodyCmd("count"), msgs, nil, nil, note, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	msgs := oneMsg(t, "body\n")
+	ctx := mustContext(t, bodyCmd("count"), msgs, nil, nil, note, "")
 	if !strings.Contains(ctx, "Style:\n") || !strings.Contains(ctx, note) {
 		t.Errorf("style note not injected:\n%s", ctx)
 	}
-	if ctx, err := BuildContext(bodyCmd("count"), msgs, nil, nil, "", ""); err != nil {
-		t.Fatal(err)
-	} else if strings.Contains(ctx, "Style:") {
+	if ctx := mustContext(t, bodyCmd("count"), msgs, nil, nil, "", ""); strings.Contains(ctx, "Style:") {
 		t.Errorf("empty note produced a section:\n%s", ctx)
 	}
 }
@@ -273,8 +244,7 @@ func TestBuildContextStyleNote(t *testing.T) {
 // (<dir>/ai/context/default.md): trimmed, sanitized, missing = "".
 func TestLoadDefaultContext(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "ai", "context"), 0700)
-	os.WriteFile(filepath.Join(dir, "ai", "context", "default.md"), []byte("  Be \x07brief.  \n"), 0600)
+	write(t, dir, "ai/context/default.md", "  Be \x07brief.  \n")
 	if got := LoadDefaultContext(dir); got != "Be brief." {
 		t.Errorf("note = %q, want %q", got, "Be brief.")
 	}
@@ -283,18 +253,34 @@ func TestLoadDefaultContext(t *testing.T) {
 	}
 }
 
-func TestLoadAccountNote(t *testing.T) {
+// TestLoadAccountContext pins the per-account context read
+// (<dir>/ai/accounts/<account>/default.md): trimmed, sanitized, missing
+// account or file = "".
+func TestLoadAccountContext(t *testing.T) {
 	dir := t.TempDir()
-	os.MkdirAll(filepath.Join(dir, "ai", "accounts"), 0700)
-	os.WriteFile(filepath.Join(dir, "ai", "accounts", "gmail.md"), []byte("  my note  \n"), 0600)
-	if got := LoadAccountNote(dir, "gmail"); got != "my note" {
+	write(t, dir, "ai/accounts/gmail/default.md", "  my note  \n")
+	if got := LoadAccountContext(dir, "gmail"); got != "my note" {
 		t.Errorf("note = %q, want %q", got, "my note")
 	}
-	if got := LoadAccountNote(dir, "acme"); got != "" {
+	if got := LoadAccountContext(dir, "acme"); got != "" {
 		t.Errorf("missing note = %q, want empty", got)
 	}
-	if got := LoadAccountNote(dir, ""); got != "" {
+	if got := LoadAccountContext(dir, ""); got != "" {
 		t.Errorf("empty account = %q, want empty", got)
+	}
+}
+
+// TestBuildContextContextOrder pins the context ordering: the default
+// context (style) comes before the account context, so the account reads
+// as the override on top of the shared style.
+func TestBuildContextContextOrder(t *testing.T) {
+	cmd := bodyCmd("count")
+	cmd.AccountContext = true
+	ctx := mustContext(t, cmd, oneMsg(t, "body\n"), nil, nil, "Be brief.", "Handle support tickets.")
+	styleAt := strings.Index(ctx, "Style:")
+	accountAt := strings.Index(ctx, "Account context:")
+	if styleAt < 0 || accountAt < 0 || accountAt < styleAt {
+		t.Errorf("account context must follow the style block:\n%s", ctx)
 	}
 }
 
@@ -302,14 +288,10 @@ func TestLoadAccountNote(t *testing.T) {
 // a declared field outside the account's grant renders no section, a
 // granted one renders, and nil (no gate) lets every declared field pass.
 func TestBuildContextGrantIntersection(t *testing.T) {
-	p := fixture(t, textBody+"granted body\n")
-	msgs := []core.Message{msg(p, "alpha@example.com", 100)}
 	cmd := bodyCmd("count", "bodies", "subjects")
+	msgs := oneMsg(t, "granted body\n")
 
-	ctx, err := BuildContext(cmd, msgs, nil, []string{"count", "bodies"}, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx := mustContext(t, cmd, msgs, nil, []string{"count", "bodies"}, "", "")
 	if !strings.Contains(ctx, "Message count: 1") || !strings.Contains(ctx, "granted body") {
 		t.Errorf("granted fields must render:\n%s", ctx)
 	}
@@ -318,19 +300,13 @@ func TestBuildContextGrantIntersection(t *testing.T) {
 	}
 
 	// nil grant = no per-account gate, everything declared passes.
-	ctx, err = BuildContext(cmd, msgs, nil, nil, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx = mustContext(t, cmd, msgs, nil, nil, "", "")
 	if !strings.Contains(ctx, "Subjects:") {
 		t.Errorf("nil grant must not filter declared fields:\n%s", ctx)
 	}
 
 	// empty grant = deny every declared field.
-	ctx, err = BuildContext(cmd, msgs, nil, []string{}, "", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	ctx = mustContext(t, cmd, msgs, nil, []string{}, "", "")
 	if strings.Contains(ctx, "Message count:") || strings.Contains(ctx, "Subjects:") {
 		t.Errorf("empty grant must render no data section:\n%s", ctx)
 	}

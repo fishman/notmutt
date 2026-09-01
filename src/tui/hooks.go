@@ -233,10 +233,12 @@ type AICommand struct {
 }
 
 // aiCommands is the AI-command source seam: the app wires it with
-// SetAICommandSource; nil = no commands.
-var aiCommands = func() []AICommand { return nil }
+// SetAICommandSource; nil = no commands. account is the current thread's
+// account - the source narrows to that account's prompts plus the
+// defaults, so the picker never offers another account's prompts.
+var aiCommands = func(account string) []AICommand { return nil }
 
-func SetAICommandSource(fn func() []AICommand) {
+func SetAICommandSource(fn func(account string) []AICommand) {
 	if fn != nil {
 		aiCommands = fn
 	}

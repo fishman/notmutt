@@ -23,10 +23,10 @@ import (
 // stream starts.
 func TestRunAICommandDenyNoGrant(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "ai"), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "ai", "prompts"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "ai", "test.md"), []byte(
+	if err := os.WriteFile(filepath.Join(dir, "ai", "prompts", "test.md"), []byte(
 		"---\nname: test-cmd\ndescription: test\naction: view\ndata: [count]\n---\nSummarize.\n"), 0600); err != nil {
 		t.Fatal(err)
 	}

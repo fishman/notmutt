@@ -93,11 +93,13 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []str
 		fmt.Fprintf(&b, "Latest message:\nFrom: %s\nSubject: %s\nDate: %s\nBody:\n%s\n",
 			senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), bodyText(m, perBodyCap))
 	}
-	if cmd.AccountContext && accountNote != "" {
-		b.WriteString("\nAccount context:\n" + accountNote + "\n")
-	}
 	if styleNote != "" {
 		b.WriteString("\nStyle:\n" + styleNote + "\n")
+	}
+	// the account context comes after the default context so it reads as
+	// the override on top of the shared style
+	if cmd.AccountContext && accountNote != "" {
+		b.WriteString("\nAccount context:\n" + accountNote + "\n")
 	}
 	return b.String(), nil
 }
@@ -178,26 +180,29 @@ func isOwn(a string, own []string) bool {
 	return false
 }
 
-// LoadAccountNote reads the per-account context note
-// (<dir>/ai/accounts/<account>.md); a missing file or empty note is "".
-func LoadAccountNote(dir, account string) string {
-	if account == "" {
-		return ""
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "ai", "accounts", account+".md"))
+// note reads one context file: trimmed and F1-sanitized (controls
+// stripped); a missing or empty file is "".
+func note(path string) string {
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	return core.SanitizeControls(strings.TrimSpace(string(data)))
 }
 
+// LoadAccountContext reads the account's default context
+// (<dir>/ai/accounts/<account>/default.md); a missing file or empty note
+// is "". BuildContext places it after the default context.
+func LoadAccountContext(dir, account string) string {
+	if account == "" {
+		return ""
+	}
+	return note(filepath.Join(dir, "ai", "accounts", account, "default.md"))
+}
+
 // LoadDefaultContext reads the default style note (<dir>/ai/context/
 // default.md) every command runs under; a missing file is "". The user
 // edits it to switch the AI's speaking style.
 func LoadDefaultContext(dir string) string {
-	data, err := os.ReadFile(filepath.Join(dir, "ai", "context", "default.md"))
-	if err != nil {
-		return ""
-	}
-	return core.SanitizeControls(strings.TrimSpace(string(data)))
+	return note(filepath.Join(dir, "ai", "context", "default.md"))
 }

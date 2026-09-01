@@ -34,6 +34,10 @@ type Command struct {
 	// command's output) to the prompt context - the chaining opt-in.
 	SummaryContext bool
 	Body           string
+	// Account is the folder that owns this prompt: "" = a default prompt
+	// (prompts/), set = an account prompt (accounts/<account>/, where
+	// default.md is the account context, never a prompt).
+	Account string
 }
 
 // LoadCommand parses one prompt file (strict): a `---` frontmatter block
@@ -163,12 +167,68 @@ func parseList(path string, line int, value string) ([]string, error) {
 	return out, nil
 }
 
-// LoadCommands scans dir for *.md prompt files (sorted by name) and
-// loads each strictly; the first broken file errors the whole load so a
-// typo cannot silently drop commands.
+// LoadCommands scans the ai tree for prompt files and loads each
+// strictly: the per-account prompts in dir/accounts/<account>/*.md
+// (Account set; default.md is the account context, not a prompt) then
+// the default prompts in dir/prompts/*.md (Account ""). The account
+// prompts come first - the picker puts them above the defaults. Names
+// stay unique across the whole set - a collision between a default and
+// an account prompt errors the load. The first broken file errors the
+// whole load so a typo cannot silently drop commands.
 func LoadCommands(dir string) ([]Command, error) {
+	var cmds []Command
+	seen := map[string]bool{}
+	add := func(path, account string) error {
+		c, err := LoadCommand(path)
+		if err != nil {
+			return err
+		}
+		if seen[c.Name] {
+			return fmt.Errorf("%s: duplicate command name %q", path, c.Name)
+		}
+		seen[c.Name] = true
+		c.Account = account
+		cmds = append(cmds, *c)
+		return nil
+	}
+	accounts, err := accountNames(filepath.Join(dir, "accounts"))
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range accounts {
+		files, err := markdownFiles(filepath.Join(dir, "accounts", a))
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range files {
+			if n == "default.md" {
+				continue // the account context, applied to every run
+			}
+			if err := add(filepath.Join(dir, "accounts", a, n), a); err != nil {
+				return nil, err
+			}
+		}
+	}
+	names, err := markdownFiles(filepath.Join(dir, "prompts"))
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range names {
+		if err := add(filepath.Join(dir, "prompts", n), ""); err != nil {
+			return nil, err
+		}
+	}
+	return cmds, nil
+}
+
+// markdownFiles lists the *.md files in dir, sorted by name; a missing
+// dir is an empty set (the prompts/ and accounts/ branches are optional).
+func markdownFiles(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var names []string
@@ -179,18 +239,24 @@ func LoadCommands(dir string) ([]Command, error) {
 		names = append(names, e.Name())
 	}
 	sort.Strings(names)
-	var cmds []Command
-	seen := map[string]bool{}
-	for _, n := range names {
-		c, err := LoadCommand(filepath.Join(dir, n))
-		if err != nil {
-			return nil, err
+	return names, nil
+}
+
+// accountNames lists the account folders under dir, sorted by name.
+func accountNames(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
 		}
-		if seen[c.Name] {
-			return nil, fmt.Errorf("%s: duplicate command name %q", n, c.Name)
-		}
-		seen[c.Name] = true
-		cmds = append(cmds, *c)
+		return nil, err
 	}
-	return cmds, nil
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			names = append(names, e.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }

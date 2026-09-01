@@ -1,0 +1,20 @@
+# user config overlay (R8): merges over the embedded base config and the
+# split files in this dir - accounts.toml (`notmutt setup` writes the
+# detected folder structure there, [accounts.<name>.folders]),
+# filters.toml, ai.toml. Every *.toml here merges, config.toml wins on
+# conflicts; nothing here is required. A readonly account is never
+# classified and never sends.
+
+# [accounts.gmail]
+# from = "You <you@gmail.com>"
+# default_signature = "gmail"
+
+# [accounts.example]
+# from = "You <you@example.com>"
+# readonly = true
+
+[refresh]
+interval = 10
+
+[pager]
+# default-views = { "linkedin.com" = "html", "substack.com" = "html" }

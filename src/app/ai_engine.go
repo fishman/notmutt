@@ -22,8 +22,10 @@ import (
 
 // aiCommandList loads the configured AI commands for the picker: the
 // strict load errors the whole list on a broken prompt file - a typo
-// must not silently drop commands.
-func aiCommandList() []tui.AICommand {
+// must not silently drop commands. account narrows the list to that
+// account's prompts (already first from LoadCommands) plus the defaults;
+// "" (unknown thread account) = defaults only.
+func aiCommandList(account string) []tui.AICommand {
 	cmds, err := aicmd.LoadCommands(filepath.Join(configDir(), "ai"))
 	if err != nil {
 		diag.Warn("aicmd", "err", err.Error())
@@ -31,6 +33,9 @@ func aiCommandList() []tui.AICommand {
 	}
 	out := make([]tui.AICommand, 0, len(cmds))
 	for _, c := range cmds {
+		if c.Account != "" && c.Account != account {
+			continue
+		}
 		out = append(out, tui.AICommand{Name: c.Name, Desc: c.Description})
 	}
 	return out
@@ -81,7 +86,7 @@ func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config
 		bus.Publish(core.AiResult{Err: fmt.Errorf("ai: account %q has no AI data grant ([ai-data])", account)})
 		return
 	}
-	ctxText, err := aicmd.BuildContext(cmd, rpl.Msgs, cfg.MyAddrs(), allowed, aicmd.LoadDefaultContext(configDir()), aicmd.LoadAccountNote(configDir(), account))
+	ctxText, err := aicmd.BuildContext(cmd, rpl.Msgs, cfg.MyAddrs(), allowed, aicmd.LoadDefaultContext(configDir()), aicmd.LoadAccountContext(configDir(), account))
 	if err != nil {
 		bus.Publish(core.AiResult{Err: err})
 		return

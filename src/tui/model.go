@@ -1328,7 +1328,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.logEntry(i18n.T("close the current summary (q) first"), true)
 			break
 		}
-		cmds := aiCommands()
+		cmds := aiCommands(m.cursorAccount())
 		if len(cmds) == 0 {
 			m.logEntry(i18n.T("no AI commands configured"), true)
 			break
@@ -2411,8 +2411,14 @@ func (m Model) ShouldRender() bool { return m.paint }
 // account tag among them (R2). In pager mode both fall back to the open
 // thread's first real message.
 func (m Model) resolveStatus() (legend, account string) {
-	tags := m.cursorTags()
-	return iconLegend(tags, m.ui.Tags, m.accountTags), accountTag(tags, m.accountTags)
+	return iconLegend(m.cursorTags(), m.ui.Tags, m.accountTags), m.cursorAccount()
+}
+
+// cursorAccount is the cursor message's account tag (the same tags the
+// status line reads); empty when the cursor surface carries none. It
+// scopes the AI-command picker to the current thread's account.
+func (m Model) cursorAccount() string {
+	return accountTag(m.cursorTags(), m.accountTags)
 }
 
 // cursorTags resolves the cursor message's tag list - an O(1) read of

@@ -18,6 +18,12 @@ func write(t *testing.T, dir, name, content string) string {
 	return path
 }
 
+// prompt builds a valid command file body for the tree-scan tests (name
+// and description differ; everything else is the minimal accepted shape).
+func prompt(name, desc string) string {
+	return "---\nname: " + name + "\ndescription: " + desc + "\naction: view\ndata: [count]\n---\nbody\n"
+}
+
 func TestLoadCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := write(t, dir, "next.md",
@@ -78,17 +84,29 @@ func TestLoadCommandStrict(t *testing.T) {
 
 func TestLoadCommands(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "b.md", "---\nname: B\ndescription: b\naction: view\ndata: [count]\n---\nbody b\n")
-	write(t, dir, "a.md", "---\nname: A\ndescription: a\naction: view\ndata: [count]\n---\nbody a\n")
-	write(t, dir, "notes.txt", "not a prompt")
+	write(t, dir, "prompts/b.md", prompt("B", "b"))
+	write(t, dir, "prompts/a.md", prompt("A", "a"))
+	// account prompt + its context: default.md is not a prompt
+	write(t, dir, "accounts/gmail/default.md", "gmail context")
+	write(t, dir, "accounts/gmail/y.md", prompt("Y", "y"))
+	// a second account sorts after gmail; notes.txt is not a prompt
+	write(t, dir, "accounts/acme/z.md", prompt("Z", "z"))
+	write(t, dir, "prompts/notes.txt", "not a prompt")
 	cmds, err := LoadCommands(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(cmds) != 2 || cmds[0].Name != "A" || cmds[1].Name != "B" {
-		t.Fatalf("bad order/set: %+v", cmds)
+	// accounts first (acme then gmail), then defaults (a then b)
+	want := []struct{ name, account string }{{"Z", "acme"}, {"Y", "gmail"}, {"A", ""}, {"B", ""}}
+	if len(cmds) != len(want) {
+		t.Fatalf("set = %+v, want %d", cmds, len(want))
 	}
-	write(t, dir, "broken.md", "---\nname: X\n---\n")
+	for i, w := range want {
+		if cmds[i].Name != w.name || cmds[i].Account != w.account {
+			t.Errorf("cmd[%d] = %+v, want %q/%q", i, cmds[i], w.name, w.account)
+		}
+	}
+	write(t, dir, "prompts/broken.md", "---\nname: X\n---\n")
 	if _, err := LoadCommands(dir); err == nil {
 		t.Fatal("expected broken-file error")
 	}
@@ -96,8 +114,9 @@ func TestLoadCommands(t *testing.T) {
 
 func TestLoadCommandsDuplicateName(t *testing.T) {
 	dir := t.TempDir()
-	write(t, dir, "a.md", "---\nname: Same\ndescription: a\naction: view\ndata: [count]\n---\nbody a\n")
-	write(t, dir, "b.md", "---\nname: Same\ndescription: b\naction: view\ndata: [count]\n---\nbody b\n")
+	write(t, dir, "prompts/a.md", prompt("Same", "a"))
+	// a duplicate across the account/default boundary must also error
+	write(t, dir, "accounts/gmail/b.md", prompt("Same", "b"))
 	if _, err := LoadCommands(dir); err == nil {
 		t.Fatal("expected duplicate-name error")
 	}

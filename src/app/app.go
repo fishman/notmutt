@@ -45,13 +45,16 @@ const pollWatchInterval = 5 * time.Second
 //go:embed lua/templates/*.lua
 var templateFS embed.FS
 
-//go:embed aicommands/*.md
+//go:embed aicommands/prompts/*.md
 //go:embed aicommands/accounts/README.md
 //go:embed aicommands/context/default.md
 var aiSeedFS embed.FS
 
 //go:embed ai.toml
 var aiConfigSeed []byte
+
+//go:embed config.toml
+var configSeed []byte
 
 func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
@@ -71,7 +74,8 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "smime-verify" {
 		return smimeVerifyOnce()
 	}
-	seedAIConfig(configDir())
+	seedFile(configDir(), "config.toml", configSeed)
+	seedFile(configDir(), "ai.toml", aiConfigSeed)
 	seedAICommands(configDir())
 	cfg, err := config.Load(configDir())
 	if err != nil {
@@ -257,7 +261,7 @@ func Run() error {
 	// <configdir>/ai; running one fetches the thread, builds the declared
 	// context, streams into the summary pager, and drafts a compose when
 	// the command drafts one
-	tui.SetAICommandSource(func() []tui.AICommand { return aiCommandList() })
+	tui.SetAICommandSource(aiCommandList)
 	tui.SetAICommandHandler(func(name, threadID, extra string) {
 		go runAICommand(name, threadID, extra, bus, cfg, worker, root)
 	})
@@ -997,22 +1001,23 @@ func resolveSetupFolders(root string, accs []setup.Account) (map[string][]string
 	return out, nil
 }
 
-// seedAIConfig writes the default ai.toml to <dir> on first load
-// (write-if-absent - a user's config survives every restart): the AI
-// provider, [ai-data] grants, and [mcp] boundary surface, all
-// deny-by-default until the user fills them in. An empty or comments-only
-// file is a valid load (strict load stays green on a fresh install).
-func seedAIConfig(dir string) {
-	path := filepath.Join(dir, "ai.toml")
+// seedFile writes name to <dir> on first load (write-if-absent - a
+// user's file survives every restart, so a broken or missing seed never
+// clobbers an edit). The seeds are comment-forward templates: config.toml
+// ships only the [refresh] interval with the account and pager surfaces
+// commented; ai.toml denies by default until filled in. Both are valid
+// loads (strict load stays green on a fresh install).
+func seedFile(dir, name string, data []byte) {
+	path := filepath.Join(dir, name)
 	if _, err := os.Stat(path); err == nil {
 		return
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
-		log.Printf("setup: seed ai.toml: %v", err)
+		log.Printf("setup: seed %s: %v", name, err)
 		return
 	}
-	if err := os.WriteFile(path, aiConfigSeed, 0600); err != nil {
-		log.Printf("setup: seed ai.toml: %v", err)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		log.Printf("setup: seed %s: %v", name, err)
 	}
 }
 
@@ -1052,15 +1057,16 @@ func seedTemplates(dir string) {
 
 // seedAICommands writes the built-in AI prompt files into <dir>/ai on
 // first load (write-if-absent - a user's edits survive every restart).
-// The accounts/README documents the per-account notes; the prompt files
-// are the seed set the picker shows until the user edits or replaces them.
+// The prompts land in ai/prompts (the default prompts), the accounts/
+// README documents the per-account folder layout, and context/ carries
+// the global default context.
 func seedAICommands(dir string) {
 	dst := filepath.Join(dir, "ai")
 	if err := os.MkdirAll(filepath.Join(dst, "accounts"), 0700); err != nil {
 		log.Printf("setup: seed ai commands: %v", err)
 		return
 	}
-	for _, sub := range []string{"", "accounts", "context"} {
+	for _, sub := range []string{"prompts", "accounts", "context"} {
 		if sub != "" {
 			if err := os.MkdirAll(filepath.Join(dst, sub), 0700); err != nil {
 				log.Printf("setup: seed ai commands: %v", err)

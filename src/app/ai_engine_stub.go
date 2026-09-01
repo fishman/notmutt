@@ -12,7 +12,7 @@ import (
 )
 
 // aiCommandList without the lua build: no AI backend, no commands.
-func aiCommandList() []tui.AICommand { return nil }
+func aiCommandList(account string) []tui.AICommand { return nil }
 
 // runAICommand without the lua build: no-op.
 func runAICommand(name, threadID, extra string, bus *core.Bus, cfg config.Config, worker workerAPI, root string) {

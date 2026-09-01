@@ -134,7 +134,7 @@ func (ac *actionCtx) mailLines() ([]core.Line, error) {
 			ac.lineErr = rpl.Err
 			return
 		}
-		ac.lines, _, _, ac.lineErr = mail.RenderThread(rpl.Msgs, core.RenderPlain, false, 120, false)
+		ac.lines, _, _, ac.lineErr = mail.RenderThread(rpl.Msgs, core.RenderPlain, false, 120, false, false, "")
 	})
 	return ac.lines, ac.lineErr
 }

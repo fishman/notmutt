@@ -42,10 +42,10 @@ func TestEasyjumpFullStack(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}})
 
 	tui.SetOpenHandler(func(threadID, msgID string, preview, headers bool, width int) {
-		go openThread(fw, bus, nil, threadID, "", preview, core.RenderPlain, headers, width, false, nil, config.Crypto{})
+		go openThread(fw, bus, nil, threadID, "", preview, core.RenderPlain, headers, width, false, nil, config.Crypto{}, false, "")
 	})
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(fw, bus, nil, threadID, "", false, mode, headers, width, labelLinks, nil, config.Crypto{})
+		go openThread(fw, bus, nil, threadID, "", false, mode, headers, width, labelLinks, nil, config.Crypto{}, false, "")
 	})
 	defer func() {
 		tui.SetOpenHandler(func(string, string, bool, bool, int) {})

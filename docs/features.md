@@ -83,6 +83,15 @@ Block flow, inline runs, column-aligned tables; layout budgeted
 cannot balloon the thread. Easyjump link mode (`F`) labels every link
 with a number; type the number to open it.
 
+Dark mode (`[html] dark-mode = auto|on|off`, auto follows the theme)
+maps the mail's colors onto the theme's background instead of rendering
+as a white box: light-declared backgrounds reflect onto the theme bg by
+an isometry (white lands exactly on the theme bg), text colors invert
+their lightness keeping their hue - a blue link stays blue - with a
+contrast guard that walks toward white until it reads as well as it did
+on white. A mail that already declares dark stays dark, and unstyled
+mail just uses the theme's own background and text.
+
 ## Theming (R11)
 
 Truecolor baseline with palette indirection: styles reference named
@@ -107,15 +116,19 @@ alignment never shifts per row.
 - 0600 files, 0700 directories for everything written
 - the mail parser boundary is fuzz-exercised
 
-## Not there yet
+## Up next
 
-Honest list, maintained in the [FAQ](faq.html): no GUI, no IMAP
-transport (mbsync/vdirsyncer deliver), crypto integration is a
-display/cycle field in the compose dialogue (no signing engine wired
-to the send path yet), Lua scripting is a build-tag-gated layer with
-a minimal plugin surface, and the emacs keymap scheme exists but the
-vim scheme is the reference. A notification activate action that runs a
-Lua hook in the live client (an IPC channel - a same-user unix socket
-the client listens on, `notmutt lua '<chunk>'` on the notification side)
-is designed but not built. Hierarchical thread trees are still broken
-and need help.
+The sign/encrypt engine (R10) is the biggest gap: the compose security
+field cycles the mode, but no signer is wired into the send job yet.
+PGP signs through the system gpg agent; S/MIME signs and verifies
+in-process (pkcs7 + stdlib x509, emailProtection EKU enforced). Both
+sit between MIME assembly and fcc, with decrypt/verify as an async job
+on the read path.
+
+- **Lua IPC** - `notmutt lua '<chunk>'` sends a chunk over a same-user
+  unix socket to the live client, which runs it as a Lua hook - the
+  notification-activate action and external scripting on the R8 VM.
+- **Markdown compose** - write the body in markdown and send as
+  multipart/alternative with an HTML part; code blocks render with
+  syntax highlighting. Same assemble-stage slot as the signer.
+

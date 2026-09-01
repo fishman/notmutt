@@ -10,6 +10,7 @@ package html
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -326,6 +327,174 @@ func ContrastFG(bg string) string {
 		return "#1a1a1a"
 	}
 	return "#f5f5f5"
+}
+
+// IsLight reports whether a #rrggbb color is light by Rec.709 luma (the
+// ContrastFG threshold). Malformed input reports false - dark-mode color
+// transforms gate on this so a dark-declared mail is never inverted.
+func IsLight(c string) bool {
+	n, err := strconv.ParseUint(strings.TrimPrefix(c, "#"), 16, 32)
+	if err != nil {
+		return false
+	}
+	return (0.299*float64(n>>16&255)+0.587*float64(n>>8&255)+0.114*float64(n&255))/255 > 0.5
+}
+
+// AdaptBG maps a mail background onto the theme's dark background by
+// reflection through the white axis: per channel out = clamp(255 +
+// themeBG - c). An isometry, so pairwise distances are exact, and
+// AdaptBG(white) == themeBG. Hue flips - acceptable for a background.
+// "" and malformed inputs pass through unchanged.
+func AdaptBG(c, themeBG string) string {
+	if c == "" || themeBG == "" {
+		return c
+	}
+	cc, err := parseRGB(c)
+	if err != nil {
+		return c
+	}
+	bg, err := parseRGB(themeBG)
+	if err != nil {
+		return c
+	}
+	return fmt.Sprintf("#%02x%02x%02x",
+		clamp255(255+bg[0]-cc[0]), clamp255(255+bg[1]-cc[1]), clamp255(255+bg[2]-cc[2]))
+}
+
+// AdaptFG maps a text color to the dark background keeping its hue:
+// invert only the lightness (HSL, L' = 1 - L, H and S unchanged), so a
+// blue link stays blue, then walk L toward white until the WCAG ratio
+// against bg clears the original's ratio against white (the "works"
+// guarantee - HSL luminance skews by hue, the walk closes the gap). A
+// hue that cannot clear at any lightness falls back to near-white.
+// "" and malformed inputs pass through unchanged.
+func AdaptFG(c, bg string) string {
+	if c == "" || bg == "" {
+		return c
+	}
+	cc, err := parseRGB(c)
+	if err != nil {
+		return c
+	}
+	bb, err := parseRGB(bg)
+	if err != nil {
+		return c
+	}
+	target := wcagRatio(cc, white)
+	h, s, l := rgbToHSL(cc)
+	for l = 1 - l; ; {
+		cur := hslToRGB(h, s, l)
+		if wcagRatio(cur, bb) >= target {
+			return fmt.Sprintf("#%02x%02x%02x", cur[0], cur[1], cur[2])
+		}
+		if l >= 1 {
+			return "#f5f5f5"
+		}
+		l = math.Min(1, l+0.05)
+	}
+}
+
+var white = [3]int{255, 255, 255}
+
+func parseRGB(s string) ([3]int, error) {
+	s = strings.TrimPrefix(s, "#")
+	if len(s) != 6 {
+		return [3]int{}, fmt.Errorf("not a #rrggbb color")
+	}
+	n, err := strconv.ParseUint(s, 16, 32)
+	if err != nil {
+		return [3]int{}, err
+	}
+	return [3]int{int(n >> 16 & 255), int(n >> 8 & 255), int(n & 255)}, nil
+}
+
+func clamp255(n int) int {
+	if n < 0 {
+		return 0
+	}
+	if n > 255 {
+		return 255
+	}
+	return n
+}
+
+// rgbToHSL converts sRGB to HSL; h in [0,360), s and l in [0,1].
+func rgbToHSL(c [3]int) (h, s, l float64) {
+	r, g, b := float64(c[0])/255, float64(c[1])/255, float64(c[2])/255
+	max := math.Max(r, math.Max(g, b))
+	min := math.Min(r, math.Min(g, b))
+	l = (max + min) / 2
+	if d := max - min; d != 0 {
+		switch max {
+		case r:
+			h = 60 * math.Mod((g-b)/d, 6)
+		case g:
+			h = 60 * ((b-r)/d + 2)
+		default:
+			h = 60 * ((r-g)/d + 4)
+		}
+		if h < 0 {
+			h += 360
+		}
+		s = d / (1 - math.Abs(2*l-1))
+	}
+	return
+}
+
+// hslToRGB converts HSL to sRGB; h in [0,360), s and l in [0,1].
+func hslToRGB(h, s, l float64) [3]int {
+	c := (1 - math.Abs(2*l-1)) * s
+	x := c * (1 - math.Abs(math.Mod(h/60, 2)-1))
+	m := l - c/2
+	var r, g, b float64
+	switch {
+	case h < 60:
+		r, g, b = c, x, 0
+	case h < 120:
+		r, g, b = x, c, 0
+	case h < 180:
+		r, g, b = 0, c, x
+	case h < 240:
+		r, g, b = 0, x, c
+	case h < 300:
+		r, g, b = x, 0, c
+	default:
+		r, g, b = c, 0, x
+	}
+	return [3]int{round255(r + m), round255(g + m), round255(b + m)}
+}
+
+func round255(v float64) int {
+	if v <= 0 {
+		return 0
+	}
+	if v >= 1 {
+		return 255
+	}
+	return int(v*255 + 0.5)
+}
+
+// wcagRatio is the WCAG 2.x contrast ratio (AA 4.5:1) between two colors.
+func wcagRatio(a, b [3]int) float64 {
+	la, lb := relLum(a), relLum(b)
+	if la < lb {
+		la, lb = lb, la
+	}
+	return (la + 0.05) / (lb + 0.05)
+}
+
+// relLum is the WCAG 2.x relative luminance: linearized sRGB channels
+// weighted 0.2126/0.7152/0.0722.
+func relLum(c [3]int) float64 {
+	return 0.2126*lin(c[0]) + 0.7152*lin(c[1]) + 0.0722*lin(c[2])
+}
+
+func lin(v int) float64 {
+	x := float64(v) / 255
+	if x <= 0.03928 {
+		return x / 12.92
+	}
+	return math.Pow((x+0.055)/1.055, 2.4)
 }
 
 // ListMark is the ordered-list numbering (or the bullet for an

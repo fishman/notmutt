@@ -39,7 +39,7 @@ func joinText(lines []core.Line) string {
 func TestRenderThread(t *testing.T) {
 	body := "line one\n> quoted a\n> > quoted deep\n-- \nsig line\n"
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, body)}}}
-	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestRenderThread(t *testing.T) {
 func TestRenderThreadStripsControls(t *testing.T) {
 	body := "evil\x1b[31mred\x07\n"
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, body)}}}
-	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestRenderThreadAttachment(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestRenderThreadAttachment(t *testing.T) {
 
 func TestRenderThreadMissingFile(t *testing.T) {
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{"/nonexistent"}}}
-	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestRenderThreadMissingFile(t *testing.T) {
 }
 
 func TestRenderThreadNoPath(t *testing.T) {
-	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1"}}, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1"}}, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +124,7 @@ func TestRenderThreadNoPath(t *testing.T) {
 }
 
 func TestRenderThreadEmpty(t *testing.T) {
-	if _, _, _, err := RenderThread(nil, core.RenderHTML, false, 0, false); err == nil {
+	if _, _, _, err := RenderThread(nil, core.RenderHTML, false, 0, false, false, ""); err == nil {
 		t.Fatal("an empty thread must error - nothing to show")
 	}
 }
@@ -139,7 +139,7 @@ func TestRenderThreadPartialOnBadMessage(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Paths: []string{bad}},
 		{ID: "m2", ThreadID: "t1", Paths: []string{good}},
 	}
-	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +160,7 @@ func TestRenderThreadUnknownCharset(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestRenderThreadUnknownCharset(t *testing.T) {
 
 func TestRenderThreadBodyTruncated(t *testing.T) {
 	big := strings.Repeat("x", maxPartBytes+1024)
-	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, big)}}}, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{fixture(t, big)}}}, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +201,7 @@ func TestRenderThreadAttachmentTruncated(t *testing.T) {
 	if err := os.WriteFile(p, []byte(msg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread([]core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestRenderThreadTextView(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 
-	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestRenderThreadTextView(t *testing.T) {
 		t.Fatalf("the html view must render, not show markup:\n%s", joinText(lines))
 	}
 
-	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false)
+	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestRenderThreadTextView(t *testing.T) {
 	}
 
 	// the raw markup is the source view's alone
-	lines, _, _, err = RenderThread(msgs, core.RenderSource, false, 0, false)
+	lines, _, _, err = RenderThread(msgs, core.RenderSource, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestRenderThreadAlternative(t *testing.T) {
 	}
 
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
-	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestRenderThreadAlternative(t *testing.T) {
 		t.Fatalf("the plain view must render the plain part only:\n%s", out)
 	}
 
-	lines, _, _, err = RenderThread(msgs, core.RenderHTML, false, 0, false)
+	lines, _, _, err = RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -408,7 +408,7 @@ func TestRenderThreadSourceView(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 
-	lines, mime, _, err := RenderThread(msgs, core.RenderSource, false, 0, false)
+	lines, mime, _, err := RenderThread(msgs, core.RenderSource, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestRenderThreadSourceView(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs2 := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p2}}}
-	lines, mime, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false)
+	lines, mime, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -445,7 +445,7 @@ func TestRenderThreadSourceView(t *testing.T) {
 
 	// the same message in the source view keeps the raw markup - the
 	// views are distinct
-	lines, mime, _, err = RenderThread(msgs2, core.RenderSource, false, 0, false)
+	lines, mime, _, err = RenderThread(msgs2, core.RenderSource, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,7 +507,7 @@ func TestRenderThreadMimeLabel(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}}}
 	for _, mode := range []core.RenderMode{core.RenderPlain, core.RenderHTML, core.RenderSource} {
-		lines, mime, _, err := RenderThread(msgs, mode, false, 0, false)
+		lines, mime, _, err := RenderThread(msgs, mode, false, 0, false, false, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -538,7 +538,7 @@ func TestRenderThreadHeaders(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "caf\xc3\xa9"}}
 
-	lines, _, _, err := RenderThread(msgs, core.RenderPlain, true, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, true, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,7 +573,7 @@ func TestRenderThreadHeaders(t *testing.T) {
 	}
 
 	// without the toggle the envelope carries no Reply-To row
-	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false)
+	lines, _, _, err = RenderThread(msgs, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -594,7 +594,7 @@ func TestEnvelopeShowsCc(t *testing.T) {
 	}
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "cc test"}}
 
-	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false)
+	lines, _, _, err := RenderThread(msgs, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -618,7 +618,7 @@ func TestEnvelopeShowsCc(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgs2 := []core.Message{{ID: "m2", ThreadID: "t2", Paths: []string{p2}, Subject: "no cc"}}
-	lines, _, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false)
+	lines, _, _, err = RenderThread(msgs2, core.RenderPlain, false, 0, false, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -643,7 +643,7 @@ func TestRenderThreadHeadersHTML(t *testing.T) {
 	msgs := []core.Message{{ID: "m1", ThreadID: "t1", Paths: []string{p}, Subject: "html"}}
 
 	for _, mode := range []core.RenderMode{core.RenderPlain, core.RenderHTML} {
-		lines, _, _, err := RenderThread(msgs, mode, true, 0, false)
+		lines, _, _, err := RenderThread(msgs, mode, true, 0, false, false, "")
 		if err != nil {
 			t.Fatal(err)
 		}

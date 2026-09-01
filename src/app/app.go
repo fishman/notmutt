@@ -183,7 +183,8 @@ func Run() error {
 		// RenderAuto resolves per sender domain ([pager] default-views)
 		// once the message is in hand - the domain is message data, only
 		// the fetch has it
-		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, cfg.Crypto)
+		dark, themeBG := cfg.HTMLDark()
+		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, cfg.Crypto, dark, themeBG)
 	})
 
 	// the render toggle (the v key), the source view (ctrl+u), and the
@@ -194,7 +195,8 @@ func Run() error {
 	// "[N]" label and the target list rides the reply. The explicit
 	// modes never resolve against the domain map.
 	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil, config.Crypto{})
+		dark, themeBG := cfg.HTMLDark()
+		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil, config.Crypto{}, dark, themeBG)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key in
@@ -535,7 +537,7 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 // read with an ActTag -unread (R1 - read is a tag; the refresh cycle
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, cryptoCfg config.Crypto) {
+func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
@@ -587,7 +589,7 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
 	}
-	lines, mime, links, err := mail.RenderThread(msgs, mode, headers, width, labelLinks)
+	lines, mime, links, err := mail.RenderThread(msgs, mode, headers, width, labelLinks, dark, themeBG)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 		return

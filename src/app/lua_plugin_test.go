@@ -68,7 +68,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{})
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -105,7 +105,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{})
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -145,7 +145,7 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{})
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -174,7 +174,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{})
+	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)

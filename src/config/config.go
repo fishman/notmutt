@@ -143,6 +143,7 @@ type Config struct {
 	// Empty = xdg-open.
 	Opener  []string                                 `toml:"opener"`
 	Pager   Pager                                    `toml:"pager"`
+	HTML    HTMLSection                              `toml:"html"`
 	Palette Palette                                  `toml:"palette"`
 	Theme   Theme                                    `toml:"theme"`
 	Schemes map[string]map[string]map[string]Binding `toml:"schemes"`
@@ -169,6 +170,33 @@ type Pager struct {
 	DefaultViews        map[string]string `toml:"default-views"`
 	ImageProtocol       string            `toml:"image-protocol"`
 	AllowTrackingImages bool              `toml:"allow-tracking-images"`
+}
+
+// HTMLSection is the [html] table: DarkMode maps mail colors onto the
+// theme's dark background when rendering HTML - auto follows the
+// resolved theme variant, on/off override (unknown value = load error).
+type HTMLSection struct {
+	DarkMode string `toml:"dark-mode" enum:"auto,on,off"`
+}
+
+// HTMLDark resolves the [html] dark-mode setting for a render: auto
+// follows the theme's default variant, on/off override; dark is false
+// unless a dark variant actually provides a normal background to reflect
+// onto (the theme bg the HTML render maps mail colors on).
+func (c Config) HTMLDark() (dark bool, themeBG string) {
+	mode := c.HTML.DarkMode
+	if mode == "auto" {
+		mode = c.Theme.Default
+	}
+	if mode != "dark" && mode != "on" {
+		return false, ""
+	}
+	resolved, _ := c.Theme.Resolved(c.Palette, "dark")
+	themeBG = resolved["normal"].Bg
+	if themeBG == "" {
+		return false, ""
+	}
+	return true, themeBG
 }
 
 // Lua configures the Lua plugin layer (R8): Tags is the config-level
@@ -1315,6 +1343,7 @@ func Default() Config {
 		},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
+		HTML:    HTMLSection{DarkMode: "auto"},
 	}
 	// the embedded base (base.toml) overlays the Go defaults: the
 	// binding schemes, tag actions, and descriptions are user data,
@@ -1625,6 +1654,9 @@ func validate(cfg Config) error {
 	}
 	if v := cfg.Pager.ImageProtocol; v != "" && v != "sixel" && v != "kitty" {
 		return fmt.Errorf("pager.image-protocol: must be sixel or kitty, got %q", v)
+	}
+	if v := cfg.HTML.DarkMode; !slices.Contains(enumOf(reflect.TypeOf(HTMLSection{}), "DarkMode"), v) {
+		return fmt.Errorf("html.dark-mode: must be auto, on or off, got %q", v)
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)

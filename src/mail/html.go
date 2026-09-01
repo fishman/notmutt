@@ -28,11 +28,13 @@ const (
 	maxHTMLLines  = 5000 // render budget: a hostile doc cannot balloon the thread
 )
 
-// RenderHTML renders an HTML mail body to pager lines; nil for an
-// empty result (the caller falls back to the raw text). width caps at
-// htmlWrapWidth: wide terminals keep the fixed layout, narrow reflow.
+// RenderHTML renders an HTML mail body to pager lines (light mode -
+// today's verbatim colors, white default); nil for an empty result
+// (the caller falls back to the raw text). width caps at htmlWrapWidth.
+// The dark render flows through RenderThread (the open job resolves the
+// [html] dark-mode setting there).
 func RenderHTML(body string, atts []Attachment, width int) []core.Line {
-	lines, _ := renderHTML(body, atts, width, false)
+	lines, _ := renderHTML(body, atts, width, false, false, "")
 	return lines
 }
 
@@ -41,10 +43,10 @@ func RenderHTML(body string, atts []Attachment, width int) []core.Line {
 // label; the label order is the returned list (label N opens
 // Links[N-1]), both from the walk's document order.
 func RenderHTMLWithLinks(body string, atts []Attachment, width int) ([]core.Line, []string) {
-	return renderHTML(body, atts, width, true)
+	return renderHTML(body, atts, width, true, false, "")
 }
 
-func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]core.Line, []string) {
+func renderHTML(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string) ([]core.Line, []string) {
 	doc, err := xhtml.Parse(strings.NewReader(body))
 	if err != nil {
 		return nil, nil // x/net/html recovers from malformed input by spec; guard anyway
@@ -58,6 +60,8 @@ func renderHTML(body string, atts []Attachment, width int, labelLinks bool) ([]c
 		linesLeft:  maxHTMLLines,
 		width:      width,
 		labelLinks: labelLinks,
+		dark:       dark,
+		themeBG:    themeBG,
 	}
 	w.walk(doc, &html.Style{})
 	w.flush()
@@ -78,7 +82,11 @@ type htmlWalker struct {
 	truncated bool
 	// defaultBG: the mail's declared background (CSS or bgcolor); every
 	// line carries it, so the html view respects the mail, not the theme.
+	// In dark mode it is the adapted (or gated) value, never raw.
 	defaultBG string
+	// dark: the [html] dark-mode render - mail colors map onto themeBG.
+	dark    bool
+	themeBG string
 	// inline state
 	words []word
 	cells int
@@ -155,18 +163,34 @@ func (w *htmlWalker) walk(n *xhtml.Node, st *html.Style) {
 			if tag == "html" || tag == "body" {
 				// the mail's declared background (body color overrides
 				// the html default) or the light fallback: a mail
-				// without one is unreadable on a dark theme
+				// without one is unreadable on a dark theme. Dark mode
+				// maps a light-declared bg onto the theme bg by
+				// reflection (the luma gate: a dark-declared mail is
+				// not inverted into light).
 				if cs.Bg != "" {
-					w.defaultBG = cs.Bg
+					if w.dark && html.IsLight(cs.Bg) {
+						w.defaultBG = html.AdaptBG(cs.Bg, w.themeBG)
+					} else {
+						w.defaultBG = cs.Bg
+					}
 				} else if w.defaultBG == "" {
-					w.defaultBG = "#ffffff"
+					if w.dark {
+						w.defaultBG = w.themeBG
+					} else {
+						w.defaultBG = "#ffffff"
+					}
 				}
-				// unstyled text must read on that background: derive
-				// the contrast fg (FgSet does not inherit, so the
-				// body recomputes against its own bg - the dark-bg
-				// mail bug: dark on dark)
+				// unstyled text must read on that background: light mode
+				// derives the contrast fg (FgSet does not inherit, so the
+				// body recomputes against its own bg - the dark-bg mail
+				// bug: dark on dark); dark mode carries the theme's fg
+				// (the page bg IS the theme bg, so the theme text reads)
 				if !cs.FgSet {
-					cs.Fg = html.ContrastFG(w.defaultBG)
+					if w.dark {
+						cs.Fg = ""
+					} else {
+						cs.Fg = html.ContrastFG(w.defaultBG)
+					}
 				}
 			}
 			switch {
@@ -350,7 +374,7 @@ func (w *htmlWalker) flush() {
 			runs = append(runs, core.Run{Text: strings.Repeat(" ", pad)})
 		}
 	}
-	runs = append(runs, runWords(w.words)...)
+	runs = append(runs, w.runWords(w.words)...)
 	w.words = nil
 	w.cells = 0
 	w.emitLine(runs)
@@ -450,7 +474,7 @@ func imgSize(c *xhtml.Node, layoutCells int) (w, h int) {
 // table renders a table as column-aligned rows (w3m: pad each column
 // to its widest cell, wrapped at a per-column cap).
 func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
-	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG, w.width)
+	rows := cellRows(t, st, w.rules, &w.links, w.labelLinks, w.defaultBG, w.dark, w.themeBG, w.width)
 	if len(rows) == 0 {
 		return
 	}
@@ -564,7 +588,7 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 						runs = append(runs, core.Run{Text: strings.Repeat(" ", pre)})
 						rowX += pre
 					}
-					for _, rn := range runWords(cell.words) {
+					for _, rn := range w.runWords(cell.words) {
 						if rn.Image != nil {
 							imgs = append(imgs, core.ImagePos{Image: rn.Image, X: rowX})
 						}
@@ -605,14 +629,14 @@ func (w *htmlWalker) table(t *xhtml.Node, st *html.Style) {
 // cellRows collects the table's tr rows, each cell a list of word-
 // lines (block boundaries and <br> start a new line). The HTML5
 // parser inserts an implicit tbody, so the row groups descend into it.
-func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) [][][]cellLine {
+func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, dark bool, themeBG string, layoutCells int) [][][]cellLine {
 	var rows [][][]cellLine
 	for r := t.FirstChild; r != nil; r = r.NextSibling {
 		if r.Type != xhtml.ElementNode {
 			continue
 		}
 		if r.Data == "tbody" || r.Data == "thead" || r.Data == "tfoot" {
-			rows = append(rows, cellRows(r, st, rules, links, labelLinks, defaultBG, layoutCells)...)
+			rows = append(rows, cellRows(r, st, rules, links, labelLinks, defaultBG, dark, themeBG, layoutCells)...)
 			continue
 		}
 		if r.Data != "tr" {
@@ -623,7 +647,7 @@ func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]stri
 			if c.Type != xhtml.ElementNode || (c.Data != "td" && c.Data != "th") {
 				continue
 			}
-			cells = append(cells, collectCell(c, html.StyleOf(c, st, rules), rules, links, labelLinks, defaultBG, layoutCells))
+			cells = append(cells, collectCell(c, html.StyleOf(c, st, rules), rules, links, labelLinks, defaultBG, dark, themeBG, layoutCells))
 		}
 		if len(cells) > 0 {
 			rows = append(rows, cells)
@@ -638,7 +662,7 @@ func cellRows(t *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]stri
 // emptied the article. Only an explicitly right-aligned cell starts a
 // new line (READ IN APP); inherited text-align never re-aligns. Link
 // mode labels anchors and bare URLs inside cells like the main walk.
-func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, layoutCells int) []cellLine {
+func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]string, labelLinks bool, defaultBG string, dark bool, themeBG string, layoutCells int) []cellLine {
 	if st.Display == "none" {
 		return nil // a display:none cell renders nothing - display never inherits
 	}
@@ -715,9 +739,13 @@ func collectCell(n *xhtml.Node, st *html.Style, rules []html.CSSRule, links *[]s
 						}
 						flush()
 						// the clear fill: the cell's declared bg or the
-						// mail's page background, never the theme
+						// mail's page background, never the theme (dark
+						// mode reflects a light-declared cell bg like the
+						// page one; defaultBG is already adapted)
 						bg := cs.Bg
-						if bg == "" {
+						if bg != "" && dark && html.IsLight(bg) {
+							bg = html.AdaptBG(bg, themeBG)
+						} else if bg == "" {
 							bg = defaultBG
 						}
 						out = append(out, cellLine{img: img, bg: bg})
@@ -870,10 +898,10 @@ func sanitize(s string) string {
 // runWords merges a word-line into runs: same-style adjacent words
 // merge (the space inherits the preceding style); style changes and
 // the F key's markers split runs (the marker keeps its own run).
-func runWords(words []word) []core.Run {
+func (w *htmlWalker) runWords(words []word) []core.Run {
 	var runs []core.Run
 	for _, wd := range words {
-		r := runFor(wd.st)
+		r := w.runFor(wd.st)
 		r.Label = wd.label
 		r.Image = wd.img
 		r.Text = wd.text
@@ -888,12 +916,33 @@ func runWords(words []word) []core.Run {
 
 // runFor maps a computed style to its run representation; "" fg/bg and
 // zero attrs for the unstyled base (run equality gates run merging).
-func runFor(st *html.Style) core.Run {
+// Dark mode adapts the declared colors: a light-declared bg reflects
+// onto themeBG and its fg inverts to keep the hue and the readability
+// (the text on a dark-declared bg stays as-is - that render already
+// reads, and is not inverted into light). Unstyled text ("" fg) stays
+// "" - the theme text reads on the adapted dark bg.
+func (w *htmlWalker) runFor(st *html.Style) core.Run {
 	var r core.Run
 	if st == nil {
 		return r
 	}
 	r.Fg, r.Bg = st.Fg, st.Bg
+	if w.dark {
+		onLight := true
+		if st.Bg != "" {
+			onLight = html.IsLight(st.Bg)
+			if onLight {
+				r.Bg = html.AdaptBG(st.Bg, w.themeBG)
+			}
+		}
+		if st.Fg != "" && onLight {
+			ref := r.Bg
+			if ref == "" {
+				ref = w.defaultBG
+			}
+			r.Fg = html.AdaptFG(st.Fg, ref)
+		}
+	}
 	if st.Bold {
 		r.Attrs |= core.AttrBold
 	}

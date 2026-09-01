@@ -13,12 +13,14 @@ prerequisites before implementation per the project's workflow.
 
 ## Tier 1: foundational, build next
 
-### 1. Crypto providers: PGP and S/MIME via system tools (R10) - effort M-L
+### 1. Crypto providers: PGP via gpg, S/MIME in-process (R10) - effort M-L
 
-No sign/encrypt/decrypt on the send or read path yet. Zero crypto code in the
-client: gpg CLI with `--status-fd` parsing (aerc's gpgbin pattern), S/MIME via
-`openssl smime`, gpg-agent + external pinentry with TUI suspend/resume (the
-only passphrase path; no loopback mode - Go cannot zero secrets).
+No sign/encrypt/decrypt on the send or read path yet. PGP via the system gpg
+CLI with `--status-fd` parsing (aerc's gpgbin pattern - the agent/passphrase
+machinery is why it is a subprocess), S/MIME in-process (go.mozilla.org/pkcs7
++ stdlib x509, emailProtection EKU enforced), gpg-agent + external pinentry
+with TUI suspend/resume (the only passphrase path; no loopback mode - Go
+cannot zero secrets).
 
 - Sign/encrypt is a transform stage between go-message assembly and the send
   job (assemble -> sign/encrypt per dialogue flags -> fcc -> send).
@@ -26,8 +28,8 @@ only passphrase path; no loopback mode - Go cannot zero secrets).
   signature status.
 - Key selection is a selector dialogue (R4 machinery) fed by
   `gpg --list-secret-keys --with-colons`.
-- go-pgpmail builds on go-message for the transform stage (verified in the
-  mail-library decision record).
+- go-pgpmail builds on go-message for the PGP transform; pkcs7 + x509 in
+  process for S/MIME (both verified in the mail-library decision record).
 
 Impact: the client becomes usable for signed/encrypted mail - table stakes for
 this user's workflow. Pointers: AGENTS.md R10, `references/neomutt/ncrypt/*`,
@@ -81,6 +83,29 @@ completion (notifications landed with the filter job's completion event,
 Impact: query completion arrives with the filter pipeline.
 Pointers: AGENTS.md R2, `references/muttrc/afew/config` (the reference side effects).
 
+### 6. Lua IPC channel (R8) - effort M
+
+`notmutt lua '<chunk>'` hands a Lua chunk to the live client over a
+same-user unix socket; the client runs it as a Lua hook in the R8 VM -
+the notification-activate action and external scripting. The IPC seam
+was designed when Lua shipped but the channel itself was not built.
+
+Impact: notification actions and external tools drive the client without
+a TUI round trip. Pointers: AGENTS.md R8, `src/app/lua_plugin.go`, the
+notification side (`src/app/notify_beeep.go`).
+
+### 7. Markdown compose, HTML send (R4) - effort M
+
+Compose the body in markdown and emit multipart/alternative with an HTML
+part; code blocks get syntax highlighting. Sits at the same assemble
+stage the signer will use (assemble -> transform -> fcc -> send), so the
+two share the wiring. goldmark + chroma for parse/highlight - large,
+established, audited (the R7 supply-chain bar).
+
+Impact: the compose path gains real formatting without an editor change.
+Pointers: AGENTS.md R4, `src/app/ai_draft.go` (the assemble-stage shape),
+the go-message decision record.
+
 ## Tier 3: later, smaller, or gated
 
 - **DBus dark/light sync (R12)** - effort S-M, build-tag-gated (`dbus`),
@@ -99,6 +124,16 @@ Pointers: AGENTS.md R2, `references/muttrc/afew/config` (the reference side effe
 ## Landed (removed from the ranks)
 
 Implemented since this backlog was drafted; kept here as the audit trail.
+
+- **Dark-mode HTML rendering** - `[html] dark-mode = auto|on|off`
+  (auto follows the theme variant): mail backgrounds reflect onto the
+  theme's normal bg by an exact per-channel isometry (white lands
+  exactly on the theme bg, pairwise distances preserved), text colors
+  invert lightness keeping their hue with a WCAG guard, and a
+  dark-declared mail passes through the luma gate unchanged. Spec:
+  docs/superpowers/specs/2026-09-01-dark-mode-html-design.md. Pointers:
+  `src/lib/html` (AdaptBG/AdaptFG/IsLight), `src/mail/html.go`, the R11
+  theme store.
 
 - **Filter engine with exclusive tag groups (R2)** - `src/filter/` (filter.go,
   mover.go), the [filter] job with DRY-RUN as a first-class mode, the

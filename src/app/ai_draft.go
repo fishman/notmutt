@@ -55,7 +55,7 @@ func aiDraftCompose(cfg config.Config, root string, msgs []core.Message, body st
 	if width <= 0 {
 		width = config.DefaultWrapWidth
 	}
-	st.Body = wrapEmail(core.SanitizeControls(body), width)
+	st.Body = wrapEmail(core.SanitizeText(body), width)
 	refs := newest.References
 	if parsed.MessageID != "" {
 		refs = append(append([]string{}, newest.References...), parsed.MessageID)
@@ -128,35 +128,42 @@ func bareLower(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
 
-// wrapEmail hard-wraps text at width, the email norm: paragraphs are
-// split on blank lines and kept separate, inner newlines and runs of
-// whitespace collapse to single spaces (soft line breaks), lines fill
-// to the cap. Consecutive blank lines collapse to one paragraph break.
+// wrapEmail hard-wraps text at width, the email norm: every newline run
+// (the AI's paragraph breaks, however many) collapses to a blank line and
+// each paragraph is wrapped in isolation - its inner whitespace collapses
+// to single spaces, lines fill to the cap. A newline the AI used as a
+// paragraph break is never merged into the surrounding text.
 func wrapEmail(text string, width int) string {
 	var paras []string
-	for _, para := range strings.Split(text, "\n\n") {
+	for _, para := range strings.Split(text, "\n") {
 		para = strings.TrimSpace(para)
 		if para == "" {
 			continue
 		}
-		var lines, words []string
-		col := 0
-		for _, w := range strings.Fields(para) {
-			if col > 0 && col+1+len(w) > width {
-				lines = append(lines, strings.Join(words, " "))
-				words = words[:0]
-				col = 0
-			}
-			if col > 0 {
-				col++ // the joining space
-			}
-			words = append(words, w)
-			col += len(w)
-		}
-		if len(words) > 0 {
-			lines = append(lines, strings.Join(words, " "))
-		}
-		paras = append(paras, strings.Join(lines, "\n"))
+		paras = append(paras, wrapLines(para, width))
 	}
 	return strings.Join(paras, "\n\n")
+}
+
+// wrapLines fills one paragraph's words to width at word boundaries,
+// keeping the word order; a word longer than the cap stays whole.
+func wrapLines(para string, width int) string {
+	var lines, words []string
+	col := 0
+	for _, w := range strings.Fields(para) {
+		if col > 0 && col+1+len(w) > width {
+			lines = append(lines, strings.Join(words, " "))
+			words = words[:0]
+			col = 0
+		}
+		if col > 0 {
+			col++ // the joining space
+		}
+		words = append(words, w)
+		col += len(w)
+	}
+	if len(words) > 0 {
+		lines = append(lines, strings.Join(words, " "))
+	}
+	return strings.Join(lines, "\n")
 }

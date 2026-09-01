@@ -97,11 +97,30 @@ func TestAIDraftCompose(t *testing.T) {
 	}
 }
 
-// TestWrapEmail proves the generated body is a mail, not a blob: long
-// lines fill to the cap at word boundaries with the word order kept,
-// paragraphs stay separate (runs of blank lines collapse to one), inner
-// newlines collapse to spaces, short text passes through untouched, and
-// a single word longer than the cap stays whole.
+// TestAIDraftComposeKeepsParagraphs proves the body keeps the AI's
+// paragraph breaks: the sanitize path preserves newlines (SanitizeText,
+// not SanitizeControls) and wrapEmail leaves short paragraphs intact.
+// Regression: SanitizeControls stripped every \n, gluing the draft into
+// run-on text.
+func TestAIDraftComposeKeepsParagraphs(t *testing.T) {
+	cfg := draftCfg(t)
+	root := t.TempDir()
+	p := draftFile(t, draftText)
+	body := "Hi Veronica,\n\nGiven our partnership discussions, I wanted to ask if you are open.\n\nThe process is straightforward.\n\nBest,\n\nReza Jelveh"
+	st := aiDraftCompose(cfg, root, []core.Message{draftMsg(p, "alpha@example.com", 100, "m1")}, body)
+	if st == nil {
+		t.Fatal("nil draft")
+	}
+	if st.Body != body {
+		t.Errorf("Body = %q, want the paragraphs intact", st.Body)
+	}
+}
+
+// TestWrapEmail proves the generated body is a mail, not a blob: newline
+// runs (whatever the AI emitted) collapse to a blank line - the paragraph
+// separator - each paragraph is wrapped in isolation to the cap at word
+// boundaries with the word order kept, short text passes through
+// untouched, and a single word longer than the cap stays whole.
 func TestWrapEmail(t *testing.T) {
 	if got := wrapEmail("", 72); got != "" {
 		t.Errorf("empty = %q", got)
@@ -115,8 +134,14 @@ func TestWrapEmail(t *testing.T) {
 	if got := wrapEmail("a b\n\n\nc", 72); got != "a b\n\nc" {
 		t.Errorf("blank-line collapse = %q", got)
 	}
-	if got := wrapEmail("aaa\nbbb", 72); got != "aaa bbb" {
-		t.Errorf("inner newline = %q", got)
+	if got := wrapEmail("aaa\nbbb", 72); got != "aaa\n\nbbb" {
+		t.Errorf("single-newline paragraph = %q", got)
+	}
+	// each newline-separated paragraph wraps in isolation - a wrapped line
+	// never bleeds across the paragraph boundary
+	if got, want := wrapEmail("one two three four\nfive six seven eight", 10),
+		"one two\nthree four\n\nfive six\nseven\neight"; got != want {
+		t.Fatalf("isolated wrap = %q, want %q", got, want)
 	}
 	out := wrapEmail(strings.Repeat("word ", 20), 10)
 	for i, line := range strings.Split(out, "\n") {

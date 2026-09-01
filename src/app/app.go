@@ -50,6 +50,9 @@ var templateFS embed.FS
 //go:embed aicommands/context/default.md
 var aiSeedFS embed.FS
 
+//go:embed ai.toml
+var aiConfigSeed []byte
+
 func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		return setupAccounts()
@@ -68,6 +71,7 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "smime-verify" {
 		return smimeVerifyOnce()
 	}
+	seedAIConfig(configDir())
 	seedAICommands(configDir())
 	cfg, err := config.Load(configDir())
 	if err != nil {
@@ -991,6 +995,25 @@ func resolveSetupFolders(root string, accs []setup.Account) (map[string][]string
 		out[a.Name] = lines
 	}
 	return out, nil
+}
+
+// seedAIConfig writes the default ai.toml to <dir> on first load
+// (write-if-absent - a user's config survives every restart): the AI
+// provider, [ai-data] grants, and [mcp] boundary surface, all
+// deny-by-default until the user fills them in. An empty or comments-only
+// file is a valid load (strict load stays green on a fresh install).
+func seedAIConfig(dir string) {
+	path := filepath.Join(dir, "ai.toml")
+	if _, err := os.Stat(path); err == nil {
+		return
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		log.Printf("setup: seed ai.toml: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, aiConfigSeed, 0600); err != nil {
+		log.Printf("setup: seed ai.toml: %v", err)
+	}
 }
 
 // seedTemplates copies the shipped example templates to

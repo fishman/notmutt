@@ -1,0 +1,18 @@
+# AI config: providers, per-account data grants, and the [mcp] agent
+# boundary. Deny by default - nothing here serves until you fill it in.
+# See docs/usage.md for the full reference.
+
+# [ai.<name>]                     # a provider
+# type = "deepseek"               # deepseek | anthropic | openai | ollama
+# model = "deepseek-v4-flash"
+# pass_cmd = ["pass", "show", "llm/deepseek"]
+
+# [ai-data.<account>]             # fields an account permits toward an LLM
+# data = ["participants", "subjects", "dates", "count", "bodies", "last_body", "structure"]
+# [ai-data."*"]                   # wildcard account: every account
+# data = ["*"]                    # wildcard field: every field
+
+# [mcp]                           # the stdio server's data boundary
+# accounts = []                   # folder space + account tag per entry
+# tags = []                       # soft tags whose mail is reachable
+# allow = ["attachments"]         # gated tools; thread_info/search/count always serve

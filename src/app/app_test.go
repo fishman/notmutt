@@ -160,3 +160,39 @@ func TestSeedAICommands(t *testing.T) {
 		t.Errorf("prompt file mode = %v, want 0600", fi.Mode().Perm())
 	}
 }
+
+func TestSeedAIConfig(t *testing.T) {
+	dir := t.TempDir()
+	seedAIConfig(dir)
+	path := filepath.Join(dir, "ai.toml")
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("seed must write %s: %v", path, err)
+	}
+	if string(body) != string(aiConfigSeed) {
+		t.Fatal("seed must write the shipped ai.toml template")
+	}
+	// the seeded file must load - a broken seed would brick startup
+	// (strict load). Deny by default: no grants, no mcp scope.
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatalf("seeded ai.toml must load: %v", err)
+	}
+	if len(cfg.AI) != 0 {
+		t.Fatalf("seeded ai.toml must grant no provider, got %d", len(cfg.AI))
+	}
+	if _, ok := cfg.AIDataGrant("any"); ok {
+		t.Fatal("seeded ai.toml must grant no account")
+	}
+	if len(cfg.MCP.Accounts) != 0 || len(cfg.MCP.Tags) != 0 {
+		t.Fatal("seeded ai.toml must serve no mcp scope")
+	}
+	// a user's config must survive a re-run
+	if err := os.WriteFile(path, []byte("[ai-data.\"*\"].data = [\"*\"]"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	seedAIConfig(dir)
+	if got, _ := os.ReadFile(path); string(got) != "[ai-data.\"*\"].data = [\"*\"]" {
+		t.Fatal("seed must never overwrite the user's ai.toml")
+	}
+}

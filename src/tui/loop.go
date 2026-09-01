@@ -69,8 +69,16 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 			var msg any
 			switch e := ev.(type) {
 			case *tcell.EventKey:
-				if press, ok := keyPressOf(e); ok {
-					msg = press
+				// press-only: tcell v3 delivers key RELEASES on
+				// release-reporting terminals (the kitty protocol - tmux
+				// strips it, which is why the double-fire only shows
+				// outside tmux). A release is not a press: dispatching it
+				// fires every key twice. 1c1beb4 dropped this guard with
+				// the dead legend path - it is the drop.
+				if e.Pressed() {
+					if press, ok := keyPressOf(e); ok {
+						msg = press
+					}
 				}
 			case *tcell.EventResize:
 				probeCellSize()

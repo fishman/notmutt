@@ -12,6 +12,12 @@ package tui
 // untouched list rows must be identical after the move - only the two
 // cursor rows (and the status segment, which resolves the cursor's
 // legend) may change.
+//
+// LOCKED: every test in this file is a regression test pinned to a
+// serious past bug (full-frame repaint, key-release double-fire). Do
+// not edit, weaken, or remove one without explicit user confirmation -
+// that holds in auto mode too (AGENTS.md, Agent working rules). Add
+// new tests beside them; leave the pinned ones alone.
 
 import (
 	"fmt"
@@ -131,6 +137,60 @@ func TestLoopCursorMoveRepaints(t *testing.T) {
 			t.Fatalf("row %d must not change on a cursor move", y)
 		}
 	}
+}
+
+// TestLoopDropsKeyRelease pins the loop's press-only gate: tcell v3
+// delivers key RELEASES on release-reporting terminals (the kitty
+// protocol - under tmux the protocol is stripped, which is why the
+// double-fire only shows outside tmux). A release must never dispatch
+// as a press or every key fires twice: a j press + release would move
+// the cursor two rows, skipping the row between (the reported "double
+// entry scrolling skip"). Regression for 1c1beb4, which removed the
+// guard while dropping the dead legend path.
+func TestLoopDropsKeyRelease(t *testing.T) {
+	const w, h = 80, 24
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups([]core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}})
+	var threads []*core.Thread
+	for i := 0; i < 5; i++ {
+		id := fmt.Sprintf("t%d", i)
+		threads = append(threads, core.NewThread(id, []*core.Message{
+			{ID: fmt.Sprintf("m%d", i), Timestamp: int64(i), Author: "Ann", Subject: "s", Tags: []string{"inbox"}},
+		}))
+	}
+	view.MergeThreads(threads)
+	bus := core.NewBus()
+	st := config.NewStore(config.Default())
+	m := New(view, bus.Subscribe(), testBindings(), testTagActions(), bus, st, config.Default().UI)
+	s := newSim(t, w, h)
+	quitCh := make(chan struct{})
+	done := make(chan error, 1)
+	go func() { done <- runLoop(m, s, quitCh) }()
+	defer func() { close(quitCh); <-done }()
+
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return strings.Contains(rowText(cs, w, 22), "$ apply") })
+	// the cursor starts on the first message (row 1); a release must not move it
+	s.evQ <- tcell.NewEventKeyEx(tcell.KeyRune, "j", tcell.ModNone, false, 0, 1)
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return cursorRow(cs, w, h) == 1 })
+	if cursorRow(cellsOf(s), w, h) != 1 {
+		t.Fatalf("key release moved the cursor to row %d", cursorRow(cellsOf(s), w, h))
+	}
+	// a press moves exactly one row: release + press must land on row 2, not 3
+	s.evQ <- tcell.NewEventKey(tcell.KeyRune, "j", tcell.ModNone)
+	waitScreen(t, s, w, h, func(cs []fakeCell) bool { return cursorRow(cs, w, h) == 2 })
+	if r := cursorRow(cellsOf(s), w, h); r != 2 {
+		t.Fatalf("press+release moved the cursor to row %d, want 2 (one move per key)", r)
+	}
+}
+
+// cursorRow returns the y of the row carrying the cursor glyph, or -1.
+func cursorRow(cs []fakeCell, w, h int) int {
+	for y := 0; y < h; y++ {
+		if strings.Contains(rowText(cs, w, y), "▌") {
+			return y
+		}
+	}
+	return -1
 }
 
 // cellsOf rebuilds the buffer through the Screen Get API (v3 has no bulk GetContents).

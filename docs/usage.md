@@ -521,10 +521,9 @@ make build TAGS="lua mcp"
 ./notmutt mcp
 ```
 
-Register it with Claude Code (`claude mcp add`) or any MCP stdio
-client; the server speaks JSON-RPC on stdin/stdout, so nothing else
-may write to stdout while it runs. `tools/list` exposes three read-only
-tools:
+Any MCP stdio client can speak to it; the server runs JSON-RPC on
+stdin/stdout, so nothing else may write to stdout while it runs.
+`tools/list` exposes three read-only tools:
 
 - `thread_info(thread_id)` - per-message metadata of one thread
   (subject, author, timestamp, tags, references, message count)
@@ -536,6 +535,36 @@ tools:
 Every tool runs as a fixed Lua chunk in a fresh sandboxed VM with a
 60s per-call deadline; the tool set is an allowlist, so a client can
 never reach anything beyond it.
+
+### Connecting Claude Code
+
+Register the built binary as a stdio server. The `--scope` flag picks
+where the registration lives: `user` makes it available in every
+project on this machine, `project` writes a `.mcp.json` into the repo
+(shared with the team; Claude Code shows such servers "pending
+approval" until each developer approves them), and the default `local`
+ties it to this checkout only. Use an absolute path to the binary -
+Claude Code spawns it from its own working directory.
+
+```sh
+make build TAGS="lua mcp"
+claude mcp add -s user notmutt -- /home/you/src/notmutt/notmutt mcp
+claude mcp get notmutt   # spawns the server and health-checks it
+```
+
+The tools appear at session start, so begin a new session (or run
+`/mcp` to reconnect) and `thread_info`, `search`, and `count` show up
+as ordinary tools. The server loads the same config the TUI does, so
+the `[mcp]` data boundary below holds no matter which client started
+it. Launch it from an environment that reaches that config dir - with
+none reachable the scope is empty and every tool serves nothing.
+
+The surface is read-only by construction and every tool result is a
+record: `search` returns `{threads: [...]}`, `count` returns
+`{count: N}`. Queries are intersected with the scope before they reach
+notmuch, so `tag:inbox` means "in-scope threads tagged inbox", and no
+tool reads message bodies - ask only about the metadata the tools
+return.
 
 Beyond the metadata-only defaults, content-adjacent tools are gated:
 they are served only when `[mcp] allow` names them. The one such tool

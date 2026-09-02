@@ -1037,7 +1037,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
-			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, !m.showHeaders, m.width, false)
+			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, !m.showHeaders, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1190,7 +1190,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				// the q key in an attachment view returns to the
 				// message: the re-open reply replaces the pager (the
 				// onThreadLoaded attView guard) and clears the view
-				onToggleRender(m.attView.threadID, m.attView.msgID, m.renderMode, m.showHeaders, m.width, false)
+				m.reopenDispatch(m.attView.threadID, m.attView.msgID, m.renderMode, m.showHeaders, false)
 				deferPaint()
 				deferred = true
 				break
@@ -1249,7 +1249,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			if m.renderMode == core.RenderHTML {
 				mode = core.RenderPlain
 			}
-			onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), mode, m.showHeaders, m.width, false)
+			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), mode, m.showHeaders, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1259,10 +1259,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// (v's html/plain cycle stays source-free).
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderSource {
-				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, m.width, false)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, false)
 			} else {
 				m.prevRenderMode = m.renderMode
-				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, m.width, false)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, false)
 			}
 			deferPaint()
 			deferred = true
@@ -1279,7 +1279,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// before the reply, or the reply would match and skip replace.
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderHTML {
-				onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.width, true)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, true)
 			} else if links := linksOfLines(m.pager.lines, m.renderMode == core.RenderSource); len(links) > 0 {
 				m.dialogue = &listDialogue{f: newFuzzy("openlink", "open link:", numberedLinks(links))}
 			} else {
@@ -1628,7 +1628,7 @@ func (m *Model) exitLinkMode() {
 	m.linkInput = ""
 	if m.pager != nil {
 		m.pager.setLinkSel("")
-		onToggleRender(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.width, false)
+		m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, false)
 	}
 }
 
@@ -1790,9 +1790,15 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	}
 	m.renderMime = e.Mime
 	m.mode = "pager"
-	// the pager belongs to the surface this open landed on: a later
-	// tab switch restores pager mode only over that surface
-	m.pagerHome = m.activeView()
+	// the pager belongs to the surface that dispatched the open (the
+	// app echoes OpenReq.Origin on the reply) - never to wherever the
+	// user tabbed while the async load ran. Nil Origin (tests) falls
+	// back to the active surface.
+	o := e.Origin
+	if o == nil {
+		o = m.activeView()
+	}
+	m.pagerHome = o
 	// the render-images toggle is per-pager: a fresh open starts
 	// collapsed - remote images never fetch without their own press
 	m.imgMode = 0
@@ -2176,6 +2182,22 @@ func (m *Model) cursorThread() (tid, msgID, subject string) {
 	return tid, msgID, subject
 }
 
+// openDispatch is the full/preview open dispatch for the active index
+// surface: Origin is that surface, so the reply routes the pager to it
+// even if the user tabs away before the async load lands (never to
+// whatever surface happens to be active when the reply arrives).
+func (m *Model) openDispatch(tid, mid string, preview bool) {
+	onOpen(OpenReq{ThreadID: tid, MsgID: mid, Preview: preview, Headers: m.showHeaders, Mode: core.RenderAuto, Width: m.width, Origin: m.activeView()})
+}
+
+// reopenDispatch is the re-render dispatch of the CURRENT open pager
+// (h/v/ctrl+u/F/back-from-attachment): same seam with an explicit view.
+// Origin is the surface owning the pager being re-rendered - in pager
+// mode that is the active index surface.
+func (m *Model) reopenDispatch(tid, mid string, mode core.RenderMode, headers bool, labelLinks bool) {
+	onOpen(OpenReq{ThreadID: tid, MsgID: mid, Mode: mode, Headers: headers, Width: m.width, LabelLinks: labelLinks, Origin: m.activeView()})
+}
+
 // pagerStep advances the index cursor by dir rows and, if it landed on
 // a different message, reloads the open pager to it (J/K and enter in
 // the pager). The walk is the active view's rows - the view the pager
@@ -2184,7 +2206,7 @@ func (m *Model) cursorThread() (tid, msgID, subject string) {
 func (m *Model) pagerStep(dir int) bool {
 	m.moveCursor(dir)
 	if tid, mid, _ := m.cursorThread(); tid != "" && (tid != pagerThreadID(m.pager) || mid != pagerMsgID(m.pager)) {
-		onOpen(tid, mid, false, m.showHeaders, m.width)
+		m.openDispatch(tid, mid, false)
 		m.paint, m.renderDue = false, true
 		return true
 	}
@@ -2197,7 +2219,7 @@ func (m *Model) pagerStep(dir int) bool {
 func (m *Model) openCursorThread() {
 	tid, msgID, _ := m.cursorThread()
 	if tid != "" {
-		onOpen(tid, msgID, false, m.showHeaders, m.width)
+		m.openDispatch(tid, msgID, false)
 	}
 }
 
@@ -2223,7 +2245,7 @@ func (m *Model) previewCursorThread() {
 	m.pager, m.pagerHome = newPager("", "", nil), nil
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
-	onOpen(tid, msgID, true, m.showHeaders, m.width)
+	m.openDispatch(tid, msgID, true)
 }
 
 // previewKey drives the popup: the pager scroll actions scroll the
@@ -2243,7 +2265,7 @@ func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 		} else {
 			m.pager, m.pagerHome = nil, nil
 		}
-		onOpen(tid, msgID, false, m.showHeaders, m.width)
+		m.openDispatch(tid, msgID, false)
 		return m, nil
 	}
 	switch actionForKey(msg, m.bindings["pager"]) {

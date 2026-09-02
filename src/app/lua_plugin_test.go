@@ -17,6 +17,7 @@ import (
 	"notmutt/core"
 	"notmutt/i18n"
 	"notmutt/mail"
+	"notmutt/tui"
 )
 
 func pluginDir(t *testing.T, files map[string]string) string {
@@ -68,7 +69,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -105,7 +106,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -145,7 +146,7 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -174,7 +175,7 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)

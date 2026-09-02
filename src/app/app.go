@@ -187,27 +187,25 @@ func Run() error {
 	// behind the walk that owns the worker); the worker fetch (ActThread)
 	// is the fallback for a thread in no view. The open job renders the
 	// files and runs the render transforms; the TUI attaches the lines on
-	// ThreadLoaded (R13 two-step - content loads on open only). The
-	// preview variant (the p key) skips read-marking; the headers flag
-	// (the h key) includes the full header block.
-	tui.SetOpenHandler(func(threadID, msgID string, preview, headers bool, width int) {
-		// RenderAuto resolves per sender domain ([pager] default-views)
-		// once the message is in hand - the domain is message data, only
-		// the fetch has it
+	// ThreadLoaded (R13 two-step - content loads on open only). The one
+	// seam carries every variant: the open key (preview=false marks read),
+	// the p preview, and the re-opens (the v/html-plain toggle, ctrl+u
+	// source, F link labels, h headers, attachment-back), distinguished by
+	// Mode. RenderAuto = a fresh open: resolve per sender domain
+	// ([pager] default-views - the domain is message data, only the fetch
+	// has it) and verify S/MIME (R10). An explicit mode = a re-open of an
+	// already-open message: no read-mark, no domain map, no S/MIME
+	// re-verify (the verdict already rendered).
+	tui.SetOpenHandler(func(req tui.OpenReq) {
 		dark, themeBG := cfg.HTMLDark()
-		go openThread(worker, bus, views, threadID, msgID, preview, core.RenderAuto, headers, width, false, cfg.Pager.DefaultViews, cfg.Crypto, dark, themeBG)
-	})
-
-	// the render toggle (the v key), the source view (ctrl+u), and the
-	// link labels (the F key): the same open path with another view -
-	// rows-first from the views, the worker re-fetches only when the
-	// thread left every view (the open job is the render owner, R13;
-	// the TUI never renders). labelLinks prefixes every link with its
-	// "[N]" label and the target list rides the reply. The explicit
-	// modes never resolve against the domain map.
-	tui.SetRenderHandler(func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {
-		dark, themeBG := cfg.HTMLDark()
-		go openThread(worker, bus, views, threadID, msgID, false, mode, headers, width, labelLinks, nil, config.Crypto{}, dark, themeBG)
+		var (
+			defViews  map[string]string
+			cryptoCfg config.Crypto
+		)
+		if req.Mode == core.RenderAuto {
+			defViews, cryptoCfg = cfg.Pager.DefaultViews, cfg.Crypto
+		}
+		go openThread(worker, bus, views, req, defViews, cryptoCfg, dark, themeBG)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key in
@@ -548,14 +546,15 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 // read with an ActTag -unread (R1 - read is a tag; the refresh cycle
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
+func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, req tui.OpenReq, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
 	start := time.Now()
+	threadID, msgID := req.ThreadID, req.MsgID
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
 		var err error
 		msgs, err = fetchMsgs(worker, threadID, msgID)
 		if err != nil {
-			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
+			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 			return
 		}
 		diag.Info("open", "rows-first", false, "thread", threadID, "msgs", len(msgs), "ms", time.Since(start).Milliseconds())
@@ -576,6 +575,7 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 	if len(msgs) > 0 {
 		msgID = msgs[0].ID
 	}
+	mode := req.Mode
 	if mode == core.RenderAuto {
 		mode = openViewMode(defViews, msgs)
 		// an html-only message's plain render is the html structure with
@@ -598,15 +598,15 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, th
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
 	}
-	lines, mime, links, err := mail.RenderThread(msgs, mode, headers, width, labelLinks, dark, themeBG)
+	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG)
 	if err != nil {
-		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
+		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, RenderMode: mode, Headers: headers, LinkLabels: labelLinks, Links: links, Mime: mime, Lines: lines, SMIME: smime})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime})
 	// the read mark names the opened message, never the whole thread
-	if !preview && msgID != "" {
+	if !req.Preview && msgID != "" {
 		rpl, err := worker.Call(notmuch.Action{
 			Kind:   notmuch.ActTag,
 			Query:  "id:" + msgID,

@@ -437,9 +437,9 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	m.width, m.height = 80, 100
 	png := testPNG(t, 100, 200)
 	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
-	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(req OpenReq) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: threadID,
+			ThreadID: req.ThreadID,
 			Lines:    mail.RenderHTML(body, nil, 0),
 		}})
 		m = next
@@ -520,9 +520,9 @@ func TestModelRenderImagesRemote(t *testing.T) {
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 100
 	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
-	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(req OpenReq) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   threadID,
+			ThreadID:   req.ThreadID,
 			RenderMode: core.RenderHTML,
 			Mime:       "text/html",
 			Lines:      mail.RenderHTML(body, nil, 0),
@@ -602,9 +602,9 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 100
-	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(req OpenReq) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   threadID,
+			ThreadID:   req.ThreadID,
 			RenderMode: core.RenderHTML,
 			Mime:       "text/html",
 			Lines:      mail.RenderHTML(string(html), nil, 0),
@@ -712,9 +712,9 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	for range 20 {
 		body.WriteString("<p>tail</p>")
 	}
-	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
+	SetOpenHandler(func(req OpenReq) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: threadID,
+			ThreadID: req.ThreadID,
 			Lines:    mail.RenderHTML(body.String(), nil, 0),
 		}})
 		m = next

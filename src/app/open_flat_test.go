@@ -22,6 +22,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
+	"notmutt/tui"
 )
 
 // flatThreadWorker models real notmuch: a thread fetch by a message id
@@ -74,7 +75,7 @@ func TestOpenFromFlatSearchTabUnmerged(t *testing.T) {
 	ch := bus.Subscribe()
 
 	// cursorThread in the flat search tab yields tid = the message id
-	openThread(fw, bus, views, msgID, msgID, true, core.RenderPlain, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, views, tui.OpenReq{ThreadID: msgID, MsgID: msgID, Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:

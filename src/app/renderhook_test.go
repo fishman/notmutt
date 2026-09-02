@@ -14,6 +14,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
+	"notmutt/tui"
 )
 
 // emptyThreadWorker serves an ActThread reply with no messages - the
@@ -47,7 +48,7 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 		return append(lines, core.Line{Text: "hook two", Kind: core.LineBody}), nil
 	})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -85,7 +86,7 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 		return append(lines, core.Line{Text: "never seen", Kind: core.LineBody}), context.DeadlineExceeded
 	})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -133,7 +134,7 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 		return lines, ctx.Err()
 	})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -164,7 +165,7 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 	ch := bus.Subscribe()
 	fw := emptyThreadWorker{}
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -195,7 +196,7 @@ func TestOpenThreadLinks(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{p}}})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderHTML, false, 0, true, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderHTML, Headers: false, Width: 0, LabelLinks: true}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -220,7 +221,7 @@ func TestOpenThreadLinks(t *testing.T) {
 		t.Fatal("no ThreadLoaded")
 	}
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderHTML, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderHTML, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)

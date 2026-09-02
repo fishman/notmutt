@@ -251,6 +251,11 @@ type ThreadLoaded struct {
 	// never the whole thread (thread-wide text stays queryable via lua).
 	MsgID   string
 	Preview bool
+	// Origin is the index surface that dispatched the open (the app echoes
+	// OpenReq.Origin verbatim): the TUI routes the pager to that surface,
+	// never to wherever the user tabbed while the async load ran. Nil
+	// (tests) falls back to the active surface.
+	Origin *View
 	// RenderMode names the view the lines were rendered with (the
 	// toggle-render and source keys): a same-thread reload with another
 	// view replaces the pager content instead of being dropped.

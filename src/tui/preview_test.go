@@ -114,10 +114,10 @@ func TestPreviewScrollsAndCloses(t *testing.T) {
 // height invariant.
 func TestPreviewOpensFull(t *testing.T) {
 	var calls []string
-	SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {
-		calls = append(calls, fmt.Sprintf("%s:%v", threadID, preview))
+	SetOpenHandler(func(req OpenReq) {
+		calls = append(calls, fmt.Sprintf("%s:%v", req.ThreadID, req.Preview))
 	})
-	defer SetOpenHandler(func(threadID, msgID string, preview, headers bool, _ int) {})
+	defer SetOpenHandler(func(OpenReq) {})
 	m := model()
 	lines := []core.Line{{Kind: core.LineBody, Text: "body line"}}
 	m = openPreview(t, m, "t1", lines)

@@ -18,28 +18,37 @@ func SetApplyHandler(fn func(*core.View)) {
 	onApply = fn
 }
 
-// onOpen is the open seam (SetOpenHandler): the open key hands the
-// thread id and cursor message to the app, which loads the message and
-// publishes ThreadLoaded. msgID is the opened message - the pager
-// renders that message only, never the whole thread. preview=true is
-// the preview fetch (no read-marking, the index mode stays); headers
-// is the h key (full header block); width is the pager's terminal
-// width (the html wrap caps at 120, narrower terminals reflow).
-var onOpen = func(threadID, msgID string, preview, headers bool, width int) {}
-
-func SetOpenHandler(fn func(string, string, bool, bool, int)) {
-	onOpen = fn
+// OpenReq is the message-open dispatch (SetOpenHandler): the open key
+// and every re-open (toggle-render, source, link labels, headers,
+// attachment-back) hand one struct to the app, which loads the message
+// and publishes ThreadLoaded. The struct IS the contract - a new need
+// extends a field, never the signature. msgID is the opened message
+// (the pager renders that message only, never the whole thread);
+// Preview is the preview fetch (no read-marking, the index mode stays);
+// Headers the h key (full header block); Width the pager's terminal
+// width (the html wrap caps at 120, narrower terminals reflow). Mode
+// RenderAuto (the default) resolves per sender domain on the open;
+// an explicit mode (plain/html/source) is the v/ctrl+u/F re-open.
+// LabelLinks (F) prefixes every link with its "[N]" label, the target
+// list riding the reply. Origin is the index surface that dispatched
+// the open - echoed back on the reply so the pager lands on the
+// requesting surface, never on wherever the user tabbed to while the
+// async load ran.
+type OpenReq struct {
+	ThreadID   string
+	MsgID      string
+	Preview    bool
+	Headers    bool
+	Width      int
+	Mode       core.RenderMode
+	LabelLinks bool
+	Origin     *core.View
 }
 
-// onToggleRender is the render-toggle seam (the v key in the pager,
-// the source view ctrl+u, the link labels F): the app re-runs the open
-// path with the requested view and publishes a fresh ThreadLoaded;
-// a no-op default so the model works in tests. labelLinks (F) prefixes
-// every link with its "[N]" label, the target list riding the reply.
-var onToggleRender = func(threadID, msgID string, mode core.RenderMode, headers bool, width int, labelLinks bool) {}
+var onOpen = func(req OpenReq) {}
 
-func SetRenderHandler(fn func(string, string, core.RenderMode, bool, int, bool)) {
-	onToggleRender = fn
+func SetOpenHandler(fn func(OpenReq)) {
+	onOpen = fn
 }
 
 // openLink is the link-open seam (the pager F key): the app runs the

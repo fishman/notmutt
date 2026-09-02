@@ -15,6 +15,7 @@ import (
 
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/tui"
 )
 
 // TestOpenThreadHtmlOnlyDefaultsHTML: a thread whose first message has
@@ -35,7 +36,7 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderAuto, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderAuto, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -72,7 +73,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -93,7 +94,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 
 	// a mid-thread open names the opened message, not the thread
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
-	openThread(fw, bus, nil, "t1", "b", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	select {
 	case e := <-ch:
 		if _, ok := e.(core.ThreadLoaded); !ok {
@@ -127,7 +128,7 @@ func TestOpenThreadMarksReadReflectsInViews(t *testing.T) {
 	})})
 	views := map[string]*core.View{"inbox": main, "tag:x": search}
 
-	openThread(fw, bus, views, "t1", "a", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	select {
 	case <-ch:
 	case <-time.After(time.Second):
@@ -149,7 +150,7 @@ func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, nil, "t1", "", true, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -208,7 +209,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 0, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
 
 	select {
 	case e := <-ch:
@@ -254,7 +255,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		{ID: "b", ThreadID: "t1", Paths: []string{p2}},
 	})
 
-	openThread(fw, bus, nil, "t1", "b", false, core.RenderPlain, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	loaded := func() core.ThreadLoaded {
 		select {
 		case e := <-ch:
@@ -280,7 +281,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		t.Fatalf("the pager must render the opened message only:\n%s", got)
 	}
 
-	openThread(fw, bus, nil, "t1", "", false, core.RenderPlain, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	tl = loaded()
 	if tl.MsgID != "a" {
 		t.Fatalf("a bare open must fall back to the thread's first, got %q", tl.MsgID)
@@ -308,7 +309,7 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{msg})
-	openThread(fw, bus, views, "t1", "a", true, core.RenderPlain, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	tl := loaded(ch)
 	if tl.Err != nil {
 		t.Fatalf("rows-first open failed: %v", tl.Err)
@@ -325,7 +326,7 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 
 	// the fallback: the thread is in no view (a closed tab's pager, a
 	// view reset race) - the worker fetch serves it
-	openThread(fw, bus, map[string]*core.View{}, "t1", "a", true, core.RenderPlain, false, 80, false, nil, config.Crypto{}, false, "")
+	openThread(fw, bus, map[string]*core.View{}, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
 	tl = loaded(ch)
 	if tl.Err != nil {
 		t.Fatalf("fallback open failed: %v", tl.Err)

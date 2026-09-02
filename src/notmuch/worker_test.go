@@ -55,6 +55,7 @@ func (f *fakeBackend) New(ctx context.Context) (uint64, uint64, error) {
 	}
 	return 41, 42, nil
 }
+func (f *fakeBackend) Reopen(ctx context.Context) error { return f.err }
 
 func TestWorkerCallQuery(t *testing.T) {
 	bus := core.NewBus()
@@ -140,6 +141,7 @@ func (b *blockingBackend) Revision(ctx context.Context) (string, uint64, error) 
 	return b.inner.Revision(ctx)
 }
 func (b *blockingBackend) New(ctx context.Context) (uint64, uint64, error) { return b.inner.New(ctx) }
+func (b *blockingBackend) Reopen(ctx context.Context) error                { return b.inner.Reopen(ctx) }
 
 // TestWorkerLockTimeout pins the WRITER budget: tag holds notmuch's
 // write lock, so a hung tag errors out as ErrLockTimeout after the
@@ -225,6 +227,7 @@ func (b *killBackend) New(ctx context.Context) (uint64, uint64, error) { return 
 func (b *killBackend) Addresses(ctx context.Context, q string) ([]core.AddressEntry, error) {
 	return b.inner.Addresses(ctx, q)
 }
+func (b *killBackend) Reopen(ctx context.Context) error { return b.inner.Reopen(ctx) }
 
 // exec.CommandContext reports a killed process as "signal: killed", not
 // context.DeadlineExceeded; the worker must map that shape too. The

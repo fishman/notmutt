@@ -32,6 +32,7 @@ const (
 	ActNew
 	ActAddresses
 	ActClose
+	ActReopen
 )
 
 type Action struct {
@@ -167,6 +168,8 @@ func (w *Worker) handle(a Action) {
 		}
 	case ActClose:
 		err = w.backend.Close(ctx)
+	case ActReopen:
+		err = w.backend.Reopen(ctx)
 	}
 	if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 		err = ErrLockTimeout
@@ -192,6 +195,7 @@ var actionNames = map[ActionKind]string{
 	ActNew:         "new",
 	ActAddresses:   "addresses",
 	ActClose:       "close",
+	ActReopen:      "reopen",
 }
 
 func actionName(k ActionKind) string {

@@ -33,6 +33,10 @@ func (b *CLIBackend) Close(ctx context.Context) error {
 	return nil
 }
 
+// Reopen is a no-op: stateless, every call spawns a fresh subprocess
+// that always sees the current state.
+func (b *CLIBackend) Reopen(ctx context.Context) error { return nil }
+
 type searchItem struct {
 	Thread    string   `json:"thread"`
 	Timestamp int64    `json:"timestamp"`

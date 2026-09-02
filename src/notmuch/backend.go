@@ -79,6 +79,13 @@ type Backend interface {
 	// revision cached at open, so the cgo backend reopens its read
 	// handle around the run and every later read sees the commit.
 	New(ctx context.Context) (pre, cur uint64, err error)
+	// Reopen refreshes this handle's read snapshot: commits landed on
+	// ANOTHER handle (the interactive worker's writes reopen only its own
+	// cgo handle) are invisible here until reopened. The walk worker
+	// calls it before each cycle or search, so it never reports a stale
+	// revision. The CLI backend is stateless - every call is a fresh
+	// subprocess - and no-ops.
+	Reopen(ctx context.Context) error
 }
 
 // runFn abstracts one CLI invocation: `notmuch new` for cgo, everything

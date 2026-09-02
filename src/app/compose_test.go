@@ -49,6 +49,7 @@ func (t *threadBackend) Revision(ctx context.Context) (string, uint64, error) {
 	return "uuid-1", 42, nil
 }
 func (t *threadBackend) New(ctx context.Context) (uint64, uint64, error) { return 41, 42, nil }
+func (t *threadBackend) Reopen(ctx context.Context) error                { return nil }
 
 func TestMailtoCompose(t *testing.T) {
 	cfg := config.Default()

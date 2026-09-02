@@ -92,9 +92,17 @@ func Run() error {
 	openDiagLog()
 	go runDiagBus(bus)
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
+	// the walk worker is a SECOND notmuch handle for the long read walks
+	// (refresh full-reloads, search tabs): interactive ops - categorize,
+	// open, tag, apply - never queue behind a walk (the bug: one worker
+	// held the single handle for 1.4-3.5s per full walk). It reopens its
+	// own snapshot before every cycle (refresh.go), so the interactive
+	// worker's writes are always visible to it.
+	walkWorker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go worker.Start(ctx)
+	go walkWorker.Start(ctx)
 
 	// DB open check plus per-view query validation (spec section 3). The
 	// empty path resolves inside the backend via `notmuch config get
@@ -102,6 +110,9 @@ func Run() error {
 	// process lifetime.
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
 		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
+	}
+	if rpl, err := walkWorker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
+		return fmt.Errorf("notmuch walk open: %v %v", err, rpl.Err)
 	}
 	for name, v := range cfg.Views {
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: v.Query, Limit: 1})
@@ -112,7 +123,7 @@ func Run() error {
 
 	view := core.NewView(cfg.ActiveView, cfg.Views[cfg.ActiveView].Query)
 	view.SetThreaded(cfg.Views[cfg.ActiveView].Threads)
-	refresher := newRefresher(bus, worker, view, 0)
+	refresher := newRefresher(bus, walkWorker, view, 0)
 
 	// views is the view registry: name -> view. Search tabs (the ctrl+f
 	// seam) register under their query; a closed tab's entry lingers
@@ -148,7 +159,7 @@ func Run() error {
 		// conversation tree
 		v.SetThreaded(false)
 		views[v.ViewName()] = v
-		go runSearchQuery(worker, bus, v)
+		go runSearchQuery(walkWorker, bus, v)
 	})
 
 	// the notmuch mail root (argv-only, F4): ONE resolution for the

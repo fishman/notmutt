@@ -46,6 +46,15 @@ func (r *refresher) cycle() {
 	r.mu.Unlock()
 	defer func() { r.mu.Lock(); r.running = false; r.mu.Unlock() }()
 
+	// the walk worker's handle is a separate cgo snapshot: the
+	// interactive worker's writes reopen only its own handle, so refresh
+	// must reopen first or ActRevision reports a stale revision and this
+	// cycle sees no change (new mail goes unnoticed). A reopen failure
+	// skips the cycle - the next one retries.
+	if rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActReopen}); err != nil || rpl.Err != nil {
+		diag.Warn("refresh: reopen", "err", fmt.Sprintf("%v %v", err, rpl.Err))
+		return
+	}
 	rpl, err := r.worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
 	if err != nil || rpl.Err != nil {
 		diag.Warn("refresh: revision", "err", fmt.Sprintf("%v %v", err, rpl.Err))
@@ -370,6 +379,10 @@ func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job 
 // phase-1 pre-query (the tab opens empty, the walk fills it). The view
 // name is the query, so the events key per tab.
 func runSearchQuery(worker workerAPI, bus *core.Bus, view *core.View) {
+	// same staleness gate as the refresher: the search walk runs on the
+	// walk worker's separate handle, so reopen before the count to see
+	// the interactive worker's latest writes
+	worker.Call(notmuch.Action{Kind: notmuch.ActReopen})
 	total := 0
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActCount, Query: view.Query, Flat: view.ViewFlat()}); err == nil && rpl.Err == nil {
 		total = rpl.Count

@@ -410,6 +410,12 @@ func (b *CGOBackend) reopen(ctx context.Context) error {
 	return b.db.Reopen(nm.DBReadOnly)
 }
 
+// Reopen is the Backend entry point to reopen: the walk worker's handle
+// must see commits the interactive worker's writes landed.
+func (b *CGOBackend) Reopen(ctx context.Context) error {
+	return b.reopen(ctx)
+}
+
 // QueryMsgs walks a message-level query (delta scans - lastmod
 // ranges): bare message ids, chunked like Query. Per-message C
 // crossings make it for small sets - the delta, never the fill.

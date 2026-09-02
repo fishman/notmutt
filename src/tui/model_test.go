@@ -2410,6 +2410,58 @@ func TestSearchTabBackground(t *testing.T) {
 	}
 }
 
+// TestSearchTabPagerHome pins the pager's home surface: a message opened
+// from a search tab belongs to that tab. ] to the mail surface must show
+// its own index (never the search tab's open message), and ] back must
+// restore the search tab's pager.
+func TestSearchTabPagerHome(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+	stubOpenHandler(t)
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, tcell.KeyEnter)
+	if len(m.searchTabs) != 1 || m.tabIdx != 1 || m.mode != "index" {
+		t.Fatalf("search tab not attached: tabs=%d idx=%d mode=%q", len(m.searchTabs), m.tabIdx, m.mode)
+	}
+	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", ThreadID: "t9", Timestamp: 9, Author: "Acme", Subject: "alpha"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+
+	// open the cursor message: the search row's thread (t9)
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t9", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the body", Kind: core.LineBody}},
+	})
+	if m.mode != "pager" || m.pager == nil || !strings.Contains(pagerText(m.pager), "the body") {
+		t.Fatalf("open must show the pager on the search tab: mode=%q", m.mode)
+	}
+
+	// tab to the mail surface: it must show its OWN index, not the
+	// search tab's open message
+	m = press(t, m, "]")
+	if m.tabIdx != 0 {
+		t.Fatalf("] must land on the mail surface: idx=%d", m.tabIdx)
+	}
+	if m.mode != "index" {
+		t.Fatalf("mail surface must not inherit the search tab's pager: mode=%q", m.mode)
+	}
+
+	// tab back to the search tab: the open pager must be restored
+	m = press(t, m, "]")
+	if m.tabIdx != 1 || m.activeView() != m.searchTabs[0] {
+		t.Fatalf("] must return to the search tab: idx=%d", m.tabIdx)
+	}
+	if m.mode != "pager" || m.pager == nil || !strings.Contains(pagerText(m.pager), "the body") {
+		t.Fatalf("returning to the search tab must restore its pager: mode=%q", m.mode)
+	}
+}
+
 func TestReplyKeyOpensDialogue(t *testing.T) {
 	got := ""
 	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })

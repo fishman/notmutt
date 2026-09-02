@@ -133,6 +133,12 @@ type Model struct {
 	pan   *panState
 	mode  string // "index" default; "pager" while a thread is open
 	pager *pager
+	// pagerHome is the view whose surface the open pager belongs to
+	// (the mail surface or the search tab that launched the open):
+	// attachTab re-enters pager mode only over that surface, so a
+	// message opened in one tab never shows over another index surface
+	// (the wrong-mail regression the goto key papers over).
+	pagerHome *core.View
 	// renderMode is the pager's requested view (toggle-render/source
 	// keys): plain parts, rendered html, or raw source. renderMime is the
 	// last reply's mime label for the status bar; showHeaders the h key's
@@ -947,7 +953,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// folder, and attachTab would re-enter pager mode over the new
 		// view's list (the wrong-mail regression).
 		m.preview, m.previewThread, m.previewTitle = false, "", ""
-		m.pager = nil
+		m.pager, m.pagerHome = nil, nil
 		m.tabIdx = 0
 		m.attachTab()
 		return m, nil
@@ -1756,6 +1762,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	}
 	if e.Err != nil {
 		m.mode, m.pager, m.attView = "index", nil, nil
+		m.pagerHome = nil
 		return
 	}
 	// the attView term: any message render while an attachment view is
@@ -1783,6 +1790,9 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	}
 	m.renderMime = e.Mime
 	m.mode = "pager"
+	// the pager belongs to the surface this open landed on: a later
+	// tab switch restores pager mode only over that surface
+	m.pagerHome = m.activeView()
 	// the render-images toggle is per-pager: a fresh open starts
 	// collapsed - remote images never fetch without their own press
 	m.imgMode = 0
@@ -2208,7 +2218,9 @@ func (m *Model) previewCursorThread() {
 	m.preview = true
 	m.previewThread = tid
 	m.previewTitle = subject
-	m.pager = newPager("", "", nil)
+	// the box pager has no home yet - the promotion re-opens and
+	// onThreadLoaded attaches it to the promoting surface
+	m.pager, m.pagerHome = newPager("", "", nil), nil
 	w, h := m.pagerSize()
 	m.pager.setSize(w, h, m.styles)
 	onOpen(tid, msgID, true, m.showHeaders, m.width)
@@ -2229,7 +2241,7 @@ func (m Model) previewKey(msg KeyPressMsg) (Model, Cmd) {
 			w, h := m.pagerSize()
 			m.pager.setSize(w, h, m.styles)
 		} else {
-			m.pager = nil
+			m.pager, m.pagerHome = nil, nil
 		}
 		onOpen(tid, msgID, false, m.showHeaders, m.width)
 		return m, nil
@@ -2265,7 +2277,7 @@ func (m *Model) closePreview() {
 	m.preview = false
 	m.previewThread = ""
 	m.previewTitle = ""
-	m.pager = nil
+	m.pager, m.pagerHome = nil, nil
 }
 
 // pagerSize resolves the pager window: the preview box's content area
@@ -4350,6 +4362,24 @@ func (m *Model) composeTab() *compose.State {
 	return &m.tabs[m.tabIdx-1]
 }
 
+// pagerHomeView is the view the open pager belongs to; a pager with no
+// recorded home (a restored mailPager, a fixture built outside the open
+// seam) is the mail surface's - real opens from a search tab always
+// record their home there.
+func (m *Model) pagerHomeView() *core.View {
+	if m.pagerHome != nil {
+		return m.pagerHome
+	}
+	return m.view
+}
+
+// pagerOnSurface reports whether the open pager is the attached
+// surface's own: attachTab re-enters pager mode only over the home view
+// that launched the open, never over a different index surface.
+func (m *Model) pagerOnSurface() bool {
+	return m.pager != nil && m.pagerHomeView() == m.activeView()
+}
+
 func (m *Model) attachTab() {
 	m.dialogue = nil
 	// a tab switch off the summary leaves its pager installed: restore
@@ -4375,11 +4405,16 @@ func (m *Model) attachTab() {
 	case m.activeSearchIdx() >= 0:
 		// the search tabs reuse the index surface: activeView routes
 		// the query's rows under the index bindings (q closes the tab,
-		// / and F filter the results)
-		m.mode = "index"
+		// / and F filter the results). A search tab shows the pager only
+		// when the pager is its own (a mail opened there).
+		if m.pagerOnSurface() {
+			m.mode = "pager"
+		} else {
+			m.mode = "index"
+		}
 	case m.tabIdx > 0:
 		m.mode = "compose"
-	case m.pager != nil:
+	case m.pagerOnSurface():
 		m.mode = "pager"
 	default:
 		m.mode = "index"
@@ -4408,6 +4443,11 @@ func (m *Model) closeTab(i int, search bool) {
 		}
 		m.summary = nil
 	} else if search {
+		// a pager parked on the closed tab dies with it: no surface
+		// left to show it, and a dangling home would hide it forever
+		if m.pagerHome == m.searchTabs[i] {
+			m.pager, m.pagerHome = nil, nil
+		}
 		m.searchTabs = append(m.searchTabs[:i], m.searchTabs[i+1:]...)
 		i += len(m.tabs)
 	} else {

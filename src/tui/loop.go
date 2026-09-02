@@ -35,6 +35,37 @@ func Run(model Model, quitCh <-chan struct{}) error {
 	return runLoop(model, s, quitCh)
 }
 
+// gatedTicker is a loop-owned ticker that runs only while its gate
+// holds: sync() arms or stops it each loop turn; ch carries ticks while
+// armed (nil blocks the select arm). One per cadence.
+type gatedTicker struct {
+	every time.Duration
+	gate  func() bool
+	ch    <-chan time.Time
+	tk    *time.Ticker
+}
+
+// sync arms or stops the ticker to match the gate.
+func (g *gatedTicker) sync() {
+	if g.gate() {
+		if g.tk == nil {
+			g.tk = time.NewTicker(g.every)
+			g.ch = g.tk.C
+		}
+	} else if g.tk != nil {
+		g.stop()
+	}
+}
+
+// stop drains and releases the ticker (ch goes nil, the arm goes inert).
+func (g *gatedTicker) stop() {
+	if g.tk != nil {
+		g.tk.Stop()
+		g.tk = nil
+		g.ch = nil
+	}
+}
+
 // runLoop is the event loop (decision record 23 - the tea runtime is
 // gone): events come from the screen, the model's cmds run on
 // goroutines with their messages back on cmdCh, quitCh is the app's
@@ -60,30 +91,19 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	pushFrame(s, m.View(), x, y, show)
 	// tcell v3's event pump: the Screen owns the EventQ channel (the ChannelEvents forwarder is gone in v3); it stays open until Fini, so quitting still comes from quitCh or the model's quitMsg.
 	evCh := s.EventQ()
-	// the status spinner's cadence: a loop-owned ticker gated by busy().
-	// A cmd-batched tick shared its goroutine with the bus reader, so an
-	// idle sync (quiet bus) froze the spinner and a tick delivered in
-	// the same batch as a real event ate that event's full-repaint
-	// request. Delivered on its own select arm, the tick is never
-	// batched - it can only drop the every-update paint default, never a
-	// real event's render request.
-	var spinC <-chan time.Time
-	var spinTicker *time.Ticker
-	stopSpin := func() {
-		if spinTicker != nil {
-			spinTicker.Stop()
-			spinTicker = nil
-			spinC = nil
-		}
-	}
-	defer stopSpin()
+	// Loop-owned cadence tickers, gated and on their own select arms.
+	// A cmd-batched tick shares the bus reader's goroutine, so its sleep
+	// holds the next bus event (the status auto-clear's 5s expiry held
+	// opens ~5s late); on its own arm a tick is never batched with a
+	// real event.
+	spin := &gatedTicker{every: statusSpinTickInterval, gate: func() bool { return m.busy() }}
+	status := &gatedTicker{every: statusClearInterval, gate: func() bool { return m.statusClearPending() }}
+	progress := &gatedTicker{every: progressTickInterval, gate: func() bool { return m.progressOn }}
+	defer func() { spin.stop(); status.stop(); progress.stop() }()
 	for {
-		if m.busy() && spinTicker == nil {
-			spinTicker = time.NewTicker(statusSpinTickInterval)
-			spinC = spinTicker.C
-		} else if !m.busy() && spinTicker != nil {
-			stopSpin()
-		}
+		spin.sync()
+		status.sync()
+		progress.sync()
 		var msgs []any
 		select {
 		case ev := <-evCh:
@@ -122,8 +142,14 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 				m, cmd = m.Update(msg)
 				run(cmd)
 			}
-		case <-spinC: // nil blocks; armed, fires the tick on its own cadence
+		case <-spin.ch: // nil blocks; armed, fires the tick on its own cadence
 			m, cmd = m.Update(statusSpinTick{})
+			run(cmd)
+		case <-status.ch: // the status auto-clear's own arm - never batched with the bus reader
+			m, cmd = m.Update(statusTick{})
+			run(cmd)
+		case <-progress.ch: // the progress bar's cadence while a job is on
+			m, cmd = m.Update(progressTick{})
 			run(cmd)
 		case <-quitCh:
 			return nil

@@ -51,7 +51,8 @@ func TestScanVisible(t *testing.T) {
 	if len(rows) != 1 || len(rows[0].Msg.Atts) != 1 || rows[0].Msg.Atts[0].Name != "f.bin" {
 		t.Fatalf("view must carry the scanned atts: %+v", rows)
 	}
-	readProgress(t, ch) // the scan publishes progress after its CacheResult
+	readProgress(t, ch) // the scan publishes its per-row progress after the CacheResult...
+	readProgress(t, ch) // ...then the terminal (R15); both drain before the second pass
 
 	// A filled row is skipped by scanVisible, so reset the message to the
 	// fresh re-fetch state (empty Atts, same path); the second pass then

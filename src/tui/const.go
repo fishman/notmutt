@@ -20,6 +20,9 @@ const (
 	// statusSpinTickInterval: the status-line spinner's frame cadence
 	// while the client is busy (R15).
 	statusSpinTickInterval = 120 * time.Millisecond
+	// statusClearInterval: the status auto-clear's expiry-check cadence
+	// while a clearable message is up (the loop's gated arm).
+	statusClearInterval = 250 * time.Millisecond
 	// addrDebounce: a Tab storm coalesces into one address harvest after
 	// the last trigger (the legendDebounce pattern).
 	addrDebounce = 40 * time.Millisecond

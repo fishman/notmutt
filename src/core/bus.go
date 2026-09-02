@@ -452,13 +452,34 @@ type TagStaged struct {
 	Ops      []TagOp
 }
 
+// ProgressKind is a background job's progress lifecycle (R15): a job
+// publishes Updates as batches land (the bar advances and never clears
+// on one), then one terminal kind. The bar clears only on a terminal,
+// so a batch reaching Done==Total - a walk outgrowing a stale count, a
+// cache rescan finishing under a walk - never reads as the end.
+type ProgressKind uint8
+
+const (
+	// ProgressUpdate marks one completed batch; the job continues. A
+	// job that forgets its terminal fails loud (a stuck bar) instead of
+	// silent early clear - the zero value is Update.
+	ProgressUpdate ProgressKind = iota
+	// ProgressDone marks a clean job end.
+	ProgressDone
+	// ProgressFailed marks a job that ended in error.
+	ProgressFailed
+)
+
 // Progress reports a background job's batch progress (R15); jobs
 // report their own totals - the worker action loop is not a progress
 // source. View scopes progress per virtual folder; the TUI shows only
-// the current view's bar.
+// the current view's bar. Kind Update may carry Done==Total when a job
+// outgrows its reported total - the bar renders full and stays up
+// until the terminal.
 type Progress struct {
 	Job   string
 	View  string
+	Kind  ProgressKind
 	Done  int
 	Total int
 }

@@ -624,6 +624,16 @@ func sized(m Model) Model {
 	return m
 }
 
+// busModel wires an empty inbox model to a fresh bus: tests publish on
+// the bus and pump the returned channel, the real-loop event path (the
+// progress-bar tests use this shape).
+func busModel() (Model, *core.Bus, <-chan core.Event) {
+	view := core.NewView("inbox", "tag:inbox")
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	return sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI)), bus, ch
+}
+
 // stubOpenHandler parks the thread-open seam at a no-op (tests that do
 // not exercise opening), restoring it on test end.
 func stubOpenHandler(t *testing.T) {
@@ -1264,7 +1274,7 @@ func TestProgressBarRendersAndClears(t *testing.T) {
 	if !strings.Contains(stripANSI(out), statusMarker("2")) {
 		t.Fatalf("status line missing view + count:\n%s", out)
 	}
-	m = pressEvent(t, m, core.Progress{Job: "refresh", Done: 10, Total: 10})
+	m = pressEvent(t, m, core.Progress{Job: "refresh", Kind: core.ProgressDone, Done: 10, Total: 10})
 	if strings.Contains(m.View(), "refresh 10/10") {
 		t.Fatal("bar must clear on completion")
 	}
@@ -1533,10 +1543,7 @@ func hasTag(tags []string, tag string) bool {
 // dropped from the channel under backpressure still clears the bar via
 // the tick.
 func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
-	view := core.NewView("inbox", "tag:inbox")
-	bus := core.NewBus()
-	ch := bus.Subscribe()
-	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
+	m, bus, ch := busModel()
 
 	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 33, Total: 37})
 	m = pump(t, m, ch)
@@ -1548,7 +1555,7 @@ func TestProgressBarSurvivesDroppedCompletion(t *testing.T) {
 	for i := 0; i < 64; i++ {
 		bus.Publish(core.ViewDiff{View: "inbox"})
 	}
-	bus.Publish(core.Progress{Job: "cache", View: "inbox", Done: 37, Total: 37})
+	bus.Publish(core.Progress{Job: "cache", View: "inbox", Kind: core.ProgressDone, Done: 37, Total: 37})
 	for i := 0; i < 64; i++ {
 		m = pump(t, m, ch)
 	}
@@ -1581,10 +1588,7 @@ func pump(t *testing.T, m Model, ch <-chan core.Event) Model {
 // folder (account, unread, sent, drafts - every view has its own fill)
 // never turns on this view's bar; only the current view's snapshot does.
 func TestProgressBarPerView(t *testing.T) {
-	view := core.NewView("inbox", "tag:inbox")
-	bus := core.NewBus()
-	ch := bus.Subscribe()
-	m := sized(New(view, ch, testBindings(), testTagActions(), bus, config.NewStore(config.Default()), config.Default().UI))
+	m, bus, ch := busModel()
 
 	// another view's fill publishes: the inbox bar stays off
 	bus.Publish(core.Progress{Job: "refresh", View: "unread", Done: 1, Total: 5})
@@ -1602,10 +1606,65 @@ func TestProgressBarPerView(t *testing.T) {
 		t.Fatalf("bar must show this view's progress:\n%s", m.View())
 	}
 	// completion clears only this view's bar
-	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 5, Total: 5})
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Kind: core.ProgressDone, Done: 5, Total: 5})
 	m = pump(t, m, ch)
 	if m.progressOn {
 		t.Fatal("bar must clear on this view's completion")
+	}
+}
+
+// TestProgressBarOwnerSurvivesOtherJobEnd pins the flash fix: a cache
+// rescan finishing under a refresh walk publishes its own terminal, but
+// the walk owns the bar - a non-owner terminal must not clear it. Only
+// the owner's terminal does.
+func TestProgressBarOwnerSurvivesOtherJobEnd(t *testing.T) {
+	m, bus, ch := busModel()
+
+	// the refresh walk owns the bar after its first chunk
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 1, Total: 100})
+	m = pump(t, m, ch)
+	if !m.progressOn {
+		t.Fatal("the walk must own the bar after its first chunk")
+	}
+	// a cache rescan under the walk ends: its Done burst must not clear it
+	bus.Publish(core.Progress{Job: "cache", View: "inbox", Kind: core.ProgressDone, Done: 37, Total: 37})
+	m = pump(t, m, ch)
+	if !m.progressOn {
+		t.Fatal("another job's terminal must not clear the owner's bar")
+	}
+	// the walk advances and still owns the bar
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 2, Total: 100})
+	m = pump(t, m, ch)
+	if !m.progressOn || !strings.Contains(m.View(), "refresh 2/100") {
+		t.Fatalf("the walk must keep its bar:\n%s", m.View())
+	}
+	// only the owner's own terminal clears
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Kind: core.ProgressDone, Done: 100, Total: 100})
+	m = pump(t, m, ch)
+	if m.progressOn {
+		t.Fatal("the owner's terminal must clear the bar")
+	}
+}
+
+// TestProgressBarUpdateAtTotalStays pins the ratio-clears bug: a batch
+// Update reaching Done==Total (a walk outgrowing a stale count, a cache
+// rescan's last row) must not read as the end - the bar stays up until
+// the job's own terminal.
+func TestProgressBarUpdateAtTotalStays(t *testing.T) {
+	m, bus, ch := busModel()
+
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Done: 100, Total: 100})
+	m = pump(t, m, ch)
+	if !m.progressOn {
+		t.Fatal("an Update at Done==Total must not clear the bar")
+	}
+	if !strings.Contains(m.View(), "refresh 100/100") {
+		t.Fatalf("the bar must render full:\n%s", m.View())
+	}
+	bus.Publish(core.Progress{Job: "refresh", View: "inbox", Kind: core.ProgressDone, Done: 100, Total: 100})
+	m = pump(t, m, ch)
+	if m.progressOn {
+		t.Fatal("the terminal must clear the bar")
 	}
 }
 

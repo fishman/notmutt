@@ -341,11 +341,14 @@ func (r *refresher) fullReload() {
 // fill progress, then runs onChunk with the snapshot (the merge and the
 // diff) - the chunk is reported as soon as it lands. An empty chunk
 // publishes nothing: a count/catalog race that empties the result must
-// not leave a stuck bar at Done 0. An empty result still merges once
-// (empty query = empty view - removals reconcile via the full snapshot
-// replacement). The emit closure runs on the worker goroutine inside
-// the Call, so the view state it touches is race-free. fullReload's
-// phase 2 and the search tab (runSearchQuery) share this shape.
+// not leave a stuck bar at Done 0. The walk's end publishes the
+// terminal (R15) - a walk that emitted chunks ends in Done, an errored
+// walk ends in Failed; done==0 (empty result) never lit a bar, so it
+// publishes neither. An empty result still merges once (empty query =
+// empty view - removals reconcile via the full snapshot replacement).
+// The emit closure runs on the worker goroutine inside the Call, so the
+// view state it touches is race-free. fullReload's phase 2 and the
+// search tab (runSearchQuery) share this shape.
 func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job string, onChunk func(snapshot []*core.Thread, done int)) {
 	var snapshot []*core.Thread
 	flat := view.ViewFlat()
@@ -356,17 +359,19 @@ func mergeWalk(worker workerAPI, bus *core.Bus, view *core.View, total int, job 
 		snapshot = mergeSorted(snapshot, page)
 		done += len(page)
 		if len(page) > 0 {
-			if total <= 0 {
-				bus.Publish(core.Progress{Job: job, View: view.ViewName(), Done: done, Total: done})
-			} else {
-				bus.Publish(core.Progress{Job: job, View: view.ViewName(), Done: done, Total: total})
-			}
+			bus.Publish(core.Progress{Job: job, View: view.ViewName(), Kind: core.ProgressUpdate, Done: done, Total: barTotal(total, done)})
 			onChunk(snapshot, done)
 		}
 		return true
 	}})
 	if err != nil || rpl.Err != nil {
+		if done > 0 {
+			bus.Publish(core.Progress{Job: job, View: view.ViewName(), Kind: core.ProgressFailed, Done: done, Total: done})
+		}
 		return
+	}
+	if done > 0 {
+		bus.Publish(core.Progress{Job: job, View: view.ViewName(), Kind: core.ProgressDone, Done: done, Total: done})
 	}
 	if len(snapshot) == 0 {
 		onChunk(nil, 0)
@@ -395,12 +400,18 @@ func runSearchQuery(worker workerAPI, bus *core.Bus, view *core.View) {
 // paint publishes the fill progress and the diff after a merge; the
 // bar's total comes from the count query (or the batch when it failed).
 func (r *refresher) paint(total, done int) {
-	if total <= 0 {
-		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: done})
-	} else {
-		r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Done: done, Total: total})
-	}
+	r.bus.Publish(core.Progress{Job: "refresh", View: r.view.Name, Kind: core.ProgressUpdate, Done: done, Total: barTotal(total, done)})
 	mergeInto(r.bus, r.view, r.snapshot)
+}
+
+// barTotal resolves the bar's total per publish: the count query when it
+// succeeded, else the accumulated chunk size - a count/catalog race must
+// not wedge the ratio at a stale zero total.
+func barTotal(total, done int) int {
+	if total <= 0 {
+		return done
+	}
+	return total
 }
 
 // mergeInto merges the snapshot into the view in one Begin/End batch

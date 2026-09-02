@@ -187,8 +187,13 @@ type Model struct {
 	// summary is the AI summary view state (R8): the streaming job that
 	// owns the pager and the mail lines it displaced - back restores
 	// them. nil = no summary view.
-	summary    *summary
-	job        string
+	summary *summary
+	// progOwner: which job owns each view's bar, keyed by view name.
+	// The first job to publish an Update on an off view takes its bar;
+	// it keeps it until its own Done/Failed. A background job (a cache
+	// rescan) finishing under the owner never clears it - the bar's end
+	// is the owner's terminal, not any Done==Total batch.
+	progOwner  map[string]string
 	progress   core.Progress
 	progressOn bool
 	// statusMsg is the status line's last log entry (R4 send results,
@@ -196,8 +201,8 @@ type Model struct {
 	statusMsg    string
 	statusMsgErr bool
 	// statusAt/statusClearOn/statusTickOn: a non-error status message
-	// auto-clears statusTimeout after it was set (errors persist). The
-	// tick is one-shot, armed on the set (the legendTickOn gate).
+	// auto-clears statusTimeout after it was set (errors persist).
+	// statusTickOn records the loop's gated clear arm is running.
 	statusAt      time.Time
 	statusClearOn bool
 	statusTickOn  bool
@@ -344,7 +349,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, progOwner: map[string]string{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -691,15 +696,15 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		return m, nil
 	case statusTick:
-		// the status message's clear timer: a fresh non-error message
-		// re-arms it, an error or a cleared message disarms it, and a
-		// stale non-error message clears the status line.
+		// the status clear check (the loop's gated arm fires it): a
+		// fresh message waits, a stale one clears, an error never clears.
 		if !m.statusClearOn || m.statusMsgErr {
 			m.statusTickOn = false
 			return m, nil
 		}
 		if time.Since(m.statusAt) < statusTimeout {
-			return m, statusTickCmd()
+			m.paint = false // unchanged: the cadence tick must not repaint
+			return m, nil
 		}
 		m.statusMsg, m.statusMsgErr = "", false
 		m.statusClearOn, m.statusTickOn = false, false
@@ -729,11 +734,7 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		case core.ConfigChanged:
 			m.onConfig(e)
 		case core.Progress:
-			m.job = e.Job
-			if m.bus == nil {
-				m.progress = e
-				m.progressOn = e.Done < e.Total
-			}
+			m.onProgress(e)
 		case core.ThreadLoaded:
 			m.onThreadLoaded(e)
 		case core.AttachmentLoaded:
@@ -877,26 +878,23 @@ func (m Model) Update(msg any) (Model, Cmd) {
 		}
 		m.refreshProgress()
 		m.rows = m.activeView().Rows()
-		// every pending tick arms in one batch: the ticks self-rearm, so
-		// a returned cmd stays alive until its condition clears
+		// only the legend debounce rides the bus batch (its 100ms is
+		// intended settle); the status clear and progress cadence run on
+		// the loop's arms - a sleeping tick fused with the reader holds
+		// the next bus event
 		cmds := []Cmd{EventCmd(m.ch)}
 		if m.legendPending && !m.legendTickOn {
 			m.legendTickOn = true
 			cmds = append(cmds, legendTickCmd(m.legendMoves))
 		}
-		if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
+		if m.statusClearOn && !m.statusMsgErr {
 			m.statusTickOn = true
-			cmds = append(cmds, statusTickCmd())
-		}
-		if m.progressOn {
-			cmds = append(cmds, progressTickCmd())
 		}
 		return m, batch(cmds...)
 	case progressTick:
+		// the loop's gated arm drives the cadence (statusTick pattern);
+		// the snapshot re-read keeps a dropped completion clearing the bar
 		m.refreshProgress()
-		if m.progressOn {
-			return m, progressTickCmd()
-		}
 		return m, nil
 	case statusSpinTick:
 		// the status spinner's frame cadence: the loop owns the ticker
@@ -942,6 +940,8 @@ func (m *Model) anySending() bool {
 func (m Model) busy() bool {
 	return len(m.tasks) > 0 || m.progressOn || m.summary != nil || m.anySending()
 }
+
+func (m Model) statusClearPending() bool { return m.statusClearOn && !m.statusMsgErr }
 
 // dispatchAction runs a bound action with its count, then the
 // legend-tick tail. Actions with their own cmds (quit, edit) return
@@ -1580,9 +1580,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.legendTickOn = true
 		cmds = append(cmds, legendTickCmd(m.legendMoves))
 	}
-	if m.statusClearOn && !m.statusMsgErr && !m.statusTickOn {
+	if m.statusClearOn && !m.statusMsgErr {
 		m.statusTickOn = true
-		cmds = append(cmds, statusTickCmd())
 	}
 	if len(cmds) > 0 {
 		return m, batch(cmds...)
@@ -2413,18 +2412,57 @@ func pagerMsgID(p *pager) string {
 	return p.msgID
 }
 
-// refreshProgress re-reads the bus snapshot for the current job and
-// virtual folder - progress is scoped per view. The snapshot write
-// never drops, so a completion dropped from the channel still clears
-// the bar on the next tick/event (the stuck-bar failure mode).
+// onProgress tracks the per-view bar owner from the event stream and,
+// on bus-less models (tests), the display itself. The owner is the
+// first job to publish an Update on an off view; a terminal for the
+// owner ends it. Events from other jobs (a cache rescan under a walk)
+// leave the owner's bar untouched.
+func (m *Model) onProgress(e core.Progress) {
+	term := e.Kind == core.ProgressDone || e.Kind == core.ProgressFailed
+	owner := m.progOwner[e.View]
+	isOwner := owner == e.Job
+	switch {
+	case term && isOwner:
+		delete(m.progOwner, e.View)
+	case !term && !isOwner && owner == "":
+		m.progOwner[e.View] = e.Job
+	}
+	if m.bus != nil {
+		return // bus models update the display from the snapshot in refreshProgress
+	}
+	// bus-less models (tests): the event is authoritative for their
+	// single view; a non-owner event leaves the owner's display alone.
+	if term && isOwner {
+		m.progressOn = false
+	} else if !term && m.progOwner[e.View] == e.Job {
+		m.progress = e
+		m.progressOn = true
+	}
+}
+
+// refreshProgress re-reads the active view's owner snapshot - progress
+// is scoped per view and the owner (the job whose bar is up) comes
+// from the bus. The snapshot write never drops, so an owner terminal
+// dropped from the channel still clears the bar on the next tick/event
+// (the stuck-bar failure mode).
 func (m *Model) refreshProgress() {
 	if m.bus == nil {
+		return // bus-less models set the display in onProgress
+	}
+	view := m.activeView().ViewName()
+	owner := m.progOwner[view]
+	if owner == "" {
+		m.progressOn = false
 		return
 	}
-	if p, ok := m.bus.LatestProgress(m.job, m.activeView().ViewName()); ok {
-		m.progress = p
-		m.progressOn = p.Done < p.Total
+	p, ok := m.bus.LatestProgress(owner, view)
+	if !ok || p.Kind == core.ProgressDone || p.Kind == core.ProgressFailed {
+		delete(m.progOwner, view)
+		m.progressOn = false
+		return
 	}
+	m.progress = p
+	m.progressOn = true
 }
 
 // WindowSizeMsg is the terminal size report: the loop's resize events
@@ -2432,10 +2470,6 @@ func (m *Model) refreshProgress() {
 type WindowSizeMsg struct{ Width, Height int }
 
 type progressTick struct{}
-
-func progressTickCmd() Cmd {
-	return tickCmd(progressTickInterval, func(time.Time) any { return progressTick{} })
-}
 
 type statusSpinTick struct{}
 
@@ -2471,14 +2505,9 @@ func chainTickCmd() Cmd {
 	return tickCmd(chainTimeout, func(time.Time) any { return chainTick{} })
 }
 
-// statusTick expires the status message on its timer: a fresh non-error
-// message re-arms the tick, a stale one clears the status line (errors
-// never clear - they persist for investigation).
+// statusTick is the status auto-clear check, fired by the loop's gated
+// arm (errors never clear).
 type statusTick struct{}
-
-func statusTickCmd() Cmd {
-	return tickCmd(statusTimeout, func(time.Time) any { return statusTick{} })
-}
 
 // ShouldRender is the loop's paint gate: false skips the render after
 // an update, so a deferred paint lands on the frame tick instead of on

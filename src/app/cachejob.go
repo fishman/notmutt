@@ -96,7 +96,7 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 			defer func() {
 				mu.Lock()
 				done++
-				c.bus.Publish(core.Progress{Job: "cache", View: name, Done: done, Total: total})
+				c.bus.Publish(core.Progress{Job: "cache", View: name, Kind: core.ProgressUpdate, Done: done, Total: total})
 				mu.Unlock()
 			}()
 			sem <- struct{}{}
@@ -130,5 +130,11 @@ func (c *cacheJob) scanVisible(sem chan struct{}) {
 	wg.Wait()
 	if len(puts) > 0 {
 		c.cache.PutBatch(puts)
+	}
+	// the scan's end is the terminal (R15): wg.Wait is the publish
+	// barrier - every row's Update is on the bus before this lands. A
+	// total-0 scan never lit a bar and publishes nothing.
+	if total > 0 {
+		c.bus.Publish(core.Progress{Job: "cache", View: name, Kind: core.ProgressDone, Done: total, Total: total})
 	}
 }

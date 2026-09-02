@@ -177,15 +177,19 @@ func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
 
 // progressBar builds the fill and empty glyph runs for done/total at
 // the given cell budget. The glyphs are config data (R11), so the bar
-// comes back as two runs styled separately. Empty runs for a clamped
-// or zero-total job.
+// comes back as two runs styled separately. Done at or past Total (a
+// job outgrowing a stale count) renders FULL - the kind protocol, not
+// the ratio, clears the bar.
 func progressBar(ui config.UI, p core.Progress, cells int) (string, string) {
 	if cells < 0 {
 		return "", ""
 	}
 	fill := 0
-	if p.Total > 0 && p.Done < p.Total {
+	if p.Total > 0 {
 		fill = int(float64(p.Done) * float64(cells) / float64(p.Total))
+	}
+	if fill > cells {
+		fill = cells
 	}
 	return strings.Repeat(ui.Glyphs.ProgressFill, fill), strings.Repeat(ui.Glyphs.ProgressEmpty, cells-fill)
 }

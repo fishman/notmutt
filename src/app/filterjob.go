@@ -46,12 +46,22 @@ func (j *filterJob) run() {
 	defer func() { j.mu.Lock(); j.running = false; j.mu.Unlock() }()
 
 	cfg := j.st.Config()
+	last := 0 // the mover's last reported total; 0 means no bar was lit
 	changed, rep, mr, err := runFilterPipeline(j.worker, cfg, j.root, func(done, total int) {
-		j.bus.Publish(core.Progress{Job: "filter", View: j.view, Done: done, Total: total})
+		last = total
+		j.bus.Publish(core.Progress{Job: "filter", View: j.view, Kind: core.ProgressUpdate, Done: done, Total: total})
 	})
 	if err != nil {
+		if last > 0 {
+			j.bus.Publish(core.Progress{Job: "filter", View: j.view, Kind: core.ProgressFailed, Done: last, Total: last})
+		}
 		j.fail(err)
 		return
+	}
+	// the mover's end is the terminal (R15); the callback ran only for a
+	// mover that had candidates.
+	if last > 0 {
+		j.bus.Publish(core.Progress{Job: "filter", View: j.view, Kind: core.ProgressDone, Done: last, Total: last})
 	}
 	if !changed {
 		return

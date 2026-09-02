@@ -89,9 +89,11 @@ func (b *blockedBackend) Query(ctx context.Context, q string, limit int, flat bo
 			block = make(chan struct{})
 			b.block = block
 		}
+		// close entered, never clear it: the test reads the field
+		// unsynchronized, and a late read must see the closed channel
+		// rather than a nil one
 		if b.entered != nil {
 			close(b.entered)
-			b.entered = nil
 		}
 		b.mu.Unlock()
 		select {

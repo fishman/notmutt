@@ -547,7 +547,6 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, req tui.OpenReq, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
-	start := time.Now()
 	threadID, msgID := req.ThreadID, req.MsgID
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
@@ -557,7 +556,6 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 			return
 		}
-		diag.Info("open", "rows-first", false, "thread", threadID, "msgs", len(msgs), "ms", time.Since(start).Milliseconds())
 	}
 	idx := 0
 	if msgID != "" {

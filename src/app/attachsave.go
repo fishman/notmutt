@@ -325,7 +325,6 @@ func absMailPath(root, p string) string {
 // saveMessageAttachments per message. Returns one save/skip line per
 // attachment plus the tallies; the callers decide the sink.
 func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun bool) (lines []string, saved, skipped int, err error) {
-	start := time.Now()
 	var ids []string
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQueryMsgs, Query: query,
 		Emit: func(chunk []core.Message) bool {
@@ -362,7 +361,6 @@ func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun
 			}
 		}
 	}
-	diag.Info("categorize", "ids", len(ids), "snapshotted", len(rpl.Msgs), "saved", saved, "skipped", skipped, "ms", time.Since(start).Milliseconds())
 	return lines, saved, skipped, nil
 }
 

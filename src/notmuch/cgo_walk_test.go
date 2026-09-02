@@ -7,7 +7,10 @@ package notmuch
 
 import (
 	"context"
+	"errors"
 	"testing"
+
+	nm "github.com/fishman/go.notmuch"
 
 	"notmutt/lib/testutil"
 )
@@ -58,5 +61,52 @@ func TestCGOWalkExhausts(t *testing.T) {
 	}
 	if total != want {
 		t.Fatalf("walk yielded %d threads, Count says %d", total, want)
+	}
+}
+
+// TestBadQuerySurfacesRealError pins the binding error-propagation fix
+// (the MCP "unknown error occurred" report): a query that fails to parse
+// must surface notmuch's real status error, never the walk
+// constructor's NULL-collapse ErrUnknownError. "and" is a bare boolean
+// operator - the Xapian parser throws on it (unbalanced parens
+// auto-close in notmuch 0.40, so they would not reproduce).
+func TestBadQuerySurfacesRealError(t *testing.T) {
+	e := testutil.Setup(t)
+	testutil.NotmuchNew(t)
+	b := newTestBackend(t, e)
+	opens := []struct {
+		name string
+		open func() error
+	}{
+		{"full", func() error {
+			w, err := b.db.NewFullWalk("and", 0)
+			if err == nil {
+				w.Close()
+			}
+			return err
+		}},
+		{"msg", func() error {
+			w, err := b.db.NewMsgWalk("and", 0)
+			if err == nil {
+				w.Close()
+			}
+			return err
+		}},
+		{"threads", func() error {
+			w, err := b.db.NewThreadsWalk("and", 0)
+			if err == nil {
+				w.Close()
+			}
+			return err
+		}},
+	}
+	for _, o := range opens {
+		err := o.open()
+		if err == nil {
+			t.Fatalf("%s walk: a malformed query must fail to open", o.name)
+		}
+		if errors.Is(err, nm.ErrUnknownError) {
+			t.Fatalf("%s walk: malformed query surfaced as ErrUnknownError (%v), want the real notmuch status", o.name, err)
+		}
 	}
 }

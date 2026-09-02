@@ -65,18 +65,23 @@ package notmuch
 // 	int count; // threads packed so far
 // } summary_walk;
 //
-// static summary_walk *summary_walk_new(notmuch_database_t *db, const char *query_str, int limit) {
+// static summary_walk *summary_walk_new(notmuch_database_t *db, const char *query_str, int limit, int *out_status) {
+// 	*out_status = 0;
 // 	summary_walk *w = calloc(1, sizeof(*w));
 // 	if (!w) {
+// 		*out_status = -1; // allocation, no notmuch status
 // 		return NULL;
 // 	}
 // 	w->q = notmuch_query_create(db, query_str);
 // 	if (!w->q) {
+// 		*out_status = -1;
 // 		free(w);
 // 		return NULL;
 // 	}
 // 	notmuch_query_set_sort(w->q, NOTMUCH_SORT_NEWEST_FIRST);
-// 	if (notmuch_query_search_threads(w->q, &w->threads) != NOTMUCH_STATUS_SUCCESS || !w->threads) {
+// 	notmuch_status_t qs = notmuch_query_search_threads(w->q, &w->threads);
+// 	if (qs != NOTMUCH_STATUS_SUCCESS || !w->threads) {
+// 		*out_status = qs == NOTMUCH_STATUS_SUCCESS ? -1 : (int)qs;
 // 		notmuch_query_destroy(w->q);
 // 		free(w);
 // 		return NULL;
@@ -220,18 +225,23 @@ package notmuch
 // 	int count; // threads packed so far
 // } full_walk;
 //
-// static full_walk *full_walk_new(notmuch_database_t *db, const char *query_str, int limit) {
+// static full_walk *full_walk_new(notmuch_database_t *db, const char *query_str, int limit, int *out_status) {
+// 	*out_status = 0;
 // 	full_walk *w = calloc(1, sizeof(*w));
 // 	if (!w) {
+// 		*out_status = -1; // allocation, no notmuch status
 // 		return NULL;
 // 	}
 // 	w->q = notmuch_query_create(db, query_str);
 // 	if (!w->q) {
+// 		*out_status = -1;
 // 		free(w);
 // 		return NULL;
 // 	}
 // 	notmuch_query_set_sort(w->q, NOTMUCH_SORT_NEWEST_FIRST);
-// 	if (notmuch_query_search_threads(w->q, &w->threads) != NOTMUCH_STATUS_SUCCESS || !w->threads) {
+// 	notmuch_status_t qs = notmuch_query_search_threads(w->q, &w->threads);
+// 	if (qs != NOTMUCH_STATUS_SUCCESS || !w->threads) {
+// 		*out_status = qs == NOTMUCH_STATUS_SUCCESS ? -1 : (int)qs;
 // 		notmuch_query_destroy(w->q);
 // 		free(w);
 // 		return NULL;
@@ -554,19 +564,24 @@ package notmuch
 // 	free(w);
 // }
 //
-// static msg_walk *msg_walk_new(notmuch_database_t *db, const char *query_str, int limit) {
+// static msg_walk *msg_walk_new(notmuch_database_t *db, const char *query_str, int limit, int *out_status) {
+// 	*out_status = 0;
 // 	msg_walk *w = calloc(1, sizeof(*w));
 // 	if (!w) {
+// 		*out_status = -1; // allocation, no notmuch status
 // 		return NULL;
 // 	}
 // 	w->q = notmuch_query_create(db, query_str);
 // 	if (!w->q) {
+// 		*out_status = -1;
 // 		free(w);
 // 		return NULL;
 // 	}
 // 	notmuch_query_set_sort(w->q, NOTMUCH_SORT_NEWEST_FIRST);
 // 	query_apply_excludes(db, w->q);
-// 	if (notmuch_query_search_messages(w->q, &w->msgs) != NOTMUCH_STATUS_SUCCESS || !w->msgs) {
+// 	notmuch_status_t qs = notmuch_query_search_messages(w->q, &w->msgs);
+// 	if (qs != NOTMUCH_STATUS_SUCCESS || !w->msgs) {
+// 		*out_status = qs == NOTMUCH_STATUS_SUCCESS ? -1 : (int)qs;
 // 		notmuch_query_destroy(w->q);
 // 		free(w);
 // 		return NULL;
@@ -648,6 +663,16 @@ func (w *ThreadsWalk) toC() *C.summary_walk {
 	return (*C.summary_walk)(w.cptr)
 }
 
+// walkOpenErr maps a walk constructor's out_status back to the real
+// error: a non-positive status means the NULL came from allocation (no
+// notmuch failure), so ErrUnknownError is honest there.
+func walkOpenErr(st C.int) error {
+	if st <= 0 {
+		return ErrUnknownError
+	}
+	return statusErr(C.notmuch_status_t(st))
+}
+
 // NewThreadsWalk opens a progressive walk over the query's threads.
 // limit <= 0 walks the whole result.
 func (db *DB) NewThreadsWalk(query string, limit int) (*ThreadsWalk, error) {
@@ -656,9 +681,10 @@ func (db *DB) NewThreadsWalk(query string, limit int) (*ThreadsWalk, error) {
 	}
 	cq := C.CString(query)
 	defer C.free(unsafe.Pointer(cq))
-	walk := C.summary_walk_new(db.toC(), cq, C.int(limit))
+	var st C.int = -1
+	walk := C.summary_walk_new(db.toC(), cq, C.int(limit), &st)
 	if walk == nil {
-		return nil, ErrUnknownError
+		return nil, walkOpenErr(st)
 	}
 	w := &ThreadsWalk{cptr: unsafe.Pointer(walk)}
 	setGcCloseErr(w)
@@ -739,9 +765,10 @@ func (db *DB) NewFullWalk(query string, limit int) (*FullWalk, error) {
 	}
 	cq := C.CString(query)
 	defer C.free(unsafe.Pointer(cq))
-	walk := C.full_walk_new(db.toC(), cq, C.int(limit))
+	var st C.int = -1
+	walk := C.full_walk_new(db.toC(), cq, C.int(limit), &st)
 	if walk == nil {
-		return nil, ErrUnknownError
+		return nil, walkOpenErr(st)
 	}
 	w := &FullWalk{cptr: unsafe.Pointer(walk)}
 	setGcCloseErr(w)
@@ -916,9 +943,10 @@ func (db *DB) NewMsgWalk(query string, limit int) (*MsgWalk, error) {
 	}
 	cq := C.CString(query)
 	defer C.free(unsafe.Pointer(cq))
-	walk := C.msg_walk_new(db.toC(), cq, C.int(limit))
+	var st C.int = -1
+	walk := C.msg_walk_new(db.toC(), cq, C.int(limit), &st)
 	if walk == nil {
-		return nil, ErrUnknownError
+		return nil, walkOpenErr(st)
 	}
 	w := &MsgWalk{cptr: unsafe.Pointer(walk)}
 	setGcCloseErr(w)

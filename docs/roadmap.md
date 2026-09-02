@@ -120,6 +120,13 @@ the go-message decision record.
   stabilizes; the core has no UI code by design, so extraction is packaging.
 - **MIME cache compression knob** - effort S, only after measuring (R13:
   "compress first" is explicitly a future knob, not a requirement).
+- **PDF export niceties (the pager E key)** - effort S each. A second
+  export of the same message overwrites the identical YYYYMMDD-<slug>.pdf
+  name (a numeric collision suffix is the fix); the weasyprint binary path
+  is hardcoded with the required --no-http-redirects flag (a config
+  override is the fix); the save prompt picks only the destination folder,
+  the generated filename resolves app-side and is not visible before
+  commit. Pointers: src/app/export.go.
 
 ## Landed (removed from the ranks)
 

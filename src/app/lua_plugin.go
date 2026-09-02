@@ -326,10 +326,12 @@ var attachHookBudget = time.Second
 // categorizeMessage runs the plugin's categorize(handle, msg) under a
 // per-call deadline: handle fetches the attachment list via
 // get_attachments, msg carries the metadata projection (from, subject,
-// date). The return is a table of 1-based attachment ordinal to
-// category, or nil to skip the message. A deadline kill fails the call
-// (the per-call budget still bounds it) but the VM survives, so the next
-// message retries instead of disabling the plugin for the session.
+// date, domain - the lowercase From-address domain, computed in Go, not
+// parsed in the plugin). The return is a table of 1-based attachment
+// ordinal to category, or nil to skip the message. A deadline kill fails
+// the call (the per-call budget still bounds it) but the VM survives, so
+// the next message retries instead of disabling the plugin for the
+// session.
 func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -343,6 +345,7 @@ func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]stri
 	msg.RawSetString("from", lua.LString(m.From))
 	msg.RawSetString("subject", lua.LString(m.Subject))
 	msg.RawSetString("date", lua.LNumber(m.Date))
+	msg.RawSetString("domain", lua.LString(m.Domain))
 	p.vm.Push(p.categorize)
 	p.vm.Push(lua.LString(handle))
 	p.vm.Push(msg)

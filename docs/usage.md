@@ -334,8 +334,10 @@ The library helpers it draws on (`get_attachments`, `re_match`,
 `date_str`) are on the [Lua library](lua.html) page.
 
 The plugin receives an opaque mail `handle` plus the metadata-only
-projection: `msg` carries `from`, `subject`, and `date` (unix seconds)
-- never paths, ids, or content. The attachment list is fetched from
+projection: `msg` carries `from`, `subject`, `date` (unix seconds), and
+`domain` - the lowercase From-address domain (subdomains kept), computed
+in Go from the raw `from` header, never parsed in the plugin - never
+paths, ids, or content. The attachment list is fetched from
 the handle with the library command `get_attachments(handle)`, which
 returns the message's attachments as `{name, ext, mime, size, ordinal}`
 tables (`ext` is the filename extension without the dot, lowercased -
@@ -358,6 +360,7 @@ value - the client writes whatever path comes back, segment by
 segment:
 
 ```lua
+-- slug: a name made path-safe - lowercase, non-word chars to dashes.
 function slug(s)
   s = string.lower(s)
   s = s:gsub("[^%w.%-]", "-")   -- non word/dot/dash chars to a dash
@@ -365,6 +368,10 @@ function slug(s)
   return s
 end
 
+-- Rules tune the destination, never gate it: a message that matches
+-- no rule keeps the default category below, so every pdf/docx lands
+-- somewhere.
+local default_category = "other"
 local rules = {
   { from = "trip\\.com", subject = "^Flight Booking Confirmed:", category = "travel" },
   { from = "delta\\.com", subject = "boarding pass", category = "travel" },
@@ -372,19 +379,28 @@ local rules = {
 }
 
 function categorize(handle, msg)
-  local category
+  local category = default_category
   for _, r in ipairs(rules) do
     local okFrom = re_match(r.from, msg.from)
     local okSubject, err = re_match(r.subject, msg.subject)
     if not okSubject and err then return nil end
-    if okFrom and okSubject then category = r.category break end
+    if okFrom and okSubject then
+      category = r.category
+      break
+    end
   end
-  if not category then return nil end
+
+  -- msg.domain is the sender's address domain, lowercased (subdomains
+  -- kept), computed in Go - the path's sender segment. A From header
+  -- with no parseable domain is skipped.
+  if msg.domain == "" then return nil end
 
   local out = {}
   for i, att in ipairs(get_attachments(handle)) do
-    if att.mime == "application/pdf" then
-      out[i] = category .. "/" .. date_str(msg.date, "YYYY/MM") .. "/" .. slug(att.name)
+    -- ext is the filename extension, lowercased and dot-less - match
+    -- the sender's naming (pdf/docx here), not parser-reported mime
+    if att.ext == "pdf" or att.ext == "docx" then
+      out[i] = category .. "/" .. msg.domain .. "/" .. date_str(msg.date, "YYYY/MM") .. "/" .. slug(att.name)
     end
   end
   return out
@@ -398,7 +414,11 @@ pattern is `false` plus the error text, never a raise.
 `YYYY`/`MM`/`DD` token pattern as the config `layout` (default
 `YYYY/MM`) - the calendar lives in the client, not the plugin. The
 file above ships as `config/examples/lua/categorize.lua` - copy it to
-`<configdir>/lua`.
+`<configdir>/lua`. The attachments it filters on come from
+`get_attachments(handle)` (`{name, ext, mime, size, ordinal}`, see the
+[Lua library](lua.html)); an extension check covers senders whose
+parser-reported mime is empty or wrong, while `mime` stays available
+for the ones whose extension lies.
 
 The command:
 

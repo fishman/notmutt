@@ -289,6 +289,43 @@ end
 	}
 }
 
+// TestLuaMsgDomain: msg carries domain - the lowercase From-address
+// domain, computed in Go (the same senderDomain the html-view lookup
+// uses, so a subdomain or uppercase host normalizes) - so a plugin
+// builds the sender path segment without parsing the raw From header.
+func TestLuaMsgDomain(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	dir := pluginDir(t, map[string]string{"dom.lua": `
+function categorize(handle, msg)
+  return {[1] = msg.domain}
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if len(categorizeHooks) != 1 {
+		t.Fatalf("categorize hooks = %d, want 1", len(categorizeHooks))
+	}
+	cases := []struct {
+		from string
+		want string
+	}{
+		{"Trip.com <noreply@trip.com>", "trip.com"},
+		{"EN_FLIGHT@TRIP.COM", "trip.com"},
+		{"service <a@service.trip.com>", "service.trip.com"},
+		{"not an address", ""},
+	}
+	for _, c := range cases {
+		meta := AttachMeta{From: c.from, Domain: senderDomain(c.from)}
+		cats, err := categorizeHooks[0]("", meta)
+		if err != nil {
+			t.Fatalf("%q: %v", c.from, err)
+		}
+		if cats == nil || cats[1] != c.want {
+			t.Fatalf("%q: msg.domain = %v, want %q", c.from, cats, c.want)
+		}
+	}
+}
+
 // TestLuaReMatchCompileError: a bad pattern is false plus the error
 // text (single-value use keeps working), never a panic.
 func TestLuaReMatchCompileError(t *testing.T) {

@@ -40,12 +40,14 @@ func attachmentFolder(cfg config.Config) string {
 }
 
 // AttachMeta is the message projection the categorize hooks see: the
-// sender, subject, and unix date. Never paths, ids, or content (the
-// plugin boundary's data policy).
+// sender (raw From header and its lowercase address domain), subject,
+// and unix date. Never paths, ids, or content (the plugin boundary's
+// data policy).
 type AttachMeta struct {
 	From    string
 	Subject string
 	Date    int64
+	Domain  string
 }
 
 // CategorizeHook decides one message's attachment destinations: the
@@ -340,7 +342,7 @@ func attachmentPass(worker workerAPI, root, folder, layout, query string, dryRun
 	}
 	for i := range rpl.Msgs {
 		m := rpl.Msgs[i]
-		meta := AttachMeta{From: m.Author, Subject: m.Subject, Date: m.Timestamp}
+		meta := AttachMeta{From: m.Author, Subject: m.Subject, Date: m.Timestamp, Domain: senderDomain(m.Author)}
 		for _, p := range m.Paths {
 			for _, s := range saveMessageAttachments(absMailPath(root, p), meta, folder, layout, dryRun) {
 				if s.Err != nil {

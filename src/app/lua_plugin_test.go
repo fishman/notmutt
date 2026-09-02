@@ -87,8 +87,8 @@ end
 
 // TestLuaBodyRenderDeadlineFallsBack: a busy-looping body_render is
 // killed by the chain deadline via SetContext, the open completes with
-// the un-hooked render, and the disabled plugin fails fast on later
-// calls instead of hanging them.
+// the un-hooked render - the fallback holds per call, the plugin is not
+// disabled.
 func TestLuaBodyRenderDeadlineFallsBack(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
@@ -295,8 +295,8 @@ end
 }
 
 // TestLuaCategorizeDeadline: a busy-looping categorize is killed by the
-// per-call budget, the VM is closed, and the disabled plugin fails fast
-// on later calls.
+// per-call budget every call - bounded, never a session disable. The VM
+// survives the kill, so the plugin keeps retrying instead of dying.
 func TestLuaCategorizeDeadline(t *testing.T) {
 	saved := categorizeHooks
 	defer func() { categorizeHooks = saved }()
@@ -309,11 +309,41 @@ function categorize(handle, msg)
 end
 `})
 	loadLuaPlugins(dir, nil)
-	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil {
-		t.Fatal("a busy loop must be killed by the budget")
+	for i := 0; i < 2; i++ {
+		if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil || strings.Contains(err.Error(), "not loaded") {
+			t.Fatalf("call %d: a busy loop must be killed per-call, got %v", i, err)
+		}
 	}
-	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatal("a killed plugin must fail fast")
+}
+
+// TestLuaCategorizeRecovers: a deadline kill must not disable the plugin -
+// one slow call fails, the next call on the same VM succeeds.
+func TestLuaCategorizeRecovers(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	savedBudget := attachHookBudget
+	attachHookBudget = 50 * time.Millisecond
+	defer func() { attachHookBudget = savedBudget }()
+	dir := pluginDir(t, map[string]string{"slow.lua": `
+local slow = true
+function categorize(handle, msg)
+  if slow then
+    slow = false
+    while true do end
+  end
+  return {"inbox"}
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if _, err := categorizeHooks[0]("", AttachMeta{}); err == nil {
+		t.Fatal("the slow first call must be killed by the budget")
+	}
+	cats, err := categorizeHooks[0]("", AttachMeta{})
+	if err != nil {
+		t.Fatalf("the second call must succeed after the kill: %v", err)
+	}
+	if cats[1] != "inbox" {
+		t.Fatalf("recovered categorize = %v, want {1: inbox}", cats)
 	}
 }
 
@@ -391,7 +421,8 @@ end
 }
 
 // TestLuaRefreshDeadline: a busy-looping refresh is killed by the hook
-// budget, the VM is closed, and the disabled plugin fails fast.
+// budget every call - bounded, never a session disable. The VM survives
+// the kill, so the next poll retries instead of dying.
 func TestLuaRefreshDeadline(t *testing.T) {
 	saved := refreshHooks
 	defer func() { refreshHooks = saved }()
@@ -404,12 +435,12 @@ function refresh(ctx)
 end
 `})
 	loadLuaPlugins(dir, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	if _, err := refreshHooks[0](ctx, RefreshCtx{}); err == nil {
-		t.Fatal("a busy loop must be killed by the budget")
-	}
-	if _, err := refreshHooks[0](context.Background(), RefreshCtx{}); err == nil || !strings.Contains(err.Error(), "disabled") {
-		t.Fatal("a killed plugin must fail fast")
+	for i := 0; i < 2; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_, err := refreshHooks[0](ctx, RefreshCtx{})
+		cancel()
+		if err == nil || strings.Contains(err.Error(), "not loaded") {
+			t.Fatalf("call %d: a busy loop must be killed per-call, got %v", i, err)
+		}
 	}
 }

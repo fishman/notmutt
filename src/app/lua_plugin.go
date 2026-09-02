@@ -248,22 +248,17 @@ func openSandboxLibs(vm *lua.LState, path string) error {
 
 // renderBody runs the plugin's body_render under the chain context.
 // SetContext is the kill switch: a deadline aborts the VM mid-loop, the
-// hook fails, and the chain falls back to the un-hooked render. A
-// deadline kill leaves the VM unusable, so the plugin is disabled
-// (dropped VM, every later call fails fast) - a wedged plugin degrades
-// to the fallback, it never takes the open down.
+// hook fails, and the chain falls back to the un-hooked render. The VM
+// survives a kill (PCall unwinds the stack), so the next call retries -
+// a wedged plugin costs the per-call deadline, never the session.
 func (p *luaPlugin) renderBody(ctx context.Context, lines []core.Line) ([]core.Line, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.vm == nil {
-		return nil, fmt.Errorf("lua plugin disabled after a deadline kill")
+		return nil, fmt.Errorf("lua plugin not loaded")
 	}
 	p.vm.SetContext(ctx)
 	out, err := p.callBodyRender(lines)
-	if err != nil && ctx.Err() != nil {
-		p.vm.Close()
-		p.vm = nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -328,13 +323,14 @@ var attachHookBudget = time.Second
 // per-call deadline: handle fetches the attachment list via
 // get_attachments, msg carries the metadata projection (from, subject,
 // date). The return is a table of 1-based attachment ordinal to
-// category, or nil to skip the message. A deadline kill closes the VM
-// and disables the plugin (the render path's fail-fast).
+// category, or nil to skip the message. A deadline kill fails the call
+// (the per-call budget still bounds it) but the VM survives, so the next
+// message retries instead of disabling the plugin for the session.
 func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.vm == nil {
-		return nil, fmt.Errorf("lua plugin disabled after a deadline kill")
+		return nil, fmt.Errorf("lua plugin not loaded")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), attachHookBudget)
 	defer cancel()
@@ -347,10 +343,6 @@ func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]stri
 	p.vm.Push(lua.LString(handle))
 	p.vm.Push(msg)
 	err := p.vm.PCall(2, 1, nil)
-	if err != nil && ctx.Err() != nil {
-		p.vm.Close()
-		p.vm = nil
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -386,13 +378,13 @@ func (p *luaPlugin) categorizeMessage(handle string, m AttachMeta) (map[int]stri
 // refreshCmd runs the plugin's refresh(ctx) under the hook deadline: ctx
 // carries the active view and, for an account view, the account tag and
 // config name. The return is an argv table to run before the poll (mbsync
-// <account>), or nil/false for a plain poll. A deadline kill closes the VM
-// and disables the plugin (the render path's fail-fast).
+// <account>), or nil/false for a plain poll. A deadline kill fails the call
+// but the VM survives, so the next poll retries.
 func (p *luaPlugin) refreshCmd(ctx context.Context, rc RefreshCtx) ([]string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.vm == nil {
-		return nil, fmt.Errorf("lua plugin disabled after a deadline kill")
+		return nil, fmt.Errorf("lua plugin not loaded")
 	}
 	p.vm.SetContext(ctx)
 	t := p.vm.NewTable()
@@ -404,10 +396,6 @@ func (p *luaPlugin) refreshCmd(ctx context.Context, rc RefreshCtx) ([]string, er
 	p.vm.Push(p.refresh)
 	p.vm.Push(t)
 	err := p.vm.PCall(1, 1, nil)
-	if err != nil && ctx.Err() != nil {
-		p.vm.Close()
-		p.vm = nil
-	}
 	if err != nil {
 		return nil, err
 	}

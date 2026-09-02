@@ -102,6 +102,7 @@ opener = ["xdg-open"]
 "ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "c" = { fun = "categorize", desc = "Categorize the thread's attachments", show = true }
 "C" = { fun = "collapse-thread", desc = "Collapse or expand the thread under the cursor", show = true }
+"E" = { fun = "export-pdf", desc = "Save the message as a PDF", show = true }
 "ctrl+v" = { fun = "collapse-all", desc = "Flatten or expand every thread", show = true }
 "z" = { fun = "toggle-flat", desc = "Toggle the thread tree / flat display", show = true }
 "g g" = { fun = "cursor-top", desc = "Jump to the first row" }
@@ -153,6 +154,7 @@ opener = ["xdg-open"]
 "v" = { fun = "attachments", desc = "List the message's attachments", show = true }
 "V" = { fun = "toggle-render", desc = "Switch between the HTML and text view", show = true }
 "s" = { fun = "save-attachment", desc = "Save the viewed attachment", show = true }
+"E" = { fun = "export-pdf", desc = "Save the message as a PDF", show = true }
 "ctrl+u" = { fun = "show-source", desc = "Show the raw HTML source", show = true }
 "F" = { fun = "open-links", desc = "Open a link by number", show = true }
 "H" = { fun = "open-headers", desc = "Toggle the full header block", show = true }
@@ -248,6 +250,7 @@ opener = ["xdg-open"]
 "ctrl+s" = { fun = "search", desc = "Search the index", show = true }
 "ctrl+f" = { fun = "search-tab", desc = "Search notmuch (new tab)", show = true }
 "A" = { fun = "ai-commands", desc = "Run an AI command on this thread", show = true }
+"E" = { fun = "export-pdf", desc = "Save the message as a PDF", show = true }
 
 [schemes.emacs.pager]
 "ctrl+n" = { fun = "scroll-down" }
@@ -271,6 +274,7 @@ opener = ["xdg-open"]
 "alt+r" = { fun = "toggle-render", desc = "Switch between the HTML and text view" }
 "v" = { fun = "attachments", desc = "List the message's attachments" }
 "s" = { fun = "save-attachment", desc = "Save the viewed attachment" }
+"E" = { fun = "export-pdf", desc = "Save the message as a PDF" }
 "F" = { fun = "open-links", desc = "Open a link by number" }
 "H" = { fun = "open-headers", desc = "Toggle the full header block" }
 "enter" = { fun = "open" }

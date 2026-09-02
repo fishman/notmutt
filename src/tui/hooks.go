@@ -80,6 +80,15 @@ func SetAttachmentSaveHandler(fn func(string, string, int, string)) {
 	onAttachmentSave = fn
 }
 
+// onExportPdf is the pager-export seam (the E key): the app renders the
+// message to a PDF at the committed path (a folder yields a generated
+// YYYYMMDD-name inside it), publishing ExportPdfResult; a no-op default.
+var onExportPdf = func(threadID, msgID, path string) {}
+
+func SetExportPdfHandler(fn func(string, string, string)) {
+	onExportPdf = fn
+}
+
 // onImageFetch is the image-fetch seam (the render-images remote mode): the app fetches the http(s) src and publishes ImageFetched; a no-op default.
 var onImageFetch = func(url string) {}
 

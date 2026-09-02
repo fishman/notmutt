@@ -219,6 +219,12 @@ func Run() error {
 		go saveAttachment(worker, bus, views, threadID, msgID, ordinal, path)
 	})
 
+	// the pager export (the E key): the generic export job, pdf the form
+	// the key fires (export.go)
+	tui.SetExportPdfHandler(func(threadID, msgID, path string) {
+		go exportMessage(worker, bus, views, threadID, msgID, path, "pdf")
+	})
+
 	// the categorize hotkey (the index c key): the attachment-category
 	// pass over the cursor thread's messages, published as
 	// CategorizeResult (the save/skip lines for the log)

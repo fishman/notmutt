@@ -315,6 +315,16 @@ type AttachmentSaved struct {
 	Err  error
 }
 
+// ExportPdfResult carries a PDF export outcome (the E key): the written
+// path, or the error the TUI surfaces. ThreadID echoes the exported
+// message's thread so the TUI auto-advance never jumps a thread the
+// cursor has left.
+type ExportPdfResult struct {
+	ThreadID string
+	Path     string
+	Err      error
+}
+
 // ImageFetched carries one remote image fetch (the render-images
 // remote mode): the bytes for the URL, or the error - the TUI attaches
 // them to the image lines. Data is an image blob, never message text

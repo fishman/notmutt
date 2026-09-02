@@ -555,6 +555,126 @@ func TestOpenReplyPagerTargetsVisibleMsg(t *testing.T) {
 	}
 }
 
+// TestModelExportDialog pins the E export flow: the pager key opens the
+// save-style prompt prefilled with the export folder, and enter fires the
+// export seam with that folder - the app's export job names the file.
+func TestModelExportDialog(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "hello"},
+	})})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	m.pager = newPager("t1", "a", nil)
+	m.mode = "pager"
+	var gotTID, gotMsgID, gotPath string
+	SetExportPdfHandler(func(threadID, msgID, path string) {
+		gotTID, gotMsgID, gotPath = threadID, msgID, path
+	})
+	defer func() { SetExportPdfHandler(func(string, string, string) {}) }()
+
+	m = press(t, m, "E")
+	td, ok := m.dialogue.(*textDialogue)
+	if !ok || td.field != "exportpdf" {
+		t.Fatalf("E must open the export prompt, got %+v", m.dialogue)
+	}
+	want := compose.ExpandHome(config.Default().Attachments.Folder) + "/"
+	if td.input != want {
+		t.Fatalf("the export prompt must prefill the export folder, got %q want %q", td.input, want)
+	}
+	m = press(t, m, "enter")
+	if gotTID != "t1" || gotMsgID != "a" || gotPath != want {
+		t.Fatalf("enter must fire the export seam with the folder, got %q %q %q", gotTID, gotMsgID, gotPath)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("the committed export prompt must close, got %+v", m.dialogue)
+	}
+}
+
+// TestExportFromIndex pins the E key's index reach: the pager-only key
+// also fires from the index, exporting the cursor row's message through
+// the same dialogue and seam.
+func TestExportFromIndex(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("tA", []*core.Message{{ID: "a", Timestamp: 200, Author: "Ann", Subject: "alpha", Tags: []string{"inbox"}}}),
+		core.NewThread("tB", []*core.Message{{ID: "b", Timestamp: 100, Author: "Bob", Subject: "beta", Tags: []string{"inbox"}}}),
+	})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	var gotTID, gotMsgID, gotPath string
+	SetExportPdfHandler(func(threadID, msgID, path string) {
+		gotTID, gotMsgID, gotPath = threadID, msgID, path
+	})
+	defer func() { SetExportPdfHandler(func(string, string, string) {}) }()
+
+	m = press(t, m, "E")
+	td, ok := m.dialogue.(*textDialogue)
+	if !ok || td.field != "exportpdf" {
+		t.Fatalf("E in the index must open the export prompt, got %+v", m.dialogue)
+	}
+	want := compose.ExpandHome(config.Default().Attachments.Folder) + "/"
+	m = press(t, m, "enter")
+	if gotTID != "tA" || gotMsgID != "a" || gotPath != want {
+		t.Fatalf("enter must fire the export seam for the cursor message, got %q %q %q", gotTID, gotMsgID, gotPath)
+	}
+	if m.dialogue != nil {
+		t.Fatalf("the committed export prompt must close, got %+v", m.dialogue)
+	}
+}
+
+// TestExportAdvanceToNextLine pins the E auto-advance: the dispatch
+// fires without moving, and a clean ExportPdfResult advances the cursor
+// one row (the categorize auto-advance sibling), so repeated E presses
+// walk the list.
+func TestExportAdvanceToNextLine(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "E") // export the cursor thread (row 0)
+	if m.CursorIndex() != 0 {
+		t.Fatalf("the E dispatch must not move the cursor, idx=%d", m.CursorIndex())
+	}
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ExportPdfResult{ThreadID: "tA", Path: "/exports/a.pdf"})
+	if m.CursorIndex() != 1 {
+		t.Fatalf("a clean export must advance to the next line, idx=%d", m.CursorIndex())
+	}
+}
+
+// TestExportPagerAdvance pins the same auto-advance from the pager
+// surface: a clean export of the open message steps the pager on.
+func TestExportPagerAdvance(t *testing.T) {
+	m := categorizeModel()
+	m.pager = newPager("tA", "a", nil)
+	m.mode = "pager"
+	m = pressEvent(t, m, core.ExportPdfResult{ThreadID: "tA", Path: "/exports/a.pdf"})
+	if m.CursorIndex() != 1 {
+		t.Fatalf("a clean pager export must step to the next mail, idx=%d", m.CursorIndex())
+	}
+}
+
+// TestExportNoAdvanceAfterCursorMoved: a result for a thread the cursor
+// has left (the user moved mid-export) must never jump it.
+func TestExportNoAdvanceAfterCursorMoved(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "E")
+	m = press(t, m, "enter") // export tA
+	m = press(t, m, "j")     // the user moved on to tB mid-export
+	m = pressEvent(t, m, core.ExportPdfResult{ThreadID: "tA", Path: "/exports/a.pdf"})
+	if m.CursorIndex() != 1 {
+		t.Fatalf("j must land on tB, idx=%d", m.CursorIndex())
+	}
+}
+
+// TestExportNoAdvanceOnError: a failed export logs and leaves the cursor
+// put - the auto-advance fires only on a clean completion.
+func TestExportNoAdvanceOnError(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "E")
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ExportPdfResult{ThreadID: "tA", Err: errors.New("weasyprint: boom")})
+	if m.CursorIndex() != 0 {
+		t.Fatalf("a failed export must not advance the cursor, idx=%d", m.CursorIndex())
+	}
+}
+
 // TestPagerStatusShowsEditedMarker pins the edited status segment: a
 // staged tag op in the pager (stage-and-stay) must flip the edited
 // marker on the status line - a layer-cache regression (the cache
@@ -739,6 +859,57 @@ func TestCursorMoves(t *testing.T) {
 	m = press(t, m, "k")
 	if m.CursorIndex() != 0 {
 		t.Fatalf("cursor after k = %d", m.CursorIndex())
+	}
+}
+
+// categorizeModel builds two flat single-message threads (tA, tB): one
+// row each, so a one-line advance is a thread-boundary crossing.
+func categorizeModel() Model {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("tA", []*core.Message{{ID: "a", Timestamp: 200, Author: "Ann", Subject: "alpha", Tags: []string{"inbox"}}}),
+		core.NewThread("tB", []*core.Message{{ID: "b", Timestamp: 100, Author: "Bob", Subject: "beta", Tags: []string{"inbox"}}}),
+	})
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+}
+
+// TestCategorizeAdvanceToNextLine pins the c auto-advance: the async
+// pass dispatches without moving, and its CategorizeResult advances the
+// cursor one line (the mutt auto-advance sibling of the tag-op advance)
+// so repeated c presses walk the list.
+func TestCategorizeAdvanceToNextLine(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "c") // categorize tA (row 0)
+	if m.CursorIndex() != 0 {
+		t.Fatalf("the c dispatch must not move the cursor, idx=%d", m.CursorIndex())
+	}
+	m = pressEvent(t, m, core.CategorizeResult{ThreadID: "tA", Saved: 1, Lines: []string{"save other/alpha/x.pdf"}})
+	if m.CursorIndex() != 1 {
+		t.Fatalf("the completed pass must advance to the next line, idx=%d", m.CursorIndex())
+	}
+}
+
+// TestCategorizeNoAdvanceAfterCursorMoved: a result for a thread the
+// cursor has left (the user moved during the async pass) must never jump
+// the cursor.
+func TestCategorizeNoAdvanceAfterCursorMoved(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "c") // categorize tA
+	m = press(t, m, "j") // the user moved on to tB mid-pass
+	m = pressEvent(t, m, core.CategorizeResult{ThreadID: "tA", Saved: 1})
+	if m.CursorIndex() != 1 {
+		t.Fatalf("j must land on tB, idx=%d", m.CursorIndex())
+	}
+}
+
+// TestCategorizeNoAdvanceOnError: a failed pass logs and leaves the
+// cursor put - the auto-advance fires only on a successful completion.
+func TestCategorizeNoAdvanceOnError(t *testing.T) {
+	m := categorizeModel()
+	m = press(t, m, "c")
+	m = pressEvent(t, m, core.CategorizeResult{ThreadID: "tA", Err: errors.New("lock wait")})
+	if m.CursorIndex() != 0 {
+		t.Fatalf("a failed pass must not advance the cursor, idx=%d", m.CursorIndex())
 	}
 }
 

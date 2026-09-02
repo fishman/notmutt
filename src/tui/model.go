@@ -54,7 +54,7 @@ var Actions = map[string]map[string]bool{
 		"half-page-down": true, "half-page-up": true,
 		"scroll-left": true, "scroll-right": true,
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
-		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true,
+		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true, "export-pdf": true,
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true, "scheduled-list": true,
@@ -71,7 +71,7 @@ var Actions = map[string]map[string]bool{
 		"next-mail": true, "prev-mail": true,
 		"toggle-render": true, "show-source": true, "open-links": true,
 		"open-headers": true, "open": true,
-		"attachments": true, "save-attachment": true,
+		"attachments": true, "save-attachment": true, "export-pdf": true,
 		"search-tab": true,
 		// the index mail actions the pager inherits (config inherit=true)
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
@@ -803,6 +803,26 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			} else {
 				m.logEntry("saved attachment to "+e.Path, false)
 			}
+		case core.ExportPdfResult:
+			// the E key's export result: the written path or the failure
+			// surfaces on the status line; a clean export auto-advances
+			// one mail (the categorize auto-advance sibling) - only while
+			// the cursor still sits on the exported thread and no prompt
+			// is open, a result for a mail the cursor left never jumps it
+			if e.Err != nil {
+				m.logEntry("pdf export failed: "+e.Err.Error(), true)
+				break
+			}
+			m.logEntry("saved PDF to "+e.Path, false)
+			if m.dialogue == nil {
+				if tid, _ := m.exportTarget(); tid != "" && tid == e.ThreadID {
+					if m.mode == "pager" && m.pager != nil {
+						m.pagerStep(1)
+					} else if m.mode == "index" {
+						m.moveCursor(1)
+					}
+				}
+			}
 		case core.ImageFetched:
 			// a fetch reply for the remote images mode; stale replies
 			// (the mode cycled away) drop - network data never feeds
@@ -843,6 +863,16 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				m.logEntry(l, false)
 			}
 			m.logEntry(fmt.Sprintf("categorize: %d saved, %d skipped", e.Saved, e.Skipped), false)
+			// auto-advance to the next line once the pass lands (mutt
+			// auto-advance, the async sibling of the tag-op advance):
+			// only when still on the categorized thread and no prompt
+			// is open - a result for a thread the cursor left never
+			// jumps it
+			if m.mode == "index" && m.dialogue == nil {
+				if tid, _, _ := m.cursorThread(); tid == e.ThreadID {
+					m.moveCursor(1)
+				}
+			}
 		case core.FilterDone:
 			// the filter run's summary on the status line (R2); the
 			// per-file detail lives in diag
@@ -1237,6 +1267,20 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// the viewed attachment's name, enter writes it via the app
 		if m.mode == "pager" && m.attView != nil {
 			m.dialogue = &textDialogue{field: "saveatt", label: i18n.T("save attachment to: "), input: m.attView.name}
+			deferPaint()
+			deferred = true
+		}
+	case "export-pdf":
+		// the E key (pager or index): the save prompt prefills the
+		// export folder ([attachments] folder); the app's export job
+		// names the file inside the committed path. The pager exports
+		// the open message, the index the cursor row's.
+		if tid, mid := m.exportTarget(); tid != "" && mid != "" {
+			folder := m.st.Config().Attachments.Folder
+			if folder == "" {
+				folder = config.DefaultAttachFolder
+			}
+			m.dialogue = &textDialogue{field: "exportpdf", label: i18n.T("export PDF to: "), input: compose.ExpandHome(folder) + "/"}
 			deferPaint()
 			deferred = true
 		}
@@ -2240,6 +2284,19 @@ func (m *Model) cursorThread() (tid, msgID, subject string) {
 		msgID = row.Msg.ID
 	}
 	return tid, msgID, subject
+}
+
+// exportTarget names the message the E key exports: the open pager
+// message, or the index cursor row's. Empty strings mean no target.
+func (m *Model) exportTarget() (tid, mid string) {
+	if m.mode == "pager" && m.pager != nil {
+		return pagerThreadID(m.pager), pagerMsgID(m.pager)
+	}
+	if m.mode == "index" {
+		tid, mid, _ := m.cursorThread()
+		return tid, mid
+	}
+	return "", ""
 }
 
 // openDispatch is the full/preview open dispatch for the active index
@@ -3976,6 +4033,17 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 		// surfaces on the status line
 		if input != "" && m.attView != nil {
 			onAttachmentSave(m.attView.threadID, m.attView.msgID, m.attView.ordinal, compose.ExpandHome(input))
+		}
+		return nil, nil
+	case "exportpdf":
+		// the E key (pager or index): the committed path goes to the
+		// app's export job (a folder yields a generated YYYYMMDD-name
+		// inside it); the target is still the dispatch-time one (the
+		// prompt is modal, the cursor cannot move while it is open)
+		if input != "" {
+			if tid, mid := m.exportTarget(); tid != "" && mid != "" {
+				onExportPdf(tid, mid, compose.ExpandHome(input))
+			}
 		}
 		return nil, nil
 	case "schedule":

@@ -10,6 +10,9 @@ other = "attach path: "
 ["save attachment to: "]
 other = "save attachment to: "
 
+["export PDF to: "]
+other = "export PDF to: "
+
 ["filter: "]
 other = "filter: "
 

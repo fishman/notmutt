@@ -85,8 +85,14 @@ func TestMCPToolExecution(t *testing.T) {
 		}
 	}
 
+	// every tool result is a record - the client reads results as such,
+	// a bare array (search) or number (count) is malformed to it
 	res := callTool(t, tools, "search", map[string]any{"query": "tag:inbox", "limit": 5})
-	rowsJSON, _ := json.MarshalIndent(res.StructuredContent, "", "  ")
+	rowsObj, ok := res.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("search must return a record, got %T", res.StructuredContent)
+	}
+	rowsJSON, _ := json.MarshalIndent(rowsObj["threads"], "", "  ")
 	rows := string(rowsJSON)
 	for _, want := range []string{`"quarterly report"`, `"status update"`, `"sender@example.com"`} {
 		if !strings.Contains(rows, want) {
@@ -95,8 +101,12 @@ func TestMCPToolExecution(t *testing.T) {
 	}
 
 	cnt := callTool(t, tools, "count", map[string]any{"query": "*"})
-	if cnt.StructuredContent != float64(2) {
-		t.Errorf("count result = %v, want 2", cnt.StructuredContent)
+	cntObj, ok := cnt.StructuredContent.(map[string]any)
+	if !ok {
+		t.Fatalf("count must return a record, got %T", cnt.StructuredContent)
+	}
+	if n, _ := cntObj["count"].(float64); n != 2 {
+		t.Errorf("count result = %v, want 2", cntObj["count"])
 	}
 
 	// the privacy pin: the Paths field and path values must never reach a
@@ -347,8 +357,8 @@ func TestMCPScopeEnforcement(t *testing.T) {
 		t.Errorf("deny-all search reached the worker (queries=%d, want the 1 scoped one)", fw.queries.Load())
 	}
 	cnt := callTool(t, denyTools, "count", map[string]any{"query": "*"})
-	if cnt.StructuredContent != float64(0) {
-		t.Errorf("deny-all count = %v, want 0", cnt.StructuredContent)
+	if cntObj, _ := cnt.StructuredContent.(map[string]any); cntObj["count"] != float64(0) {
+		t.Errorf("deny-all count = %v, want {count: 0}", cnt.StructuredContent)
 	}
 	info = callTool(t, denyTools, "thread_info", map[string]any{"thread_id": "gt"})
 	if got, _ := json.Marshal(info.StructuredContent); !strings.Contains(string(got), `"count":0`) {

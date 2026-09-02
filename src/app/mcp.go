@@ -49,11 +49,13 @@ const (
 
 // The chunks are one function expression each; the leading return makes
 // the literal valid top-level Lua (a bare function literal is a syntax
-// error at statement level).
+// error at statement level). search and count wrap their scalar into a
+// record so every tool result is a record: a client that reads tool
+// results as records rejects a bare array (search) or number (count).
 const (
 	mcpThreadInfoChunk = `return function(ctx, args) return ctx.thread_info(args.thread_id) end`
-	mcpSearchChunk     = `return function(ctx, args) return ctx.search(args.query, args.limit) end`
-	mcpCountChunk      = `return function(ctx, args) return ctx.count(args.query) end`
+	mcpSearchChunk     = `return function(ctx, args) return {threads = ctx.search(args.query, args.limit)} end`
+	mcpCountChunk      = `return function(ctx, args) return {count = ctx.count(args.query)} end`
 )
 
 // mcpToolSpec is one registry entry: the MCP-facing name/description/
@@ -91,7 +93,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	},
 	{
 		name: "search",
-		desc: "Thread summaries for a notmuch query: one row per thread with its subject, author, timestamp, and tags. Metadata only - never message content.",
+		desc: "Thread summaries for a notmuch query: one row per thread with its subject, author, timestamp, and tags, returned as {threads: [...]}. Metadata only - never message content.",
 		schema: []mcp.ToolOption{
 			mcp.WithString("query", mcp.Required(), mcp.Description("A notmuch query, e.g. tag:inbox or from:alpha")),
 			mcp.WithNumber("limit", mcp.Description("Max thread rows (1-500, default 50)")),
@@ -114,7 +116,7 @@ var mcpToolSpecs = []mcpToolSpec{
 	},
 	{
 		name: "count",
-		desc: "The thread count of a notmuch query.",
+		desc: "The thread count of a notmuch query, returned as {count: N}.",
 		schema: []mcp.ToolOption{
 			mcp.WithString("query", mcp.Required(), mcp.Description("A notmuch query")),
 		},

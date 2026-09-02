@@ -117,6 +117,42 @@ func TestBboltEmptyListHit(t *testing.T) {
 	}
 }
 
+// TestBboltSchemaVersionInvalidates pins the classifier-version guard:
+// a DB carrying an older schemaVersion clears its cached lists on open,
+// so a classifier change re-scans messages instead of serving stale
+// attachment markers (the html-only false-positive fix bumps it).
+func TestBboltSchemaVersionInvalidates(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.db")
+	c, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := Key{Path: "/m/Mail/v", Size: 1, Mtime: 1}
+	if err := c.Put(k, []core.Attachment{{Name: "stale"}}); err != nil {
+		t.Fatal(err)
+	}
+	c.Close()
+
+	// simulate a DB written by an older classifier (any older version)
+	db, err := bbolt.Open(path, 0600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket(metaBucket).Put(schemaKey, []byte("1"))
+	})
+	db.Close()
+
+	c2, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c2.Close()
+	if _, ok, _ := c2.Get(k); ok {
+		t.Fatal("stale cached lists must clear when the schema version changes")
+	}
+}
+
 // TestOpenContendedReturnsError pins the startup-hang fix: the cache
 // is single-writer (flock), so a second open must fail fast (bbolt's
 // infinite retry would hang the second instance at startup).

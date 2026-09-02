@@ -13,7 +13,15 @@ import (
 	"notmutt/core"
 )
 
-var bucket = []byte("atts")
+var (
+	bucket     = []byte("atts")
+	metaBucket = []byte("meta")
+	schemaKey  = []byte("schema")
+	// schemaVersion identifies ScanAttachments' classifier semantics: a
+	// bump clears every cached list on open, so a classifier change
+	// re-scans messages instead of showing stale attachment markers.
+	schemaVersion = []byte("2")
+)
 
 // openTimeout bounds the flock wait: bbolt's infinite retry would
 // hang a second instance, but the cache is disposable (R13) - run
@@ -31,8 +39,21 @@ func Open(path string) (*Bbolt, error) {
 		return nil, err
 	}
 	err = db.Update(func(tx *bbolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists(bucket)
-		return err
+		atts, err := tx.CreateBucketIfNotExists(bucket)
+		if err != nil {
+			return err
+		}
+		meta, err := tx.CreateBucketIfNotExists(metaBucket)
+		if err != nil {
+			return err
+		}
+		if !bytes.Equal(meta.Get(schemaKey), schemaVersion) {
+			if err := atts.ForEach(func(k, _ []byte) error { return atts.Delete(k) }); err != nil {
+				return err
+			}
+			return meta.Put(schemaKey, schemaVersion)
+		}
+		return nil
 	})
 	if err != nil {
 		db.Close()

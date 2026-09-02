@@ -37,6 +37,12 @@ func walk(m *message.Entity, atts *[]core.Attachment) {
 	if err != nil || !strings.HasPrefix(mt, "multipart/") {
 		return
 	}
+	// multipart/related (RFC 2387) aggregates the html body with the
+	// media it references - inline images are the body, never files.
+	// Nothing inside it flags the row as an attachment mail.
+	if strings.HasPrefix(mt, "multipart/related") {
+		return
+	}
 	mr := m.MultipartReader()
 	if mr == nil {
 		return
@@ -52,15 +58,31 @@ func walk(m *message.Entity, atts *[]core.Attachment) {
 		if err != nil {
 			return
 		}
-		if name := filename(p); name != "" || isAttachment(p) {
+		if isFile(p) {
 			*atts = append(*atts, core.Attachment{
-				Name:     name,
+				Name:     filename(p),
 				MimeType: p.Header.Get("Content-Type"),
 				Size:     contentLength(p.Header.Get("Content-Length")),
 			})
 		}
 		walk(p, atts)
 	}
+}
+
+// isFile tells whether a leaf part is a downloadable file - the row's
+// attachment marker. The html body is never one: a text/html part (a
+// named alternative body, Outlook's message.html) counts only under an
+// explicit Content-Disposition: attachment (a saved-page file, not a
+// body). Everything else keeps the filename rule: Content-Disposition:
+// attachment, or a part that names itself (a disposition filename or
+// the legacy Content-Type name= shape).
+func isFile(p *message.Entity) bool {
+	ct, _, err := p.Header.ContentType()
+	if err == nil && ct == "text/html" {
+		disp, _, derr := p.Header.ContentDisposition()
+		return derr == nil && strings.HasPrefix(disp, "attachment")
+	}
+	return filename(p) != "" || isAttachment(p)
 }
 
 func filename(p *message.Entity) string {

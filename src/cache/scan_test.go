@@ -91,3 +91,91 @@ func TestScanContentTypeNameParam(t *testing.T) {
 		t.Fatalf("want name= param attachment report.pdf, got %+v", atts)
 	}
 }
+
+// TestScanHtmlOnlyNoAttachment pins the html-body fix (the 2026-09
+// report): a newsletter whose only parts are the html body and its
+// inline images must not flag as an attachment mail - the related
+// container's inline media and a named alternative html half are
+// content, never files.
+func TestScanHtmlOnlyNoAttachment(t *testing.T) {
+	// multipart/related: the html body plus an image it references
+	related := `From: a@x
+Subject: t
+Content-Type: multipart/related; boundary="R"
+
+--R
+Content-Type: text/html
+
+<html>hi <img src="cid:pix"></html>
+--R
+Content-Type: image/png; name="pix.png"
+Content-Disposition: inline; filename="pix.png"
+
+DATA
+--R--
+`
+	// an alternative whose html half names itself (Outlook's
+	// message.html) - still the body, not a file
+	alt := `From: a@x
+Subject: t
+Content-Type: multipart/alternative; boundary="A"
+
+--A
+Content-Type: text/plain
+
+body
+--A
+Content-Type: text/html; name="message.html"
+
+<html>hi</html>
+--A--
+`
+	for name, raw := range map[string]string{"related": related, "alternative": alt} {
+		p := filepath.Join(t.TempDir(), name+".eml")
+		os.WriteFile(p, []byte(raw), 0600)
+		atts, err := ScanAttachments(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(atts) != 0 {
+			t.Fatalf("%s: html-only mail must carry no attachments, got %+v", name, atts)
+		}
+	}
+}
+
+// TestScanHtmlPlusRealAttachment: a genuine file beside the html body
+// still flags - the html fix must not suppress real attachments.
+func TestScanHtmlPlusRealAttachment(t *testing.T) {
+	raw := `From: a@x
+Subject: t
+Content-Type: multipart/mixed; boundary="M"
+
+--M
+Content-Type: multipart/alternative; boundary="A"
+
+--A
+Content-Type: text/plain
+
+body
+--A
+Content-Type: text/html; name="message.html"
+
+<html>hi</html>
+--A--
+--M
+Content-Type: application/pdf; name="report.pdf"
+Content-Disposition: attachment; filename="report.pdf"
+
+DATA
+--M--
+`
+	p := filepath.Join(t.TempDir(), "m.eml")
+	os.WriteFile(p, []byte(raw), 0600)
+	atts, err := ScanAttachments(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(atts) != 1 || atts[0].Name != "report.pdf" {
+		t.Fatalf("a real file beside html must still flag, got %+v", atts)
+	}
+}

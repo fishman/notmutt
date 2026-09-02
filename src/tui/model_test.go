@@ -2462,6 +2462,180 @@ func TestSearchTabPagerHome(t *testing.T) {
 	}
 }
 
+// TestOpenReplyRoutesToOriginWhileAway pins the origin echo against the
+// race it exists for: an open dispatched on a search tab lands after the
+// user tabbed to the mail surface. The reply must route to the search
+// tab (its retained open updates), never flip the mail surface's own
+// state; tabbing back to the search tab shows the loaded message.
+func TestOpenReplyRoutesToOriginWhileAway(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+	stubOpenHandler(t)
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, tcell.KeyEnter)
+	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", ThreadID: "t9", Timestamp: 9, Author: "Acme", Subject: "alpha"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+
+	// the open dispatches on the search tab, then the user tabs to the
+	// mail surface BEFORE the async reply lands
+	origin := m.searchTabs[0]
+	m = press(t, m, "enter")
+	if m.mode != "index" || m.pager != nil {
+		t.Fatalf("the open must be async: mode=%q pager=%v", m.mode, m.pager != nil)
+	}
+	m = press(t, m, "]")
+	if m.tabIdx != 0 || m.mode != "index" {
+		t.Fatalf("] must land on the mail surface: idx=%d mode=%q", m.tabIdx, m.mode)
+	}
+
+	// the deferred reply arrives while the mail surface is on display:
+	// routed by Origin to the search tab's retained open, never to the
+	// surface the user happens to be on
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t9", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the body", Kind: core.LineBody}}, Origin: origin,
+	})
+	if m.mode != "index" || m.pager != nil {
+		t.Fatalf("the away reply must not flip the mail surface: mode=%q pager=%v", m.mode, m.pager != nil)
+	}
+	po, ok := m.surfOpen[origin]
+	if !ok || po.pager == nil || !strings.Contains(pagerText(po.pager), "the body") {
+		t.Fatalf("the reply must park under the search view: %v", m.surfOpen[origin])
+	}
+
+	// tab back to the search tab: its retained open shows the loaded body
+	m = press(t, m, "]")
+	if m.tabIdx != 1 || m.mode != "pager" || m.pager == nil || !strings.Contains(pagerText(m.pager), "the body") {
+		t.Fatalf("] must return to the search tab's pager: idx=%d mode=%q", m.tabIdx, m.mode)
+	}
+}
+
+// TestSearchTabPagerRetainedAcrossMailOpen pins per-surface opens: an
+// open on the search tab and a different open on the mail surface must
+// both survive tab switches - each surface shows its own message when
+// returned to.
+func TestSearchTabPagerRetainedAcrossMailOpen(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+	stubOpenHandler(t)
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, tcell.KeyEnter)
+	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", ThreadID: "t9", Timestamp: 9, Author: "Acme", Subject: "alpha"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+	// open t9 on the search tab
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t9", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the search body", Kind: core.LineBody}}, Origin: m.searchTabs[0],
+	})
+	if m.mode != "pager" || !strings.Contains(pagerText(m.pager), "the search body") {
+		t.Fatalf("the search tab must show its open: mode=%q", m.mode)
+	}
+
+	// the mail surface opens a different message of its own
+	m = press(t, m, "]")
+	if m.mode != "index" {
+		t.Fatalf("the mail surface must not inherit the search tab's pager: mode=%q", m.mode)
+	}
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the mail body", Kind: core.LineBody}}, Origin: m.view,
+	})
+	if m.mode != "pager" || !strings.Contains(pagerText(m.pager), "the mail body") {
+		t.Fatalf("the mail surface must show its own open: mode=%q", m.mode)
+	}
+
+	// tab to the search tab: still its own open, not the mail's
+	m = press(t, m, "]")
+	if m.tabIdx != 1 || m.mode != "pager" || !strings.Contains(pagerText(m.pager), "the search body") {
+		t.Fatalf("the search tab must keep its own open: idx=%d mode=%q pager=%q", m.tabIdx, m.mode, pagerText(m.pager))
+	}
+
+	// and back to the mail surface: still its own open
+	m = press(t, m, "]")
+	if m.tabIdx != 0 || m.mode != "pager" || !strings.Contains(pagerText(m.pager), "the mail body") {
+		t.Fatalf("the mail surface must keep its own open: idx=%d mode=%q pager=%q", m.tabIdx, m.mode, pagerText(m.pager))
+	}
+}
+
+// TestSummaryFromSearchTabRestoresSearchOpen pins the summary's displaced
+// open tracking: invoked over a search tab's pager, closing the summary
+// must return to THAT tab's open - and the mail surface, its own open
+// parked meanwhile, keeps it on the next return.
+func TestSummaryFromSearchTabRestoresSearchOpen(t *testing.T) {
+	SetSearchHandler(func(v *core.View) {})
+	t.Cleanup(func() { SetSearchHandler(func(v *core.View) {}) })
+	stubOpenHandler(t)
+
+	m := model()
+	next, _ := m.Update(KeyPressMsg{Text: "f", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
+	m = next
+	m = press(t, m, "tag:acme")
+	m = pressType(t, m, tcell.KeyEnter)
+	m.searchTabs[0].MergeThreads([]*core.Thread{core.NewThread("t9", []*core.Message{
+		{ID: "m9", ThreadID: "t9", Timestamp: 9, Author: "Acme", Subject: "alpha"},
+	})})
+	m = pressEvent(t, m, core.ViewDiff{View: "tag:acme"})
+	// open t9 on the search tab, then a different message on the mail
+	// surface, then return to the search tab's open
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t9", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the search body", Kind: core.LineBody}}, Origin: m.searchTabs[0],
+	})
+	m = press(t, m, "]")
+	m = press(t, m, "enter")
+	m = pressEvent(t, m, core.ThreadLoaded{
+		ThreadID: "t1", RenderMode: core.RenderPlain, Mime: "text/plain",
+		Lines: []core.Line{{Text: "the mail body", Kind: core.LineBody}}, Origin: m.view,
+	})
+	m = press(t, m, "]")
+	if m.tabIdx != 1 || !strings.Contains(pagerText(m.pager), "the search body") {
+		t.Fatalf("] must return to the search tab's open: idx=%d pager=%q", m.tabIdx, pagerText(m.pager))
+	}
+
+	// summarize over the search tab's pager: the displaced open belongs
+	// to the search tab, not the mail surface
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t9"})
+	if m.summary == nil || !m.summaryActive() {
+		t.Fatalf("the summary must open: %v", m.summary)
+	}
+	if m.summary.mailHome != m.searchTabs[0] {
+		t.Fatalf("the summary must record the search tab as the displaced home: %v", m.summary.mailHome)
+	}
+	if m.summary.mailPager == nil || !strings.Contains(pagerText(m.summary.mailPager), "the search body") {
+		t.Fatalf("the displaced pager must be the search tab's open: %q", pagerText(m.summary.mailPager))
+	}
+
+	// close the summary: back to the search tab's open
+	m, _ = m.dispatchAction("back", 1)
+	if m.summary != nil {
+		t.Fatal("back must close the summary")
+	}
+	if m.tabIdx != 1 || m.mode != "pager" || !strings.Contains(pagerText(m.pager), "the search body") {
+		t.Fatalf("closing the summary must restore the search tab's open: idx=%d mode=%q pager=%q", m.tabIdx, m.mode, pagerText(m.pager))
+	}
+
+	// the mail surface keeps its own open
+	m = press(t, m, "]")
+	if m.tabIdx != 0 || !strings.Contains(pagerText(m.pager), "the mail body") {
+		t.Fatalf("the mail surface must keep its own open: idx=%d pager=%q", m.tabIdx, pagerText(m.pager))
+	}
+}
+
 func TestReplyKeyOpensDialogue(t *testing.T) {
 	got := ""
 	SetReplyHandler(func(msg *core.Message, mode string) { got = mode })

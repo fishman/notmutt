@@ -139,6 +139,13 @@ type Model struct {
 	// message opened in one tab never shows over another index surface
 	// (the wrong-mail regression the goto key papers over).
 	pagerHome *core.View
+	// surfOpen retains the open of every NON-active index surface: each
+	// surface keeps its own open message across tab switches - attachTab
+	// parks the surface it leaves here and installs the destination's
+	// open back. The active surface's open lives in m.pager and surfOpen
+	// never holds an entry for it (the summary parks a displaced open in
+	// summary.mailPager instead, R4).
+	surfOpen map[*core.View]*parkedOpen
 	// renderMode is the pager's requested view (toggle-render/source
 	// keys): plain parts, rendered html, or raw source. renderMime is the
 	// last reply's mime label for the status bar; showHeaders the h key's
@@ -337,7 +344,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -948,12 +955,16 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.st.SetActiveView(strings.TrimPrefix(action, "goto-"))
 		}
 		// the goto re-points the mail surface's view: land on it, or
-		// the switch hides behind the attached search tab. Drop the
-		// previous view's pager - it shows a message from the old
-		// folder, and attachTab would re-enter pager mode over the new
-		// view's list (the wrong-mail regression).
+		// the switch hides behind the attached search tab. Drop the mail
+		// surface's open - installed or parked - it shows a message from
+		// the old folder, and mountSurface would re-enter pager mode over
+		// the new view's list (the wrong-mail regression). A search tab's
+		// open is untouched: it belongs to that tab, not the mail folder.
 		m.preview, m.previewThread, m.previewTitle = false, "", ""
-		m.pager, m.pagerHome = nil, nil
+		delete(m.surfOpen, m.view)
+		if m.pagerHomeView() == m.view {
+			m.pager = nil
+		}
 		m.tabIdx = 0
 		m.attachTab()
 		return m, nil
@@ -1760,11 +1771,45 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 		return
 	}
+	// the reply's surface: the index surface that dispatched the open
+	// (the app echoes OpenReq.Origin on the reply) - never wherever the
+	// user tabbed while the async load ran. Nil Origin (tests) falls
+	// back to the active view.
+	o := e.Origin
+	if o == nil {
+		o = m.activeView()
+	}
 	if e.Err != nil {
-		m.mode, m.pager, m.attView = "index", nil, nil
-		m.pagerHome = nil
+		// the open failed: drop the target surface's open. An open that
+		// was installed (the surface on display, or parked under a
+		// covering compose/summary) dies in place; a parked or closed
+		// surface forgets its retained open.
+		if o == m.stackSurface() {
+			m.mode, m.pager, m.attView = "index", nil, nil
+			m.pagerHome = nil
+		} else if m.pagerHome == o {
+			m.pager, m.attView = nil, nil
+			m.pagerHome = nil
+		} else {
+			delete(m.surfOpen, o)
+		}
 		return
 	}
+	if o != m.stackSurface() && m.pagerHome != o {
+		// the open belongs to a non-displayed surface: refresh its
+		// retained open only - the displayed surface keeps its pager,
+		// mode and render state (the race Origin routing kills). A
+		// closed surface's reply drops (no slot left to hold it).
+		if !m.liveSurface(o) {
+			return
+		}
+		pg := newPager(e.ThreadID, e.MsgID, e.Lines)
+		pg.setSMIME(e.SMIME)
+		m.surfOpen[o] = &parkedOpen{pager: pg, renderMode: e.RenderMode, showHeaders: e.Headers, linkMode: e.LinkLabels, renderMime: e.Mime}
+		return
+	}
+	// the reply targets the surface whose open is installed (on display,
+	// or parked under a covering compose/summary): replace its content.
 	// the attView term: any message render while an attachment view is
 	// active replaces it (the back key's restore) - the reply's own
 	// mode/headers alone never differ
@@ -1789,16 +1834,13 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 	}
 	m.renderMime = e.Mime
-	m.mode = "pager"
-	// the pager belongs to the surface that dispatched the open (the
-	// app echoes OpenReq.Origin on the reply) - never to wherever the
-	// user tabbed while the async load ran. Nil Origin (tests) falls
-	// back to the active surface.
-	o := e.Origin
-	if o == nil {
-		o = m.activeView()
-	}
 	m.pagerHome = o
+	// a reply to the surface ON DISPLAY opens the pager; a reply to an
+	// open parked under a covering compose/summary only refreshes the
+	// content - the covering tab keeps the screen
+	if o == m.stackSurface() {
+		m.mode = "pager"
+	}
 	// the render-images toggle is per-pager: a fresh open starts
 	// collapsed - remote images never fetch without their own press
 	m.imgMode = 0
@@ -1842,8 +1884,26 @@ type summary struct {
 	msgID     string
 	pager     *pager
 	mailPager *pager
-	first     bool // the first delta replaces the placeholder line
-	done      bool // the stream settled (error or success): a new job may replace it
+	// mailHome is the index surface the displaced mailPager belongs to:
+	// leaving the summary parks it back under that surface (nil when the
+	// summary opened from the index - nothing was displaced).
+	mailHome *core.View
+	first    bool // the first delta replaces the placeholder line
+	done     bool // the stream settled (error or success): a new job may replace it
+}
+
+// parkedOpen is a non-active index surface's retained open: the pager
+// plus the render context the model would carry were that surface the
+// active one. The model's render fields (renderMode/showHeaders/
+// linkMode/renderMime) describe the INSTALLED pager, so a parked open
+// must snapshot them with the pager or the restore would mis-toggle a
+// parked surface's view (V/F act on the wrong render state).
+type parkedOpen struct {
+	pager       *pager
+	renderMode  core.RenderMode
+	showHeaders bool
+	linkMode    bool
+	renderMime  string
 }
 
 // onAiStarted opens the summary as its own tab: the stack attaches the
@@ -1868,6 +1928,7 @@ func (m *Model) onAiStarted(e core.AiStarted) {
 	// mailPager and leaving the tab renders it over the mail surface
 	if m.summary != nil && m.pager == m.summary.pager {
 		m.pager = m.summary.mailPager
+		m.pagerHome = m.summary.mailHome
 	}
 	m.summary = s
 	// the summary tab attaches last and active: the displaced message
@@ -4395,11 +4456,72 @@ func (m *Model) pagerHomeView() *core.View {
 	return m.view
 }
 
-// pagerOnSurface reports whether the open pager is the attached
-// surface's own: attachTab re-enters pager mode only over the home view
-// that launched the open, never over a different index surface.
-func (m *Model) pagerOnSurface() bool {
-	return m.pager != nil && m.pagerHomeView() == m.activeView()
+// stackSurface is the index surface the tab stack currently displays,
+// or nil on a compose or summary tab (no index surface is on screen -
+// an open's home is then the surface it belongs to, parked under
+// compose, not the m.view fallback).
+func (m *Model) stackSurface() *core.View {
+	if i := m.activeSearchIdx(); i >= 0 {
+		return m.searchTabs[i]
+	}
+	if m.tabIdx == 0 {
+		return m.view
+	}
+	return nil
+}
+
+// liveSurface reports whether the view is a current index surface (the
+// mail surface or an open search tab): an async reply for a closed tab
+// has no slot left to hold it and drops.
+func (m *Model) liveSurface(v *core.View) bool {
+	if v == nil {
+		return false
+	}
+	if v == m.view {
+		return true
+	}
+	for _, s := range m.searchTabs {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// mountSurface lands attachTab on the index surface d (the mail surface
+// or a search tab): the open of the surface being left is parked under
+// its home first, then d's own retained open - if it has one - installs
+// with its render context restored. mode derives from whether d shows a
+// pager. Each surface keeps its own open across tab switches (R3).
+func (m *Model) mountSurface(d *core.View) {
+	if home := m.pagerHomeView(); home != d && m.pager != nil {
+		// leaving the surface whose open is installed: park it under its
+		// home, snapshotting the render context with the pager (the
+		// model's render fields describe the installed pager)
+		m.surfOpen[home] = &parkedOpen{
+			pager: m.pager, renderMode: m.renderMode, showHeaders: m.showHeaders,
+			linkMode: m.linkMode, renderMime: m.renderMime,
+		}
+		m.pager = nil
+	}
+	if po, ok := m.surfOpen[d]; ok {
+		delete(m.surfOpen, d)
+		if po.pager != nil {
+			m.pager = po.pager
+			m.renderMode, m.showHeaders, m.linkMode, m.renderMime = po.renderMode, po.showHeaders, po.linkMode, po.renderMime
+			// WindowSizeMsg only re-fits the installed pager: a parked
+			// open may predate a resize, re-fit it on install
+			w, h := m.pagerSize()
+			m.pager.setSize(w, h, m.styles)
+		}
+	}
+	m.attView = nil
+	m.pagerHome = d
+	if m.pager != nil {
+		m.mode = "pager"
+	} else {
+		m.mode = "index"
+	}
 }
 
 func (m *Model) attachTab() {
@@ -4407,19 +4529,23 @@ func (m *Model) attachTab() {
 	// a tab switch off the summary leaves its pager installed: restore
 	// the displaced message pager BEFORE the surface routes on it, or
 	// the mode switch sees the stale summary pager (nil pager, pager
-	// mode)
+	// mode). The restore records the displaced open's home surface so
+	// mountSurface parks it under the right one.
 	if m.summary != nil && !m.summaryActive() && m.pager == m.summary.pager {
 		m.pager = m.summary.mailPager
+		m.pagerHome = m.summary.mailHome
 	}
 	switch {
 	case m.summaryActive():
 		// the summary tab: its own pager, installed for the pager mode.
-		// The displaced message pager is re-saved on every entry, so it
-		// stays fresh if the user opened new mail while away (nil when
-		// the summary was opened from the index).
+		// The displaced open is re-saved on every entry (kept fresh if
+		// the user opened new mail while away), its home surface
+		// recorded so leaving the tab parks it correctly (nil when the
+		// summary was opened from the index).
 		m.mode = "pager"
 		if m.pager != m.summary.pager {
 			m.summary.mailPager = m.pager
+			m.summary.mailHome = m.pagerHomeView()
 			m.pager = m.summary.pager
 		}
 		w, h := m.pagerSize()
@@ -4427,19 +4553,13 @@ func (m *Model) attachTab() {
 	case m.activeSearchIdx() >= 0:
 		// the search tabs reuse the index surface: activeView routes
 		// the query's rows under the index bindings (q closes the tab,
-		// / and F filter the results). A search tab shows the pager only
-		// when the pager is its own (a mail opened there).
-		if m.pagerOnSurface() {
-			m.mode = "pager"
-		} else {
-			m.mode = "index"
-		}
+		// / and F filter the results). The tab's own open mounts, or it
+		// shows its index rows.
+		m.mountSurface(m.searchTabs[m.activeSearchIdx()])
 	case m.tabIdx > 0:
 		m.mode = "compose"
-	case m.pagerOnSurface():
-		m.mode = "pager"
 	default:
-		m.mode = "index"
+		m.mountSurface(m.view)
 	}
 	// the render reads m.rows: every attach re-points it at the
 	// attached view, or the frame shows the previous view's rows until
@@ -4456,20 +4576,24 @@ func (m *Model) closeTab(i int, search bool) {
 	if !search && m.summary != nil && i == m.summaryIdx() {
 		// the summary tab: restore the displaced message pager (nil
 		// when opened from the index - the surface lands on the index)
-		// and clear the streamed job
+		// and clear the streamed job. The restore records the displaced
+		// open's home so mountSurface parks it under the right surface.
 		if m.pager == m.summary.pager {
 			m.pager = m.summary.mailPager
+			m.pagerHome = m.summary.mailHome
 		}
 		if m.bus != nil {
 			m.bus.ClearAiResult(m.summary.jobID)
 		}
 		m.summary = nil
 	} else if search {
-		// a pager parked on the closed tab dies with it: no surface
-		// left to show it, and a dangling home would hide it forever
+		// the closed tab's open dies with it, whether installed or
+		// parked: no surface left to show it, and a dangling home or
+		// retained entry would hide it forever
 		if m.pagerHome == m.searchTabs[i] {
 			m.pager, m.pagerHome = nil, nil
 		}
+		delete(m.surfOpen, m.searchTabs[i])
 		m.searchTabs = append(m.searchTabs[:i], m.searchTabs[i+1:]...)
 		i += len(m.tabs)
 	} else {

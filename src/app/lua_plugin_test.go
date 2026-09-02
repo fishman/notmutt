@@ -246,6 +246,49 @@ end
 	}
 }
 
+// TestLuaGetAttachmentsExt: the get_attachments row carries ext - the
+// filename extension, lowercased, dot stripped (filepath.Ext) - so a
+// plugin keys on the sender's naming, not the parser-reported mime. An
+// uppercase or multi-dot name normalizes; a name with no extension is
+// an empty ext. mime stays available alongside.
+func TestLuaGetAttachmentsExt(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	dir := pluginDir(t, map[string]string{"ext.lua": `
+function categorize(handle, msg)
+  local out = {}
+  for i, att in ipairs(get_attachments(handle)) do
+    out[i] = att.ext .. "/" .. att.mime
+  end
+  return out
+end
+`})
+	loadLuaPlugins(dir, nil)
+	if len(categorizeHooks) != 1 {
+		t.Fatalf("categorize hooks = %d, want 1", len(categorizeHooks))
+	}
+	h := registerAttachments([]mail.Attachment{
+		{Name: "invoice.PDF", MimeType: "application/octet-stream"},
+		{Name: "a.b.docx", MimeType: "application/octet-stream"},
+		{Name: "noext", MimeType: "text/plain"},
+	})
+	defer unregisterAttachments(h)
+	cats, err := categorizeHooks[0](h, AttachMeta{From: "a@example.com", Subject: "s", Date: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int]string{
+		1: "pdf/application/octet-stream",
+		2: "docx/application/octet-stream",
+		3: "/text/plain",
+	}
+	for i := 1; i <= 3; i++ {
+		if cats[i] != want[i] {
+			t.Fatalf("attachment %d ext/mime = %q, want %q", i, cats[i], want[i])
+		}
+	}
+}
+
 // TestLuaReMatchCompileError: a bad pattern is false plus the error
 // text (single-value use keeps working), never a panic.
 func TestLuaReMatchCompileError(t *testing.T) {

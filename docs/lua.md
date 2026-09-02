@@ -51,13 +51,15 @@ literal needs `\\` - a single backslash is swallowed by the Lua parser.
 Fetches the attachment list of the message the save pass is
 categorizing. The `handle` is the opaque string passed to
 `categorize(handle, msg)`; the plugin never opens files - this returns
-what the client already parsed. Returns a table of `{name, mime,
-size, ordinal}` rows; `ordinal` is the 1-based position in the message
-(the key the categorize return table uses). An unknown handle raises.
+what the client already parsed. Returns a table of `{name, ext, mime,
+size, ordinal}` rows; `ext` is the filename extension without the dot,
+lowercased (the sender's own naming, immune to parser-reported mime
+quirks), `ordinal` is the 1-based position in the message (the key the
+categorize return table uses). An unknown handle raises.
 
 ```lua
 for i, att in ipairs(get_attachments(handle)) do
-  if att.mime == "application/pdf" then out[i] = category .. "/" .. slug(att.name) end
+  if att.ext == "pdf" or att.ext == "docx" then out[i] = category .. "/" .. slug(att.name) end
 end
 ```
 

@@ -337,8 +337,10 @@ The plugin receives an opaque mail `handle` plus the metadata-only
 projection: `msg` carries `from`, `subject`, and `date` (unix seconds)
 - never paths, ids, or content. The attachment list is fetched from
 the handle with the library command `get_attachments(handle)`, which
-returns the message's attachments as `{name, mime, size, ordinal}`
-tables (the ordinal is the 1-based position in the message). The
+returns the message's attachments as `{name, ext, mime, size, ordinal}`
+tables (`ext` is the filename extension without the dot, lowercased -
+the sender's naming, immune to parser mime quirks; the ordinal is the
+1-based position in the message). The
 plugin never opens files - the client parsed the list.
 
 Return a table of attachment ordinal to a relative path below the

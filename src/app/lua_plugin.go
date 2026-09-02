@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -135,9 +136,11 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		return 2
 	}))
 	// get_attachments is the mail-handle fetch (the categorize
-	// contract): returns name/mime/size/ordinal per attachment for the
-	// handle the save pass passed to categorize. The plugin never opens
-	// files - the list is what the client parsed.
+	// contract): returns name/ext/mime/size/ordinal per attachment for
+	// the handle the save pass passed to categorize. ext is the filename
+	// extension without the dot, lowercased (filepath.Ext) - the sender's
+	// own naming, immune to parser-reported mime quirks. The plugin never
+	// opens files - the list is what the client parsed.
 	vm.SetGlobal("get_attachments", vm.NewFunction(func(L *lua.LState) int {
 		atts, ok := attachmentsForHandle(L.CheckString(1))
 		if !ok {
@@ -147,6 +150,7 @@ func loadLuaPlugin(path string, network map[string]config.LuaNetwork) {
 		for i, a := range atts {
 			row := L.NewTable()
 			row.RawSetString("name", lua.LString(a.Name))
+			row.RawSetString("ext", lua.LString(strings.TrimPrefix(strings.ToLower(filepath.Ext(a.Name)), ".")))
 			row.RawSetString("mime", lua.LString(a.MimeType))
 			row.RawSetString("size", lua.LNumber(a.Size))
 			row.RawSetString("ordinal", lua.LNumber(i+1))

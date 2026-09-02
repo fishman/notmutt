@@ -549,18 +549,16 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID string, preview bool, mode core.RenderMode, headers bool, width int, labelLinks bool, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
+	start := time.Now()
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+		var err error
+		msgs, err = fetchMsgs(worker, threadID, msgID)
 		if err != nil {
 			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: err})
 			return
 		}
-		if rpl.Err != nil {
-			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: preview, Err: rpl.Err})
-			return
-		}
-		msgs = rpl.Msgs
+		diag.Info("open", "rows-first", false, "thread", threadID, "msgs", len(msgs), "ms", time.Since(start).Milliseconds())
 	}
 	idx := 0
 	if msgID != "" {
@@ -701,6 +699,30 @@ func threadFromViews(views map[string]*core.View, threadID string) []core.Messag
 	return nil
 }
 
+// fetchMsgs is the worker fallback for a thread in no view. A flat-view
+// open carries a message id as its thread id - notmuch's thread:<tid>
+// matches nothing for it, so the message-id case resolves by id.
+func fetchMsgs(worker workerAPI, threadID, msgID string) ([]core.Message, error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+	if err != nil {
+		return nil, err
+	}
+	if rpl.Err != nil {
+		return nil, rpl.Err
+	}
+	if len(rpl.Msgs) == 0 && msgID != "" {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{msgID}})
+		if err != nil {
+			return nil, err
+		}
+		if rpl.Err != nil {
+			return nil, rpl.Err
+		}
+		return rpl.Msgs, nil
+	}
+	return rpl.Msgs, nil
+}
+
 // extractAttachment reads the opened message's ordinal-th attachment
 // bytes and type - the shared demand path of the view and save seams
 // (one file open per demand, never held in memory). The message
@@ -710,14 +732,10 @@ func threadFromViews(views map[string]*core.View, threadID string) []core.Messag
 func extractAttachment(worker workerAPI, views map[string]*core.View, threadID, msgID string, ordinal int) (name, typ string, data []byte, foundID string, err error) {
 	msgs := threadFromViews(views, threadID)
 	if msgs == nil {
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+		msgs, err = fetchMsgs(worker, threadID, msgID)
 		if err != nil {
 			return "", "", nil, msgID, err
 		}
-		if rpl.Err != nil {
-			return "", "", nil, msgID, rpl.Err
-		}
-		msgs = rpl.Msgs
 	}
 	msg, ok := findMsg(msgs, msgID)
 	if !ok || len(msg.Paths) == 0 {

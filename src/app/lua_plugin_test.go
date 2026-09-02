@@ -55,8 +55,6 @@ register_attach_command("yazi", {"yazi", "--chooser-file"})
 // job and its output rides ThreadLoaded to the TUI (decision record 20's
 // adapter shape, this time through Lua).
 func TestLuaBodyRenderTransforms(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -69,20 +67,10 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		last := tl.Lines[len(tl.Lines)-1]
-		if last.Text != "lua says hi" || last.Kind != core.LineBody {
-			t.Fatalf("the plugin's line must ride the event: %+v", tl.Lines)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	last := tl.Lines[len(tl.Lines)-1]
+	if last.Text != "lua says hi" || last.Kind != core.LineBody {
+		t.Fatalf("the plugin's line must ride the event: %+v", tl.Lines)
 	}
 }
 
@@ -91,8 +79,6 @@ end
 // the un-hooked render - the fallback holds per call, the plugin is not
 // disabled.
 func TestLuaBodyRenderDeadlineFallsBack(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -106,35 +92,23 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	if tl.Err != nil {
+		t.Fatalf("a deadline kill must not fail the open: %v", tl.Err)
+	}
+	for _, l := range tl.Lines {
+		if l.Text == "lua says hi" {
+			t.Fatalf("the killed plugin's output must not survive: %+v", tl.Lines)
 		}
-		if tl.Err != nil {
-			t.Fatalf("a deadline kill must not fail the open: %v", tl.Err)
-		}
-		for _, l := range tl.Lines {
-			if l.Text == "lua says hi" {
-				t.Fatalf("the killed plugin's output must not survive: %+v", tl.Lines)
-			}
-		}
-		if len(tl.Lines) == 0 {
-			t.Fatal("the deadline fallback must keep the un-hooked render")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("the busy-loop plugin must be killed by the deadline")
+	}
+	if len(tl.Lines) == 0 {
+		t.Fatal("the deadline fallback must keep the un-hooked render")
 	}
 }
 
 // TestLuaPluginLoadErrorSkips: a broken file logs and skips, the good
 // plugin still registers.
 func TestLuaPluginLoadErrorSkips(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -146,23 +120,13 @@ func TestLuaPluginLoadErrorSkips(t *testing.T) {
 
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	select {
-	case e := <-ch:
-		if _, ok := e.(core.ThreadLoaded); !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
-	}
+	runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
 }
 
 // TestLuaTranslateBinding (decision record 24): translate() is backed
 // by the same embedded bundle as the UI, so its output rides the
 // catalog lookup.
 func TestLuaTranslateBinding(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -175,19 +139,10 @@ end
 `})
 	loadLuaPlugins(dir, nil)
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		last := tl.Lines[len(tl.Lines)-1]
-		if last.Text != "save attachment to: " {
-			t.Fatalf("translate must serve the catalog: %+v", last)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	last := tl.Lines[len(tl.Lines)-1]
+	if last.Text != "save attachment to: " {
+		t.Fatalf("translate must serve the catalog: %+v", last)
 	}
 }
 

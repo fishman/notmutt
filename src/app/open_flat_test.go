@@ -17,9 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
-	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
 	"notmutt/tui"
@@ -70,36 +68,24 @@ func TestOpenFromFlatSearchTabUnmerged(t *testing.T) {
 	search.SetThreaded(false)
 	views := map[string]*core.View{"inbox": inbox, "tag:new": search}
 
-	bus := core.NewBus()
 	fw := &flatThreadWorker{threads: map[string][]core.Message{"t1": {m1}}}
-	ch := bus.Subscribe()
 
 	// cursorThread in the flat search tab yields tid = the message id
-	openThread(fw, bus, views, tui.OpenReq{ThreadID: msgID, MsgID: msgID, Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
+	tl := runOpen(t, fw, views, tui.OpenReq{ThreadID: msgID, MsgID: msgID, Preview: true, Width: 80})
+	if tl.Err != nil {
+		t.Fatalf("open from an unmerged search tab failed: %v", tl.Err)
+	}
+	if len(tl.Lines) == 0 {
+		t.Fatal("open from an unmerged search tab rendered nothing")
+	}
+	found := false
+	for _, l := range tl.Lines {
+		if strings.Contains(l.Text, "travel confirm") {
+			found = true
+			break
 		}
-		if tl.Err != nil {
-			t.Fatalf("open from an unmerged search tab failed: %v", tl.Err)
-		}
-		if len(tl.Lines) == 0 {
-			t.Fatal("open from an unmerged search tab rendered nothing")
-		}
-		found := false
-		for _, l := range tl.Lines {
-			if strings.Contains(l.Text, "travel confirm") {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatal("open from an unmerged search tab did not render the message subject")
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no ThreadLoaded")
+	}
+	if !found {
+		t.Fatal("open from an unmerged search tab did not render the message subject")
 	}
 }

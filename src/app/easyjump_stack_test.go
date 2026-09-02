@@ -42,17 +42,13 @@ func TestEasyjumpFullStack(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}})
 
 	tui.SetOpenHandler(func(req tui.OpenReq) {
-		mode := req.Mode
-		if mode == core.RenderAuto {
-			// the fixture opens in plain; RenderAuto would resolve the
-			// domain map and html-only upgrade to HTML, flipping the
-			// enter -> V -> F render cycle this test drives
-			mode = core.RenderPlain
+		// the fixture opens in plain; RenderAuto would resolve the
+		// domain map and html-only upgrade to HTML, flipping the
+		// enter -> V -> F render cycle this test drives
+		if req.Mode == core.RenderAuto {
+			req.Mode = core.RenderPlain
 		}
-		go openThread(fw, bus, nil, tui.OpenReq{
-			ThreadID: req.ThreadID, MsgID: req.MsgID, Preview: req.Preview,
-			Headers: req.Headers, Width: req.Width, Mode: mode, LabelLinks: req.LabelLinks,
-		}, nil, config.Crypto{}, false, "")
+		go openThread(fw, bus, nil, req, nil, config.Crypto{}, false, "")
 	})
 	defer func() {
 		tui.SetOpenHandler(func(tui.OpenReq) {})

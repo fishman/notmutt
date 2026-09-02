@@ -323,6 +323,103 @@ func TestCategorizeThread(t *testing.T) {
 	}
 }
 
+// msgIDWorker models real notmuch for the flat-tab categorize case: a
+// query with no id: term (thread:<msgid>) matches nothing - thread ids
+// are opaque - while an id: term resolves the message. The hotkey pass
+// builds the OR fallback; this fake proves a plain thread query on a
+// message id stays empty.
+type msgIDWorker struct {
+	msgs []core.Message
+}
+
+func (w *msgIDWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
+	r := notmuch.Reply{ID: a.ID}
+	switch a.Kind {
+	case notmuch.ActQueryMsgs:
+		var chunk []core.Message
+		for _, id := range queryIDs(a.Query) {
+			for _, m := range w.msgs {
+				if m.ID == id {
+					chunk = append(chunk, core.Message{ID: id})
+				}
+			}
+		}
+		if a.Emit != nil {
+			a.Emit(chunk)
+		}
+	case notmuch.ActSnapshots:
+		for _, id := range a.Paths {
+			for _, m := range w.msgs {
+				if m.ID == id {
+					r.Msgs = append(r.Msgs, m)
+				}
+			}
+		}
+	}
+	return r, nil
+}
+
+// queryIDs extracts the id:"..." terms from a query. A plain
+// thread:<msgid> has none - the model's notion of a matchless query.
+func queryIDs(q string) []string {
+	var ids []string
+	for rest := q; ; {
+		i := strings.Index(rest, "id:")
+		if i < 0 {
+			return ids
+		}
+		rest = rest[i+3:]
+		if open := strings.Index(rest, "\""); open >= 0 {
+			rest = rest[open+1:]
+			if end := strings.Index(rest, "\""); end >= 0 {
+				ids = append(ids, rest[:end])
+				rest = rest[end+1:]
+			}
+		}
+	}
+}
+
+// TestCategorizeThreadFlatSearchTab: the hotkey pass in a flat search
+// tab - the cursor yields the message id as the thread id, and
+// thread:<msgid> matches nothing (opaque thread ids), so the pass was a
+// silent no-op (the diag log showed "categorize ids=0"). The OR
+// fallback must resolve the message by id or nothing saves.
+func TestCategorizeThreadFlatSearchTab(t *testing.T) {
+	saved := categorizeHooks
+	defer func() { categorizeHooks = saved }()
+	RegisterCategorizeHook(func(handle string, m AttachMeta) (map[int]string, error) {
+		return map[int]string{1: "receipt"}, nil
+	})
+	dir := t.TempDir()
+	ts := time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local)
+	p := fixtureMail(t, dir, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", ts)
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	msgID := "m1@example.com"
+	w := &msgIDWorker{msgs: []core.Message{
+		{ID: msgID, Author: "delta@example.com", Subject: "hotel invoice", Timestamp: ts.Unix(), Paths: []string{p}},
+	}}
+	cfg := config.Default()
+	cfg.Attachments.Folder = filepath.Join(dir, "dl")
+
+	go categorizeThread(w, bus, msgID, &cfg)
+	select {
+	case e := <-ch:
+		res, ok := e.(core.CategorizeResult)
+		if !ok {
+			t.Fatalf("expected CategorizeResult, got %T", e)
+		}
+		if res.Err != nil || res.Saved != 1 || res.Skipped != 0 {
+			t.Fatalf("flat-tab categorize = %+v, want one save (the id fallback resolved it)", res)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "dl", "2026-08", "receipt", "invoice.pdf")); err != nil {
+			t.Fatalf("the flat-tab pass must save: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no CategorizeResult")
+	}
+}
+
 // failWorker answers every call with an error - the worker-error path.
 type failWorker struct{}
 

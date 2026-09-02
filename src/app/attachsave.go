@@ -375,11 +375,15 @@ func runAttachmentBackfill(worker workerAPI, root, folder, layout, query string,
 }
 
 // categorizeThread is the hotkey pass (the index categorize action):
-// the cursor thread's messages, attachmentPass over thread:<tid>, the
+// the cursor thread's messages, attachmentPass over the thread, the
 // lines and tallies published as CategorizeResult for the session log.
+// The cursor may carry a message id (a flat search tab): thread:<tid>
+// matches nothing for it, so the id branch resolves it - the threaded
+// case is unchanged (the id term adds nothing).
 func categorizeThread(worker workerAPI, bus *core.Bus, threadID string, cfg *config.Config) {
 	res := core.CategorizeResult{ThreadID: threadID}
-	lines, saved, skipped, err := attachmentPass(worker, "", attachmentFolder(*cfg), cfg.Attachments.Layout, "thread:"+threadID, false)
+	q := fmt.Sprintf("(thread:%q) or (id:%q)", threadID, threadID)
+	lines, saved, skipped, err := attachmentPass(worker, "", attachmentFolder(*cfg), cfg.Attachments.Layout, q, false)
 	if err != nil {
 		res.Err = err
 		bus.Publish(res)

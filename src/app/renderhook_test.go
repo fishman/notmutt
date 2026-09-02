@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"notmutt/config"
 	"notmutt/core"
 	"notmutt/notmuch"
 	"notmutt/tui"
@@ -34,8 +33,6 @@ func restoreRenderHooks(hooks []BodyRenderHook, budget time.Duration) {
 // open job's render output, and the transformed lines ride the
 // ThreadLoaded event to the TUI.
 func TestBodyRenderHooksTransform(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -48,27 +45,17 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 		return append(lines, core.Line{Text: "hook two", Kind: core.LineBody}), nil
 	})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		var texts []string
-		for _, l := range tl.Lines {
-			texts = append(texts, l.Text)
-		}
-		joined := strings.Join(texts, "|")
-		if !strings.Contains(joined, "message a: no path") {
-			t.Fatalf("the render output must arrive on the event: %q", joined)
-		}
-		if !strings.HasSuffix(joined, "|hook one|hook two") {
-			t.Fatalf("hooks must chain in registration order: %q", joined)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	var texts []string
+	for _, l := range tl.Lines {
+		texts = append(texts, l.Text)
+	}
+	joined := strings.Join(texts, "|")
+	if !strings.Contains(joined, "message a: no path") {
+		t.Fatalf("the render output must arrive on the event: %q", joined)
+	}
+	if !strings.HasSuffix(joined, "|hook one|hook two") {
+		t.Fatalf("hooks must chain in registration order: %q", joined)
 	}
 }
 
@@ -76,8 +63,6 @@ func TestBodyRenderHooksTransform(t *testing.T) {
 // the render keeps the last good lines - the open never fails because a
 // plugin misbehaved.
 func TestBodyRenderHookErrorFallsBack(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -86,27 +71,17 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 		return append(lines, core.Line{Text: "never seen", Kind: core.LineBody}), context.DeadlineExceeded
 	})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	if tl.Err != nil {
+		t.Fatalf("a hook error must not fail the open: %v", tl.Err)
+	}
+	for _, l := range tl.Lines {
+		if l.Text == "never seen" {
+			t.Fatalf("the failed hook's output must not survive: %+v", tl.Lines)
 		}
-		if tl.Err != nil {
-			t.Fatalf("a hook error must not fail the open: %v", tl.Err)
-		}
-		for _, l := range tl.Lines {
-			if l.Text == "never seen" {
-				t.Fatalf("the failed hook's output must not survive: %+v", tl.Lines)
-			}
-		}
-		if len(tl.Lines) == 0 {
-			t.Fatal("the fallback must keep the un-hooked render")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	}
+	if len(tl.Lines) == 0 {
+		t.Fatal("the fallback must keep the un-hooked render")
 	}
 }
 
@@ -115,8 +90,6 @@ func TestBodyRenderHookErrorFallsBack(t *testing.T) {
 // adapter wires later), and the render falls back to the un-hooked
 // lines instead of hanging the open.
 func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	saved := renderHooks
@@ -134,25 +107,15 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 		return lines, ctx.Err()
 	})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		if !deadlineSeen {
-			t.Fatal("the hook must observe the chain deadline")
-		}
-		if tl.Err != nil {
-			t.Fatalf("a deadline overrun must not fail the open: %v", tl.Err)
-		}
-		if len(tl.Lines) == 0 {
-			t.Fatal("the deadline fallback must keep the un-hooked render")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	if !deadlineSeen {
+		t.Fatal("the hook must observe the chain deadline")
+	}
+	if tl.Err != nil {
+		t.Fatalf("a deadline overrun must not fail the open: %v", tl.Err)
+	}
+	if len(tl.Lines) == 0 {
+		t.Fatal("the deadline fallback must keep the un-hooked render")
 	}
 }
 
@@ -161,20 +124,11 @@ func TestBodyRenderHookDeadlineFallsBack(t *testing.T) {
 // the fallback); the fake worker substitutes a changed-set marker, so
 // this test uses a minimal stub.
 func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := emptyThreadWorker{}
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok || tl.Err == nil {
-			t.Fatalf("an empty thread must publish Err, got %T %+v", e, tl)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	if tl.Err == nil {
+		t.Fatalf("an empty thread must publish Err, got %+v", tl)
 	}
 }
 
@@ -183,8 +137,6 @@ func TestOpenThreadEmptyThreadPublishesErr(t *testing.T) {
 // unlabeled render carries no links - the labels are mode-scoped,
 // never the html view's default.
 func TestOpenThreadLinks(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	msg := "From: a@example.com\nTo: b@example.com\nSubject: html\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
 		"Content-Type: text/html; charset=utf-8\n\n" +
@@ -196,47 +148,28 @@ func TestOpenThreadLinks(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{p}}})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderHTML, Headers: false, Width: 0, LabelLinks: true}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		if !tl.LinkLabels {
-			t.Fatal("labelLinks must ride the event")
-		}
-		if len(tl.Links) != 1 || tl.Links[0] != "https://alpha.example.com/x" {
-			t.Fatalf("links = %v", tl.Links)
-		}
-		joined := ""
-		for _, l := range tl.Lines {
-			joined += l.Text + "|"
-		}
-		if !strings.Contains(joined, "[1]") {
-			t.Fatalf("the label render must carry the [N] label: %q", joined)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", Mode: core.RenderHTML, LabelLinks: true})
+	if !tl.LinkLabels {
+		t.Fatal("labelLinks must ride the event")
+	}
+	if len(tl.Links) != 1 || tl.Links[0] != "https://alpha.example.com/x" {
+		t.Fatalf("links = %v", tl.Links)
+	}
+	joined := ""
+	for _, l := range tl.Lines {
+		joined += l.Text + "|"
+	}
+	if !strings.Contains(joined, "[1]") {
+		t.Fatalf("the label render must carry the [N] label: %q", joined)
 	}
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderHTML, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
+	tl = runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", Mode: core.RenderHTML})
+	if tl.LinkLabels || len(tl.Links) != 0 {
+		t.Fatalf("the unlabeled render must carry no links: labels=%v links=%v", tl.LinkLabels, tl.Links)
+	}
+	for _, l := range tl.Lines {
+		if strings.Contains(l.Text, "[1]") {
+			t.Fatalf("the unlabeled render must carry no labels: %q", l.Text)
 		}
-		if tl.LinkLabels || len(tl.Links) != 0 {
-			t.Fatalf("the unlabeled render must carry no links: labels=%v links=%v", tl.LinkLabels, tl.Links)
-		}
-		for _, l := range tl.Lines {
-			if strings.Contains(l.Text, "[1]") {
-				t.Fatalf("the unlabeled render must carry no labels: %q", l.Text)
-			}
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
 	}
 }

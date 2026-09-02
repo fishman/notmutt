@@ -5,7 +5,6 @@ package app
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -23,8 +22,6 @@ import (
 // included - a hybrid plain view has no reason to win over the real
 // html view.
 func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	path := filepath.Join(t.TempDir(), "msg")
 	msg := "From: sender@example.com\nTo: alpha@example.com\nSubject: html only\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
@@ -36,30 +33,20 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "html only", Paths: []string{path}}})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderAuto, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		if tl.RenderMode != core.RenderHTML {
-			t.Fatalf("html-only thread must open in the html view, got %v", tl.RenderMode)
-		}
-		colored := false
-		for _, l := range tl.Lines {
-			for _, r := range l.Runs {
-				if r.Fg != "" || r.Bg != "" {
-					colored = true
-				}
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", Mode: core.RenderAuto, Width: 80})
+	if tl.RenderMode != core.RenderHTML {
+		t.Fatalf("html-only thread must open in the html view, got %v", tl.RenderMode)
+	}
+	colored := false
+	for _, l := range tl.Lines {
+		for _, r := range l.Runs {
+			if r.Fg != "" || r.Bg != "" {
+				colored = true
 			}
 		}
-		if !colored {
-			t.Fatal("the html view must carry colored runs")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	}
+	if !colored {
+		t.Fatal("the html view must carry colored runs")
 	}
 }
 
@@ -68,24 +55,12 @@ func TestOpenThreadHtmlOnlyDefaultsHTML(t *testing.T) {
 // reconciles it into the view), never the whole thread. ThreadLoaded
 // publishes first.
 func TestOpenThreadMarksRead(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-		if tl.ThreadID != "t1" || tl.Preview {
-			t.Fatalf("open must publish a non-preview ThreadLoaded: %+v", tl)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1"})
+	if tl.ThreadID != "t1" || tl.Preview {
+		t.Fatalf("open must publish a non-preview ThreadLoaded: %+v", tl)
 	}
 	calls := fw.tagCallsSnapshot()
 	if len(calls) != 1 || calls[0].query != "id:a" || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Tag != "unread" || calls[0].tagOps[0].Add {
@@ -94,15 +69,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 
 	// a mid-thread open names the opened message, not the thread
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	select {
-	case e := <-ch:
-		if _, ok := e.(core.ThreadLoaded); !ok {
-			t.Fatalf("expected ThreadLoaded, got %T", e)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
-	}
+	runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b"})
 	calls = fw.tagCallsSnapshot()
 	if len(calls) != 2 || calls[1].query != "id:b" {
 		t.Fatalf("a mid-thread open must tag its own message only: %+v", calls)
@@ -113,8 +80,6 @@ func TestOpenThreadMarksRead(t *testing.T) {
 // reflect in every view holding the message (a search tab included),
 // or the flag stays stale until the next refresh.
 func TestOpenThreadMarksReadReflectsInViews(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Tags: []string{"unread", "inbox"}}})
 
@@ -128,12 +93,7 @@ func TestOpenThreadMarksReadReflectsInViews(t *testing.T) {
 	})})
 	views := map[string]*core.View{"inbox": main, "tag:x": search}
 
-	openThread(fw, bus, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	select {
-	case <-ch:
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
-	}
+	runOpen(t, fw, views, tui.OpenReq{ThreadID: "t1", MsgID: "a"})
 	if tags := main.Tags("a"); slices.Contains(tags, "unread") {
 		t.Fatalf("the mail surface must reflect -unread: %v", tags)
 	}
@@ -145,21 +105,12 @@ func TestOpenThreadMarksReadReflectsInViews(t *testing.T) {
 // TestOpenThreadPreviewSkipsReadMarking: the fetch happens, the tag
 // never does.
 func TestOpenThreadPreviewSkipsReadMarking(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		tl, ok := e.(core.ThreadLoaded)
-		if !ok || !tl.Preview {
-			t.Fatalf("preview must publish a Preview ThreadLoaded: %T %+v", e, tl)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", Preview: true})
+	if !tl.Preview {
+		t.Fatalf("preview must publish a Preview ThreadLoaded: %+v", tl)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
 		t.Fatalf("preview must not tag: %+v", calls)
@@ -203,22 +154,16 @@ func TestOpenViewMode(t *testing.T) {
 // must not lose the open - ThreadLoaded still publishes, the JobError
 // reports the tag.
 func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}})
 	fw.setTagErr(errors.New("lock timeout"))
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 0, LabelLinks: false}, nil, config.Crypto{}, false, "")
-
-	select {
-	case e := <-ch:
-		if _, ok := e.(core.ThreadLoaded); !ok {
-			t.Fatalf("expected ThreadLoaded first, got %T", e)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("no ThreadLoaded")
-	}
+	// two events ride one open (ThreadLoaded then JobError): keep the bus
+	// explicit instead of runOpen's single read
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1"}, nil, config.Crypto{}, false, "")
+	waitThread(t, ch)
 	select {
 	case e := <-ch:
 		je, ok := e.(core.JobError)
@@ -236,8 +181,6 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 // stays queryable via the lua layer). A bare open (empty id) falls
 // back to the thread's first.
 func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	dir := t.TempDir()
 	writeMsg := func(id, subject string) string {
 		path := filepath.Join(dir, id)
@@ -255,21 +198,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		{ID: "b", ThreadID: "t1", Paths: []string{p2}},
 	})
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	loaded := func() core.ThreadLoaded {
-		select {
-		case e := <-ch:
-			tl, ok := e.(core.ThreadLoaded)
-			if !ok {
-				t.Fatalf("expected ThreadLoaded, got %T", e)
-			}
-			return tl
-		case <-time.After(time.Second):
-			t.Fatal("no ThreadLoaded")
-			return core.ThreadLoaded{}
-		}
-	}
-	tl := loaded()
+	tl := runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b", Width: 80})
 	if tl.MsgID != "b" {
 		t.Fatalf("the reply must name the opened message, got %q", tl.MsgID)
 	}
@@ -281,8 +210,7 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 		t.Fatalf("the pager must render the opened message only:\n%s", got)
 	}
 
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1", MsgID: "", Preview: false, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	tl = loaded()
+	tl = runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", Width: 80})
 	if tl.MsgID != "a" {
 		t.Fatalf("a bare open must fall back to the thread's first, got %q", tl.MsgID)
 	}
@@ -294,8 +222,6 @@ func TestOpenThreadRendersOnlyOpenedMessage(t *testing.T) {
 // the walk already loaded headers and paths; a thread in no view falls
 // back to the worker fetch.
 func TestOpenThreadRowsFirst(t *testing.T) {
-	bus := core.NewBus()
-	ch := bus.Subscribe()
 	path := filepath.Join(t.TempDir(), "msg")
 	raw := "From: sender@example.com\nTo: alpha@example.com\nSubject: rows first\n" +
 		"Date: Tue, 01 Jan 2019 00:00:00 +0000\n\nbody\n"
@@ -309,8 +235,7 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 
 	fw := &fakeWorker{}
 	fw.setMsgs([]core.Message{msg})
-	openThread(fw, bus, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	tl := loaded(ch)
+	tl := runOpen(t, fw, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Width: 80})
 	if tl.Err != nil {
 		t.Fatalf("rows-first open failed: %v", tl.Err)
 	}
@@ -326,8 +251,7 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 
 	// the fallback: the thread is in no view (a closed tab's pager, a
 	// view reset race) - the worker fetch serves it
-	openThread(fw, bus, map[string]*core.View{}, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Mode: core.RenderPlain, Headers: false, Width: 80, LabelLinks: false}, nil, config.Crypto{}, false, "")
-	tl = loaded(ch)
+	tl = runOpen(t, fw, map[string]*core.View{}, tui.OpenReq{ThreadID: "t1", MsgID: "a", Preview: true, Width: 80})
 	if tl.Err != nil {
 		t.Fatalf("fallback open failed: %v", tl.Err)
 	}
@@ -336,15 +260,32 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 	}
 }
 
-func loaded(ch <-chan core.Event) core.ThreadLoaded {
+// waitThread fails unless the next bus event is the ThreadLoaded a full
+// open publishes, returning it.
+func waitThread(t *testing.T, ch <-chan core.Event) core.ThreadLoaded {
+	t.Helper()
 	select {
 	case e := <-ch:
 		tl, ok := e.(core.ThreadLoaded)
 		if !ok {
-			panic(fmt.Sprintf("expected ThreadLoaded, got %T", e))
+			t.Fatalf("expected ThreadLoaded, got %T", e)
 		}
 		return tl
 	case <-time.After(time.Second):
-		panic("no ThreadLoaded")
+		t.Fatal("no ThreadLoaded")
+		return core.ThreadLoaded{}
 	}
+}
+
+// runOpen drives openThread on a fresh subscription under the fixture's
+// standard open environment (no domain map, no crypto config, light
+// theme) and returns the ThreadLoaded it publishes. req carries only
+// what a test varies - a bare {ThreadID} is the plain full open of the
+// thread's first message (RenderPlain is the zero mode).
+func runOpen(t *testing.T, fw workerAPI, views map[string]*core.View, req tui.OpenReq) core.ThreadLoaded {
+	t.Helper()
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	openThread(fw, bus, views, req, nil, config.Crypto{}, false, "")
+	return waitThread(t, ch)
 }

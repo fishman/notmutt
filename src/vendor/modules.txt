@@ -50,7 +50,7 @@ github.com/emersion/go-message/textproto
 # github.com/esiqveland/notify v0.13.3
 ## explicit; go 1.13
 github.com/esiqveland/notify
-# github.com/fishman/go.notmuch v0.40.4
+# github.com/fishman/go.notmuch v0.40.5
 ## explicit; go 1.23
 github.com/fishman/go.notmuch
 # github.com/fishman/zaman v0.1.2

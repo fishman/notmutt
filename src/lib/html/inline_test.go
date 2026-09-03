@@ -92,3 +92,30 @@ func TestPreAndPreWrapKeepWhitespace(t *testing.T) {
 		}
 	}
 }
+
+func TestFlattenInlineInOrder(t *testing.T) {
+	bs := buildBody(`<p>a<b>b</b>c</p>`)
+	if got := renderAtoms(flattenInline(bs[0].Children)); got != "abc" {
+		t.Fatalf("flatten = %q, want %q", got, "abc")
+	}
+}
+
+func TestFlattenKeepsBRAndImg(t *testing.T) {
+	bs := buildBody(`<p>x<br><img src="p.png">y</p>`)
+	as := flattenInline(bs[0].Children)
+	if got := renderAtoms(as); got != "x\ny" {
+		t.Fatalf("flatten = %q, want %q", got, "x\ny")
+	}
+	if len(as) != 4 || !as[1].br || as[2].img == nil {
+		t.Fatalf("atoms must be x, br, img, y in order, got %d", len(as))
+	}
+}
+
+func TestFlattenPreTextStaysVerbatim(t *testing.T) {
+	// nested inline under a bare pre inherits WSPre; flatten must keep
+	// the run verbatim across the box boundary.
+	bs := buildBody(`<pre>a  <b>b</b> c</pre>`)
+	if got := renderAtoms(flattenInline(bs[0].Children)); got != "a  b c" {
+		t.Fatalf("pre flatten = %q, want %q", got, "a  b c")
+	}
+}

@@ -111,3 +111,26 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 	}
 	return out
 }
+
+// flattenInline turns a block's inline-level children into one ordered
+// atom stream. RoleInline boxes flatten transparently: their text leaves
+// already carry the effective white-space class (promoted by the box
+// builder), so the tag is irrelevant at layout time. Consecutive sep
+// atoms from adjacent leaves collapse at fill (one rendered space), not
+// here.
+func flattenInline(cs []*Box) []atom {
+	var out []atom
+	for _, c := range cs {
+		switch c.Role {
+		case RoleInline:
+			out = append(out, flattenInline(c.Children)...)
+		case RoleText:
+			out = append(out, atomizeText(c.Text, c.St, c.WS)...)
+		case RoleImg:
+			out = append(out, atom{st: c.St, ws: c.WS, img: c})
+		case RoleBR:
+			out = append(out, atom{st: c.St, ws: c.WS, br: true})
+		}
+	}
+	return out
+}

@@ -265,3 +265,51 @@ func hasTag(m Message, tag string) bool {
 	}
 	return false
 }
+
+// TestCGOWorkerReadsFresh pins the worker's read path to a fresh
+// snapshot: a read-only handle's Xapian snapshot is pinned at open, so
+// a commit landed on ANOTHER handle (a CLI `notmuch new`) is invisible
+// - and can invalidate - reads until reopened (a stale get_document
+// throws OPERATION_INVALIDATED, message.cc). serveMCP read from a
+// never-reopened handle and threw exactly that after a live session's
+// commit; every read action must reopen first, so no caller can serve
+// a stale snapshot.
+func TestCGOWorkerReadsFresh(t *testing.T) {
+	e := testutil.Setup(t)
+	write := func(id string) {
+		body := fmt.Sprintf("From: alpha <alpha@example.com>\nTo: beta@example.com\n"+
+			"Subject: probe %s\nDate: Sat, 16 Aug 2026 12:00:00 +0000\n"+
+			"Message-ID: <%s@test.invalid>\n\nsynthetic fixture body\n", id, id)
+		if err := os.WriteFile(filepath.Join(e.Maildir, id+".eml"), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("m1")
+	testutil.NotmuchNew(t)
+	b := newTestBackend(t, e)
+	w := NewWorker(core.NewBus(), b, time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go w.Start(ctx)
+	count := func() int {
+		t.Helper()
+		rpl, err := w.Call(Action{Kind: ActCount, Query: "tag:inbox"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rpl.Err != nil {
+			t.Fatalf("count: %v", rpl.Err)
+		}
+		return rpl.Count
+	}
+	if n := count(); n != 1 {
+		t.Fatalf("baseline count = %d, want 1", n)
+	}
+	// a foreign commit while the worker's read handle is open: the CLI
+	// `notmuch new` advances the revision on another handle
+	write("m2")
+	testutil.NotmuchNew(t)
+	if n := count(); n != 2 {
+		t.Fatalf("read served a stale snapshot: count %d, want 2", n)
+	}
+}

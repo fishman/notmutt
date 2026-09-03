@@ -128,20 +128,8 @@ func (w *Worker) handle(a Action) {
 	switch a.Kind {
 	case ActOpen:
 		err = w.backend.Open(ctx, a.Query)
-	case ActQuery:
-		err = w.backend.Query(ctx, a.Query, a.Limit, a.Flat, a.Emit)
-	case ActQueryMsgs:
-		err = w.backend.QueryMsgs(ctx, a.Query, a.Emit)
-	case ActCount:
-		if a.Flat {
-			r.Count, err = w.backend.CountMsgs(ctx, a.Query)
-		} else {
-			r.Count, err = w.backend.Count(ctx, a.Query)
-		}
-	case ActThread:
-		r.Msgs, err = w.backend.Thread(ctx, a.ThreadID)
-	case ActSnapshots:
-		r.Msgs, err = w.backend.Snapshots(ctx, a.Paths)
+	case ActQuery, ActQueryMsgs, ActCount, ActThread, ActSnapshots, ActRevision, ActAddresses:
+		r = w.read(ctx, a)
 	case ActTag:
 		err = w.backend.Tag(ctx, a.Query, a.TagOps)
 		if err == nil {
@@ -157,10 +145,6 @@ func (w *Worker) handle(a Action) {
 		if err == nil {
 			w.bus.Publish(core.WorkerDone{Job: "tag"})
 		}
-	case ActRevision:
-		r.UUID, r.Rev, err = w.backend.Revision(ctx)
-	case ActAddresses:
-		r.Addrs, err = w.backend.Addresses(ctx, a.Query)
 	case ActNew:
 		r.Pre, r.Rev, err = w.backend.New(ctx)
 		if err == nil {
@@ -175,8 +159,50 @@ func (w *Worker) handle(a Action) {
 		err = ErrLockTimeout
 		w.bus.Publish(core.WorkerLockTimeout{Kind: actionName(a.Kind)})
 	}
-	r.Err = err
+	if err != nil {
+		// non-read actions deliver their error through the dispatch err;
+		// reads set r.Err in read() and leave err nil
+		r.Err = err
+	}
 	a.replyCh <- r
+}
+
+// read runs a read action on a fresh snapshot. A read-only cgo
+// handle's Xapian revision is pinned at open: a commit landed on
+// ANOTHER handle (a tag op's read-write reopen, a `notmuch new`
+// subprocess, a foreign process) is invisible - and can invalidate -
+// reads until reopened (a stale get_document throws
+// OPERATION_INVALIDATED, message.cc). Callers used to reopen by hand
+// per cycle (the walk worker); every read reopens here, so no caller
+// can serve a stale snapshot. Writes reopen their own handle around
+// the op and skip this; the CLI backend's Reopen is a no-op.
+func (w *Worker) read(ctx context.Context, a Action) Reply {
+	r := Reply{ID: a.ID}
+	if err := w.backend.Reopen(ctx); err != nil {
+		r.Err = err
+		return r
+	}
+	switch a.Kind {
+	case ActQuery:
+		r.Err = w.backend.Query(ctx, a.Query, a.Limit, a.Flat, a.Emit)
+	case ActQueryMsgs:
+		r.Err = w.backend.QueryMsgs(ctx, a.Query, a.Emit)
+	case ActCount:
+		if a.Flat {
+			r.Count, r.Err = w.backend.CountMsgs(ctx, a.Query)
+		} else {
+			r.Count, r.Err = w.backend.Count(ctx, a.Query)
+		}
+	case ActThread:
+		r.Msgs, r.Err = w.backend.Thread(ctx, a.ThreadID)
+	case ActSnapshots:
+		r.Msgs, r.Err = w.backend.Snapshots(ctx, a.Paths)
+	case ActRevision:
+		r.UUID, r.Rev, r.Err = w.backend.Revision(ctx)
+	case ActAddresses:
+		r.Addrs, r.Err = w.backend.Addresses(ctx, a.Query)
+	}
+	return r
 }
 
 // actionNames is the canonical action-name table: the lock-timeout

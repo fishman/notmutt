@@ -11,11 +11,13 @@ processed state written back to HubSpot.
 
 **Architecture:** purpose-built stdlib Go clients (`src/hubspot`, `src/search`)
 behind the `lua` build tag (they call the lua-gated `ai` package), a lua-gated
-`src/app/hubspot_engine.go` + `!lua` stub (the ai_engine split), default-build
-bus event types in `core`, and a new queue surface in `tui` that stays inert in
+`src/app/hubspot_engine.go` + `!lua` stub (the ai_engine split), and a new
+non-mail queue surface in `tui`. Core and tui stay vendor-neutral: rows are
+`core.CrmContact` carrying a `provider` id that routes actions to the owning
+engine; nothing in `core`/`tui` names HubSpot. The surface stays inert in
 default builds via hook setters. Analysis/research/draft all ride one `[ai]`
-entry named by `[hubspot] provider`; only the HubSpot portal token is `[hubspot]
-token_cmd`.
+entry named by `[hubspot] provider`; only the HubSpot portal token is
+`[hubspot] token_cmd`.
 
 **Tech Stack:** Go stdlib `net/http` + `encoding/json`; `//go:build lua`;
 existing `ai` (Chat/FetchKey/aiStream), `aicmd`, `compose`, `core.Bus`,
@@ -70,19 +72,22 @@ core types. Add plain data event structs beside `AiChunk`/`AiResult`
 precedent):
 
 ```go
-type HubspotContact struct {   // one queue row
-    ID, Email, First, Last, Title string
+type CrmContact struct {        // one queue row; provider-neutral - core never names a vendor
+    Provider                       string // CRM source, the routing id: "hubspot" (a future CRM adds a value)
+    ID, Email, First, Last, Title  string // ID is provider-local
     Company                        string
     CreatedAt                      time.Time
     Status                         string // new|briefing|drafted|sent|dismissed
 }
-type HubspotQueue struct{ Contacts []HubspotContact }
-type HubspotBriefing struct{ ID, Text string }        // ID = contact ID
-type HubspotRowError struct{ ID string; Err error }   // JobError-style, F6-safe
+type CrmQueue struct{ Contacts []CrmContact }
+type CrmBriefing struct{ Provider, ContactID, Text string }
+type CrmRowError struct{ Provider, ContactID string; Err error } // JobError-style, F6-safe
 ```
 
-`HubspotQueue` gets a last-value snapshot in `newBus` (bus.go:35-49, the
-list at 38-49). `HubspotRowError` needs no snapshot.
+`CrmQueue` gets a last-value snapshot in `newBus` (bus.go:35-49, the
+list at 38-49). `CrmRowError` needs no snapshot. The HubSpot engine
+(provider value `"hubspot"`) produces and consumes these; nothing in `core` or
+`tui` names HubSpot.
 
 **Check:** `cd src && go build ./core/`.
 
@@ -185,7 +190,7 @@ two setters (place next to app.go:288-290); the symbols exist in both builds:
 
 ```go
 // hubspot_engine.go (lua):
-func hubspotPullSource() []tui.HubspotCommand              // stub: nil
+func hubspotPullSource() []tui.CrmCommand                  // stub: nil
 func hubspotWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) // stub: no-op
 // hubspot_engine_stub.go (!lua): matching no-op symbols, no lua imports
 ```
@@ -197,9 +202,9 @@ hubspotWire(ctx, bus, worker, cfg, root) // no-op in !lua builds
 ```
 
 `hubspotWire` subscribes to `core.Bus` (the subscriber pattern at app.go:393
-or ai wiring): on `RefreshRequested` and on a `core.HubspotQueue`-refresh event
-it re-runs the pull; on `core.SendResult` and `core.HubspotRowError` it drives
-write-back (Tasks 11). Keep it a thin subscriber; the job bodies are separate.
+or ai wiring): on `RefreshRequested` it re-runs the pull; on `core.SendResult`
+and `core.CrmRowError` it drives write-back (Tasks 11). Keep it a thin
+subscriber; the job bodies are separate.
 
 **Check:** `cd src && go build .` and `go build -tags "lua mcp" ./...`.
 
@@ -209,12 +214,13 @@ write-back (Tasks 11). Keep it a thin subscriber; the job bodies are separate.
 
 `runHubspotPull(bus, worker, cfg, root)` mirrors `sendJob`'s fresh-goroutine
 shape (app.go:343-345): on a `run` mutex guard, build the client
-(`hubspot.New`), `ListUnprocessed`, publish `core.HubspotQueue{Contacts}` as
+(`hubspot.New`), `ListUnprocessed`, publish `core.CrmQueue{Contacts}` as
 the rows arrive (one publish per page, so refresh diff-and-inserts - the R3
-shape). Map each `hubspot.Contact` to a `core.HubspotContact` row here
-(client `FirstName`/`LastName`/`CompanyID` -> row `First`/`Last`/`Company`
-via the company name lookup when loaded; `Status` starts `"new"`). Any error
-publishes `core.HubspotRowError{ID:"", Err}` and stops;
+shape). Map each `hubspot.Contact` to a `core.CrmContact` row here with
+`Provider: "hubspot"` (client `FirstName`/`LastName`/`CompanyID` -> row
+`First`/`Last`/`Company` via the company name lookup when loaded; `Status`
+starts `"new"`). Any error
+publishes `core.CrmRowError{Provider: "hubspot", Err}` and stops;
 rows already received stay. Guard with the `running` mutex precedent
 (refresh.go:39-47) so overlapping refreshes no-op.
 
@@ -231,7 +237,8 @@ research with company fields empty), `search.Research` on the company
 name/domain over the `[hubspot] provider` entry, assemble with `briefing`
 (Task 6), then stream the model's briefing text. Stream via `aiStream` on that
 provider (ai_stream.go:54, the shape runAICommand uses) and publish
-`core.HubspotBriefing{ID: contact.ID, Text}`. Cancellable through the existing
+`core.CrmBriefing{Provider: "hubspot", ContactID: contact.ID, Text}`.
+Cancellable through the existing
 Task machinery (task.go registerTask/completeTask); abort leaves the row at its
 prior status. Resolve the provider with `resolveAIProvider(cfg,
 cfg.Hubspot.Provider)` (ai_draft.go:22).
@@ -263,9 +270,9 @@ fake provider (httptest OpenAI-compatible endpoint via the provider's
    *compose.State` sibling of `aiDraftCompose` (ai_draft.go:46-67) that sets
    `To` from `contact.Email`, subject/body, and reuses the newCompose/prefill
    fields (compose.go:79-90); publish `compose.ToEvent`. Track
-   `composeID -> contactID` in a session-local map (a package var like
-   `lastAIOutput`, ai_engine.go:44-49) for the send hook (Task 11). Nothing is
-   sent automatically.
+   `composeID -> {Provider: "hubspot", ContactID}` in a session-local map (a
+   package var like `lastAIOutput`, ai_engine.go:44-49) for the send hook
+   (Task 11). Nothing is sent automatically.
 
 **Check:** `go build -tags lua ./app/`; the map + subject/body parse get a
 unit test in Task 13 (`hubspot_draft_test.go`, fake chat).
@@ -275,61 +282,70 @@ unit test in Task 13 (`hubspot_draft_test.go`, fake chat).
 **Files:** `src/app/hubspot_engine.go`
 
 From `hubspotWire`'s subscribers (Task 7): on `core.SendResult{OK:true,
-TabID}` where `TabID` is in the compose map, and on a dismiss action for a
-contact, call `runHubspotMark(contactID)`: `hubspot.MarkFollowedUp(id,
-marker)`. On success drop the map entry / publish a queue update so the row
-leaves; on failure publish `core.HubspotRowError{ID, Err}` and keep the row
+TabID}` where `TabID` is in the compose map, look up the entry and, when its
+`Provider` is `"hubspot"`, call `runHubspotMark(ContactID)`:
+`hubspot.MarkFollowedUp(id, marker)`. On success drop the map entry / publish
+a queue update so the row leaves; on failure publish
+`core.CrmRowError{Provider: "hubspot", ContactID: id, Err}` and keep the row
 retryable (the `x`/`a` re-run covers retry). The marker is eventually
 consistent; the sent mail is the durable artifact. Dismiss publishes
-`core.HubspotQueue` minus that contact only after the mark succeeds.
+`core.CrmQueue` minus that contact only after the mark succeeds; the dismiss
+handler filters on the row's `Provider` before dispatching (a neutral surface
+must not assume HubSpot).
 
 **Check:** `go build -tags lua ./app/`; the once-per-contact rule is pinned in
 Task 13's test (fake client records calls).
 
 ## Task 12: TUI hooks + queue surface
 
-**Files:** `src/tui/hooks.go`, `src/tui/hubspot.go`, `src/tui/hubspot_test.go`
+**Files:** `src/tui/hooks.go`, `src/tui/crm.go`, `src/tui/crm_test.go` (all
+default build)
 
-`hooks.go` (default build, inert unless set - the ai hook pattern at
-hooks.go:246-272): `type HubspotCommand struct{ Name, Desc string }`;
-`SetHubspotPullSource(fn func() []HubspotCommand)` defaulting to nil; a
-`SetHubspotActionHandler(fn func(action, contactID string))` defaulting to a
-no-op (the onAICommand shape, hooks.go:265-272).
+`hooks.go` (inert unless set - the ai hook pattern at hooks.go:246-272):
+`type CrmCommand struct{ Name, Desc string }`; `SetCrmPullSource(fn func()
+[]CrmCommand)` defaulting to nil; `SetCrmActionHandler(fn func(action string,
+c core.CrmContact))` defaulting to a no-op (the onAICommand shape,
+hooks.go:265-272). The handler receives the full row, so dispatch is
+provider-aware.
 
 The queue surface is a new non-mail list buffer. Model its skeleton on the
 search tab + index: `openSearchTab`/`runSearchQuery`/`ViewDiff`
 (model.go:4507, refresh.go:386, core bus ViewDiff at core/bus.go:172) give the
-list-view precedent, but rows are `core.HubspotContact`, not a notmuch view.
-Add a `hubspot.go` (default build, since `core.HubspotContact` is default):
-a small model + render holding `[]core.HubspotContact`, selection, and the
-selected row's `core.HubspotBriefing` text rendered in a detail region under
-the list; row actions map to the handler hook: `a` -> analyze, `d` -> draft
-(enabled only when a briefing is present), `x` -> dismiss. Rows come from
-subscribing to `core.HubspotQueue`/`HubspotBriefing` on the bus (the
-subscriber wiring at model.go). Keep it to the existing renderer primitives and
-theme objects (`normal`, `index_*`, `prompt`/`message`, R11 machinery) - no new
-dependencies. When no source is set (default build), the surface never opens
-and the hooks are inert.
+list-view precedent, but rows are `core.CrmContact`, not a notmuch view. Add a
+`crm.go` (default build - `core.CrmContact` and the Crm* events are default):
+a small model + render holding `[]core.CrmContact`, selection, and the selected
+row's `core.CrmBriefing` text rendered in a detail region under the list; row
+actions map to the handler hook with the selected row: `a` -> analyze,
+`d` -> draft (enabled only when a briefing is present for that row), `x` ->
+dismiss. Rows come from subscribing to `core.CrmQueue`/`CrmBriefing` on the
+bus (the subscriber wiring at model.go). Keep it to the existing renderer
+primitives and theme objects (`normal`, `index_*`, `prompt`/`message`, R11
+machinery) - no new dependencies. When no source is set (default build), the
+surface never opens and the hooks are inert.
 
-**Check:** `go build ./tui/` in default and `-tags lua`; `hubspot_test.go` for
-the row model transitions (new -> briefing -> drafted/sent/dismissed) and the
+**Check:** `go build ./tui/` in default and `-tags lua`; `crm_test.go` for the
+row model transitions (new -> briefing -> drafted/sent/dismissed) and the
 `d`-requires-briefing guard, no screen needed.
 
 ## Task 13: wire the surface + integration tests
 
-**Files:** `src/app/app.go`, `src/app/hubspot_engine.go`, `src/app/hubspot_test.go` (lua), `src/tui/hubspot.go`
+**Files:** `src/app/app.go`, `src/app/hubspot_engine.go`,
+`src/app/hubspot_test.go` (lua), `src/tui/crm.go`
 
 - Open path: register the queue surface behind a new index-mode keybinding
   (the binding map at key.go; mirror how the AI picker key opens). `hubspotWire`
-  supplies `hubspotPullSource` and the action handler into tui hooks (the
-  SetAICommandSource/Handler call shape at app.go:288-290). First open triggers
-  `runHubspotPull`.
+  supplies the pull source and the action handler into tui hooks (the
+  SetAICommandSource/Handler call shape at app.go:288-290), filling rows with
+  `Provider: "hubspot"`. The surface dispatches every action with the full row;
+  the handler filters `c.Provider == "hubspot"` before acting (a neutral
+  surface must not assume a vendor). First open triggers `runHubspotPull`.
 - `hubspot_test.go` (lua): drive `runHubspotPull`/`Analyze`/`Draft`/`Mark`
   end-to-end against an `httptest` OpenAI-compatible provider + an `httptest`
-  HubSpot server: pull publishes rows; analyze publishes a briefing; draft
-  opens a `compose.State` with the contact address; send-OK and dismiss each
-  call `MarkFollowedUp` once with the right id; a failing mark keeps the row
-  (Task 11 rule). Fabricated data only.
+  HubSpot server: pull publishes `core.CrmQueue` rows with
+  `Provider: "hubspot"`; analyze publishes a `CrmBriefing`; draft opens a
+  `compose.State` with the contact address; send-OK and dismiss each call
+  `MarkFollowedUp` once with the right id; a failing mark keeps the row (Task
+  11 rule). Fabricated data only.
 
 **Check:** `cd src && go test -count=1 -tags "lua mcp" ./app/ -run 'Hubspot'`
 and `go test -count=1 -tags "lua mcp" ./tui/ -run Hubspot`.

@@ -234,20 +234,20 @@ func TestAuthorListItemGate(t *testing.T) {
 }
 
 func TestTableExpandsToGridTree(t *testing.T) {
-	// <table><tr><td>a</td></tr></table> (rawTable: the HTML5 parser wraps a
-	// literal <tr> under <table> in an implied tbody, so the anonymous
-	// row-group repair needs the author's raw structure)
-	bs := rawTable(tnode("tr", tnode("td", tnodeText("a"))))
+	// <table><tr><td>a</td></tr></table> - x/net/html wraps the literal <tr>
+	// in an implied <tbody>, so the well-formed table>row-group>row>cell shape
+	// is the parser's output, not a builder repair.
+	bs := buildBody(`<table><tr><td>a</td></tr></table>`)
 	tbl := bs[0]
 	if tbl.Role != RoleTable || tbl.Tbl != "table" {
 		t.Fatalf("table role/tbl = %v/%q, want RoleTable/table", tbl.Role, tbl.Tbl)
 	}
-	if len(tbl.Children) != 1 || tbl.Children[0].Tbl != "row-group" || tbl.Children[0].Tag != "" {
-		t.Fatalf("table child = %+v, want an anonymous row-group wrapping the tr", tbl.Children)
+	if len(tbl.Children) != 1 || tbl.Children[0].Tbl != "row-group" || tbl.Children[0].Tag != "tbody" {
+		t.Fatalf("table child = %+v, want the implied tbody row-group", tbl.Children)
 	}
 	row := tbl.Children[0].Children[0]
 	if len(tbl.Children[0].Children) != 1 || row.Tbl != "row" || row.Tag != "tr" {
-		t.Fatalf("row-group child = %+v, want the tr as a row", tbl.Children[0].Children)
+		t.Fatalf("row-group child = %+v, want the tr row", tbl.Children[0].Children)
 	}
 	cell := row.Children[0]
 	if len(row.Children) != 1 || cell.Tbl != "cell" || cell.Tag != "td" {

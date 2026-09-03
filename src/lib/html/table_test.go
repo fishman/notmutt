@@ -3,44 +3,7 @@
 
 package html
 
-import (
-	"testing"
-
-	xhtml "golang.org/x/net/html"
-)
-
-// rawTable builds a body whose single table element carries the given
-// literal child nodes and returns the body's top-level boxes. The HTML5
-// parser never hands a table raw tr/td/text children: it wraps rows and
-// cells in an implied tbody>tr and foster-parents stray runs out of the
-// table. The anonymous-repair tests below therefore construct the author's
-// raw structure directly so buildElement/tableKids/fixTable actually see a
-// stray row, cell, or run under a table.
-func rawTable(children ...*xhtml.Node) []*Box {
-	table := &xhtml.Node{Type: xhtml.ElementNode, Data: "table"}
-	for _, c := range children {
-		table.AppendChild(c)
-	}
-	body := &xhtml.Node{Type: xhtml.ElementNode, Data: "body"}
-	body.AppendChild(table)
-	html := &xhtml.Node{Type: xhtml.ElementNode, Data: "html"}
-	html.AppendChild(body)
-	doc := &xhtml.Node{Type: xhtml.DocumentNode}
-	doc.AppendChild(html)
-	return Build(doc, nil)
-}
-
-func tnode(tag string, children ...*xhtml.Node) *xhtml.Node {
-	n := &xhtml.Node{Type: xhtml.ElementNode, Data: tag}
-	for _, c := range children {
-		n.AppendChild(c)
-	}
-	return n
-}
-
-func tnodeText(s string) *xhtml.Node {
-	return &xhtml.Node{Type: xhtml.TextNode, Data: s}
-}
+import "testing"
 
 func TestTableStrayWhitespaceDrops(t *testing.T) {
 	bs := buildBody("<table>\n  <tr><td>a</td></tr>\n  </table>")
@@ -50,47 +13,30 @@ func TestTableStrayWhitespaceDrops(t *testing.T) {
 	}
 }
 
-func TestTableStrayTdGetsAnonymousRow(t *testing.T) {
-	// <table><td>a</td></table>
-	bs := rawTable(tnode("td", tnodeText("a")))
-	tbl := bs[0]
-	grp := tbl.Children[0]
-	if len(tbl.Children) != 1 || grp.Tbl != "row-group" || grp.Tag != "" {
-		t.Fatalf("stray td child = %+v, want one anonymous row-group", tbl.Children)
+func TestTableFosteredRunLandsBeforeTable(t *testing.T) {
+	// <table>stray<tr>... - x/net/html foster-parents the non-whitespace run
+	// out of the table (before it in the body); the builder must not invent an
+	// anonymous cell to hold it.
+	// Top-level text before a block table wraps in an anonymous run
+	// (splitRuns), exactly as text before any other block does.
+	bs := buildBody(`<table>stray<tr><td>a</td></tr></table>`)
+	if len(bs) != 2 || bs[0].Role != RoleBlock || len(bs[0].Children) != 1 ||
+		bs[0].Children[0].Role != RoleText || bs[0].Children[0].Text != "stray" {
+		t.Fatalf("body = %+v, want the stray run (anon block) then the table", bs)
 	}
-	row := grp.Children[0]
-	if row.Tbl != "row" || row.Tag != "" {
-		t.Fatalf("row-group child = %+v, want an anonymous row", grp.Children)
-	}
-	cell := row.Children[0]
-	if cell.Tbl != "cell" || cell.Tag != "td" {
-		t.Fatalf("row child = %+v, want the td cell", row.Children)
-	}
-}
-
-func TestTableStrayTrGetsAnonymousGroup(t *testing.T) {
-	// <table><tr><td>a</td></tr></table>
-	bs := rawTable(tnode("tr", tnode("td", tnodeText("a"))))
-	tbl := bs[0]
-	grp := tbl.Children[0]
-	if len(tbl.Children) != 1 || grp.Tbl != "row-group" || grp.Tag != "" {
-		t.Fatalf("stray tr child = %+v, want one anonymous row-group", tbl.Children)
-	}
-	if len(grp.Children) != 1 || grp.Children[0].Tag != "tr" {
-		t.Fatalf("anonymous group child = %+v, want the real tr", grp.Children)
+	tbl := bs[1]
+	if tbl.Role != RoleTable || len(tbl.Children) != 1 || tbl.Children[0].Tag != "tbody" {
+		t.Fatalf("table = %+v, want one implied tbody row-group", tbl.Children)
 	}
 }
 
-func TestTableStrayRunGetsAnonymousCell(t *testing.T) {
-	// <table>stray<tr><td>a</td></tr></table>
-	bs := rawTable(tnodeText("stray"), tnode("tr", tnode("td", tnodeText("a"))))
-	tbl := bs[0]
-	if len(tbl.Children) != 2 {
-		t.Fatalf("children = %d, want anon-cell group then the tr group", len(tbl.Children))
-	}
-	cell := tbl.Children[0].Children[0].Children[0]
-	if cell.Tbl != "cell" || cell.Tag != "" || len(cell.Children) != 1 || cell.Children[0].Text != "stray" {
-		t.Fatalf("stray run cell = %+v, want anonymous cell wrapping 'stray'", cell)
+func TestAuthorDisplayTableOnDivRendersBlock(t *testing.T) {
+	// display:table on a non-table element is not a grid: x/net/html cannot
+	// nest it (parser keys off element names) and mail never uses it, so the
+	// div renders as block (walker parity) and its children as ordinary flow.
+	bs := buildBody(`<div style="display:table"><em style="display:table-cell">a</em></div>`)
+	if len(bs) != 1 || bs[0].Role != RoleBlock || bs[0].Tag != "div" {
+		t.Fatalf("display:table div = %+v, want RoleBlock (not RoleTable)", bs[0])
 	}
 }
 

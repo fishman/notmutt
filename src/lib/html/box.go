@@ -145,6 +145,9 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 		role = RoleImg
 	default:
 		role = roleOf(d)
+		if role == RoleTable && !isTableTag(tag) {
+			role = RoleBlock // author display:table-* on a non-table tag: block, not a grid
+		}
 	}
 	b := &Box{Role: role, Tag: tag, Node: n, St: st, WS: st.WS}
 	if role == RoleTable {
@@ -157,12 +160,8 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 			fillFlowChildren(b, n, st, rules, listDepth)
 		case "caption":
 			fillFlowChildren(b, n, st, rules, listDepth) // content built; caption layout deferred
-		case "table":
-			b.Children = fixTable(tableKids(n, st, rules, listDepth), st, 0)
-		case "row-group":
-			b.Children = fixTable(tableKids(n, st, rules, listDepth), st, 1)
-		case "row":
-			b.Children = fixTable(tableKids(n, st, rules, listDepth), st, 2)
+		case "table", "row-group", "row":
+			b.Children = tableKids(n, st, rules, listDepth)
 		}
 		return b
 	}
@@ -257,6 +256,18 @@ func roleOf(d string) Role {
 	return RoleInline
 }
 
+// isTableTag reports whether the element is a real HTML table-family tag,
+// whose UA default display is a table keyword. Table roles resolve only for
+// these: x/net/html's parse already normalizes their children, and author
+// display:table-* on any other element renders as block.
+func isTableTag(tag string) bool {
+	switch tag {
+	case "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col":
+		return true
+	}
+	return false
+}
+
 // hasBlockChild reports whether any direct child is a block-level box.
 func hasBlockChild(cs []*Box) bool {
 	for _, c := range cs {
@@ -296,10 +307,11 @@ func splitRuns(cs []*Box, st *Style) []*Box {
 	return out
 }
 
-// tableKids gathers a table-context element's children into boxes,
-// dropping whitespace-only text nodes (anonymous-table repair) and the
-// display:none/head skips; non-whitespace text is kept so a stray run gets
-// a cell instead of vanishing.
+// tableKids gathers a table-context element's children into boxes. The
+// x/net/html parse already nests real rows/cells and foster-parents
+// non-whitespace runs out of a table/row; only whitespace text between
+// furniture survives into this context, so it is dropped (the renderer must
+// not give it height) and each furniture element is built in place.
 func tableKids(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) []*Box {
 	var out []*Box
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
@@ -315,85 +327,5 @@ func tableKids(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) []*
 			}
 		}
 	}
-	return out
-}
-
-// anonTableBox builds one anonymous grid wrapper sharing the container's
-// style pointer (anonymous boxes carry no margins or geometry of their own).
-func anonTableBox(kind string, st *Style) *Box {
-	return &Box{Role: RoleTable, Tbl: kind, St: st, WS: st.WS}
-}
-
-// fixTable repairs a table-context child list into the grid children of a
-// box at the given level (0: a table collecting row-groups/captions; 1: a
-// row-group collecting rows; 2: a row collecting cells). Anonymous repair
-// (weasyprint formatting_structure/build.py): a stray row gets an anonymous
-// group, a stray cell gets an anonymous row (and group at level 0/1), and a
-// stray run of inline content gets an anonymous cell->row(->group) chain.
-// Whitespace-only text is already gone (tableKids).
-func fixTable(cs []*Box, st *Style, level int) []*Box {
-	var out []*Box
-	var run []*Box
-	flush := func() {
-		if len(run) == 0 {
-			return
-		}
-		cell := anonTableBox("cell", st)
-		cell.Children = run
-		if hasBlockChild(run) {
-			cell.Children = splitRuns(run, st)
-		}
-		row := anonTableBox("row", st)
-		row.Children = []*Box{cell}
-		switch level {
-		case 0:
-			g := anonTableBox("row-group", st)
-			g.Children = []*Box{row}
-			out = append(out, g)
-		case 1:
-			out = append(out, row)
-		default:
-			out = append(out, cell)
-		}
-		run = nil
-	}
-	wrapCell := func(cell *Box) {
-		row := anonTableBox("row", st)
-		row.Children = []*Box{cell}
-		switch level {
-		case 0:
-			g := anonTableBox("row-group", st)
-			g.Children = []*Box{row}
-			out = append(out, g)
-		case 1:
-			out = append(out, row)
-		default:
-			out = append(out, cell)
-		}
-	}
-	for _, c := range cs {
-		switch {
-		case c.Tbl == "cell" && level == 2: // a proper td under its row
-			flush()
-			out = append(out, c)
-		case level == 0 && (c.Tbl == "row-group" || c.Tbl == "caption"):
-			flush()
-			out = append(out, c)
-		case level == 0 && c.Tbl == "row": // stray tr under a table
-			flush()
-			g := anonTableBox("row-group", st)
-			g.Children = []*Box{c}
-			out = append(out, g)
-		case level == 1 && c.Tbl == "row":
-			flush()
-			out = append(out, c)
-		case c.Tbl == "cell": // stray td under a table or row-group
-			flush()
-			wrapCell(c)
-		default: // inline runs, stray block/nested-table content: an anonymous cell
-			run = append(run, c)
-		}
-	}
-	flush()
 	return out
 }

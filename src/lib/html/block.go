@@ -15,6 +15,7 @@ type Row struct {
 	Line    LineBox     // filled content line (unused when HR or marker-only)
 	HR      bool        // this row is the 2px hr rule
 	Markers []RowMarker // list markers hanging in this row's gutters
+	Cells   []Row       // table grid row: per-cell fragments side by side (mutually exclusive with Line/HR)
 }
 
 // RowMarker is one list marker hanging before its row. X is the px content
@@ -89,6 +90,10 @@ func flow(cs []*Box, x0, w int, s *seam, m Metrics, norm bool) []Row {
 		}
 		first := len(rows)
 		switch {
+		case c.Tbl == "table":
+			// the grid case runs before the block recursion: a table's
+			// row-group children must not flow as stacked blocks
+			rows = append(rows, tableRows(c, cx, cw, s, m, norm)...)
 		case c.Tag == "hr":
 			rows = append(rows, Row{Gap: s.take(), X: cx, W: cw, Box: c, HR: true})
 		case hasBlockChild(c.Children):

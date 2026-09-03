@@ -9,18 +9,31 @@ import (
 	"testing"
 )
 
-// rowsText renders the non-hr rows' text for assertions.
+// rowsText renders the non-hr rows' text for assertions. A table row's
+// Cells fragments render in order (their texts concatenate; the stage-2
+// gutter is horizontal blank columns, not text).
 func rowsText(rs []Row) []string {
-	var out []string
-	for _, r := range rs {
-		if r.HR {
-			continue
+	var rowText func(Row) string
+	rowText = func(r Row) string {
+		if len(r.Cells) > 0 {
+			var b strings.Builder
+			for _, f := range r.Cells {
+				b.WriteString(rowText(f))
+			}
+			return b.String()
 		}
 		var b strings.Builder
 		for _, a := range r.Line.Atoms {
 			b.WriteString(a.text)
 		}
-		out = append(out, b.String())
+		return b.String()
+	}
+	var out []string
+	for _, r := range rs {
+		if r.HR {
+			continue
+		}
+		out = append(out, rowText(r))
 	}
 	return out
 }

@@ -1568,3 +1568,23 @@ func TestEnumTags(t *testing.T) {
 		t.Fatal("keymap enum must stay data-derived (the schemes map)")
 	}
 }
+
+// TestLoadExportPaper pins the [export] paper knob: a4 by default
+// (weasyprint's own default kept, so nothing changes for existing
+// configs), letter overrides, and any other value is a load error.
+func TestLoadExportPaper(t *testing.T) {
+	if got := Default().Export.Paper; got != "a4" {
+		t.Fatalf("default export paper = %q, want a4", got)
+	}
+	cfg, err := Load(write(t, "[export]\npaper = \"letter\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Export.Paper != "letter" {
+		t.Fatalf("export paper = %q, want letter", cfg.Export.Paper)
+	}
+	if _, err := Load(write(t, "[export]\npaper = \"tabloid\"\n")); err == nil ||
+		!strings.Contains(err.Error(), "export.paper") {
+		t.Fatalf("unknown paper must error naming the key, got: %v", err)
+	}
+}

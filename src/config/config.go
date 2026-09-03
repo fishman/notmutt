@@ -144,6 +144,7 @@ type Config struct {
 	Opener  []string                                 `toml:"opener"`
 	Pager   Pager                                    `toml:"pager"`
 	HTML    HTMLSection                              `toml:"html"`
+	Export  ExportSection                            `toml:"export"`
 	Palette Palette                                  `toml:"palette"`
 	Theme   Theme                                    `toml:"theme"`
 	Schemes map[string]map[string]map[string]Binding `toml:"schemes"`
@@ -177,6 +178,13 @@ type Pager struct {
 // resolved theme variant, on/off override (unknown value = load error).
 type HTMLSection struct {
 	DarkMode string `toml:"dark-mode" enum:"auto,on,off"`
+}
+
+// ExportSection is the [export] table: Paper declares the pager export's
+// PDF page size (the injected print stylesheet's @page). a4 (default) or
+// letter; any other value = load error.
+type ExportSection struct {
+	Paper string `toml:"paper" enum:"a4,letter"`
 }
 
 // HTMLDark resolves the [html] dark-mode setting for a render: auto
@@ -1344,6 +1352,7 @@ func Default() Config {
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 		HTML:    HTMLSection{DarkMode: "auto"},
+		Export:  ExportSection{Paper: "a4"},
 	}
 	// the embedded base (base.toml) overlays the Go defaults: the
 	// binding schemes, tag actions, and descriptions are user data,
@@ -1657,6 +1666,9 @@ func validate(cfg Config) error {
 	}
 	if v := cfg.HTML.DarkMode; !slices.Contains(enumOf(reflect.TypeOf(HTMLSection{}), "DarkMode"), v) {
 		return fmt.Errorf("html.dark-mode: must be auto, on or off, got %q", v)
+	}
+	if p := cfg.Export.Paper; !slices.Contains(enumOf(reflect.TypeOf(ExportSection{}), "Paper"), p) {
+		return fmt.Errorf("export.paper: must be a4 or letter, got %q", p)
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)

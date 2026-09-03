@@ -44,7 +44,7 @@ func TestExportMessage(t *testing.T) {
 
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	exportMessage(fw, bus, nil, "t1", "a", dir, "pdf")
+	exportMessage(fw, bus, nil, exportParams{threadID: "t1", msgID: "a", target: dir, form: "pdf", paper: "a4"})
 
 	want := filepath.Join(strings.TrimSuffix(dir, "/"), "20190102-test-subject.pdf")
 	select {
@@ -63,7 +63,7 @@ func TestExportMessage(t *testing.T) {
 			t.Fatalf("path = %q, want %q", ev.Path, want)
 		}
 		data, err := os.ReadFile(want)
-		if err != nil || strings.TrimSpace(string(data)) != html {
+		if err != nil || strings.TrimSpace(string(data)) != strings.TrimSpace(printDoc(html, "a4")) {
 			t.Fatalf("exported file = %q, %v", data, err)
 		}
 		if fi, err := os.Stat(want); err != nil || fi.Mode().Perm() != 0o600 {
@@ -75,7 +75,7 @@ func TestExportMessage(t *testing.T) {
 
 	// a literal path target is written verbatim, not renamed by the form
 	explicit := filepath.Join(t.TempDir(), "custom.pdf")
-	exportMessage(fw, bus, nil, "t1", "a", explicit, "pdf")
+	exportMessage(fw, bus, nil, exportParams{threadID: "t1", msgID: "a", target: explicit, form: "pdf", paper: "a4"})
 	select {
 	case e := <-ch:
 		ev, ok := e.(core.ExportPdfResult)
@@ -92,7 +92,7 @@ func TestExportMessage(t *testing.T) {
 	// a failing renderer reports the error and leaves no file behind
 	exportForms["pdf"] = exportForm{ext: pdf.ext, argv: []string{failStub(t)}}
 	failDir := filepath.Join(t.TempDir(), "boom") + "/"
-	exportMessage(fw, bus, nil, "t1", "a", failDir, "pdf")
+	exportMessage(fw, bus, nil, exportParams{threadID: "t1", msgID: "a", target: failDir, form: "pdf", paper: "a4"})
 	select {
 	case e := <-ch:
 		ev, ok := e.(core.ExportPdfResult)
@@ -108,6 +108,29 @@ func TestExportMessage(t *testing.T) {
 	}
 	if tmps, err := filepath.Glob(filepath.Join(strings.TrimSuffix(failDir, "/"), ".notmutt-export-*.tmp")); err != nil || len(tmps) != 0 {
 		t.Fatalf("a failed export must leave no render temp behind, got %v (%v)", tmps, err)
+	}
+}
+
+// TestPrintDocDeclaresPageAndWrapping pins the print stylesheet: the
+// requested paper reaches @page, long text cannot clip at the page edge
+// (pre-wrap + max-width), nowrap lines that would set a page-wide
+// min-content are made wrappable, and the mail body survives the wrapper.
+func TestPrintDocDeclaresPageAndWrapping(t *testing.T) {
+	doc := printDoc("<html><body><pre>line\n</pre></body></html>", "letter")
+	if !strings.Contains(doc, "@page { size: letter; margin: 1.5cm }") {
+		t.Fatalf("printDoc must declare the paper size, got %q", doc)
+	}
+	if !strings.Contains(doc, "max-width: 100%") {
+		t.Fatalf("printDoc must constrain width, got %q", doc)
+	}
+	if !strings.Contains(doc, "white-space: normal !important") {
+		t.Fatalf("printDoc must break nowrap lines (they clip at the page edge), got %q", doc)
+	}
+	if !strings.Contains(doc, "pre { white-space: pre-wrap !important }") {
+		t.Fatalf("printDoc must keep <pre> spacing while wrapping, got %q", doc)
+	}
+	if !strings.HasSuffix(doc, "</body></html>") {
+		t.Fatalf("printDoc must preserve the mail body, got %q", doc)
 	}
 }
 

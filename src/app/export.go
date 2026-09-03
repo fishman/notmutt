@@ -30,29 +30,42 @@ var exportForms = map[string]exportForm{
 	"pdf": {ext: ".pdf", argv: []string{"weasyprint", "--no-http-redirects"}},
 }
 
-// exportMessage turns one message into an exported file at target. A
+// exportParams carries the export job's per-invocation parameters
+// (message identity, destination, renderer form and paper) as one struct
+// - the parameter list outgrew positional args once the [export] paper
+// knob joined the form key. The dependency plumbing (worker, bus, views)
+// stays separate.
+type exportParams struct {
+	threadID string // the exported thread (echoed on the result)
+	msgID    string // the message whose html renders
+	target   string // folder (trailing "/") or literal file path
+	form     string // the renderer form key ("pdf")
+	paper    string // the [export] paper size for the print stylesheet
+}
+
+// exportMessage turns one message into an exported file at p.target. A
 // folder target (a trailing "/" or an existing directory) receives the
 // generated YYYYMMDD-<slug>.pdf name from the message's own date and
 // subject; anything else is the literal file path. The renderer runs with
-// the message's html on stdin (never a temp file with content) and writes
-// a 0600 temp that renames over the target only on success - a failed run
-// leaves no partial file behind.
-func exportMessage(worker workerAPI, bus *core.Bus, views map[string]*core.View, threadID, msgID, target, form string) {
-	f, ok := exportForms[form]
+// the message's html (print-wrapped) on stdin (never a temp file with
+// content) and writes a 0600 temp that renames over the target only on
+// success - a failed run leaves no partial file behind.
+func exportMessage(worker workerAPI, bus *core.Bus, views map[string]*core.View, p exportParams) {
+	f, ok := exportForms[p.form]
 	if !ok {
-		bus.Publish(core.ExportPdfResult{Err: fmt.Errorf("export: unknown form %q", form)})
+		bus.Publish(core.ExportPdfResult{Err: fmt.Errorf("export: unknown form %q", p.form)})
 		return
 	}
-	msgs := threadFromViews(views, threadID)
+	msgs := threadFromViews(views, p.threadID)
 	if msgs == nil {
 		var err error
-		msgs, err = fetchMsgs(worker, threadID, msgID)
+		msgs, err = fetchMsgs(worker, p.threadID, p.msgID)
 		if err != nil {
 			bus.Publish(core.ExportPdfResult{Err: err})
 			return
 		}
 	}
-	msg, ok := findMsg(msgs, msgID)
+	msg, ok := findMsg(msgs, p.msgID)
 	if !ok || len(msg.Paths) == 0 {
 		bus.Publish(core.ExportPdfResult{Err: fmt.Errorf("no message path")})
 		return
@@ -62,7 +75,8 @@ func exportMessage(worker workerAPI, bus *core.Bus, views map[string]*core.View,
 		bus.Publish(core.ExportPdfResult{Err: err})
 		return
 	}
-	file, err := exportFile(target, f.ext, msg.Subject, msg.Timestamp)
+	doc = printDoc(doc, p.paper)
+	file, err := exportFile(p.target, f.ext, msg.Subject, msg.Timestamp)
 	if err != nil {
 		bus.Publish(core.ExportPdfResult{Err: err})
 		return
@@ -71,7 +85,7 @@ func exportMessage(worker workerAPI, bus *core.Bus, views map[string]*core.View,
 		bus.Publish(core.ExportPdfResult{Err: err})
 		return
 	}
-	bus.Publish(core.ExportPdfResult{ThreadID: threadID, Path: file})
+	bus.Publish(core.ExportPdfResult{ThreadID: p.threadID, Path: file})
 }
 
 // messageHTML is the document source an export form renders: the message's
@@ -94,6 +108,24 @@ func messageHTML(path string) (string, error) {
 		return "", fmt.Errorf("message has no readable body")
 	}
 	return "<html><body><pre>" + html.EscapeString(text.String()) + "</pre></body></html>", nil
+}
+
+// printDoc prepends the print stylesheet to a mail document. weasyprint
+// would otherwise lay fixed email widths and <pre> lines out at sizes
+// that overflow the page box - text clips at the page edge and big
+// blank areas are left. nowrap lines (text riding a wide image) set a
+// min-content wider than the page and get cut at the paper edge; paper
+// cannot scroll, so such lines must wrap - inline nowrap survives only
+// via !important. The page geometry (paper + margins) is declared so
+// output does not drift with weasyprint's defaults; the rules are
+// universal so the mail's own CSS keeps its specific layout.
+func printDoc(doc, paper string) string {
+	css := "@page { size: " + paper + "; margin: 1.5cm }\n" +
+		"html, body { margin: 0 }\n" +
+		"* { max-width: 100%; overflow-wrap: anywhere; white-space: normal !important }\n" +
+		"img { height: auto }\n" +
+		"pre { white-space: pre-wrap !important }"
+	return "<style>\n" + css + "\n</style>" + doc
 }
 
 // exportFile resolves the destination: a folder target (a trailing "/" or

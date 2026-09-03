@@ -222,7 +222,9 @@ func Run() error {
 	// the pager export (the E key): the generic export job, pdf the form
 	// the key fires (export.go)
 	tui.SetExportPdfHandler(func(threadID, msgID, path string) {
-		go exportMessage(worker, bus, views, threadID, msgID, path, "pdf")
+		go exportMessage(worker, bus, views, exportParams{
+			threadID: threadID, msgID: msgID, target: path, form: "pdf", paper: cfg.Export.Paper,
+		})
 	})
 
 	// the categorize hotkey (the index c key): the attachment-category

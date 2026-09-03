@@ -205,3 +205,103 @@ func TestResolveImagesNilLoaderIsNoop(t *testing.T) {
 		t.Fatalf("nil loader intrinsic = %+v, want untouched 0x0", b)
 	}
 }
+
+// layoutImg lays out one body with the given fake loader at the width.
+func layoutImg(t *testing.T, body string, load func(string) (int, int, bool), width int) []Row {
+	t.Helper()
+	bs := buildBody(body)
+	ResolveImages(bs, load)
+	return LayoutBlock(bs, width, mono(1), false)
+}
+
+// imgAtomIn scans rows for the first row whose Line carries an image atom.
+func imgAtomIn(t *testing.T, rs []Row) (Row, atom) {
+	t.Helper()
+	for _, r := range rs {
+		for _, a := range r.Line.Atoms {
+			if a.img != nil {
+				return r, a
+			}
+		}
+	}
+	t.Fatal("no row carries an image atom")
+	return Row{}, atom{}
+}
+
+func TestLoneImageEmitsItsOwnRowAtUsedWidth(t *testing.T) {
+	rs := layoutImg(t, `<p>a</p><img src="banner.png"><p>b</p>`,
+		func(string) (int, int, bool) { return 60, 30, true }, 800)
+	if len(rs) != 3 {
+		t.Fatalf("rows = %d (%v), want 3: a, the image, b", len(rs), rowsText(rs))
+	}
+	r, a := imgAtomIn(t, rs)
+	if r.Box.Tag != "" || len(r.Line.Atoms) != 1 {
+		t.Fatalf("img row box/atoms = tag %q/%d, want the anonymous run holding just the img",
+			r.Box.Tag, len(r.Line.Atoms))
+	}
+	if res := a.img.res; res == nil || res.uW != 60 || res.uH != 30 {
+		t.Fatalf("img used = %+v, want 60x30 resolved at the 800px block width", res)
+	}
+}
+
+func TestImageSharesATextLine(t *testing.T) {
+	// weasyprint places an inline image on the text line; stage 1 does the
+	// same (the terminal own-row choice is plan 6, recorded divergence).
+	rs := layoutImg(t, `<p>x<img src="y.png">z</p>`,
+		func(string) (int, int, bool) { return 60, 30, true }, 800)
+	if len(rs) != 1 {
+		t.Fatalf("rows = %d, want 1 (x, img, z on one line)", len(rs))
+	}
+	if got := rowsText(rs); len(got) != 1 || got[0] != "xz" {
+		t.Fatalf("line text = %q, want [xz] (the img is atomic, no text)", got)
+	}
+	r, a := imgAtomIn(t, rs)
+	if len(r.Line.Atoms) != 3 {
+		t.Fatalf("img row atoms = %d, want x img z", len(r.Line.Atoms))
+	}
+	if res := a.img.res; res == nil || res.uW != 60 || res.uH != 30 {
+		t.Fatalf("inline img used = %+v, want 60x30", res)
+	}
+}
+
+func TestPercentWidthResolvesThroughLayout(t *testing.T) {
+	// probe G shape at the block level: a 50% image resolves against the
+	// available width (300 here - stage 1 does not consume block width, so
+	// the layout width is the containing width)
+	rs := layoutImg(t, `<img src="m.png" style="width:50%">`,
+		func(string) (int, int, bool) { return 600, 400, true }, 300)
+	if len(rs) != 1 {
+		t.Fatalf("rows = %d, want 1 (the image)", len(rs))
+	}
+	_, a := imgAtomIn(t, rs)
+	if res := a.img.res; res == nil || res.uW != 150 || res.uH != 100 {
+		t.Fatalf("50%% img at 300px = %+v, want 150x100 (ratio 600:400)", res)
+	}
+}
+
+func TestTableCellSeatsAnImageColumn(t *testing.T) {
+	bs := buildBody(`<table><tr><td><img src="big.png"></td></tr></table>`)
+	ResolveImages(bs, func(string) (int, int, bool) { return 600, 400, true })
+	rs := LayoutBlock(bs, 800, mono(1), false)
+	if len(rs) != 1 || len(rs[0].Cells) != 1 {
+		t.Fatalf("rows/cells = %d/%d, want one grid row with one cell fragment",
+			len(rs), len(rs[0].Cells))
+	}
+	frag := rs[0].Cells[0]
+	var imgAtom *atom
+	for i := range frag.Line.Atoms {
+		if frag.Line.Atoms[i].img != nil {
+			imgAtom = &frag.Line.Atoms[i]
+		}
+	}
+	if imgAtom == nil {
+		t.Fatal("cell fragment has no image atom")
+	}
+	if res := imgAtom.img.res; res == nil || res.uW != 600 || res.uH != 400 {
+		t.Fatalf("cell img used = %+v, want 600x400", res)
+	}
+	if frag.W != 600 {
+		// content width = column box (600 + 2px td padding) - 2px padding
+		t.Fatalf("cell content width = %d, want 600", frag.W)
+	}
+}

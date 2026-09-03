@@ -46,7 +46,10 @@ type atom struct {
 
 func (a atom) width(m Metrics) int {
 	if a.img != nil {
-		return 0
+		if r := a.img.res; r != nil && r.uSet {
+			return r.uW // resolved at the line's width by LayoutInline
+		}
+		return imgExtentW(a.img) // not laid out yet: extent width
 	}
 	return m.Width(a.text)
 }
@@ -197,6 +200,7 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 			continue
 		}
 		if a.img != nil {
+			usedImg(a.img, width) // resolve px against this line width
 			emit(a)
 			continue
 		}

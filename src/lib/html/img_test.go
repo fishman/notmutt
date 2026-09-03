@@ -351,3 +351,27 @@ func TestPctHeightAttrIsAuto(t *testing.T) {
 		t.Fatalf("usedImg = %dx%d, want 60x30 (auto: a %% height attr is not px)", w, h)
 	}
 }
+
+func TestImgExtentCapsAtPXMaxWidth(t *testing.T) {
+	// a px max-width is width-independent: the image can never exceed it at
+	// any available width, so the measure-side extent caps at it (a table
+	// column seats the capped width). A % max-width needs the available width
+	// and stays uncapped on this side (recorded divergence).
+	cases := []struct {
+		name string
+		body string
+		want int
+	}{
+		{"intrinsic over cap", `<img src="m2000x1000.png" style="max-width:50px">`, 50},
+		{"css width over cap", `<img src="m2000x1000.png" style="width:200px;max-width:50px">`, 50},
+		{"pct max-width uncapped", `<img src="m2000x1000.png" style="max-width:50%">`, 2000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := imgBox(t, tc.body, 2000, 1000)
+			if got := imgExtentW(b); got != tc.want {
+				t.Fatalf("imgExtentW = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}

@@ -85,17 +85,22 @@ func attrLen(v string) (px int, pct bool) {
 // measured at infinite available width: a specified px width, else the
 // intrinsic width. A % width cannot resolve at infinite width and never
 // forces a column wider than the image is, so it contributes the intrinsic
-// natural width (0 when the image has none). Min equals max: an image is
+// natural width (0 when the image has none). A px max-width caps that
+// contribution (the image can never exceed it at any width); a % max-width
+// needs the available width and is ignored here. Min equals max: an image is
 // atomic (the widest unbreakable piece is the whole).
 func imgExtentW(b *Box) int {
 	s := specImg(b)
+	var w int
 	if !s.wPct && s.wPx > 0 {
-		return s.wPx
+		w = s.wPx
+	} else if b.res != nil && b.res.iw > 0 {
+		w = b.res.iw
 	}
-	if b.res != nil && b.res.iw > 0 {
-		return b.res.iw
+	if s.mwPx > 0 && !s.mwPct && w > s.mwPx {
+		return s.mwPx
 	}
-	return 0
+	return w
 }
 
 // usedImg resolves an image's used px width/height at the available width

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the table-as-leaf stub with a real CSS table engine in `lib/html`: anonymous-table repair in the box builder (stray cells/rows/text get their anonymous wrappers), weasyprint-shaped auto layout (per-column min/max measured once, used widths by distribution, shrink-to-fit capped at the content width), the UA 2px border-spacing gutter and 1px cell padding, a real colspan/rowspan grid, and nested tables laying out as real block tables inside their cell - all strictly additive with zero behavior change to the running mail walker.
+**Goal:** Replace the table-as-leaf stub with a real CSS table engine in `lib/html`: a table-family box tree that consumes x/net/html's already-normalized table grammar (no repair - the parser's implied tbody/foster-parenting do it; see the conformance rule below), weasyprint-shaped auto layout (per-column min/max measured once, used widths by distribution, shrink-to-fit capped at the content width), the UA 2px border-spacing gutter and 1px cell padding, a real colspan/rowspan grid, and nested tables laying out as real block tables inside their cell - all strictly additive with zero behavior change to the running mail walker.
 
-**Architecture:** Weasyprint-shaped two-stage renderer per the spec (`docs/superpowers/specs/2026-09-03-html-layout-engine-design.md`). Plan 4 is the "Stage 1: tables" section. Tables stop being opaque leaves: `buildElement` builds the table-family subtree (table/row-group/row/cell/caption boxes with a grid slot tag), the row/group/cell contexts get anonymous repair, then a new `table.go` measures each cell's content once into per-column min/max, distributes the used width, and emits the grid into the existing `[]Row` stream by adding a `Cells` fragment row (one stream row per visual line, fragments of several cells side by side at their own absolute X). Nothing in `mail/` is touched and the walker keeps rendering unchanged.
+**Architecture:** Weasyprint-shaped two-stage renderer per the spec (`docs/superpowers/specs/2026-09-03-html-layout-engine-design.md`). Plan 4 is the "Stage 1: tables" section. Tables stop being opaque leaves: `buildElement` builds the table-family subtree (table/row-group/row/cell/caption boxes with a grid slot tag), the builder drops whitespace-only text between furniture and passes x/net/html's well-formed rows/groups/cells through unchanged (table roles resolve only for real table-family tags), then a new `table.go` measures each cell's content once into per-column min/max, distributes the used width, and emits the grid into the existing `[]Row` stream by adding a `Cells` fragment row (one stream row per visual line, fragments of several cells side by side at their own absolute X). Nothing in `mail/` is touched and the walker keeps rendering unchanged.
 
 **Tech Stack:** Go, x/net/html, cascadia (existing deps). Test cmd: `cd src && go test -count=1 ./lib/html/`. Full gate: `go test -count=1 -tags "lua mcp" ./...`, `go vet ./lib/html/`, `gofmt -l lib/html/`.
 
@@ -12,11 +12,13 @@
 
 **Threat model (locked):** a malicious sender can ship a megabyte HTML part. Every loop that scales with input must be O(n); any super-linear path is a content-reachable DoS on the read surface. Tables add new hazards that must stay single-pass: (1) each cell's text is measured exactly once for min/max content width (one atomize pass for measurement, one for layout - a bounded constant 2, never one per column or per row); (2) column count derives from the widest row by cell count, and a colspan is clamped to the row's remaining columns - an attacker cannot mint a million empty spacer columns from a 20-character `colspan=1000000` attribute; (3) span-width excess distribution touches only the columns the cell spans (bounded by the clamped colspan); (4) rowspan occupancy costs one check per column per populated row, and a rowspan blanks only rows that actually carry other cells (fully-occupied rows emit nothing), so blank placements are bounded by the cell count that mentions them; (5) nested tables are bounded by the node count - each table's min/max content extents are memoized on its box the first time any measure pass reaches it (content extents are width-independent, so the cache is always valid, across widths and across LayoutBlock calls over the same tree). A deep chain of nested single-cell tables therefore costs ONE bottom-up measure pass over the whole tree, never one full subtree re-measure per ancestor (which would be O(depth^2) atomize/grid work - a content-reachable DoS in exactly this hostile shape). No cell text is ever re-measured in a loop, no column array is rescanned per row, and no margin/seam list is rescanned.
 
+**Conformance rule (locked 2026-09-03, supersedes decision 28 and any Task 1 text below):** things x/net/html already handles are never reimplemented in `lib/html`. x/net/html (vendored, the only parser, every input crosses `xhtml.Parse`) performs HTML5 table tree construction itself - it inserts an implied `tbody` for stray rows/cells, foster-parents non-whitespace content out of a table/row, and keeps only whitespace text between furniture. So a `RoleTable` box's children arrive well-formed (`table` > `row-group` > `row` > `cell`) and the box builder consumes that grammar unchanged; it must not re-express it. The builder drops whitespace-only text between furniture (x/net/html keeps it; the renderer must not give it height) and passes children through. What survives a parse is author `display:table-*` on NON-table elements - x/net/html keys off element names and never reads computed `display`, so that is not its job, but it is also not a mail pattern: table roles resolve only for real table-family tags, and a `display:table` div or `display:table-cell` span renders as a block (the mail-safe default the walker already uses). Task 1a conforms the committed Task 1 to this rule; Tasks 2-5 text below reads as amended by it.
+
 ---
 
 ## File structure
 
-- Modify: `src/lib/html/box.go` - `Box.Tbl` grid-slot field; `buildElement` builds the table family instead of returning RoleTable leaves; `fillFlowChildren` extracted for shared block/cell content building; `tableKids`/`fixTable` anonymous repair.
+- Modify: `src/lib/html/box.go` - `Box.Tbl` grid-slot field; `buildElement` builds the table family instead of returning RoleTable leaves; `fillFlowChildren` extracted for shared block/cell content building; `tableKids` drops whitespace-only text between furniture (table roles resolve only for real table-family tags - Task 1a; no `fixTable`/`anonTableBox`).
 - Modify: `src/lib/html/html.go` - `Style.BoldSet` (explicit font-weight source flag); `apply`'s `font-weight` branch sets it (gates the UA th bold to stage-1 only).
 - Modify: `src/lib/html/block.go` - `Row.Cells` fragment field; `flow` routes `RoleTable` grid tables to `tableRows`.
 - Create: `src/lib/html/table.go` - grid construction, content measurement, width distribution, row emission.
@@ -25,7 +27,7 @@
 ## Decisions locked for this plan
 
 - **A table is a real box tree, not a leaf.** `RoleTable` boxes carry `Tbl` naming their grid slot (`table`, `row-group`, `row`, `cell`, `caption`, `column-group`, `column`). Only `table`, `row-group`, `row`, `cell`, `caption` get flow content; `column-group`/`column` are empty (column styling is out of scope). `buildElement` builds cell/caption content like a block container (blockified, mixed content split into anonymous runs), so cell content structure is clean and layout never re-derives it.
-- **Anonymous repair is a box transform, not a re-parse.** Whitespace-only text in table/row/group context drops; a stray `td` gets an anonymous row (and group under a table/row-group); a stray `tr` gets an anonymous group; a stray text/inline run gets an anonymous cell->row(->group) chain. Repair runs on the already-built box list, so it shares styles and never re-runs the cascade.
+- **The box builder consumes x/net/html's table grammar; it performs no table-grammar repair.** x/net/html's HTML5 tree construction (the vendored, only parser) already normalizes tables: an implied `tbody` wraps stray rows/cells and non-whitespace content is foster-parented out of a table/row, so a `RoleTable` box's children arrive well-formed and never need a stray repaired. The builder's only job past that is dropping whitespace-only text between furniture (x/net/html keeps it; the renderer must not give it height) and building each furniture element's content. Author `display:table-*` on a non-table element survives the parse but is out of scope (not a mail pattern): table roles resolve only for real table-family tags, and a remapped div/span renders as a block. This mirrors the library's input contract - an HTML5-parsed DOM, like cascadia's x/net/html-node contract; a normalizer for non-HTML5 DOM sources is a future opt-in, not a stage-1 feature. Task 1a implements this; the original anonymous-repair decision text is superseded.
 - **th bold is stage-1-only, gated on a sticky `BoldSet`.** Weasyprint's `th { font-weight: bold }` cannot go into the shared `uaDefaults` emphasis table: the running mail walker computes styles through `StyleOf` and would start rendering `<th>` bold too (drift). Instead the box builder promotes `st.Bold = true` on a `th` cell when no font-weight is declared anywhere on the inheritance chain (`!st.BoldSet`), before building the cell's children so text leaves inherit it. `BoldSet` is set by `apply`'s font-weight branch, is not reset by `StyleOf` (it is sticky: an author `font-weight` on any ancestor suppresses UA th bold, matching CSS inheritance authority). th is not centered (the weasyprint html5_ua.css used here does not center th, and the spec says not centered).
 - **Auto layout, weasyprint clamp.** Per-column min-content and max-content are measured from all rows (base single-span cells first, then colspan excess distributed onto its spanned columns). Used table width U: max-content when `available >= tableMax`, the available width when `tableMin < available < tableMax` (fill), min-content when `available <= tableMin`; equivalently `U = min(max(tableMin, available), tableMax)`. Under normalize, `available < tableMin` caps U at the container width and columns shrink below min-content (cell text char-breaks) - the spec's "tables cap at the content box width, never overflow". Column box widths include each cell's horizontal padding; cell content width = column box width minus 2px.
 - **The 2px gutter and 1px padding are UA constants, probe-measured.** `border-spacing: 2px` (between columns, and at the table's left/right edges), `td/th { padding: 1px }` each side. No border-collapse is modeled (the cascade does not parse it, so separate is always in force). The single 2px gutter replaces the old shared-cap model's per-cell cap entirely.
@@ -489,6 +491,135 @@ git commit -m "feat(html): build table-family boxes with anonymous repair"
 
 ---
 
+### Task 1a: Conform the table build to x/net/html's grammar (no repair)
+
+Supersedes Task 1's anonymous-repair mechanism per the conformance rule at the top. Applies as a NEW commit on top of Task 1's `b70f963` (do not amend history): delete the repair machinery and the tests that fed it parser-impossible shapes; gate table roles to real table tags; pin the consume side against x/net/html's actual output.
+
+**Files:**
+- Modify: `src/lib/html/box.go` - delete `fixTable` + `anonTableBox`; table/row-group/row children = `tableKids` alone; table roles resolve only for real table-family tags; fix the `Role`/`tableKids` doc comments that name stray repair.
+- Modify: `src/lib/html/box_test.go` - `TestTableExpandsToGridTree` asserts x/net/html's real output (implied `tbody`, not an anonymous `Tag == ""` group).
+- Modify: `src/lib/html/table_test.go` - delete the `rawTable`/`tnode`/`tnodeText` helpers and the three stray tests; add the foster + display-remap pins below.
+- Test: `src/lib/html/table_test.go`.
+
+- [ ] **Step 1: Delete the repair machinery in `box.go`**
+
+Remove `fixTable` and `anonTableBox` (box.go ~321-399). The `table`/`row-group`/`row` routing in `buildElement` becomes:
+
+```go
+		case "table", "row-group", "row":
+			b.Children = tableKids(n, st, rules, listDepth)
+```
+
+`tableKids` stays (whitespace-only text drop + recursive element build) but its doc comment drops the stray-run rationale: x/net/html keeps whitespace text between furniture (the renderer must not give it height) and nests real rows/cells, so `tableKids` only removes that whitespace and builds each furniture element. Non-whitespace text cannot reach a table/row context from `xhtml.Parse` (it is foster-parented out).
+
+- [ ] **Step 2: Gate table roles to real table-family tags**
+
+`roleOf(d)` still maps display keywords to `RoleTable`, but a non-table tag whose author sets `display:table-*` must fall to block (the walker's mail-safe default; x/net/html cannot know computed `display` and it is not a mail pattern). In `buildElement`, where `role = roleOf(d)` is computed, demote:
+
+```go
+		role = roleOf(d)
+		if role == RoleTable && !isTableTag(tag) {
+			role = RoleBlock // author display:table-* on a non-table tag: block, not a grid
+		}
+```
+
+with
+
+```go
+// isTableTag reports whether the element is a real HTML table-family tag,
+// whose UA default display is a table keyword. Table roles resolve only for
+// these: x/net/html's parse already normalizes their children, and author
+// display:table-* on any other element renders as block.
+func isTableTag(tag string) bool {
+	switch tag {
+	case "table", "thead", "tbody", "tfoot", "tr", "td", "th", "caption", "colgroup", "col":
+		return true
+	}
+	return false
+}
+```
+
+A real `<table style="display:table">` still routes (tag gate passes); a `<div style="display:table">` demotes to `RoleBlock` and its children build as ordinary block flow, so a nested real `<table>` inside it still becomes a table. A real `td`/`tr` whose author demotes it out of the family (`td { display:block }`) also leaves the family; its box then sits inside a row/group whose grid must SKIP non-cell/non-row children rather than assume (see Task 2's grid note).
+
+- [ ] **Step 3: Rework `TestTableExpandsToGridTree` to assert the real parse**
+
+`box_test.go`: replace the `rawTable(...)` body with a plain `buildBody` (a literal `<tr>` under `<table>` now yields x/net/html's implied `tbody`, which is what the builder consumes):
+
+```go
+func TestTableExpandsToGridTree(t *testing.T) {
+	// <table><tr><td>a</td></tr></table> - x/net/html wraps the literal <tr>
+	// in an implied <tbody>, so the well-formed table>row-group>row>cell shape
+	// is the parser's output, not a builder repair.
+	bs := buildBody(`<table><tr><td>a</td></tr></table>`)
+	tbl := bs[0]
+	if tbl.Role != RoleTable || tbl.Tbl != "table" {
+		t.Fatalf("table role/tbl = %v/%q, want RoleTable/table", tbl.Role, tbl.Tbl)
+	}
+	if len(tbl.Children) != 1 || tbl.Children[0].Tbl != "row-group" || tbl.Children[0].Tag != "tbody" {
+		t.Fatalf("table child = %+v, want the implied tbody row-group", tbl.Children)
+	}
+	row := tbl.Children[0].Children[0]
+	if len(tbl.Children[0].Children) != 1 || row.Tbl != "row" || row.Tag != "tr" {
+		t.Fatalf("row-group child = %+v, want the tr row", tbl.Children[0].Children)
+	}
+	cell := row.Children[0]
+	if len(row.Children) != 1 || cell.Tbl != "cell" || cell.Tag != "td" {
+		t.Fatalf("row child = %+v, want a td cell", row.Children)
+	}
+	if len(cell.Children) != 1 || cell.Children[0].Role != RoleText || cell.Children[0].Text != "a" {
+		t.Fatalf("cell content = %+v, want one RoleText 'a'", cell.Children)
+	}
+}
+```
+
+- [ ] **Step 4: Delete the rawTable stray tests and add the consume-side pins**
+
+`table_test.go`: delete the `rawTable`/`tnode`/`tnodeText` helpers and `TestTableStrayTdGetsAnonymousRow` / `TestTableStrayTrGetsAnonymousGroup` / `TestTableStrayRunGetsAnonymousCell`. Add:
+
+```go
+func TestTableFosteredRunLandsBeforeTable(t *testing.T) {
+	// <table>stray<tr>... - x/net/html foster-parents the non-whitespace run
+	// out of the table (before it in the body); the builder must not invent an
+	// anonymous cell to hold it.
+	bs := buildBody(`<table>stray<tr><td>a</td></tr></table>`)
+	if len(bs) != 2 || bs[0].Role != RoleText || bs[0].Text != "stray" {
+		t.Fatalf("body = %+v, want the stray run then the table", bs)
+	}
+	tbl := bs[1]
+	if tbl.Role != RoleTable || len(tbl.Children) != 1 || tbl.Children[0].Tag != "tbody" {
+		t.Fatalf("table = %+v, want one implied tbody row-group", tbl.Children)
+	}
+}
+
+func TestAuthorDisplayTableOnDivRendersBlock(t *testing.T) {
+	// display:table on a non-table element is not a grid: x/net/html cannot
+	// nest it (parser keys off element names) and mail never uses it, so the
+	// div renders as block (walker parity) and its children as ordinary flow.
+	bs := buildBody(`<div style="display:table"><em style="display:table-cell">a</em></div>`)
+	if len(bs) != 1 || bs[0].Role != RoleBlock || bs[0].Tag != "div" {
+		t.Fatalf("display:table div = %+v, want RoleBlock (not RoleTable)", bs[0])
+	}
+}
+```
+
+Keep `TestTableStrayWhitespaceDrops`, `TestTheadTbodyFootAreRowGroups`, `TestThBoldNotCentered`, `TestThAuthorFontWeightBeatsUA`, `TestCellContentBlockifies`, `TestCaptionStoredNotGrid` unchanged (they already exercise real-parse output).
+
+- [ ] **Step 5: Full package gate**
+
+Run: `cd src && go test -count=1 ./lib/html/ && go vet ./lib/html/ && gofmt -l lib/html/`
+Expected: PASS, vet clean, gofmt lists nothing. The pre-existing box/inline/block tests must still pass (no test lays out a table yet - no `flow` case - so the new children stay inert until Task 2).
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/lib/html/box.go src/lib/html/box_test.go src/lib/html/table_test.go
+git commit -m "feat(html): consume x/net/html table grammar without re-implementing it"
+```
+
+(Code commit: no co-author line.)
+
+---
+
 ### Task 2: Auto-layout widths + row emission (`[]Row` with Cells fragments)
 
 **Files:**
@@ -670,11 +801,16 @@ package html
 import "math"
 
 // Table grid layout (weasyprint auto-table-layout analog). A table box's
-// children are row-group boxes (anonymous repair gave every row a group);
-// layout walks them row by row, measures each cell's content once into
-// per-column min/max, distributes the used width, then emits the grid rows
-// into the px Row stream. A grid row is one horizontal strip: its stream
-// Row carries Cells fragments, one per cell content line, at absolute X.
+// children are row-group boxes - x/net/html's implied tbody gives every row
+// a group, so no builder repair is needed (Task 1a). Layout walks them row
+// by row, measures each cell's content once into per-column min/max,
+// distributes the used width, then emits the grid rows into the px Row
+// stream. A grid row is one horizontal strip: its stream Row carries Cells
+// fragments, one per cell content line, at absolute X. The grid readers skip
+// non-conforming children (a row-group box that is not a row, a row box that
+// is not a cell): author CSS that demotes a real table tag out of the family
+// leaves such a box, and layout must skip it, never assume - there is no
+// anonymous repair to wrap it.
 
 const (
 	tableSpacing = 2 // UA table border-spacing, px (probe-measured; html5_ua.css)
@@ -1554,6 +1690,7 @@ No OPEN entry corresponds to this plan's work (checked: the two html OPEN entrie
 - "html tables: table captions are built but not rendered (stage-1 deferral)" - OPEN, referenced to plan 4.
 - "html tables: intra-cell block vertical margins are flattened inside a grid row" - OPEN, plan 4 divergence.
 - "html tables: a colspan never mints empty spacer columns beyond the row's cell count (weasyprint would create them)" - OPEN, the O(n) clamp, plan 4.
+- "html tables: author display:table-* on a non-table element renders as block, not a grid (weasyprint anonymous-repairs it)" - OPEN, plan 4 Task 1a (x/net/html cannot nest it; not a mail pattern; a normalizer for non-HTML5 DOM sources would be the future opt-in).
 
 - [ ] **Step 4: Commit**
 
@@ -1568,8 +1705,8 @@ git commit -m "docs: record html table stage-1 divergences"
 
 ## Self-review notes
 
-- **Spec coverage:** anonymous table repair + block-in-cell -> Task 1; auto layout per-column min/max + distribution + shrink-to-fit cap -> Task 2; 2px gutter + 1px padding -> Task 2 (UA constants); colspan/rowspan grid -> Task 3; nested tables as real block tables -> Task 4; th bold stage-1-only, not centered -> Task 1. Vertical-align, borders, and caption rendering are explicitly not modeled (spec + locked decisions). Images inside cells are the image plan's concern (their atoms measure 0 px here, as they do today in inline layout); this plan's tests use text.
-- **Placeholders:** none; every task carries verbatim code and expected commands. Functions are defined exactly where each task references them (`tableSlot`, `fillFlowChildren`, `tableKids`, `fixTable`, `runExtents`, `cellExtents`, `measureColumns`, `columnWidths`, `cellRows`, `tableRows`, `buildGrid`, `tableExtents`, `boxExtents`, `flowExtents`, `spanOf`).
+- **Spec coverage:** table-family box build consuming x/net/html's grammar + table roles gated to real tags (Task 1 + Task 1a); auto layout per-column min/max + distribution + shrink-to-fit cap -> Task 2; 2px gutter + 1px padding -> Task 2 (UA constants); colspan/rowspan grid -> Task 3; nested tables as real block tables -> Task 4; th bold stage-1-only, not centered -> Task 1. The builder performs no table-grammar repair (Task 1a - x/net/html's implied tbody/foster-parenting already normalize; see the conformance rule at the top). Vertical-align, borders, and caption rendering are explicitly not modeled (spec + locked decisions); author display:table-* on non-table elements renders as block (Task 1a divergence). Images inside cells are the image plan's concern (their atoms measure 0 px here, as they do today in inline layout); this plan's tests use text.
+- **Placeholders:** none; every task carries verbatim code and expected commands. Functions are defined exactly where each task references them (`tableSlot`, `fillFlowChildren`, `tableKids`, `runExtents`, `cellExtents`, `measureColumns`, `columnWidths`, `cellRows`, `tableRows`, `buildGrid`, `tableExtents`, `boxExtents`, `flowExtents`, `spanOf`; `fixTable`/`anonTableBox` existed only in the superseded Task 1 and are deleted by Task 1a).
 - **Staged boundaries are explicit, not silent:** Task 2's single-span inline `buildGrid`/`columnWidths`/`cellRows` are replaced in Task 3 (spans) and Task 4 (block content), and the plan says so at each task head. Each task's code is complete for what that task tests.
 - **Consistency:** `Row.Cells` is read nowhere in `mail/`; the only consumer is the new `table.go` and the `rowsText` helper. `hasBlockChild`, `splitRuns`, `geom`, `LayoutBlock`, `LayoutInline`, `flattenInline`, `buildBody`, `mono`, `el`, `Attr`, `mustInt` are existing in-package helpers. `rowsText` gains recursion; the existing block tests assert on rows without `Cells`, where it is behavior-identical.
 - **Regression discipline:** the pinned mail `html_*_test.go` suite is untouched; `TestMCPScopeEnforcement` is untouched. `TestTableIsLeaf` was a stub description of the pre-plan leaf, not a pinned behavior, and becomes `TestTableExpandsToGridTree`. No regression test is weakened.

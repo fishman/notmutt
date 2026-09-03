@@ -71,6 +71,19 @@ type Style struct {
 	MarginTop, MarginRight, MarginBottom, MarginLeft             int
 	MarginTopSet, MarginRightSet, MarginBottomSet, MarginLeftSet bool
 	PadLeft                                                      int // padding-left px (ul/ol gutter; UA-only)
+
+	// Image sizing (replaced elements): width/height/max-width, px or %.
+	// Non-inherited, zeroed per node like the margins above. Height is
+	// px-only in effect - a percentage height is auto (see specImg).
+	Width, Height, MaxWidth CSSLen
+}
+
+// CSSLen is one length value for image sizing. Px is the number; when Pct
+// is false it is CSS px, when true it is a percentage of the containing
+// block's width. The zero value (Px 0, Pct false) means auto/none.
+type CSSLen struct {
+	Px  int
+	Pct bool
 }
 
 // cssColor normalizes a CSS color value to #rrggbb, or "" when not a
@@ -138,6 +151,25 @@ func parseLen(v string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// parseSizeLen folds one image-sizing length: px passes through, a
+// percentage keeps Pct true (it resolves against the containing width at
+// layout). auto, 0, em, and other units are not values (rejected, so the
+// property stays unset, which means auto).
+func parseSizeLen(v string) (CSSLen, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	if strings.HasSuffix(v, "px") {
+		if n, err := strconv.Atoi(strings.TrimSuffix(v, "px")); err == nil && n > 0 {
+			return CSSLen{Px: n}, true
+		}
+	}
+	if strings.HasSuffix(v, "%") {
+		if n, err := strconv.Atoi(strings.TrimSuffix(v, "%")); err == nil && n >= 0 {
+			return CSSLen{Px: n, Pct: true}, true
+		}
+	}
+	return CSSLen{}, false
 }
 
 // marginSides expands a margin value list to top/right/bottom/left.
@@ -270,6 +302,21 @@ func (s *Style) apply(decls map[string]string) {
 			setMargin(s, side, v)
 		}
 	}
+	if v, ok := decls["width"]; ok {
+		if l, ok := parseSizeLen(v); ok {
+			s.Width = l
+		}
+	}
+	if v, ok := decls["height"]; ok {
+		if l, ok := parseSizeLen(v); ok {
+			s.Height = l
+		}
+	}
+	if v, ok := decls["max-width"]; ok {
+		if l, ok := parseSizeLen(v); ok {
+			s.MaxWidth = l
+		}
+	}
 }
 
 // CSSRule is one <style> block rule with its selector parsed and the
@@ -347,6 +394,7 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft = 0, 0, 0, 0
 	s.MarginTopSet, s.MarginRightSet, s.MarginBottomSet, s.MarginLeftSet = false, false, false, false
 	s.PadLeft = 0 // geometry is not inherited
+	s.Width, s.Height, s.MaxWidth = CSSLen{}, CSSLen{}, CSSLen{}
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {

@@ -163,7 +163,7 @@ Pointers: src/tui/model.go `moveCursor`/`windowSlideAt`/`SetFilter` prompt
 (~1498), src/core/view.go `SetFilter`/`rowMatches`/`SlideWindow`/`SetCursorIndex`
 (~325, ~650, ~736), src/tui/model.go EventMsg rows rematerialize (~870).
 
-* TODO html inline layout is O(n^2) on one unbroken token (content-reachable hang)
+* CLOSED html inline layout is O(n^2) on one unbroken token (content-reachable hang)
 
 A single long unbroken token (base64 blob, long URL, crafted mail) makes the
 stage-1 inline layout quadratic in two independent places:
@@ -181,13 +181,15 @@ stage-1 inline layout quadratic in two independent places:
 A multi-hundred-KB unbroken word stalls the render for minutes. Mail HTML
 reaches this path on the read surface.
 
-Fix direction: accumulate collapse-mode words in a strings.Builder / []byte
-and flush an atom at a separator (keeps the sep atom contract); carry a
-running px width through cutText instead of re-measuring from the head. Both
-local to src/lib/html/inline.go; no shape change. Add an uneven-Metrics
-regression (double-width runes) so a rune-count-for-px regression cannot slip
-back in. Suggested first step: the two throwaway probes listed under the pin
-entry below already exist as verified expectations.
+Fix (Plan 3 Task 1 + 1a): atomizeText accumulates collapse-mode words in a
+strings.Builder and flushes an atom at a separator (c772a78); cutText carries
+a running px width through the RuneStepper interface instead of re-measuring
+from the head (c772a78); the preserved-wrap fill tracks a running remainder
+width and breakAtSpace stops measuring past the budget (72111bd, 781ab59,
+83cb18e). Regression: TestGiantUnbrokenTokenLaysOutLinearly,
+TestPreservedSpaceDenseTokenLaysOutLinearly, TestCutTextDoesNotRescanFromHead,
+TestBreakAtSpaceStopsMeasuringPastBudget, TestPreservedWrapFillDoesNotRescanRemainder,
+TestCharBreakMeasuresPxNotRunes (double-width runes prove px, not rune count).
 
 Pointers: src/lib/html/inline.go atomizeText, cutText, LayoutInline charBreak.
 
@@ -221,7 +223,7 @@ docs commit. Old hashes remain reachable in the reflog.
 
 Pointers: commits 08cf685/b7755a9/c2d531f; plan Task 5 (docs/superpowers/plans/2026-09-03-html-inline-normalize.md).
 
-* TODO html inline: pin Plan-2 contract gaps at the LayoutInline surface
+* CLOSED html inline: pin Plan-2 contract gaps at the LayoutInline surface
 
 The fill engine is correct on audit and on live probes, but the suite (25
 inline test funcs; the "55" figure is the whole lib/html package across
@@ -237,13 +239,17 @@ box/ua/html/adapt/links/inline) does not pin these:
   widths, not rune counts - mono(n) scales uniformly, so a rune-count regression
   would pass today.
 
-All four were verified against current code with throwaway probes on 2026-09-03
-(removed). These pins exist so a Plan 3+ regression in shared code is caught
-here.
+Resolved by the Plan 3 Task 1 pins in src/lib/html/inline_test.go:
+TestAuthorOverwideCollapsibleOverflowsWhole (author over-wide word overflows
+whole, normalize char-breaks), TestOverwideCenteredLineStaysFlushLeft
+(center/right leave an over-wide or exactly-full line flush at X = 0),
+TestNoEmptyLinesAtFillSurface (`a<br><br>b` -> ["a","b"]),
+TestCharBreakMeasuresPxNotRunes and the dbl-meter fill cases (double-width
+runes prove fill/breakAtSpace/cutText use px widths, not rune counts).
 
-Pointers: src/lib/html/inline_test.go (helpers mono, renderAtoms, linesText).
+Pointers: src/lib/html/inline_test.go (helpers mono, dbl, renderAtoms, linesText).
 
-* TODO scheduled list sorts the display-time string, not the send time (misorders across weekday boundaries)
+* CLOSED scheduled list sorts the display-time string, not the send time (misorders across weekday boundaries)
 
 Report: TestScheduledList (src/app/schedule_test.go:315) fails nightly ~22:00-23:00
 local and passes the rest of the day. It schedules two mails at now+1h and now+2h and
@@ -260,11 +266,11 @@ failure window is ~22:00-23:00 (+1h stays today, +2h crosses midnight -> "Fri Se
 misorders across month ends, year ends, and any opposite-weekday pair, so it is wrong
 well beyond the nightly window - the clock only decides when the existing test trips.
 
-Fix direction: sort on the parsed time.Time, not the formatted string (sort a
-[]struct{ at time.Time; entry } by at, or sort.Slice with out[i].at.Before(out[j].at)),
-and emit the display string after the sort. One-line-class change; TestScheduledList
-then pins it and stops tripping on the clock.
+Fix (7e2fdb3): scheduledList sorts on the parsed time.Time (parallel ats
+slice, ats[i].Before(ats[j])); the display string is emitted after the sort.
+Regression: TestScheduledList (unchanged, src/app/schedule_test.go:315) - it
+failed nightly ~22:00-23:00 and now passes year-round, catching any return to
+string-keyed sorting.
 
-Pointers: src/app/schedule.go scheduledList (145-153); src/app/schedule_test.go:315
-TestScheduledList. App code, not lib/html - untouched by the html layout plans;
-recorded here so the nightly failure is a known bug, not a mystery.
+Pointers: src/app/schedule.go scheduledList (145-155); src/app/schedule_test.go:315
+TestScheduledList.

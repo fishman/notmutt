@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -256,5 +257,122 @@ func TestNormalizeNoSpaceBoundaryExactFill(t *testing.T) {
 	bs := buildBody(`<p><span>hello</span><span>world</span></p>`)
 	if got := linesText(LayoutInline(bs[0], 5, mono(1), true)); !reflect.DeepEqual(got, []string{"hello", "world"}) {
 		t.Fatalf("normalize exact-fill boundary = %q, want %q", got, []string{"hello", "world"})
+	}
+}
+
+func TestAuthorOverwideCollapsibleOverflowsWhole(t *testing.T) {
+	// author mode: an over-wide collapsible word overflows whole (only the
+	// pre/nowrap author overflow was pinned before).
+	bs := buildBody(`<p>aa abcdef</p>`)
+	if got := linesText(LayoutInline(bs[0], 4, mono(1), false)); !reflect.DeepEqual(got, []string{"aa", "abcdef"}) {
+		t.Fatalf("author overflow = %q, want %q", got, []string{"aa", "abcdef"})
+	}
+}
+
+func TestOverwideCenteredLineStaysFlushLeft(t *testing.T) {
+	// an over-width or exactly-full line under center/right keeps X = 0.
+	for _, tc := range []struct {
+		align string
+		width int
+	}{
+		{"center", 4}, // over-wide: pad would be negative
+		{"right", 6},  // exactly full: pad is 0
+	} {
+		bs := buildBody(`<p style="text-align:` + tc.align + `">abcdef</p>`)
+		ls := LayoutInline(bs[0], tc.width, mono(1), false)
+		x := 0
+		if len(ls) != 1 {
+			x = -1
+		} else {
+			x = ls[0].X
+		}
+		if len(ls) != 1 || x != 0 {
+			t.Fatalf("%s over-wide X = %d, want 1 line at X 0", tc.align, x)
+		}
+	}
+}
+
+func TestNoEmptyLinesAtFillSurface(t *testing.T) {
+	// breaks with nothing between them emit no empty lines.
+	bs := buildBody(`<p>a<br><br>b</p>`)
+	if got := linesText(LayoutInline(bs[0], 50, mono(1), false)); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Fatalf("double br = %q, want %q", got, []string{"a", "b"})
+	}
+}
+
+// dbl is an uneven Metrics: runes at or above 0x2E80 measure 2px, others 1px.
+// mono(n) scales uniformly, so a rune-count-for-px regression would pass on it.
+type dbl struct{}
+
+func (dbl) Width(s string) int {
+	n := 0
+	for _, r := range s {
+		n += dblW(r)
+	}
+	return n
+}
+
+// RuneWidth makes dbl step-capable once Metrics grows RuneStepper, so the
+// px-not-rune pin drives the incremental cut path too.
+func (dbl) RuneWidth(r rune) int {
+	return dblW(r)
+}
+
+func dblW(r rune) int {
+	if r >= 0x2E80 {
+		return 2
+	}
+	return 1
+}
+
+func TestCharBreakMeasuresPxNotRunes(t *testing.T) {
+	// "ab界c" is 4 runes but 5px: a rune-count cut would keep it whole and
+	// overflow; px cut breaks after 4px (the 界 costs 2).
+	bs := buildBody(`<p>ab界c</p>`)
+	if got := linesText(LayoutInline(bs[0], 4, dbl{}, true)); !reflect.DeepEqual(got, []string{"ab界", "c"}) {
+		t.Fatalf("px char-break = %q, want %q", got, []string{"ab界", "c"})
+	}
+}
+
+// countMeter counts every rune a Width call scans, so re-measuring
+// prefixes on a long string shows up as O(n^2) scanned runes.
+type countMeter struct {
+	scanned int
+}
+
+func (m *countMeter) Width(s string) int {
+	for range s {
+		m.scanned++
+	}
+	return utf8.RuneCountInString(s)
+}
+
+func (m *countMeter) RuneWidth(r rune) int {
+	return 1
+}
+
+func TestCutTextDoesNotRescanFromHead(t *testing.T) {
+	s := strings.Repeat("x", 4000) // budget fits the whole run
+	m := &countMeter{}
+	if head, _ := cutText(s, len(s), m); head != s {
+		t.Fatal("cutText returned a partial head for a fitting budget")
+	}
+	if m.scanned > 2*len(s) {
+		t.Fatalf("cutText rescanned %d runes to fit one budget, want <= %d (quadratic re-measure)", m.scanned, 2*len(s))
+	}
+}
+
+func TestGiantUnbrokenTokenLaysOutLinearly(t *testing.T) {
+	// A ~1MB single word is a content-reachable DoS if atomizing or
+	// char-breaking is super-linear (BUGS.org #1). On the fixed code this
+	// finishes in well under a second; a reintroduced quadratic path hangs.
+	n := 1_000_000
+	bs := buildBody("<p>" + strings.Repeat("a", n) + "</p>")
+	done := make(chan []LineBox, 1)
+	go func() { done <- LayoutInline(bs[0], 80, mono(1), true) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("LayoutInline of a 1MB unbroken token did not finish in 3s (quadratic atomize/char-break)")
 	}
 }

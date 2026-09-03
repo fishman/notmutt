@@ -88,10 +88,18 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 		return out
 	}
 	var out []atom
+	var word strings.Builder
+	flush := func() {
+		if word.Len() > 0 {
+			out = append(out, atom{st: st, ws: ws, text: word.String()})
+			word.Reset()
+		}
+	}
 	sep := false
 	for _, r := range txt {
 		if collapsible(r) {
 			if b.newlineBreak && r == '\n' { // pre-line: LF is a kept break
+				flush()
 				out = append(out, atom{st: st, ws: ws, br: true})
 				sep = false
 			} else {
@@ -100,15 +108,13 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 			continue
 		}
 		if sep {
+			flush() // the prior word atomizes before its break space
 			out = append(out, atom{st: st, ws: ws, text: " ", sep: true})
 			sep = false
 		}
-		if n := len(out); n > 0 && !out[n-1].sep && !out[n-1].br {
-			out[n-1].text += string(r)
-		} else {
-			out = append(out, atom{st: st, ws: ws, text: string(r)})
-		}
+		word.WriteRune(r)
 	}
+	flush()
 	if sep {
 		out = append(out, atom{st: st, ws: ws, text: " ", sep: true})
 	}
@@ -290,10 +296,26 @@ func breakAtSpace(s string, budget int, m Metrics) (head, tail string, ok bool) 
 }
 
 // cutText cuts the longest rune prefix of s that fits the px budget,
-// always returning at least one rune so char-break makes progress.
+// always returning at least one rune so char-break makes progress. When
+// the meter steps rune-by-rune the running width is carried, so cutting
+// a giant token is O(n); otherwise prefixes are re-measured (the
+// proportional-metrics fallback, correct but not linear).
 func cutText(s string, budget int, m Metrics) (head, tail string) {
 	if s == "" {
 		return "", ""
+	}
+	if st, ok := m.(RuneStepper); ok {
+		w := 0
+		i := 0
+		for i < len(s) {
+			r, n := utf8.DecodeRuneInString(s[i:])
+			if w > 0 && w+st.RuneWidth(r) > budget {
+				break
+			}
+			w += st.RuneWidth(r)
+			i += n
+		}
+		return s[:i], s[i:]
 	}
 	_, size := utf8.DecodeRuneInString(s)
 	if m.Width(s[:size]) > budget {

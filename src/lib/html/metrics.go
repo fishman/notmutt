@@ -12,3 +12,11 @@ package html
 type Metrics interface {
 	Width(s string) int // px advance of s
 }
+
+// RuneStepper is implemented by Metrics that can also advance one rune at
+// a time. char-break uses it to carry a running px width instead of
+// re-measuring prefixes (quadratic on a giant unbroken token). Width and
+// the per-rune widths must agree (a monospace meter satisfies this).
+type RuneStepper interface {
+	RuneWidth(r rune) int
+}

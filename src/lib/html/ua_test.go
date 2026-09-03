@@ -52,3 +52,33 @@ func TestWhiteSpaceInheritsButFlagDoesNot(t *testing.T) {
 		t.Fatal("WSSet must not inherit (it marks an explicit declaration at this node)")
 	}
 }
+
+func TestWhiteSpaceApplyTriple(t *testing.T) {
+	cases := map[string]struct {
+		ws  WS
+		wss bool
+		pre bool
+	}{
+		"normal":   {WSNormal, true, false},
+		"nowrap":   {WSNowrap, true, false},
+		"pre":      {WSPre, true, true},
+		"pre-wrap": {WSPreWrap, true, true},
+		"pre-line": {WSPreLine, true, true},
+	}
+	for in, want := range cases {
+		var s Style
+		s.apply(ParseDecls("white-space: " + in))
+		if s.WS != want.ws || s.WSSet != want.wss || s.Pre != want.pre {
+			t.Errorf("white-space %q: WS=%d WSSet=%v Pre=%v, want WS=%d WSSet=%v Pre=%v",
+				in, s.WS, s.WSSet, s.Pre, want.ws, want.wss, want.pre)
+		}
+	}
+}
+
+func TestExplicitNormalClearsInheritedWrap(t *testing.T) {
+	s := StyleOf(el("span"), &Style{WS: WSPreWrap, WSSet: true}, nil)
+	s.apply(ParseDecls("white-space: normal"))
+	if s.WS != WSNormal || !s.WSSet || s.Pre {
+		t.Fatalf("explicit normal on pre-wrap child: WS=%d WSSet=%v Pre=%v, want WSNormal set, Pre=false", s.WS, s.WSSet, s.Pre)
+	}
+}

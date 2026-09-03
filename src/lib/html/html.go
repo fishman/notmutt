@@ -60,7 +60,7 @@ type Style struct {
 	Align     string // left|center|right|justify, "" = inherit
 	AlignSet  bool   // an explicit text-align source at this node, not inherited
 	Display   string // block|inline|none|table|..., "" = tag default
-	Pre       bool   // white-space: pre* -> no wrap, keep spaces
+	Pre       bool   // white-space: pre* -> no wrap, keep spaces (legacy; mail reads it, WS is precise)
 	WS        WS     // white-space class (precise); zero = normal. Inherits.
 	WSSet     bool   // an explicit white-space declaration at this node, not inherited
 }

@@ -104,8 +104,12 @@ func cellExtents(cell *Box, m Metrics) (minW, maxW int) {
 // cannot build a million-column grid. Cells are placed left to right,
 // stepping past columns still claimed by a rowspan above; a colspan is
 // clamped to the free columns remaining in the row. Rows that end up with
-// no cell are dropped (they emit no content line), but rowspan countdowns
-// still tick across them.
+// no cell are dropped (they emit no content line), but rowspan claims
+// still expire across them: every <tr> advances the row ordinal, empty or
+// not. Claims hold an absolute expiry row and are consulted only when a
+// row places cells, so an empty row costs O(1) - the per-row full-map tick
+// of the first Task 3 cut was O(C x R) on a wide rowspan row above many
+// empty rows (measured ~17 s at 1 MB, BUGS.org-1 class; Task 3a).
 func buildGrid(t *Box) (rows []gridRow, cols int) {
 	for _, g := range t.Children {
 		if g.Tbl != "row-group" {
@@ -126,7 +130,8 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 			}
 		}
 	}
-	busy := make(map[int]int) // grid col -> rows still claimed by a rowspan above
+	busy := make(map[int]int) // grid col -> first row where its rowspan claim no longer blocks
+	ri := 0                   // grid-row ordinal; every <tr> advances it (empty rows included)
 	for _, g := range t.Children {
 		if g.Tbl != "row-group" {
 			continue
@@ -142,7 +147,7 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 					continue
 				}
 				cs, rs := spanOf(cb)
-				for cur < cols && busy[cur] > 0 {
+				for cur < cols && busy[cur] > ri { // skip columns still claimed at this row
 					cur++
 				}
 				if cur >= cols {
@@ -153,14 +158,14 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 				}
 				for {
 					free := 0
-					for cur+free < cols && free < cs && busy[cur+free] == 0 {
+					for cur+free < cols && free < cs && busy[cur+free] <= ri {
 						free++
 					}
 					if free == cs {
 						break
 					}
 					cur += free + 1 // a busy column blocks the span; retry after it
-					for cur < cols && busy[cur] > 0 {
+					for cur < cols && busy[cur] > ri {
 						cur++
 					}
 					if cur >= cols {
@@ -172,20 +177,14 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 				}
 				gr.cells = append(gr.cells, gridCell{box: cb, start: cur, colspan: cs})
 				if rs > 1 {
-					busy[cur] = rs // countdown includes this row
+					busy[cur] = ri + rs // claims its column through row ri+rs-1 (this row included)
 				}
 				cur += cs
 			}
 			if len(gr.cells) > 0 {
 				rows = append(rows, gr)
 			}
-			for c, n := range busy { // one row passed: tick every claim down
-				if n <= 1 {
-					delete(busy, c)
-				} else {
-					busy[c] = n - 1
-				}
-			}
+			ri++ // one row passed: claims expire by row index, never by a map tick
 		}
 	}
 	return rows, cols

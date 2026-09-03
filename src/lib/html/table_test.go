@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTableStrayWhitespaceDrops(t *testing.T) {
@@ -273,5 +274,54 @@ func TestRowspanSkipsBusyColumnInWiderRow(t *testing.T) {
 	}
 	if fragText(rs[1].Cells[0]) != "d" || rs[1].Cells[0].X != 8 {
 		t.Fatalf("row1 cell0 = X%d %q, want X8 d (stepped past the rowspanned col0)", rs[1].Cells[0].X, fragText(rs[1].Cells[0]))
+	}
+}
+
+func TestRowspanBusyDoesNotScaleWithEmptyRows(t *testing.T) {
+	// One row of 20000 rowspan cells above 60000 empty rows is O(C x R) under
+	// the per-row tick of the first Task 3 cut (~17 s at ~1 MB, BUGS.org-1
+	// class). Expiry-by-row-index makes empty rows O(1); this finishes in
+	// milliseconds on the fixed code and a reintroduced tick hangs.
+	var b strings.Builder
+	b.WriteString(`<table><tr>`)
+	for i := 0; i < 20000; i++ {
+		b.WriteString(`<td rowspan="99999">x</td>`)
+	}
+	b.WriteString(`</tr>`)
+	for i := 0; i < 60000; i++ {
+		b.WriteString(`<tr></tr>`)
+	}
+	b.WriteString(`</table>`)
+	bs := buildBody(b.String())
+	tbl := bs[0]
+	done := make(chan []gridRow, 1)
+	go func() {
+		rows, _ := buildGrid(tbl)
+		done <- rows
+	}()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("buildGrid over 60000 empty rows did not finish in 3s (per-row busy tick)")
+	}
+}
+
+func TestRowspanExpiresAcrossEmptyRow(t *testing.T) {
+	// a has rowspan 2 at row0; the empty row1 consumes one row of the claim,
+	// so at row2 col0 is free and c lands there (start 0), not at col1.
+	bs := buildBody(`<table><tr><td rowspan="2">a</td><td>b</td></tr><tr></tr><tr><td>c</td></tr></table>`)
+	rows, _ := buildGrid(bs[0])
+	if len(rows) != 2 || len(rows[0].cells) != 2 || len(rows[1].cells) != 1 {
+		t.Fatalf("grid = %+v, want row0 (a,b) then row2 (c)", rows)
+	}
+	if rows[0].cells[0].start != 0 || rows[0].cells[1].start != 1 {
+		t.Fatalf("row0 starts = %d/%d, want 0/1", rows[0].cells[0].start, rows[0].cells[1].start)
+	}
+	c := rows[1].cells[0]
+	if c.start != 0 {
+		t.Fatalf("row2 cell start = %d, want 0 (rowspan 2 expired across the empty row)", c.start)
+	}
+	if len(c.box.Children) != 1 || c.box.Children[0].Text != "c" {
+		t.Fatalf("row2 cell = %+v, want the 'c' text cell", c.box.Children)
 	}
 }

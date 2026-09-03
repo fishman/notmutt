@@ -376,3 +376,32 @@ func TestGiantUnbrokenTokenLaysOutLinearly(t *testing.T) {
 		t.Fatal("LayoutInline of a 1MB unbroken token did not finish in 3s (quadratic atomize/char-break)")
 	}
 }
+
+func TestBreakAtSpaceStopsMeasuringPastBudget(t *testing.T) {
+	// pre-fix breakAtSpace keeps measuring every later space against its
+	// full prefix (~n^2 scanned); post-fix it stops once a prefix exceeds
+	// the budget (widths are monotonic), so scanned stays ~budget-sized.
+	s := strings.Repeat("ab ", 5000) // 15000 chars, a space every third byte
+	m := &countMeter{}
+	if head, tail, ok := breakAtSpace(s, 40, m); !ok || head == "" || tail == "" {
+		t.Fatal("expected a break within the budget")
+	}
+	if m.scanned > 10*len(s) {
+		t.Fatalf("breakAtSpace measured %d runes to break a 15000-rune string, want <= %d", m.scanned, 10*len(s))
+	}
+}
+
+func TestPreservedSpaceDenseTokenLaysOutLinearly(t *testing.T) {
+	// A space-dense preserved run that wraps (pre-wrap) used to cost ~n^3:
+	// breakAtSpace rescanned past the width budget on every emitted line.
+	// The early-break keeps each wrap O(budget), so this finishes fast.
+	body := "<p style=\"white-space:pre-wrap\">" + strings.Repeat("ab ", 32000) + "</p>"
+	bs := buildBody(body)
+	done := make(chan []LineBox, 1)
+	go func() { done <- LayoutInline(bs[0], 80, mono(1), false) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("LayoutInline of a 96k space-dense preserved run did not finish in 3s (cubic breakAtSpace)")
+	}
+}

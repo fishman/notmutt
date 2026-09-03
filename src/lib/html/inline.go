@@ -287,6 +287,8 @@ func breakAtSpace(s string, budget int, m Metrics) (head, tail string, ok bool) 
 		}
 		if m.Width(s[:i]) <= budget {
 			best = i
+		} else {
+			break // widths are monotonic; no later space can fit
 		}
 	}
 	if best < 0 {

@@ -165,3 +165,41 @@ func TestMaxWidthClampHeightSurvival(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveImagesFillsIntrinsics(t *testing.T) {
+	load := func(src string) (w, h int, ok bool) {
+		switch src {
+		case "ok.png":
+			return 60, 30, true
+		case "tiny.png":
+			return 1, 1, true
+		}
+		return 0, 0, false // broken.png, empty src
+	}
+	bs := buildBody(`<p><img src="ok.png"></p><div><ul><li><img src="broken.png"></li></ul></div><p><img src="tiny.png"><img src=""></p>`)
+	ResolveImages(bs, load)
+	if b := bs[0].Children[0].res; b == nil || b.iw != 60 || b.ih != 30 {
+		t.Fatalf("ok.png intrinsic = %+v, want 60x30", b)
+	}
+	// descend to the img under div > ul > li
+	div := bs[1]
+	li := div.Children[0].Children[0]
+	if b := li.Children[0].res; b == nil || b.iw != 0 || b.ih != 0 {
+		t.Fatalf("broken.png intrinsic = %+v, want 0x0 (load ok=false)", b)
+	}
+	p3 := bs[2]
+	if b := p3.Children[0].res; b == nil || b.iw != 1 || b.ih != 1 {
+		t.Fatalf("tiny.png intrinsic = %+v, want 1x1", b)
+	}
+	if b := p3.Children[1].res; b == nil || b.iw != 0 {
+		t.Fatalf("empty-src intrinsic = %+v, want 0x0", b)
+	}
+}
+
+func TestResolveImagesNilLoaderIsNoop(t *testing.T) {
+	bs := buildBody(`<p><img src="ok.png"></p>`)
+	ResolveImages(bs, nil) // must not panic
+	if b := bs[0].Children[0].res; b == nil || b.iw != 0 {
+		t.Fatalf("nil loader intrinsic = %+v, want untouched 0x0", b)
+	}
+}

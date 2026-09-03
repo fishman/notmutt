@@ -566,7 +566,13 @@ cd /home/timebomb/git/opencode/notmutt && git add src/lib/html/box.go src/lib/ht
 
 - [ ] **Step 1: Write the failing test**
 
-Append to `src/lib/html/img_test.go`:
+Append to `src/lib/html/img_test.go`. The fixtures are crafted so every assert is
+load-bearing (a mutation-review finding): a loadable img sits at depth 3 so the
+walk's descent is proven positively, and broken.png returns NONZERO dims with
+ok=false so a dropped `ok` guard would visibly land 40x20 and fail its 0x0 assert
+(a 0x0-false fixture would be indistinguishable from "not reached"). The
+trailing src-less img is an adjacency/no-write check (the `src != ""` skip is not
+separately pinned - see TODO.org).
 
 ```go
 func TestResolveImagesFillsIntrinsics(t *testing.T) {
@@ -574,25 +580,27 @@ func TestResolveImagesFillsIntrinsics(t *testing.T) {
 		switch src {
 		case "ok.png":
 			return 60, 30, true
-		case "tiny.png":
-			return 1, 1, true
+		case "deep.png":
+			return 12, 6, true
+		case "broken.png":
+			return 40, 20, false // decode failed: nonzero dims must NOT land
 		}
-		return 0, 0, false // broken.png, empty src
+		return 0, 0, false // empty src, unknown
 	}
-	bs := buildBody(`<p><img src="ok.png"></p><div><ul><li><img src="broken.png"></li></ul></div><p><img src="tiny.png"><img src=""></p>`)
+	bs := buildBody(`<p><img src="ok.png"></p><div><ul><li><img src="deep.png"></li></ul></div><p><img src="broken.png"><img src=""></p>`)
 	ResolveImages(bs, load)
 	if b := bs[0].Children[0].res; b == nil || b.iw != 60 || b.ih != 30 {
 		t.Fatalf("ok.png intrinsic = %+v, want 60x30", b)
 	}
-	// descend to the img under div > ul > li
+	// descend to the img under div > ul > li: the walk must reach depth 3
 	div := bs[1]
 	li := div.Children[0].Children[0]
-	if b := li.Children[0].res; b == nil || b.iw != 0 || b.ih != 0 {
-		t.Fatalf("broken.png intrinsic = %+v, want 0x0 (load ok=false)", b)
+	if b := li.Children[0].res; b == nil || b.iw != 12 || b.ih != 6 {
+		t.Fatalf("deep.png intrinsic = %+v, want 12x6", b)
 	}
 	p3 := bs[2]
-	if b := p3.Children[0].res; b == nil || b.iw != 1 || b.ih != 1 {
-		t.Fatalf("tiny.png intrinsic = %+v, want 1x1", b)
+	if b := p3.Children[0].res; b == nil || b.iw != 0 || b.ih != 0 {
+		t.Fatalf("broken.png intrinsic = %+v, want 0x0 (load ok=false)", b)
 	}
 	if b := p3.Children[1].res; b == nil || b.iw != 0 {
 		t.Fatalf("empty-src intrinsic = %+v, want 0x0", b)
@@ -786,6 +794,59 @@ Expected: PASS.
 
 Run: `cd src && go test -count=1 ./lib/html/`
 Expected: PASS - the pre-existing `<img>` fixtures (box_test, inline_test) still pass: without `ResolveImages` an image has no intrinsic and no CSS width, so it resolves to 0x0 and lays out exactly as before.
+
+- [ ] **Step 4b: Post-review hardening (Task 4 code-quality review)**
+
+The four Step-1 tests pin structure and `res.uW`, but `res.uW` is written by the
+dispatch's `usedImg` call regardless of what `emit` does with the atom, so a
+regression that made images zero-width again in the line fill would pass them.
+These two tests close that gap, and one comment states the memo's validity
+contract. The wrap test MUST fail if `atom.width` returns 0 for an image
+(verify by a transient mutation, then revert).
+
+Append to `src/lib/html/img_test.go`:
+
+```go
+func TestImageConsumesUsedWidthInWrapBudget(t *testing.T) {
+	// text after an inline image wraps only after the image's used px: x(1)
+	// + sep + 60px img fill the 62px line, so y wraps to line 2. Laying the
+	// image at zero width would keep all three on one line.
+	rs := layoutImg(t, `<p>x <img src="b.png"> y</p>`,
+		func(string) (int, int, bool) { return 60, 30, true }, 62)
+	got := rowsText(rs)
+	if len(got) != 2 || got[1] != "y" {
+		t.Fatalf("rows = %v, want 2 with y on line 2 (the 60px image consumed the budget)", got)
+	}
+}
+
+func TestRelayoutAtNewWidthReResolvesImages(t *testing.T) {
+	// the memoized used px is valid per layout pass; a second LayoutBlock of
+	// the same tree at a different width must re-resolve, not serve the old uW
+	bs := buildBody(`<img src="p.png" style="width:50%">`)
+	ResolveImages(bs, func(string) (int, int, bool) { return 100, 50, true })
+	LayoutBlock(bs, 200, mono(1), false) // first pass resolves uW=100
+	rs := LayoutBlock(bs, 400, mono(1), false)
+	_, a := imgAtomIn(t, rs)
+	if res := a.img.res; res == nil || res.uW != 200 {
+		t.Fatalf("re-laid 50%% img at 400px = %+v, want uW 200 (re-resolved, not stale 100)", res)
+	}
+}
+```
+
+And strengthen the `atom.width` uW-branch comment in `src/lib/html/inline.go`
+so the memo contract is explicit (the branch is valid only because
+`LayoutInline` resolves immediately before emit at the same width; `runExtents`
+overrides images on the measure side, so measure never reads a stale resolved
+width from a different pass):
+
+```go
+		if r := a.img.res; r != nil && r.uSet {
+			return r.uW // valid: LayoutInline resolves right before emit at this width
+		}
+```
+
+Re-run the full `./lib/html/` suite, vet, gofmt. Then commit as in Step 5 but
+with the message `feat(html): inline layout resolves images to used px and emits them at that width` plus a body line noting the hardening - or, if the Step-4 commit already landed separately, make this its own commit `feat(html): pin image used px in the wrap budget and re-resolve on re-layout`.
 
 - [ ] **Step 5: Commit**
 

@@ -2014,6 +2014,12 @@ func (m *Model) onAiResult(e core.AiResult) {
 	if m.summary == nil || e.JobID != m.summary.jobID {
 		return
 	}
+	// a settled summary already consumed its one result: the bus last-value
+	// poll (LatestAiResult) re-delivers it on later ticks, and re-applying
+	// would stack a fresh error line per repaint (the out-of-funds 4xx spam)
+	if m.summary.done {
+		return
+	}
 	if e.Err != nil {
 		m.summary.pager.append(core.Line{Text: "ai: " + e.Err.Error(), Kind: core.LineError})
 		m.logEntry("ai: "+e.Err.Error(), true)

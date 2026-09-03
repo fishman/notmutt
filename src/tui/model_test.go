@@ -6059,6 +6059,25 @@ func TestSummaryView(t *testing.T) {
 	}
 }
 
+// TestSummaryErrorNotRespammed pins a settled failure appending its error
+// line exactly once: the bus last-value poll (LatestAiResult, model.go)
+// re-delivers the result on every tick while the summary stays open, and
+// re-applying it would stack a fresh error line per repaint. Regression
+// for the 4xx out-of-funds spam: the summary stayed reviewable, and every
+// frame appended another "ai: 402 Insufficient Balance".
+func TestSummaryErrorNotRespammed(t *testing.T) {
+	m, bus, _ := busModel()
+	m.onAiStarted(core.AiStarted{JobID: "j1", ThreadID: "t1"})
+	bus.Publish(core.AiResult{JobID: "j1", Err: errors.New("402 Insufficient Balance")})
+	// the poll runs on every Update: two ticks would double-append
+	for i := 0; i < 2; i++ {
+		m, _ = m.Update(statusTick{})
+	}
+	if got := pagerText(m.pager); strings.Count(got, "402 Insufficient Balance") != 1 {
+		t.Fatalf("error must append once per job, got %d in %q", strings.Count(got, "402 Insufficient Balance"), got)
+	}
+}
+
 // TestSummaryViewFromIndex: a summary opened from the index has no mail
 // lines to restore - the back key returns to the index.
 func TestSummaryViewFromIndex(t *testing.T) {

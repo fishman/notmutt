@@ -217,6 +217,7 @@ func TestStage2LabelsAreOwnRuns(t *testing.T) {
 		t.Fatalf("label must sit at the link start: %q", joined)
 	}
 	labelRuns := 0
+	alphaRuns := 0
 	for _, l := range lines {
 		for _, r := range l.Runs {
 			if r.Label {
@@ -224,14 +225,18 @@ func TestStage2LabelsAreOwnRuns(t *testing.T) {
 				if r.Text != "[1]" {
 					t.Fatalf("label run text must be exactly [1], got %q", r.Text)
 				}
-				if strings.Contains(joined, "[1]alpha") && strings.HasSuffix(r.Text, "alpha") {
-					t.Fatalf("label must not merge with the anchor text: %q", r.Text)
-				}
+				continue
+			}
+			if strings.Contains(r.Text, "alpha") {
+				alphaRuns++
 			}
 		}
 	}
 	if labelRuns != 1 {
 		t.Fatalf("want exactly one label run, got %d", labelRuns)
+	}
+	if alphaRuns == 0 {
+		t.Fatalf("the anchor text must render in a non-label run: %q", joined)
 	}
 }
 
@@ -266,6 +271,78 @@ func TestStage2UnlabeledRenderCarriesNoLabels(t *testing.T) {
 				t.Fatalf("no label run may exist in the unlabeled render")
 			}
 		}
+	}
+}
+
+func TestStage2WholeCardAnchorLabelLeadsItsOwnLine(t *testing.T) {
+	// a whole-card anchor (uniformly block-level content) must render its [N]
+	// as its own leading line: a bare RoleText leaf among block children lays
+	// out to zero rows and the label would vanish (Task-6 parity shape)
+	body := `<a href="https://x.example.com/"><h3>Card title</h3><p>card body</p></a>`
+	lines, links := renderStage2HTML(body, nil, 80, true, false, "")
+	if len(links) != 1 || links[0] != "https://x.example.com/" {
+		t.Fatalf("links must list the card anchor: %v", links)
+	}
+	found := false
+	for _, l := range lines {
+		if strings.HasPrefix(l.Text, "[1]") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("the [1] label must lead its own line before the card content: %q", renderText(lines))
+	}
+}
+
+func TestStage2PreTextBareUrlNotLabeled(t *testing.T) {
+	// preserve-white-space text keeps its line structure: a bare URL inside
+	// <pre> is never bare-URL labeled (the walker never linkifies in pre), so
+	// the labeled render matches the unlabeled path line for line
+	body := "<pre>line1\nhttps://x.example.com/\nline2</pre>"
+	lines, links := renderStage2HTML(body, nil, 80, true, false, "")
+	if links != nil {
+		t.Fatalf("bare URLs inside preserve text must not be labeled: %v", links)
+	}
+	if got := linesText(lines); got != "line1/https://x.example.com//line2" {
+		t.Fatalf("pre line structure must survive the labeled render: %q", got)
+	}
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Label {
+				t.Fatalf("no label run may exist inside preserve text")
+			}
+		}
+	}
+}
+
+func TestStage2AdjacentLabelsStaySeparateRuns(t *testing.T) {
+	// two adjacent anchors yield [1] and [2] as separate runs: the pager
+	// highlights a label only on exact r.Text == linkSel, so a merged
+	// "[1][2]" run would drop both highlights
+	body := `<p><a href="https://a.example.com/"></a><a href="https://b.example.com/">z</a></p>`
+	lines, links := renderStage2HTML(body, nil, 80, true, false, "")
+	if len(links) != 2 {
+		t.Fatalf("links must list both anchors: %v", links)
+	}
+	has1, has2, merged := false, false, false
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Label {
+				switch r.Text {
+				case "[1]":
+					has1 = true
+				case "[2]":
+					has2 = true
+				}
+				if r.Text == "[1][2]" {
+					merged = true
+				}
+			}
+		}
+	}
+	if !has1 || !has2 || merged {
+		t.Fatalf("labels must render as separate runs [1],[2]: %q", renderText(lines))
 	}
 }
 

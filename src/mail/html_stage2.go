@@ -102,18 +102,23 @@ func (q *stage2) injectInto(bs []*html.Box) []*html.Box {
 			if href := sanitize(html.Attr(b.Node, "href")); href != "" {
 				q.links = append(q.links, href)
 				label := labelBox(b.St, fmt.Sprintf("[%d]", len(q.links)))
-				// A display:block anchor's content sits in a leading anonymous
-				// run when it mixed inline with a block child; the label joins
-				// that run's inline content. Otherwise the label leads the
-				// anchor's inline children directly.
-				if len(b.Children) > 0 && b.Children[0].Role == html.RoleBlock && b.Children[0].Tag == "" {
+				switch {
+				case len(b.Children) > 0 && b.Children[0].Role == html.RoleBlock && b.Children[0].Tag == "":
+					// a blockified anchor whose content leads with an anonymous
+					// inline run: the label joins that run's inline content
 					run := b.Children[0]
 					run.Children = append([]*html.Box{label}, run.Children...)
-				} else {
+				case len(b.Children) > 0 && (b.Children[0].Role == html.RoleBlock || b.Children[0].Role == html.RoleTable):
+					// uniformly block-level content (whole-card anchor): the
+					// label needs its own anonymous run so the children stay
+					// uniformly block-level and the marker leads its own line
+					run := &html.Box{Role: html.RoleBlock, St: b.St, WS: b.WS, Children: []*html.Box{label}}
+					b.Children = append([]*html.Box{run}, b.Children...)
+				default:
 					b.Children = append([]*html.Box{label}, b.Children...)
 				}
 			}
-		case b.Role == html.RoleText && urlText(b.Text):
+		case b.Role == html.RoleText && !preserveWS(b.WS) && urlText(b.Text):
 			out = append(out, q.splitTextURLs(b)...)
 			continue // replacement leaves carry the whole text node
 		}
@@ -165,6 +170,18 @@ func urlText(s string) bool {
 		if ls := html.Links(f, true); len(ls) > 0 {
 			return true
 		}
+	}
+	return false
+}
+
+// preserveWS reports a white-space class that keeps source whitespace verbatim
+// (the pre family). Bare-URL splitting must skip these: field-splitting a text
+// leaf strands a newline in a before piece, whose trailing LF atomizeText
+// trims, collapsing two pre lines into one.
+func preserveWS(w html.WS) bool {
+	switch w {
+	case html.WSPre, html.WSPreWrap, html.WSPreLine:
+		return true
 	}
 	return false
 }
@@ -288,12 +305,14 @@ func (a *acc) pad(to int) {
 }
 
 // add appends a run, merging it into the previous run when their
-// effective style (everything but Text) matches.
+// effective style (everything but Text) matches. Labels never merge with
+// each other: the pager finds a link marker by exact run text, so "[1][2]"
+// would drop both highlights.
 func (a *acc) add(r core.Run) {
 	if n := len(a.runs); n > 0 {
 		last := &a.runs[n-1]
 		if last.Fg == r.Fg && last.Bg == r.Bg && last.Attrs == r.Attrs &&
-			last.Label == r.Label && last.Image == r.Image {
+			last.Label == r.Label && last.Image == r.Image && !(last.Label && r.Label) {
 			last.Text += r.Text
 			return
 		}

@@ -3,15 +3,16 @@
 
 package html
 
-// Row is one emitted content row of block flow: a filled text line or the
-// 2px hr rule, positioned in px. Rows are pure vertical flow (no floats),
-// so a flat ordered stream is lossless for stage 2.
+// Row is one emitted content row of block flow: a filled text line, the
+// 2px hr rule, or a marker-only row for an item that emitted no content
+// row (empty li), positioned in px. Rows are pure vertical flow (no
+// floats), so a flat ordered stream is lossless for stage 2.
 type Row struct {
 	Gap     int         // collapsed px of margin above this row's content edge
 	X       int         // absolute px left edge of the content box
 	W       int         // content-box px width (wrap/align budget)
 	Box     *Box        // the block that owns the row (style/theme)
-	Line    LineBox     // filled content line (unused when HR)
+	Line    LineBox     // filled content line (unused when HR or marker-only)
 	HR      bool        // this row is the 2px hr rule
 	Markers []RowMarker // list markers hanging in this row's gutters
 }

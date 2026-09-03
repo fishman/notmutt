@@ -134,6 +134,7 @@ func scheduledList(cfg config.Config) []tui.ScheduledEntry {
 		return nil
 	}
 	var out []tui.ScheduledEntry
+	var ats []time.Time
 	for _, e := range entries {
 		if !strings.HasSuffix(e.Name(), ".pending") {
 			continue
@@ -149,8 +150,12 @@ func scheduledList(cfg config.Config) []tui.ScheduledEntry {
 		out = append(out, tui.ScheduledEntry{
 			ID: m.State.ID, Subject: m.State.Subject, At: at.Format("Mon Jan 2 15:04"),
 		})
+		ats = append(ats, at)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].At < out[j].At })
+	// Sort on the parsed time: the display string ("Mon Jan 2 15:04") is not
+	// chronological under string order - weekday names cross midnight wrongly
+	// ("Fri" < "Thu"), misordering a list that straddles a day boundary.
+	sort.Slice(out, func(i, j int) bool { return ats[i].Before(ats[j]) })
 	return out
 }
 

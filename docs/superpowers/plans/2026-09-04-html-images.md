@@ -230,7 +230,7 @@ cd /home/timebomb/git/opencode/notmutt && git add src/lib/html/html.go src/lib/h
 **Files:**
 - Modify: `src/lib/html/box.go` - `Box.res` field; `buildElement` allocates it for `RoleImg`.
 - Create: `src/lib/html/img.go`.
-- Modify: `src/lib/html/inline.go` - `runExtents` uses `imgExtentW` for image atoms.
+- Modify: `src/lib/html/table.go` - `runExtents` uses `imgExtentW` for image atoms.
 - Test: `src/lib/html/img_test.go` - the full probe-pinned sizing table.
 
 This task is the heart of the plan: the pure replaced-element sizing that the probe appendix pins. It builds on Task 1's `CSSLen`. Extent integration (`imgExtentW` in `runExtents`) lands here so Task 4's table seating has its measure side; layout emission (used width into rows) is Task 4.
@@ -313,7 +313,7 @@ func TestImgExtentWidth(t *testing.T) {
 		t.Fatalf("intrinsic extent = %d, want 60", imgExtentW(b))
 	}
 	if b := imgBox(t, `<img src="m60x30.png" style="width:50%">`, 60, 30); imgExtentW(b) != 60 {
-		t.Fatalf("pct width extent = %d, want intrinsic 60 (never a % number)", imgExtentW(b))
+		t.Fatalf("pct width extent = %d, want intrinsic 60 (never a %% number)", imgExtentW(b))
 	}
 	if b := imgBox(t, `<img src="broken.png">`, 0, 0); imgExtentW(b) != 0 {
 		t.Fatalf("no-intrinsic extent = %d, want 0", imgExtentW(b))
@@ -392,8 +392,8 @@ func specImg(b *Box) imgSpec {
 		} else if b.St.Width.Px > 0 {
 			s.wPx = b.St.Width.Px
 		}
-		if b.St.Height.Px > 0 {
-			s.hPx = b.St.Height.Px
+		if !b.St.Height.Pct && b.St.Height.Px > 0 {
+			s.hPx = b.St.Height.Px // a % height is auto (M, N): never px, so the attr hint survives
 		}
 		if b.St.MaxWidth.Pct {
 			s.mwPx, s.mwPct = b.St.MaxWidth.Px, true
@@ -529,7 +529,7 @@ func ResolveImages(boxes []*Box, load func(src string) (w, h int, ok bool)) {
 
 - [ ] **Step 5: Route run-extent image width through `imgExtentW`**
 
-`src/lib/html/inline.go`, in `runExtents` (the loop over atoms, around line 79):
+`src/lib/html/table.go`, in `runExtents` (the loop over atoms, lines 74-87):
 
 ```go
 		w := a.width(m)

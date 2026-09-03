@@ -274,3 +274,35 @@ string-keyed sorting.
 
 Pointers: src/app/schedule.go scheduledList (145-155); src/app/schedule_test.go:315
 TestScheduledList.
+
+* OPEN html tables: captions are built but not rendered (stage-1 deferral)
+The box tree builds caption boxes and the grid readers skip non-conforming
+children, but no flow case emits a caption row: weasyprint paints the caption
+above (or below) the table in the block flow, stage 1 never does. Caption
+rendering is an explicit non-goal of plan 4; a later table plan or stage 2 owns
+the caption-as-a-block-row emission. Pointers: src/lib/html/table.go buildGrid
+(skips non-conforming children), plan 4
+(docs/superpowers/plans/2026-09-03-html-tables.md) self-review notes.
+
+* OPEN html tables: intra-cell block vertical margins are flattened inside a grid row
+A grid row is one flat strip shared across cells, so the collapsed margins
+between a cell's block children are zeroed (cellRows sets Gap = 0 on every
+LayoutBlock row): weasyprint gives the cell its full block-flow vertical rhythm.
+Unrepresentable while a strip is shared; stage 2's quantizer or a later table
+plan could re-introduce cell-internal rhythm by splitting strips. Pointers:
+src/lib/html/table.go cellRows.
+
+* OPEN html tables: a colspan never mints empty spacer columns beyond the row's cell count
+Column count is the widest row by cell count, so a colspan is clamped to the
+free columns remaining in the row and never builds empty spacer columns;
+weasyprint would create them from a colspan attribute alone. This is the O(n)
+clamp - a huge colspan attribute cannot mint a huge grid. Pointers:
+src/lib/html/table.go buildGrid (doc).
+
+* OPEN html tables: author display:table-* on a non-table element renders as block, not a grid
+RoleTable is gated to real table-family tags (Task 1a): a div with
+display:table (or a display:table-cell remap) demotes to RoleBlock and flows as
+plain blocks, where weasyprint anonymous-repairs it into a grid. x/net/html
+cannot nest a real table into that shape, it is not a mail pattern, and a
+normalizer for non-HTML5 DOM sources would be the future opt-in. Pointers:
+src/lib/html/box.go role gate (~147-150), plan 4 Task 1a conformance.

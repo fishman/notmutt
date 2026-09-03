@@ -1457,6 +1457,190 @@ git commit -m "feat(html): colspan and rowspan grid occupancy"
 
 ---
 
+### Task 3a: Rowspan claims expire by row index, not per-row tick (O(n) on empty rows)
+
+Task 3's buildGrid ticks the whole live-claims map once per `<tr>` (`for c, n := range busy`), empty rows included. That is O(C x R) on O(C + R) input: a wide row of C long-rowspan cells above R empty rows keeps all C claims live across every empty row - measured ~17 s at ~1 MB (C=20000, R=60000), a content-reachable stall violating the locked top-of-file threat model. The code is plan-faithful but the plan's own cost text mis-described the tick as one map tick per row; the fix lands as a NEW commit on top of Task 3's `590d20e` (do not amend).
+
+**Files:**
+- Modify: `src/lib/html/table.go` - `buildGrid` claims store an absolute expiry row index and rows advance a counter; empty rows cost O(1); no full-map tick.
+- Test: `src/lib/html/table_test.go` - the measured-shape DoS regression + an empty-row-consumes-rowspan correctness pin.
+- Doc comment: `buildGrid`'s header and the `busy` map comment stop describing countdown ticks.
+
+- [ ] **Step 1: Rewrite `buildGrid`'s rowspan bookkeeping to expiry-by-row-index**
+
+Replace the whole `buildGrid` function (today lines ~100-192, the countdown-tick version committed in `590d20e`) with:
+
+```go
+// buildGrid places every cell of a table's row-group children into grid
+// rows and returns the grid plus its column count. Column count is the
+// widest row by cell count - a colspan never mints empty spacer columns
+// beyond the cells that define them, so a 20-character colspan attribute
+// cannot build a million-column grid. Cells are placed left to right,
+// stepping past columns still claimed by a rowspan above; a colspan is
+// clamped to the free columns remaining in the row. Rows that end up with
+// no cell are dropped (they emit no content line), but rowspan claims
+// still expire across them: every <tr> advances the row ordinal, empty or
+// not. Claims hold an absolute expiry row and are consulted only when a
+// row places cells, so an empty row costs O(1) - the per-row full-map tick
+// of the first Task 3 cut was O(C x R) on a wide rowspan row above many
+// empty rows (measured ~17 s at 1 MB, BUGS.org-1 class; Task 3a).
+func buildGrid(t *Box) (rows []gridRow, cols int) {
+	for _, g := range t.Children {
+		if g.Tbl != "row-group" {
+			continue
+		}
+		for _, rb := range g.Children {
+			if rb.Tbl != "row" {
+				continue
+			}
+			n := 0
+			for _, cb := range rb.Children {
+				if cb.Tbl == "cell" {
+					n++
+				}
+			}
+			if n > cols {
+				cols = n
+			}
+		}
+	}
+	busy := make(map[int]int) // grid col -> first row where its rowspan claim no longer blocks
+	ri := 0                    // grid-row ordinal; every <tr> advances it (empty rows included)
+	for _, g := range t.Children {
+		if g.Tbl != "row-group" {
+			continue
+		}
+		for _, rb := range g.Children {
+			if rb.Tbl != "row" {
+				continue
+			}
+			var gr gridRow
+			cur := 0
+			for _, cb := range rb.Children {
+				if cb.Tbl != "cell" {
+					continue
+				}
+				cs, rs := spanOf(cb)
+				for cur < cols && busy[cur] > ri { // skip columns still claimed at this row
+					cur++
+				}
+				if cur >= cols {
+					break // only rowspan-claimed columns remain: drop the rest
+				}
+				if cs > cols-cur {
+					cs = cols - cur
+				}
+				for {
+					free := 0
+					for cur+free < cols && free < cs && busy[cur+free] <= ri {
+						free++
+					}
+					if free == cs {
+						break
+					}
+					cur += free + 1 // a busy column blocks the span; retry after it
+					for cur < cols && busy[cur] > ri {
+						cur++
+					}
+					if cur >= cols {
+						break
+					}
+				}
+				if cur >= cols {
+					break
+				}
+				gr.cells = append(gr.cells, gridCell{box: cb, start: cur, colspan: cs})
+				if rs > 1 {
+					busy[cur] = ri + rs // claims its column through row ri+rs-1 (this row included)
+				}
+				cur += cs
+			}
+			if len(gr.cells) > 0 {
+				rows = append(rows, gr)
+			}
+			ri++ // one row passed: claims expire by row index, never by a map tick
+		}
+	}
+	return rows, cols
+}
+```
+
+Semantics are identical to the countdown version: a cell placed at row `ri` with `rowspan = rs` claims its column for rows `ri..ri+rs-1` (free from `ri+rs`), so an empty `<tr>` between the claim and a later cell consumes one row of the claim exactly as before. The free test is now time-based (`busy[c] <= ri` means free; entries are left in place, never ticked) - lazy expiry. Each claim is consulted only when a row's placement cursor reaches its column, so an empty row does no map work.
+
+- [ ] **Step 2: The `buildGrid` header and map comment are in the rewrite (Step 1)**
+
+No other file references `busy` or the tick; the rewrite above carries the updated header and map comment. `cellExtents`' "Task 4" boundary comment stays untouched.
+
+- [ ] **Step 3: Add the DoS regression and the empty-row semantics pin**
+
+Append to `table_test.go` (ensure `strings` and `time` are imported; the DoS regression mirrors the `LayoutInline` giant-token idiom in `inline_test.go`):
+
+```go
+func TestRowspanBusyDoesNotScaleWithEmptyRows(t *testing.T) {
+	// One row of 20000 rowspan cells above 60000 empty rows is O(C x R) under
+	// the per-row tick of the first Task 3 cut (~17 s at ~1 MB, BUGS.org-1
+	// class). Expiry-by-row-index makes empty rows O(1); this finishes in
+	// milliseconds on the fixed code and a reintroduced tick hangs.
+	var b strings.Builder
+	b.WriteString(`<table><tr>`)
+	for i := 0; i < 20000; i++ {
+		b.WriteString(`<td rowspan="99999">x</td>`)
+	}
+	b.WriteString(`</tr>`)
+	for i := 0; i < 60000; i++ {
+		b.WriteString(`<tr></tr>`)
+	}
+	b.WriteString(`</table>`)
+	bs := buildBody(b.String())
+	tbl := bs[0]
+	done := make(chan []gridRow, 1)
+	go func() { done <- buildGrid(tbl) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("buildGrid over 60000 empty rows did not finish in 3s (per-row busy tick)")
+	}
+}
+
+func TestRowspanExpiresAcrossEmptyRow(t *testing.T) {
+	// a has rowspan 2 at row0; the empty row1 consumes one row of the claim,
+	// so at row2 col0 is free and c lands there (start 0), not at col1.
+	bs := buildBody(`<table><tr><td rowspan="2">a</td><td>b</td></tr><tr></tr><tr><td>c</td></tr></table>`)
+	rows, _ := buildGrid(bs[0])
+	if len(rows) != 2 || len(rows[0].cells) != 2 || len(rows[1].cells) != 1 {
+		t.Fatalf("grid = %+v, want row0 (a,b) then row2 (c)", rows)
+	}
+	if rows[0].cells[0].start != 0 || rows[0].cells[1].start != 1 {
+		t.Fatalf("row0 starts = %d/%d, want 0/1", rows[0].cells[0].start, rows[0].cells[1].start)
+	}
+	c := rows[1].cells[0]
+	if c.start != 0 {
+		t.Fatalf("row2 cell start = %d, want 0 (rowspan 2 expired across the empty row)", c.start)
+	}
+	if len(c.box.Children) != 1 || c.box.Children[0].Text != "c" {
+		t.Fatalf("row2 cell = %+v, want the 'c' text cell", c.box.Children)
+	}
+}
+```
+
+- [ ] **Step 4: Full package gate**
+
+Run: `cd src && go test -count=1 ./lib/html/ && go vet ./lib/html/ && gofmt -l lib/html/`
+Expected: PASS, vet clean, gofmt lists nothing. All Task 1/1a/2/3 tests still pass.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/lib/html/table.go src/lib/html/table_test.go
+git commit -m "feat(html): rowspan claims expire by row index, not per-row tick"
+```
+
+(Code commit: no co-author line.)
+
+Residual (documented, not gate-blocking): a populated row whose cells must step over many columns claimed by still-live rowspans scans those claims once per such row; with the empty-row driver gone the byte-budget worst case is sub-second at 1 MB, not a freeze. If a real hostile probe ever shows otherwise, an ordered structure over claimed columns (first-free lookup) is the upgrade; TODO.org carries this.
+
+---
+
 ### Task 4: Block content and nested tables inside cells
 
 **Files:**
@@ -1710,7 +1894,7 @@ git commit -m "docs: record html table stage-1 divergences"
 - **Staged boundaries are explicit, not silent:** Task 2's single-span inline `buildGrid`/`columnWidths`/`cellRows` are replaced in Task 3 (spans) and Task 4 (block content), and the plan says so at each task head. Each task's code is complete for what that task tests.
 - **Consistency:** `Row.Cells` is read nowhere in `mail/`; the only consumer is the new `table.go` and the `rowsText` helper. `hasBlockChild`, `splitRuns`, `geom`, `LayoutBlock`, `LayoutInline`, `flattenInline`, `buildBody`, `mono`, `el`, `Attr`, `mustInt` are existing in-package helpers. `rowsText` gains recursion; the existing block tests assert on rows without `Cells`, where it is behavior-identical.
 - **Regression discipline:** the pinned mail `html_*_test.go` suite is untouched; `TestMCPScopeEnforcement` is untouched. `TestTableIsLeaf` was a stub description of the pre-plan leaf, not a pinned behavior, and becomes `TestTableExpandsToGridTree`. No regression test is weakened.
-- **O(n) per stage:** Task 1 is one build pass per node (repair wraps without rescanning). Task 2 measures each cell's text once (measure pass) and lays it out once (layout pass); column count and widths are single passes over the grid. Task 3 keeps that and adds span distribution that touches only each spanning cell's clamped columns; rowspan costs one map tick per actual row plus one skip per rowspan-claimed column in a populated row. Task 4 recurses into nested tables with each table's border-box min/max memoized on its box at first measure (content min/max are width-independent, so the cache is valid across widths and LayoutBlock calls). The first outer measure warms the whole nested subtree bottom-up once; later ancestor measures and each table's own layout read O(1) caches - a constant, never a per-ancestor subtree rescan (the O(n) requirement, not an optimization).
+- **O(n) per stage:** Task 1 is one build pass per node (repair wraps without rescanning). Task 2 measures each cell's text once (measure pass) and lays it out once (layout pass); column count and widths are single passes over the grid. Task 3 keeps that and adds span distribution that touches only each spanning cell's clamped columns; rowspan claims expire by row index (Task 3a), so empty rows cost O(1) and a populated row pays one skip per live claim its cells actually step over (no per-row full-map tick - the first Task 3 cut was O(C x R) on a wide rowspan row above many empty rows, ~17 s at 1 MB). Task 4 recurses into nested tables with each table's border-box min/max memoized on its box at first measure (content min/max are width-independent, so the cache is valid across widths and LayoutBlock calls). The first outer measure warms the whole nested subtree bottom-up once; later ancestor measures and each table's own layout read O(1) caches - a constant, never a per-ancestor subtree rescan (the O(n) requirement, not an optimization).
 
 ## Appendix: weasyprint parity probes (developer cross-check, not CI)
 

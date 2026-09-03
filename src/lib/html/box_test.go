@@ -58,14 +58,28 @@ func TestBuildDisplayNoneAndHeadSkipped(t *testing.T) {
 }
 
 func TestBodyStyleReachesContent(t *testing.T) {
-	bs := buildBody(`<p>text</p>`)
 	doc, err := xhtml.Parse(strings.NewReader(`<html><body style="color:#ff0000"><p>text</p></body></html>`))
 	if err != nil {
 		panic(err)
 	}
-	bs = Build(doc, ParseStyleSheets(doc))
-	if bs[0].St.Fg != "#ff0000" {
-		t.Fatalf("p under author-styled body must inherit Fg, got %q", bs[0].St.Fg)
+	bs := Build(doc, ParseStyleSheets(doc))
+	p := bs[0]
+	if p.St.Fg != "#ff0000" {
+		t.Fatalf("p under author-styled body must inherit Fg, got %q", p.St.Fg)
+	}
+	if p.Children[0].St == nil || p.Children[0].St.Fg != "#ff0000" {
+		t.Fatal("p's text leaf must carry the inherited Fg style")
+	}
+}
+
+func TestHTMLStyleReachesContent(t *testing.T) {
+	doc, err := xhtml.Parse(strings.NewReader(`<html style="color:#00ff00"><body><p>text</p></body></html>`))
+	if err != nil {
+		panic(err)
+	}
+	bs := Build(doc, ParseStyleSheets(doc))
+	if bs[0].St.Fg != "#00ff00" {
+		t.Fatalf("p under an author-styled html element must inherit Fg, got %q", bs[0].St.Fg)
 	}
 }
 
@@ -113,6 +127,9 @@ func TestBlockOriginMixedSplitsRuns(t *testing.T) {
 	run0 := div.Children[0]
 	if run0.Role != RoleBlock || run0.Tag != "" || len(run0.Children) != 1 || run0.Children[0].Text != "text" {
 		t.Fatalf("first run = %+v, want anon block wrapping 'text'", run0)
+	}
+	if run0.St != div.St || run0.WS != div.WS {
+		t.Fatal("anon run must share the container's style and white-space class")
 	}
 	if div.Children[1].Tag != "div" {
 		t.Fatalf("middle child = %q, want the inner div", div.Children[1].Tag)
@@ -202,6 +219,17 @@ func TestStrayBlockInListGetsNoMarker(t *testing.T) {
 	}
 	if ul.Children[1].Marker != "disc" {
 		t.Fatalf("real li marker = %q, want disc", ul.Children[1].Marker)
+	}
+}
+
+func TestAuthorListItemGate(t *testing.T) {
+	bs := buildBody(`<ul><div style="display:list-item">a</div><li style="display:block">b</li></ul>`)
+	ul := bs[0]
+	if ul.Children[0].Marker != "disc" {
+		t.Fatalf("div display:list-item must get a marker, got %q", ul.Children[0].Marker)
+	}
+	if ul.Children[1].Marker != "" {
+		t.Fatalf("li display:block must lose its marker, got %q", ul.Children[1].Marker)
 	}
 }
 

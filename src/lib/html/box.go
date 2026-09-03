@@ -23,11 +23,13 @@ const (
 
 // Box is one node of the stage-1 flow tree. St is the computed style
 // the box renders with; text leaves and anonymous run blocks share
-// their container's style pointer, never nil. WS is the effective
-// white-space class. Text carries raw text (whitespace is collapsed at
-// layout, never at build). A block box's children are uniformly
-// block-level or uniformly inline-level; mixed content is split into
-// anonymous run blocks.
+// their container's style pointer, never nil. The pointer is shared,
+// so computed-style derivations must copy before mutating - StyleOf's
+// copy-per-element discipline is deliberately broken for text and
+// anonymous boxes. WS is the effective white-space class. Text carries
+// raw text (whitespace is collapsed at layout, never at build). A block
+// box's children are uniformly block-level or uniformly inline-level;
+// mixed content is split into anonymous run blocks.
 type Box struct {
 	Role     Role
 	Tag      string      // element tag, "" on anonymous boxes
@@ -60,14 +62,19 @@ func ParseStyleSheets(doc *xhtml.Node) []CSSRule {
 
 // Build returns the body's top-level flow boxes under the cascade. A
 // document without a body yields nil. display:none and the
-// head/script/skip set produce no box. The body element's own style is
-// the inheritance root, so body/html declarations reach content.
+// head/script/skip set produce no box. The body element's own style -
+// inherited from the html element when present - is the inheritance
+// root, so body/html declarations reach content.
 func Build(doc *xhtml.Node, rules []CSSRule) []*Box {
 	body := findBody(doc)
 	if body == nil {
 		return nil
 	}
-	st := StyleOf(body, &Style{}, rules)
+	root := &Style{}
+	if body.Parent != nil && body.Parent.Type == xhtml.ElementNode && body.Parent.Data == "html" {
+		root = StyleOf(body.Parent, root, rules)
+	}
+	st := StyleOf(body, root, rules)
 	st.WS = effectiveWS("body", st)
 	var out []*Box
 	for c := body.FirstChild; c != nil; c = c.NextSibling {
@@ -166,6 +173,7 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 	if role == RoleInline && hasBlockChild(b.Children) {
 		b.Role = RoleBlock
 		role = RoleBlock
+		st.Display = "block" // blockification rewrites computed display
 	}
 	if role == RoleBlock && hasBlockChild(b.Children) {
 		b.Children = splitRuns(b.Children, st)
@@ -212,7 +220,9 @@ func hasBlockChild(cs []*Box) bool {
 // container into anonymous run blocks around its block children: text
 // before a block does not bleed into it, and the container's children
 // come out uniformly block-level. Anonymous runs inherit the
-// container's style and white-space class.
+// container's style and white-space class. Whitespace-only runs from
+// pretty-printed markup are layout-drop; block flow must not give them
+// height.
 func splitRuns(cs []*Box, st *Style) []*Box {
 	var out []*Box
 	var run []*Box

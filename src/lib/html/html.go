@@ -21,6 +21,33 @@ import (
 	"golang.org/x/net/html"
 )
 
+// WS is the computed white-space class (CSS white-space). Zero = normal.
+type WS int
+
+const (
+	WSNormal WS = iota
+	WSNowrap
+	WSPre
+	WSPreWrap
+	WSPreLine
+)
+
+// parseWS maps a white-space value to its class; unknown values
+// (break-spaces, typos) land on normal like weasyprint's validator.
+func parseWS(v string) WS {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "nowrap":
+		return WSNowrap
+	case "pre":
+		return WSPre
+	case "pre-wrap":
+		return WSPreWrap
+	case "pre-line":
+		return WSPreLine
+	}
+	return WSNormal
+}
+
 // Style is the computed style the renderer acts on. Zero values mean
 // "inherit", except Display which is the tag default when empty.
 type Style struct {
@@ -34,6 +61,8 @@ type Style struct {
 	AlignSet  bool   // an explicit text-align source at this node, not inherited
 	Display   string // block|inline|none|table|..., "" = tag default
 	Pre       bool   // white-space: pre* -> no wrap, keep spaces
+	WS        WS     // white-space class (precise); zero = normal. Inherits.
+	WSSet     bool   // an explicit white-space declaration at this node, not inherited
 }
 
 // cssColor normalizes a CSS color value to #rrggbb, or "" when not a
@@ -159,8 +188,10 @@ func (s *Style) apply(decls map[string]string) {
 		s.Display = strings.ToLower(strings.TrimSpace(v))
 	}
 	if v, ok := decls["white-space"]; ok {
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "pre", "pre-wrap", "pre-line":
+		s.WS = parseWS(v)
+		s.WSSet = true
+		switch s.WS {
+		case WSPre, WSPreWrap, WSPreLine:
 			s.Pre = true
 		default:
 			s.Pre = false
@@ -237,6 +268,7 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s := *parent
 	s.AlignSet = false // align inherits, its explicit-source flag never does
 	s.FgSet = false    // same for color: the contrast derivation must override an inherited value
+	s.WSSet = false    // white-space inherits; its explicit-source flag never does
 	// display is not inherited (CSS): don't carry the parent's display into children
 	s.Display = ""
 	uaDefaults(n.Data, &s)

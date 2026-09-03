@@ -325,3 +325,43 @@ func TestRowspanExpiresAcrossEmptyRow(t *testing.T) {
 		t.Fatalf("row2 cell = %+v, want the 'c' text cell", c.box.Children)
 	}
 }
+
+func TestNestedTableIndentsInsideCell(t *testing.T) {
+	// Outer: one cell holding a nested 2-column table. Nested col0 text is
+	// 10px -> column box 12; col1 text is 20px -> column box 22; nested table
+	// is 12+22+2*3 = 40px wide. Outer cell content is that nested table, so
+	// the outer column is 40 + 2px padding = 42 and the outer table is 42 +
+	// 2*2 = 46px (measured against weasyprint: nested table left edge = outer
+	// spacing 2 + outer pad 1 = x3; inner col0 box x5, content x6).
+	bs := buildBody(`<table><tr><td><table>` +
+		`<tr><td>aaaaaaaaaa</td><td>bbbbbbbbbbbbbbbbbbbb</td></tr>` +
+		`</table></td></tr></table>`)
+	rs := LayoutBlock(bs, 100, mono(1), false)
+	if len(rs) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rs))
+	}
+	if rs[0].W != 46 {
+		t.Fatalf("outer table W = %d, want 46", rs[0].W)
+	}
+	if got := fragText(rs[0]); got != "aaaaaaaaaabbbbbbbbbbbbbbbbbbbb" {
+		t.Fatalf("nested text = %q (len %d), want 10 a's then 20 b's", got, len(got))
+	}
+	outer := rs[0].Cells[0]
+	if len(outer.Cells) != 2 {
+		t.Fatalf("outer cell fragments = %d, want the nested row's 2 columns", len(outer.Cells))
+	}
+	if outer.Cells[0].X != 6 || outer.Cells[1].X != 20 {
+		t.Fatalf("nested fragment X = %d/%d, want 6/20 (nested col0 content x6, col1 x20)", outer.Cells[0].X, outer.Cells[1].X)
+	}
+}
+
+func TestTextThenNestedTableStackInCell(t *testing.T) {
+	// A cell holding text and then a nested table blockifies into two block
+	// children: the text run renders on its own line, then the nested table
+	// lines follow - two stream rows total (both children single-line).
+	bs := buildBody(`<table><tr><td>hi<table><tr><td>x</td></tr></table></td></tr></table>`)
+	rs := LayoutBlock(bs, 60, mono(1), false)
+	if got := rowsText(rs); !reflect.DeepEqual(got, []string{"hi", "x"}) {
+		t.Fatalf("rows = %q, want [hi x]", got)
+	}
+}

@@ -38,6 +38,9 @@ type Box struct {
 	St       *Style
 	WS       WS
 	Tbl      string // table grid slot: table|row-group|row|cell|caption|column-group|column ("" outside tables)
+	tblMin   int    // memoized table min-content border-box width (tableExtents)
+	tblMax   int    // memoized table max-content border-box width (tableExtents)
+	tblMeas  bool   // tblMin/tblMax valid; extents are width-independent and the tree is immutable, so never stale
 	Marker   string // list-item marker type: disc|circle|square|decimal
 	Text     string // RoleText only
 	Children []*Box

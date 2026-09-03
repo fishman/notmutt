@@ -89,11 +89,85 @@ func runExtents(as []atom, m Metrics) (minW, maxW int) {
 	return minW, maxW
 }
 
-// cellExtents measures one cell's min and max column-box width (content +
-// both paddings). Task-2/3 boundary: cell content is the uniform-inline
-// case; block-in-cell (divs, nested tables) lands in Task 4.
+// flowExtents measures a vertical flow of boxes at infinite width: each
+// child contributes its own min/max, the flow takes the max across children
+// (blocks stack vertically, so the widest child governs the content width).
+func flowExtents(cs []*Box, m Metrics) (minW, maxW int) {
+	for _, c := range cs {
+		cmin, cmax := boxExtents(c, m)
+		if cmin > minW {
+			minW = cmin
+		}
+		if cmax > maxW {
+			maxW = cmax
+		}
+	}
+	return minW, maxW
+}
+
+// boxExtents measures one box as a flow child: its content's min/max plus
+// its horizontal insets (ml + pl on the left, mr on the right - the same
+// insets flow applies). A nested table contributes its own border-box width
+// (its margins/padding plus columns and spacing edges), so outer columns
+// widen to seat it exactly as layout will.
+func boxExtents(b *Box, m Metrics) (minW, maxW int) {
+	_, mr, _, ml, pl := geom(b)
+	if b.Tbl == "table" {
+		tmin, tmax := tableExtents(b, m)
+		return ml + pl + tmin + mr, ml + pl + tmax + mr
+	}
+	if b.Tbl == "cell" || len(b.Children) == 0 {
+		return 0, 0 // stray cell/leaf contributes nothing as a flow child
+	}
+	inset := ml + mr + pl
+	var cmin, cmax int
+	if hasBlockChild(b.Children) {
+		cmin, cmax = flowExtents(b.Children, m)
+	} else {
+		cmin, cmax = runExtents(flattenInline(b.Children), m)
+	}
+	return inset + cmin, inset + cmax
+}
+
+// tableExtents measures a nested table's min and max border-box width
+// (column widths plus the surrounding border-spacing) at infinite width,
+// memoized on the box (tblMin/tblMax/tblMeas). Content min/max are
+// width-independent (measured at infinite width), so the first measure pass
+// to reach a table computes its extents and every later ancestor measure and
+// the table's own layout read the cache. Without the memo, each ancestor's
+// measure and layout pass would re-descend the whole subtree below it -
+// O(depth^2) buildGrid/atomize work on a deep chain of single-cell tables (a
+// content-reachable DoS). measureColumns below the memo still runs per table
+// when it lays out (assignColumns needs per-column arrays), but its
+// cellExtents reads deeper tables' caches, so it costs only the table's own
+// direct cell text - a constant, never a subtree.
+func tableExtents(t *Box, m Metrics) (minW, maxW int) {
+	if t.tblMeas {
+		return t.tblMin, t.tblMax
+	}
+	rows, cols := buildGrid(t)
+	if cols == 0 {
+		t.tblMeas = true
+		return 0, 0
+	}
+	min, max := measureColumns(rows, cols, m)
+	sumMin, sumMax := tableSpacing*(cols+1), tableSpacing*(cols+1)
+	for j := 0; j < cols; j++ {
+		sumMin += min[j]
+		sumMax += max[j]
+	}
+	t.tblMin, t.tblMax, t.tblMeas = sumMin, sumMax, true
+	return sumMin, sumMax
+}
+
+// cellExtents measures one cell's min and max column-box width: content
+// (inline runs or block children, recursively) plus both paddings.
 func cellExtents(cell *Box, m Metrics) (minW, maxW int) {
-	minW, maxW = runExtents(flattenInline(cell.Children), m)
+	if hasBlockChild(cell.Children) {
+		minW, maxW = flowExtents(cell.Children, m)
+	} else {
+		minW, maxW = runExtents(flattenInline(cell.Children), m)
+	}
 	return minW + 2*tablePad, maxW + 2*tablePad
 }
 
@@ -333,13 +407,24 @@ func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics) (U int,
 	return assignColumns(min, max, cols, avail, norm)
 }
 
-// cellRows lays out a cell's uniform-inline content at its content width,
-// returning one Row per filled line, X relative to the cell content box's
-// left edge (0).
+// cellRows lays out a cell's content at its content width and returns the
+// cell's visual lines, X relative to the cell content box's left edge (0).
+// Uniform-inline content fills lines directly; block content (divs, lists,
+// a nested table) runs through the ordinary block engine, so a nested
+// RoleTable recurses into tableRows. Intra-cell vertical margins are
+// flattened (Gap 0): a grid row is one horizontal strip, so a paragraph
+// gap inside one cell cannot push only that cell down.
 func cellRows(cell *Box, w int, m Metrics, norm bool) []Row {
-	var rs []Row
-	for _, line := range LayoutInline(cell, w, m, norm) {
-		rs = append(rs, Row{X: line.X, W: w, Box: cell, Line: line})
+	if !hasBlockChild(cell.Children) {
+		var rs []Row
+		for _, line := range LayoutInline(cell, w, m, norm) {
+			rs = append(rs, Row{X: line.X, W: w, Box: cell, Line: line})
+		}
+		return rs
+	}
+	rs := LayoutBlock(cell.Children, w, m, norm)
+	for i := range rs {
+		rs[i].Gap = 0
 	}
 	return rs
 }
@@ -347,7 +432,7 @@ func cellRows(cell *Box, w int, m Metrics, norm bool) []Row {
 // tableRows emits a table box into the row stream at content (x, w),
 // consuming the ambient seam on its first emitted line. A spanning cell's
 // box sums its columns' widths plus the gutters between them. Cell content
-// is uniform-inline until Task 4 (block-in-cell content).
+// may be uniform-inline or block content (a nested table recurses here).
 func tableRows(t *Box, x, w int, s *seam, m Metrics, norm bool) []Row {
 	rows, cols := buildGrid(t)
 	if len(rows) == 0 || cols == 0 {

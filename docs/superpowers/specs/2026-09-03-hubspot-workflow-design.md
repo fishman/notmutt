@@ -10,8 +10,9 @@ skips it. Trigger-to-draft answers came from a brainstorm handoff
 
 Decisions locked in brainstorm:
 - Trigger: review queue of unprocessed HubSpot contacts (newest first).
-- Analysis input: HubSpot CRM record + company website via a search provider
-  (snippet/extract content), no arbitrary-domain fetches.
+- Analysis input: HubSpot CRM record + company website and web/news research,
+  run over the referenced `[ai]` provider connection (no arbitrary-domain
+  fetches).
 - Privacy: company/contact/web data reaches the LLM freely through the `[ai]`
   provider; inbound mail content joins ONLY through the aicmd gate (BuildContext
   + `[ai-data.<account>]` grant) when a thread with the contact's address exists.
@@ -37,15 +38,18 @@ reviewable, personalized follow-up draft, with processed state written back.
 Acceptance (scripted tests; item 9 manual):
 
 1. Config: `[hubspot]` loads strictly (unknown keys = load errors, the R8
-   rule). Token and research key come from `token_cmd` (never a literal).
+   rule). `[hubspot] provider` references one `[ai]` entry (empty = first
+   configured); HubSpot's own token comes from `[hubspot] token_cmd`; no
+   literal secret and no second AI-side token surface exists.
 2. Pull (`ListUnprocessed`) lists contacts lacking the marker, newest first,
    paginated; refresh diff-and-inserts new rows into the queue view (the R3
    pattern, no full rebuild). A `created_after` knob (empty default) skips a
    pre-feature backlog.
 3. Analyze on a row runs a cancellable background job (contact + company from
-   HubSpot, research-provider queries on the company domain/name, snippets ->
-   non-mail context -> `ai.Chat`) and streams a briefing into the queue view's
-   detail region. Row status advances only on success or explicit error.
+   HubSpot, research queries on the company domain/name over the `[hubspot]
+   provider` connection, snippets -> non-mail context -> `ai.Chat`) and
+   streams a briefing into the queue view's detail region. Row status
+   advances only on success or explicit error.
 4. Draft is enabled only when a briefing exists for the row. It composes a
    follow-up grounded in the briefing plus (gated) mail history and opens a
    prefilled compose (`To` from the contact address, subject, body) via the
@@ -73,23 +77,29 @@ Acceptance (scripted tests; item 9 manual):
 
 ```toml
 [hubspot]
-token_cmd        = "cmd printing the private-app token"   # secret, never literal
+provider         = "deepseek"       # name of an [ai] provider driving the workflow; empty = first configured
+token_cmd        = "cmd printing the private-app token"   # HubSpot's own secret, never literal
 marker_property  = "notmutt_followed_up"                  # the processed marker
 created_after    = ""                                     # RFC3339; empty = all unprocessed
-
-[hubspot.research]
-provider = "..."    # search/extract provider; host is a compile-time constant
-token_cmd = "..."   # its API key via cmd
 ```
 
+- `provider` selects which `[ai]` entry drives the workflow. Multiple
+  `[ai.<name>]` providers may be configured (the existing registry); the
+  workflow references one by name. Analysis, research, and draft all ride that
+  connection: its `base-url` is the host and its `pass_cmd` (the `[ai]` secret
+  field) is the auth - there is no second provider or token surface. Empty =
+  the resolveAIProvider rule (first configured). A distinct research model is a
+  future per-step override, not today's shape.
 - `marker_property` is the property the pull filters on and write-back sets.
   It must exist in the portal (one-time setup, typically a checkbox property);
   an API error naming the missing property is surfaced verbatim so the config
   fix is obvious (the R14 refusal-style message). HubSpot private apps may not
   create custom properties - if the portal cannot, the operator pre-creates it.
-- Hosts are compile-time constants (`api.hubspot.com`, the research provider),
-  so no `[lua.network]` allowlist is involved - the Go clients are stricter
-  than a config allowlist by construction. A future config-driven base URL is
+- The HubSpot host is a compile-time constant (`api.hubspot.com`); no
+  `[lua.network]` allowlist is involved - the Go client is stricter than a
+  config allowlist by construction. The research/analysis host is the
+  referenced `[ai]` entry's `base-url`, which already exists as config; the
+  workflow adds no new host surface. A config-driven HubSpot base URL is
   deliberately not offered (deny-by-default; no new knob without a need).
 - `[hubspot]` is portal-scoped, not per mail account; the workflow does not
   depend on any account's folder/tag state except the opt-in `[ai-data]` grant
@@ -111,13 +121,17 @@ error. Data types (Contact, Company) carry only the fields the workflow uses.
 - `Company(id) (Company, error)` - name, domain, industry, size, description.
 - `MarkFollowedUp(id) error` - set `marker_property`.
 
-`src/search/client.go` - the research provider (a search API that returns
-snippets and/or extracted page content), queried by company domain and name.
-Own auth via `token_cmd`. Returns `[]Result{Title, URL, Snippet}` with a cap
-on count and per-result length (bounded, like the aicmd body caps).
+`src/search/client.go` - the research call: queries on the company domain and
+name over the referenced `[ai]` provider connection (base-url + `pass_cmd`
+from that `[ai]` entry; no own token). Returns `[]Result{Title, URL, Snippet}`
+with a cap on count and per-result length (bounded, like the aicmd body caps).
+Whether research is a distinct search/extract endpoint on that connection or
+is served by the model itself is a per-provider detail - a provider that
+fronts neither limits research to model knowledge, an accepted constraint of
+riding one connection (the hubspot client below is unaffected).
 
-Endpoint paths are illustrative; the exact HubSpot/research paths are pinned in
-the plan and locked by the httptest tests.
+Endpoint paths are illustrative; the exact HubSpot and research request shapes
+are pinned in the plan and locked by the httptest tests.
 
 ## 4. The workflow driver
 
@@ -127,8 +141,9 @@ publishing to `core.Bus`, cancellable via the existing Task machinery.
 
 - `runHubspotPull` - calls `ListUnprocessed`, publishes queue rows.
 - `runHubspotAnalyze(contact)` - gathers contact + company, runs research
-  queries, assembles a non-mail context, streams the briefing via `ai.Chat`.
-  Publishes progress; cancellable mid-stream.
+  queries over the `[hubspot] provider` connection, assembles a non-mail
+  context, streams the briefing via `ai.Chat` on that connection. Publishes
+  progress; cancellable mid-stream.
 - `runHubspotDraft(contact, briefing)` - resolves the contact's email address
   and searches for an inbound thread with it across accounts; grounding is
   applied only from accounts that hold mail from that address AND whose
@@ -174,8 +189,9 @@ of R14).
   prompt-bound strings pass `core.SanitizeText`; research/briefing content is
   length-capped before the prompt; JSON is decoded with `encoding/json` and
   never trusted as safe text (F1).
-- Secrets (HubSpot token, research key) via `token_cmd`, argv exec (F4),
-  never logged (F6).
+- Secrets: the HubSpot token comes from `[hubspot] token_cmd`, argv exec (F4),
+  never logged (F6). AI-side auth is the referenced `[ai]` entry's `pass_cmd`,
+  reused rather than duplicated - there is no second token surface to leak.
 - Rows/briefings are session-local like `lastAIOutput`; no new persistence.
   HubSpot is the processed-state store; compose drafts persist through the
   existing saveDraft/draft seams.
@@ -194,7 +210,10 @@ of R14).
 ## 8. Testing
 
 1. Client tests: `httptest` servers pin method/path/auth-header/request JSON
-   and exercise paging, rate-limit retry, and error mapping.
+   and exercise paging, rate-limit retry, and error mapping. A
+   provider-resolution test pins that `[hubspot] provider` selects that `[ai]`
+   entry (its base-url + pass_cmd) and that an empty value falls back to the
+   first configured provider.
 2. Pull test: fabricated contact set (generated names, never personal) -> the
    unprocessed filter and newest-first order, `created_after` honored.
 3. Context-assembler test: fabricated research data in -> bounded non-mail

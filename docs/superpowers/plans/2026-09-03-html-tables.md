@@ -1837,6 +1837,8 @@ Expected: PASS.
 
 Run a scratch test over a fabricated chain of 5,000 nested single-cell tables (each nesting a one-cell table), plus the existing `TestTableFillsBetweenMinAndMax`. Expected: completes promptly. Without the Step 3 memo this is O(depth^2) - 25M re-entered buildGrid/measure passes that visibly stall; with it, the first outer measure warms every nested table's cache bottom-up and the rest reads O(1) - a constant, never a per-depth rescan of the text.
 
+Step 6 is not runnable against the parser as written: x/net/html rejects nesting past an open element stack of 512 (vendor/golang.org/x/net/html/parse.go), and a nested single-cell table holds ~4 open elements per level (table, implied tbody, tr, td), so a real parse caps near ~127 nested tables, not 5000. The memo's O(depth) measure was verified instead on a hand-built 20,000-deep box tree (parser bypassed; scratch probe, deleted). No committed regression can pin this: a deeper-than-512 tree is exactly the hand-assembled DOM the conformance rule forbids tests from building, and at the parser's capped depth the memo's saving is sub-millisecond, so no deterministic assertion distinguishes it. The parser cap is the actual DoS bound on this hostile shape; the memo stays as plan-faithful defense for re-layout over a built tree. (Adjudicated at Task 4 review, 2026-09-04.)
+
 - [ ] **Step 7: Full package gate**
 
 Run: `cd src && go test -count=1 ./lib/html/ && go vet ./lib/html/ && gofmt -l lib/html/`

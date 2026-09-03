@@ -121,17 +121,12 @@ type stage2 struct {
 
 // emitRows turns the block row stream into pager lines. The D5 gap
 // preamble runs once per emitted content row at the row level; cell
-// strips (Task 4) and tracking-pixel rows own their rows instead.
+// strips (Task 4) flow through it too, so strip rows and text rows
+// cannot drift apart. Tracking-pixel rows emit nothing and consume no gap.
 func (q *stage2) emitRows(rows []html.Row) {
 	for _, r := range rows {
 		if q.truncated {
 			return
-		}
-		if len(r.Cells) > 0 {
-			// Task 4: emitStrip(r). Route it through this same D5 preamble
-			// shape (first content row drops its gap, else r.Gap blanks) so
-			// strip rows and text rows cannot drift apart.
-			continue
 		}
 		if q.skipFor(r) { // tracking-pixel-only row (D9): no blanks, no line
 			continue
@@ -144,6 +139,8 @@ func (q *stage2) emitRows(rows []html.Row) {
 		switch {
 		case r.HR:
 			q.emitHR(r)
+		case len(r.Cells) > 0:
+			q.emitStrip(r)
 		case len(r.Line.Atoms) > 0:
 			q.emitTextRow(r)
 		default:
@@ -226,6 +223,37 @@ func (q *stage2) emitMarkerRow(r html.Row) {
 	var a acc
 	q.layMarkers(&a, r)
 	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// emitStrip renders one table grid row (Row.Cells) as one horizontal line
+// (D12): each fragment renders at its own absolute px X through appendRow;
+// recursion places nested-table strips inline at their shifted columns. A
+// cell's declared background rides its content runs (the td style carries
+// the bg down the cascade), so no region machinery. The strip line carries
+// defaultBG. The row-level preamble in emitRows already applied the gap.
+func (q *stage2) emitStrip(r html.Row) {
+	var a acc
+	for _, f := range r.Cells {
+		q.appendRow(&a, f)
+	}
+	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Imgs: a.imgs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// appendRow places one strip fragment (a Row) into the accumulator. A
+// fragment with Cells hosts a nested table: its fragments are already
+// shifted to absolute X (shiftRow), so render them in directly. A cell is
+// table flow or inline content at the strip level (cellRows separates), so
+// a fragment is never both (guard on Cells first). ownImages is false: a
+// strip has no own-line image; every cell image is inline on the strip
+// (D9). emitRowContent pads the fragment to its own column.
+func (q *stage2) appendRow(a *acc, f html.Row) {
+	if len(f.Cells) > 0 {
+		for _, inner := range f.Cells {
+			q.appendRow(a, inner)
+		}
+		return
+	}
+	q.emitRowContent(a, f, false)
 }
 
 // emitHR emits one horizontal-rule row (D11): a run of rule glyphs over

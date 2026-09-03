@@ -7,7 +7,7 @@ package mail
 // (renderStage2HTML); the locked html_*_test.go suite is the walker's
 // contract until the Task-6 cutover. These tests pin the stage-2-only
 // decisions: blank quantization, page background, punctuation binding, tab
-// expansion, image own-line/inline, and list marker gutters.
+// expansion, image own-line/inline, list marker gutters, and table strips.
 
 import (
 	"strings"
@@ -160,6 +160,47 @@ func TestStage2MarkerGutterAndIndent(t *testing.T) {
 		}
 		if j == 0 || !strings.HasSuffix(text[:j], "•") {
 			t.Fatalf("line %d = %q: the hanging disc must sit in the gutter cell before the text", i, text)
+		}
+	}
+}
+
+func TestStage2CellBackgroundPaintsItsRuns(t *testing.T) {
+	lines, _ := renderStage2HTML(`<table bgcolor="#dddddd"><tr><td>cell</td></tr></table>`, nil, 0, false, false, "")
+	found := false
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Bg == "#dddddd" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the bgcolor table's cell runs must carry the table bg: %+v", renderText(lines))
+	}
+}
+
+func TestStage2MultiColumnStripPlacesCells(t *testing.T) {
+	// two narrow cells: both texts present on one strip line, second cell's
+	// text starts strictly after the first's text end
+	lines, _ := renderStage2HTML(`<table><tr><td>aa</td><td>bb</td></tr></table>`, nil, 0, false, false, "")
+	if len(lines) != 1 {
+		t.Fatalf("want one strip line, got %d: %q", len(lines), renderText(lines))
+	}
+	text := lines[0].Text
+	i, j := strings.Index(text, "aa"), strings.Index(text, "bb")
+	if i < 0 || j <= i+1 {
+		t.Fatalf("cells must both render, second strictly after the first: %q", text)
+	}
+}
+
+func TestStage2NestedStripRendersInnerCells(t *testing.T) {
+	// a cell hosting a table renders its inner cells on the strip too
+	body := `<table><tr><td>a<table><tr><td>in</td><td>ner</td></tr></table></td><td>b</td></tr></table>`
+	lines, _ := renderStage2HTML(body, nil, 0, false, false, "")
+	text := renderText(lines)
+	for _, want := range []string{"a", "in", "ner", "b"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("nested table cell %q missing: %q", want, text)
 		}
 	}
 }

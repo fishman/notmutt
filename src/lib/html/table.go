@@ -492,9 +492,14 @@ func tableRows(t *Box, x, w int, s *seam, m Metrics, norm bool) []Row {
 
 // shiftRow translates a row and everything nested in its Cells by dx px: a
 // cell fragment that hosts a nested table row carries that table's column
-// fragments, and they all share the same horizontal coordinate space.
+// fragments, and they all share the same horizontal coordinate space. A
+// block child's list markers hang at cell-local X too, so they translate
+// with their row.
 func shiftRow(r Row, dx int) Row {
 	r.X += dx
+	for i := range r.Markers {
+		r.Markers[i].X += dx
+	}
 	for i := range r.Cells {
 		r.Cells[i] = shiftRow(r.Cells[i], dx)
 	}

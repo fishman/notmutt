@@ -365,3 +365,51 @@ func TestTextThenNestedTableStackInCell(t *testing.T) {
 		t.Fatalf("rows = %q, want [hi x]", got)
 	}
 }
+
+func TestCellListMarkersTranslateWithCell(t *testing.T) {
+	// A list inside a td is a block child, so its li row is laid out at the
+	// cell content origin (0): the li text line and its disc marker both sit
+	// at X 40 (the ul's 40px padding gutter). tableRows then shifts the row
+	// by the cell content X (3), so the marker must translate with the row:
+	// the emitted fragment lands at X 43 and its marker must too.
+	bs := buildBody(`<table><tr><td><ul><li>item</li></ul></td></tr></table>`)
+	rs := LayoutBlock(bs, 60, mono(1), false)
+	if len(rs) != 1 || len(rs[0].Cells) != 1 {
+		t.Fatalf("rows = %d cells = %d, want 1 row with 1 cell fragment", len(rs), len(rs[0].Cells))
+	}
+	frag := rs[0].Cells[0]
+	if len(frag.Markers) != 1 || frag.Markers[0].Type != "disc" {
+		t.Fatalf("fragment markers = %+v, want one disc", frag.Markers)
+	}
+	if frag.X != 43 {
+		t.Fatalf("fragment X = %d, want 43 (li row shifted by the cell content X)", frag.X)
+	}
+	if frag.Markers[0].X != frag.X {
+		t.Fatalf("marker X = %d, want %d (marker translates with the cell content)", frag.Markers[0].X, frag.X)
+	}
+}
+
+func TestCellTableListMarkerTranslatesWithRow(t *testing.T) {
+	// A text-less li whose content is a nested table hangs its disc marker on
+	// the table's first grid row (which carries Cells fragments). Inside a td
+	// that row is shifted by the cell content X (3), and the marker on it must
+	// translate too - it sits on the row, not in the Cells recursion.
+	bs := buildBody(`<table><tr><td><ul><li><table><tr><td>x</td></tr></table></li></ul></td></tr></table>`)
+	rs := LayoutBlock(bs, 60, mono(1), false)
+	if len(rs) != 1 || len(rs[0].Cells) != 1 {
+		t.Fatalf("rows = %d cells = %d, want 1 row with 1 cell fragment", len(rs), len(rs[0].Cells))
+	}
+	row := rs[0].Cells[0]
+	if len(row.Cells) != 1 {
+		t.Fatalf("row cells = %d, want the nested table's 1 column", len(row.Cells))
+	}
+	if len(row.Markers) != 1 || row.Markers[0].Type != "disc" {
+		t.Fatalf("row markers = %+v, want one disc on the nested grid row", row.Markers)
+	}
+	if row.X != 43 {
+		t.Fatalf("row X = %d, want 43 (nested grid row shifted by the cell content X)", row.X)
+	}
+	if row.Markers[0].X != row.X {
+		t.Fatalf("marker X = %d, want %d (marker on a Cells row translates with it)", row.Markers[0].X, row.X)
+	}
+}

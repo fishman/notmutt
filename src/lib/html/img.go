@@ -138,7 +138,9 @@ func usedImg(b *Box, avail int) (w, h int) {
 	}
 	if mw := at(s.mwPx, s.mwPct); mw > 0 && w > mw {
 		w = mw
-		if ratio {
+		// a specified height survives the clamp (CSS 2.1 10.4); only an
+		// auto height rescales by the intrinsic ratio
+		if s.hPx == 0 && ratio {
 			h = int(math.Round(float64(w) * float64(ih) / float64(iw)))
 		}
 	}

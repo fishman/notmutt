@@ -123,3 +123,45 @@ func TestImgExtentWidth(t *testing.T) {
 		t.Fatalf("no-intrinsic extent = %d, want 0", imgExtentW(b))
 	}
 }
+
+func TestRoleImgBoxCarriesRes(t *testing.T) {
+	// buildElement must allocate res on every RoleImg box; without it the
+	// imgBox helper's nil fallback would mask a deleted allocation
+	bs := buildBody(`<img src="m60x30.png">`)
+	if len(bs) != 1 || bs[0].Role != RoleImg {
+		t.Fatalf("body = %d boxes role %d, want one RoleImg", len(bs), bs[0].Role)
+	}
+	if bs[0].res == nil {
+		t.Fatal("buildElement must allocate res on a RoleImg box")
+	}
+}
+
+func TestMaxWidthClampHeightSurvival(t *testing.T) {
+	// CSS 2.1 10.4: a non-auto height survives a max-width clamp; only an
+	// auto height recomputes from the intrinsic ratio (probe maxh, maxh2).
+	// The E/F rows re-pin the auto-height rescale so the whole matrix locks.
+	cases := []struct {
+		name   string
+		body   string
+		iw, ih int
+		avail  int
+		wantW  int
+		wantH  int
+	}{
+		// auto height: clamp rescales height by ratio
+		{"E auto h px clamp", `<img src="m60x30.png" style="max-width:50px">`, 60, 30, 800, 50, 25},
+		{"F auto h pct clamp", `<img src="m200x100.png" style="max-width:100%">`, 200, 100, 100, 100, 50},
+		// specified height: clamp caps width, height survives
+		{"both axes + clamp", `<img src="m200x100.png" style="width:120px;height:40px;max-width:50px">`, 200, 100, 800, 50, 40},
+		{"height only + clamp", `<img src="m200x100.png" style="height:200px;max-width:150px">`, 200, 100, 800, 150, 200},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			b := imgBox(t, tc.body, tc.iw, tc.ih)
+			w, h := usedImg(b, tc.avail)
+			if w != tc.wantW || h != tc.wantH {
+				t.Fatalf("usedImg = %dx%d, want %dx%d", w, h, tc.wantW, tc.wantH)
+			}
+		})
+	}
+}

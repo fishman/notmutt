@@ -33,20 +33,24 @@ type imgSpec struct {
 // NOTMUTT extension - the pinned mail contract sizes declared-size images
 // from them, and weasyprint ignores them (probes B, C). width/height:auto
 // and width:0 are "no value", so the attribute hint then fills its axis.
-// A percentage height is auto (weasyprint: a % height against an
-// auto-height containing block is auto, probes M, N), so it never reaches
-// hPx and the height attribute survives it.
+// CSS beats the attribute across units: a px width clears a % width
+// attribute, never leaving it to resolve against the container. A percentage
+// height is auto (weasyprint: a % height against an auto-height containing
+// block is auto, probes M, N), so it never reaches hPx and the height
+// attribute survives it; a % height attribute is auto the same way.
 func specImg(b *Box) imgSpec {
 	var s imgSpec
 	if b.Node != nil {
 		s.wPx, s.wPct = attrLen(Attr(b.Node, "width"))
-		s.hPx, _ = attrLen(Attr(b.Node, "height"))
+		if v, pct := attrLen(Attr(b.Node, "height")); !pct {
+			s.hPx = v
+		}
 	}
 	if b.St != nil {
 		if b.St.Width.Pct {
 			s.wPx, s.wPct = b.St.Width.Px, true
 		} else if b.St.Width.Px > 0 {
-			s.wPx = b.St.Width.Px
+			s.wPx, s.wPct = b.St.Width.Px, false
 		}
 		if !b.St.Height.Pct && b.St.Height.Px > 0 {
 			s.hPx = b.St.Height.Px

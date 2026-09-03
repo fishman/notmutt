@@ -330,3 +330,24 @@ func TestRelayoutAtNewWidthReResolvesImages(t *testing.T) {
 		t.Fatalf("re-laid 50%% img at 400px = %+v, want uW 200 (re-resolved, not stale 100)", res)
 	}
 }
+
+func TestCSSPXWidthClearsPctWidthAttr(t *testing.T) {
+	// CSS width beats the same-named attribute across units: a px width must
+	// clear a % width attribute hint, or 120px resolves as 120 * avail / 100
+	// (960 here) instead of the declared 120px.
+	b := imgBox(t, `<img src="m60x30.png" width="100%" style="width:120px">`, 60, 30)
+	w, h := usedImg(b, 800)
+	if w != 120 || h != 60 {
+		t.Fatalf("usedImg = %dx%d, want 120x60 (css px beats the %% attr)", w, h)
+	}
+}
+
+func TestPctHeightAttrIsAuto(t *testing.T) {
+	// a % height attribute shares the CSS length unit space, where a % height
+	// is auto against an auto-height containing block; it must not read as px
+	b := imgBox(t, `<img src="m60x30.png" height="50%">`, 60, 30)
+	w, h := usedImg(b, 800)
+	if w != 60 || h != 30 {
+		t.Fatalf("usedImg = %dx%d, want 60x30 (auto: a %% height attr is not px)", w, h)
+	}
+}

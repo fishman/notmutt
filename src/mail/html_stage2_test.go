@@ -60,6 +60,11 @@ func TestStage2TabExpandsInPreservedText(t *testing.T) {
 	}
 }
 
+// TestStage2EmptySpanAfterControlDoesNotDoubleSpace proves the F1 output
+// through the pipeline: the control char never reaches the pager and the
+// spacing stays single. It does NOT exercise the emptied-span branch in
+// emitRowContent - collapse-mode input already dropped the zero-width
+// atom in lib/html, so that branch is a preserve-mode defense only.
 func TestStage2EmptySpanAfterControlDoesNotDoubleSpace(t *testing.T) {
 	lines, _ := renderStage2HTML("<p>lead \x01 tail</p>", nil, 0, false, false, "")
 	text := renderText(lines)
@@ -91,6 +96,47 @@ func TestStage2ImageOwnLineAndInline(t *testing.T) {
 	}
 	if own != 1 || inline != 0 {
 		t.Fatalf("an isolated image must be its own line (1 own, 0 inline), got own=%d inline=%d", own, inline)
+	}
+}
+
+func TestStage2InlineImageXAtPlaceholderColumns(t *testing.T) {
+	// Two inline images share one line: each ImagePos.X must be the cell
+	// column where that image's placeholder text starts in Line.Text (col
+	// tracks the concatenated run-text end, not the image's used px). The
+	// walk below recomputes each placeholder column from the preceding run
+	// texts, so the pin locks the invariant the pager relies on.
+	lines, _ := renderStage2HTML(`<p>before <img src="https://x.example.com/i.png" width="24" height="24"> <img src="https://x.example.com/j.png" width="24" height="24"> after</p>`, nil, 80, false, false, "")
+	var line *core.Line
+	for i := range lines {
+		if len(lines[i].Imgs) > 0 {
+			line = &lines[i]
+			break
+		}
+	}
+	if line == nil {
+		t.Fatalf("want one line holding both inline images")
+	}
+	if len(line.Imgs) != 2 {
+		t.Fatalf("want 2 inline images, got %d in %q", len(line.Imgs), line.Text)
+	}
+	col, img := 0, 0
+	for _, r := range line.Runs {
+		if r.Image != nil {
+			if img >= len(line.Imgs) {
+				t.Fatalf("image runs outnumber ImagePos entries")
+			}
+			if line.Imgs[img].X != col {
+				t.Fatalf("image %d placeholder starts at col %d (run walk of %q), ImagePos.X=%d", img, col, line.Text, line.Imgs[img].X)
+			}
+			img++
+		}
+		col += html.TextWidth(r.Text)
+	}
+	if img != len(line.Imgs) {
+		t.Fatalf("image runs undercount ImagePos entries: %d runs, %d imgs", img, len(line.Imgs))
+	}
+	if line.Text != "before [image] [image] after" {
+		t.Fatalf("unexpected line text %q", line.Text)
 	}
 }
 

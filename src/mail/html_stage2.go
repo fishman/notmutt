@@ -128,7 +128,9 @@ func (q *stage2) emitRows(rows []html.Row) {
 			return
 		}
 		if len(r.Cells) > 0 {
-			// Task 4: emitStrip(r)
+			// Task 4: emitStrip(r). Route it through this same D5 preamble
+			// shape (first content row drops its gap, else r.Gap blanks) so
+			// strip rows and text rows cannot drift apart.
 			continue
 		}
 		if q.skipFor(r) { // tracking-pixel-only row (D9): no blanks, no line
@@ -237,16 +239,21 @@ func (q *stage2) emitHR(r html.Row) {
 	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Kind: core.LineBody, Bg: q.defaultBG})
 }
 
-// emitRowContent lays one row's content into the accumulator: its
-// hanging gutter markers, then its spans. ownImages lets a top-level
-// row claim an isolated image (the sole span, no markers) as an
-// own-line image, which it returns non-nil; strip fragments always pass
-// false so their images stay inline. The caller reaches the content
-// column with a.pad.
+// emitRowContent lays one row's content into the accumulator. It owns
+// the content lead: after hanging gutter markers it pads to the row's
+// content column (round(r.X/charW)); callers must not pre-pad. ownImages
+// lets a top-level row claim an isolated image (the sole span, no
+// markers) as an own-line image, which it returns non-nil; strip
+// fragments always pass false so their images stay inline.
 func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image {
-	if ownImages && len(r.Markers) == 0 && len(r.Line.Atoms) == 1 && r.Line.Atoms[0].Img != nil {
-		if img := q.boxImage(r.Line.Atoms[0].Img); img != nil {
-			return img
+	// A lone image resolves once: it may satisfy the own-line claim, or an
+	// unresolved (nil) resolution falls through to the inline loop below.
+	lone := len(r.Markers) == 0 && len(r.Line.Atoms) == 1 && r.Line.Atoms[0].Img != nil
+	var soleImg *core.Image
+	if lone {
+		soleImg = q.boxImage(r.Line.Atoms[0].Img)
+		if ownImages && soleImg != nil {
+			return soleImg
 		}
 	}
 	q.layMarkers(a, r)
@@ -259,7 +266,10 @@ func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image 
 			if w, h := sp.Img.ImgDisp(); w == 1 && h == 1 {
 				continue // tracking pixel (D9): drops, leaving any pending space
 			}
-			img := q.boxImage(sp.Img)
+			img := soleImg
+			if !lone {
+				img = q.boxImage(sp.Img)
+			}
 			if img == nil {
 				// unresolved src: the alt renders as plain text, not an image
 				q.emitTextPiece(a, &pending, &started, sanitize(imgAlt(sp.Img)), sp.Img.St)
@@ -276,15 +286,21 @@ func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image 
 			rn.Text = img.Alt
 			rn.Image = img
 			a.add(rn)
+			// col tracks the concatenated run-text end (the pager blanks runs
+			// over Text), so ImagePos.X is the placeholder's text column.
 			a.imgs = append(a.imgs, core.ImagePos{Image: img, X: a.col})
-			a.col += imageCells(sp.Img)
+			a.col += html.TextWidth(rn.Text)
 			started = true
 		case sp.Sep:
 			pending = true
 		default:
 			text := sanitize(expandTabs(sp.Text))
 			if text == "" {
-				pending = false // an emptied span clears the pending space (no doubled gap)
+				// Preserve-mode pure-control corner only: collapse-mode
+				// input already dropped the zero-width atom in lib/html
+				// (inline.go). Clear the pending space so a control char
+				// never doubles the gap.
+				pending = false
 				continue
 			}
 			q.emitTextPiece(a, &pending, &started, text, sp.St)
@@ -441,27 +457,16 @@ func (q *stage2) boxImage(b *html.Box) *core.Image {
 	return img
 }
 
-// imgAlt is an image box's placeholder text: its alt attribute, else
-// "[image]".
+// imgAlt is an image box's placeholder text: a non-blank alt attribute,
+// else "[image]". Blank alts still reserve the bracket text so an image
+// run always advances at least one cell.
 func imgAlt(b *html.Box) string {
 	if b != nil && b.Node != nil {
-		if alt := html.Attr(b.Node, "alt"); alt != "" {
+		if alt := strings.TrimSpace(html.Attr(b.Node, "alt")); alt != "" {
 			return alt
 		}
 	}
 	return "[image]"
-}
-
-// imageCells is an inline image's occupied cell width: its used px at
-// the last layout, the declared px fallback, else one cell.
-func imageCells(b *html.Box) int {
-	if w, _, ok := b.ImgUsed(); ok && w > 0 {
-		return int(math.Ceil(float64(w) / charW))
-	}
-	if w, _ := b.ImgDisp(); w > 0 {
-		return int(math.Ceil(float64(w) / charW))
-	}
-	return 1
 }
 
 var ruleGlyph = "─"

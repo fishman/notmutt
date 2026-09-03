@@ -9,7 +9,10 @@ package mail
 // stage 2 + migration, and the stage-2 plan 6.
 
 import (
+	"encoding/base64"
+	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	xhtml "golang.org/x/net/html"
@@ -116,57 +119,230 @@ type stage2 struct {
 	firstRow  bool // first content row's gap drops (D5)
 }
 
-// emitRows turns the block row stream into pager lines. Task 2 handles
-// only plain single-line text rows; cells/hr/markers/image rows land in
-// Tasks 3-4 and are skipped here without consuming the first-row drop.
+// emitRows turns the block row stream into pager lines. The D5 gap
+// preamble runs once per emitted content row at the row level; cell
+// strips (Task 4) and tracking-pixel rows own their rows instead.
 func (q *stage2) emitRows(rows []html.Row) {
 	for _, r := range rows {
 		if q.truncated {
 			return
 		}
-		q.emitTextRow(r)
+		if len(r.Cells) > 0 {
+			// Task 4: emitStrip(r)
+			continue
+		}
+		if q.skipFor(r) { // tracking-pixel-only row (D9): no blanks, no line
+			continue
+		}
+		if !q.firstRow {
+			q.firstRow = true // first content row drops its gap (D5)
+		} else if r.Gap > 0 {
+			q.blankLines(r.Gap)
+		}
+		switch {
+		case r.HR:
+			q.emitHR(r)
+		case len(r.Line.Atoms) > 0:
+			q.emitTextRow(r)
+		default:
+			q.emitMarkerRow(r) // marker-only (empty li / textless nested)
+		}
 	}
 }
 
-// emitTextRow emits one plain text row; false when the row needs the
-// Task 3-4 machinery (cells, hr, markers, images) and is left for them.
-func (q *stage2) emitTextRow(r html.Row) bool {
-	if len(r.Cells) > 0 || r.HR || len(r.Markers) > 0 {
+// skipFor reports a row whose only content is one declared 1x1 pixel
+// (a tracking beacon, D9): it emits nothing and consumes no gap.
+func (q *stage2) skipFor(r html.Row) bool {
+	if len(r.Markers) != 0 || len(r.Line.Atoms) != 1 || r.Line.Atoms[0].Img == nil {
 		return false
 	}
-	for _, a := range r.Line.Atoms {
-		if a.Img != nil {
-			return false // Task 3: image rows
+	w, h := r.Line.Atoms[0].Img.ImgDisp()
+	return w == 1 && h == 1
+}
+
+// acc is one horizontal pager line under construction. Runs sit at
+// absolute cell columns; pad() materializes the blanks before a column
+// as a space run so core.Line.Text stays the concatenation of the runs'
+// text (the pager paints runs over Line.Text). Blank lines have Text ""
+// and only a Bg.
+type acc struct {
+	col  int // current text-end column
+	runs []core.Run
+	imgs []core.ImagePos
+}
+
+func (a *acc) pad(to int) {
+	if to <= a.col {
+		return
+	}
+	a.runs = append(a.runs, core.Run{Text: strings.Repeat(" ", to-a.col)})
+	a.col = to
+}
+
+// add appends a run, merging it into the previous run when their
+// effective style (everything but Text) matches.
+func (a *acc) add(r core.Run) {
+	if n := len(a.runs); n > 0 {
+		last := &a.runs[n-1]
+		if last.Fg == r.Fg && last.Bg == r.Bg && last.Attrs == r.Attrs &&
+			last.Label == r.Label && last.Image == r.Image {
+			last.Text += r.Text
+			return
 		}
 	}
-	// D5: the first content row's gap drops; later gaps quantize to blanks
-	if !q.firstRow {
-		q.firstRow = true
-	} else {
-		q.blankLines(r.Gap)
+	a.runs = append(a.runs, r)
+}
+
+// space appends the inter-word one-space run styled like the preceding
+// run (the walker's space-inherits-preceding), merging when equal.
+func (a *acc) space() {
+	var fg, bg string
+	var attrs core.LineAttrs
+	if n := len(a.runs); n > 0 {
+		last := a.runs[n-1]
+		fg, bg, attrs = last.Fg, last.Bg, last.Attrs
 	}
-	var runs []core.Run
-	if lead := int(math.Round(float64(r.X) / charW)); lead > 0 {
-		runs = append(runs, core.Run{Text: strings.Repeat(" ", lead)})
+	a.add(core.Run{Text: " ", Fg: fg, Bg: bg, Attrs: attrs})
+	a.col++
+}
+
+// emitTextRow emits one content row: hanging markers (D10), then its
+// spans with binding (D6), tab expansion + F1 sanitize, and images
+// (D9). An isolated image the row owns outright becomes an image line.
+func (q *stage2) emitTextRow(r html.Row) {
+	var a acc
+	if img := q.emitRowContent(&a, r, true); img != nil {
+		q.addLine(core.Line{Image: img, Text: img.Alt, Kind: core.LineBody, Bg: q.defaultBG})
+		return
 	}
-	for _, a := range r.Line.Atoms {
-		text := sanitize(a.Text) // F1: DOM text is raw
-		if text == "" {
-			continue
+	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Imgs: a.imgs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// emitMarkerRow emits a marker-only row (an empty li, or a nested item
+// whose content produced no row): the hanging glyphs, then the line ends.
+func (q *stage2) emitMarkerRow(r html.Row) {
+	var a acc
+	q.layMarkers(&a, r)
+	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// emitHR emits one horizontal-rule row (D11): a run of rule glyphs over
+// the rule's content width.
+func (q *stage2) emitHR(r html.Row) {
+	var a acc
+	a.pad(int(math.Round(float64(r.X) / charW)))
+	rn := q.runForBox(r.Box)
+	rn.Text = strings.Repeat(ruleGlyph, int(math.Round(float64(r.W)/charW)))
+	a.add(rn)
+	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// emitRowContent lays one row's content into the accumulator: its
+// hanging gutter markers, then its spans. ownImages lets a top-level
+// row claim an isolated image (the sole span, no markers) as an
+// own-line image, which it returns non-nil; strip fragments always pass
+// false so their images stay inline. The caller reaches the content
+// column with a.pad.
+func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image {
+	if ownImages && len(r.Markers) == 0 && len(r.Line.Atoms) == 1 && r.Line.Atoms[0].Img != nil {
+		if img := q.boxImage(r.Line.Atoms[0].Img); img != nil {
+			return img
 		}
-		rn := q.runFor(a.St)
-		if rn.Fg == "" {
-			rn.Fg = q.defaultFG
-		}
-		rn.Text = text
-		if len(runs) > 0 && rn == runs[len(runs)-1] {
-			runs[len(runs)-1].Text += text
-			continue
-		}
-		runs = append(runs, rn)
 	}
-	q.addLine(core.Line{Kind: core.LineBody, Text: joinRunText(runs), Runs: runs, Bg: q.defaultBG})
-	return true
+	q.layMarkers(a, r)
+	a.pad(int(math.Round(float64(r.X) / charW)))
+	pending := false
+	started := false // a text/image run already landed: a sep then spaces words
+	for _, sp := range r.Line.Atoms {
+		switch {
+		case sp.Img != nil:
+			if w, h := sp.Img.ImgDisp(); w == 1 && h == 1 {
+				continue // tracking pixel (D9): drops, leaving any pending space
+			}
+			img := q.boxImage(sp.Img)
+			if img == nil {
+				// unresolved src: the alt renders as plain text, not an image
+				q.emitTextPiece(a, &pending, &started, sanitize(imgAlt(sp.Img)), sp.Img.St)
+				continue
+			}
+			if pending && started {
+				a.space()
+			}
+			pending = false
+			rn := q.runFor(sp.Img.St)
+			if rn.Fg == "" {
+				rn.Fg = q.defaultFG
+			}
+			rn.Text = img.Alt
+			rn.Image = img
+			a.add(rn)
+			a.imgs = append(a.imgs, core.ImagePos{Image: img, X: a.col})
+			a.col += imageCells(sp.Img)
+			started = true
+		case sp.Sep:
+			pending = true
+		default:
+			text := sanitize(expandTabs(sp.Text))
+			if text == "" {
+				pending = false // an emptied span clears the pending space (no doubled gap)
+				continue
+			}
+			q.emitTextPiece(a, &pending, &started, text, sp.St)
+		}
+	}
+	return nil
+}
+
+// emitTextPiece appends one text piece: a pending inter-word space
+// commits unless the piece binds left (D6) or opens the line (a dropped
+// pixel's trailing space collapses like CSS leading whitespace); then
+// the styled run lands.
+func (q *stage2) emitTextPiece(a *acc, pending, started *bool, text string, st *html.Style) {
+	if *pending && *started && !bindsLeft(text) {
+		a.space()
+	}
+	*pending = false
+	rn := q.runFor(st)
+	if rn.Fg == "" {
+		rn.Fg = q.defaultFG
+	}
+	rn.Text = text
+	a.add(rn)
+	a.col += html.TextWidth(text)
+	*started = true
+}
+
+// layMarkers hangs a row's markers in their gutters, each glyph ending
+// one cell before its owning item's content edge. A textless li whose
+// first content row is a nested list hangs both markers on one row, so
+// they lay in ascending gutter order (pad only moves forward).
+func (q *stage2) layMarkers(a *acc, r html.Row) {
+	ms := r.Markers
+	if len(ms) > 1 {
+		ms = append([]html.RowMarker(nil), ms...)
+		sort.Slice(ms, func(i, j int) bool { return ms[i].X < ms[j].X })
+	}
+	for _, mk := range ms {
+		gc := glyphCells(mk)
+		a.pad(int(math.Round(float64(mk.X)/charW)) - gc)
+		rn := q.runForBox(r.Box)
+		rn.Text = glyphText(mk)
+		a.add(rn)
+		a.col += gc
+	}
+}
+
+// runForBox is runFor on a box's computed style, folding in the default
+// foreground for unstyled content.
+func (q *stage2) runForBox(b *html.Box) core.Run {
+	var r core.Run
+	if b != nil {
+		r = q.runFor(b.St)
+	}
+	if r.Fg == "" {
+		r.Fg = q.defaultFG
+	}
+	return r
 }
 
 // blankRows quantizes a collapsed margin gap to whole pager blank rows
@@ -230,3 +406,86 @@ func (q *stage2) runFor(st *html.Style) core.Run {
 	}
 	return r
 }
+
+// boxImage resolves an image box to its core.Image: cid:/data: bytes
+// or a remote URL-only placeholder (the render never decodes - the TUI
+// does on the render-images key). DispW/DispH are the DECLARED display
+// px from the box (stage-1 resolved, % against the actual containing
+// width); nil when the src resolves to nothing.
+func (q *stage2) boxImage(b *html.Box) *core.Image {
+	if b == nil || b.Node == nil {
+		return nil
+	}
+	src := html.Attr(b.Node, "src")
+	var data []byte
+	var url string
+	switch {
+	case strings.HasPrefix(src, "cid:"):
+		id := strings.Trim(strings.TrimSpace(src[4:]), "<>")
+		for _, a := range q.atts {
+			if strings.EqualFold(strings.Trim(a.ContentID, "<>"), id) {
+				data = a.Data
+				break
+			}
+		}
+	case strings.HasPrefix(src, "data:image/") && strings.Contains(src, ";base64,"):
+		data, _ = base64.StdEncoding.DecodeString(src[strings.IndexByte(src, ',')+1:])
+	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
+		url = src
+	}
+	if len(data) == 0 && url == "" {
+		return nil
+	}
+	img := &core.Image{Data: data, URL: url, Alt: sanitize(imgAlt(b))}
+	img.DispW, img.DispH = b.ImgDisp()
+	return img
+}
+
+// imgAlt is an image box's placeholder text: its alt attribute, else
+// "[image]".
+func imgAlt(b *html.Box) string {
+	if b != nil && b.Node != nil {
+		if alt := html.Attr(b.Node, "alt"); alt != "" {
+			return alt
+		}
+	}
+	return "[image]"
+}
+
+// imageCells is an inline image's occupied cell width: its used px at
+// the last layout, the declared px fallback, else one cell.
+func imageCells(b *html.Box) int {
+	if w, _, ok := b.ImgUsed(); ok && w > 0 {
+		return int(math.Ceil(float64(w) / charW))
+	}
+	if w, _ := b.ImgDisp(); w > 0 {
+		return int(math.Ceil(float64(w) / charW))
+	}
+	return 1
+}
+
+var ruleGlyph = "─"
+
+var markerGlyphs = map[string]string{
+	"disc":   "•",
+	"circle": "◦",
+	"square": "▪",
+}
+
+// glyphText renders one marker's display text: the numbered "N." for an
+// ordered item (Ord is 1-based; 0 defended as 1 since stage-1 always
+// stamps it), the glyph-map shape otherwise.
+func glyphText(mk html.RowMarker) string {
+	if mk.Type == "decimal" {
+		if mk.Ord == 0 {
+			mk.Ord = 1
+		}
+		return fmt.Sprintf("%d.", mk.Ord)
+	}
+	return markerGlyphs[mk.Type]
+}
+
+// glyphCells is a marker glyph's terminal width: its hang ends one cell
+// before the owning item's content edge, so the glyph occupies
+// [col-glyphCells, col) in the gutter.
+func glyphCells(mk html.RowMarker) int { return html.TextWidth(glyphText(mk)) }

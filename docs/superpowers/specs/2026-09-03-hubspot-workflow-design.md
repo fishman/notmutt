@@ -166,6 +166,13 @@ A new list buffer (row model + transitions out of the UI, R5). Rows:
 `drafted`, `sent`, `dismissed` (row leaves the queue once write-back lands).
 Selection shows the briefing in a detail region of the view.
 
+The row model and this surface are provider-neutral: the core type is
+`CrmContact` carrying a `provider` id - the routing key (`hubspot` today; a
+future CRM is a new value, no core/TUI rename). Core and TUI never name a
+vendor; only the vendor clients and the engine do. The engine fills rows with
+`provider = "hubspot"` and the surface dispatches every action with the full
+row so the owning engine filters on its provider.
+
 Row actions (vim scheme, R9 declarative bindings, configurable):
 - `a` analyze - runs the briefing job; guard: not while a job is running on
   this row.

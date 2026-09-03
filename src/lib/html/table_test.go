@@ -205,3 +205,73 @@ func TestTableDemotedToBlockFlowsCellsAsBlocks(t *testing.T) {
 		}
 	}
 }
+
+func TestColspanDistributesOverColumns(t *testing.T) {
+	// base row gives col0 (aaa -> content 3, box 5) and col1 (bbb -> box 5).
+	// The colspan-2 cell's text is 16px + 2px padding = 18 > base max sum
+	// (5+5+2 spacing = 12): excess 6 distributes to the two equal base
+	// columns, +3 each -> columns 8/8. tableMin = tableMax = 8+8+6 = 22.
+	bs := buildBody(`<table><tr><td>aaa</td><td>bbb</td></tr>` +
+		`<tr><td colspan="2">abcdefghijklmnop</td></tr></table>`)
+	rs := LayoutBlock(bs, 40, mono(1), false)
+	if len(rs) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rs))
+	}
+	if rs[0].W != 22 {
+		t.Fatalf("table W = %d, want 22 (shrinkwrapped max-content, not the 40 container)", rs[0].W)
+	}
+	// row0: aaa at x3, bbb at x13 (col1 box x12, content +1)
+	if fragText(rs[0].Cells[0]) != "aaa" || rs[0].Cells[0].X != 3 {
+		t.Fatalf("row0 col0 = X%d %q, want X3 aaa", rs[0].Cells[0].X, fragText(rs[0].Cells[0]))
+	}
+	if fragText(rs[0].Cells[1]) != "bbb" || rs[0].Cells[1].X != 13 {
+		t.Fatalf("row0 col1 = X%d %q, want X13 bbb", rs[0].Cells[1].X, fragText(rs[0].Cells[1]))
+	}
+	// row1: the spanning cell's box is 8 + 2 spacing + 8 = 18 wide; its text
+	// starts at the first column's content x3 and fills all 16px.
+	if len(rs[1].Cells) != 1 || fragText(rs[1].Cells[0]) != "abcdefghijklmnop" || rs[1].Cells[0].X != 3 {
+		t.Fatalf("row1 = X%d %q, want X3 spanning text", rs[1].Cells[0].X, fragText(rs[1].Cells[0]))
+	}
+	if rs[1].Cells[0].W != 16 {
+		t.Fatalf("spanning content W = %d, want 16", rs[1].Cells[0].W)
+	}
+}
+
+func TestRowspanOccupiesLaterRowColumn(t *testing.T) {
+	// col0's cell rowspans 2: it renders in row0 and leaves row1's col0
+	// blank. col1 has b (row0) and c (row1). All columns are 3px.
+	bs := buildBody(`<table><tr><td rowspan="2">a</td><td>b</td></tr>` +
+		`<tr><td>c</td></tr></table>`)
+	rs := LayoutBlock(bs, 20, mono(1), false)
+	if len(rs) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rs))
+	}
+	if fragText(rs[0].Cells[0]) != "a" || rs[0].Cells[0].X != 3 {
+		t.Fatalf("row0 col0 = X%d %q, want X3 a", rs[0].Cells[0].X, fragText(rs[0].Cells[0]))
+	}
+	if fragText(rs[0].Cells[1]) != "b" || rs[0].Cells[1].X != 8 {
+		t.Fatalf("row0 col1 = X%d %q, want X8 b", rs[0].Cells[1].X, fragText(rs[0].Cells[1]))
+	}
+	if len(rs[1].Cells) != 1 || fragText(rs[1].Cells[0]) != "c" || rs[1].Cells[0].X != 8 {
+		t.Fatalf("row1 = %d cells X%d %q, want only c at X8 (rowspan blanks col0)", len(rs[1].Cells), rs[1].Cells[0].X, fragText(rs[1].Cells[0]))
+	}
+}
+
+func TestRowspanSkipsBusyColumnInWiderRow(t *testing.T) {
+	// row0: a (rowspan 2) plus b and c -> grid is 3 wide. row1: a rowspan
+	// cell at col0 spans down into row1, so row1's first cell steps to col1
+	// while col0 stays blank. This pins the busy-column skip, not just the
+	// simple two-column case.
+	bs := buildBody(`<table><tr><td rowspan="2">a</td><td>b</td><td>c</td></tr>` +
+		`<tr><td>d</td><td>e</td></tr></table>`)
+	rs := LayoutBlock(bs, 30, mono(1), false)
+	if len(rs) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rs))
+	}
+	if len(rs[1].Cells) != 2 {
+		t.Fatalf("row1 cells = %d, want 2 (d at col1, e at col2; col0 blank)", len(rs[1].Cells))
+	}
+	if fragText(rs[1].Cells[0]) != "d" || rs[1].Cells[0].X != 8 {
+		t.Fatalf("row1 cell0 = X%d %q, want X8 d (stepped past the rowspanned col0)", rs[1].Cells[0].X, fragText(rs[1].Cells[0]))
+	}
+}

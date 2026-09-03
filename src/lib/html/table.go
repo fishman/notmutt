@@ -29,16 +29,15 @@ const (
 type gridCell struct {
 	box     *Box
 	start   int // first grid column the cell occupies
-	colspan int // clamped to the row's columns (1 until Task 3)
+	colspan int // clamped to the free columns remaining in the row
 }
 
 type gridRow struct {
 	cells []gridCell
 }
 
-// spanOf reads a cell's colspan/rowspan attributes. Task-2 boundary: the
-// values are parsed and stored, but buildGrid/columnWidths ignore spans
-// until Task 3.
+// spanOf reads a cell's colspan/rowspan attributes; values below 2 (and
+// unparsable text) fall back to 1.
 func spanOf(cell *Box) (colspan, rowspan int) {
 	colspan, rowspan = 1, 1
 	if cell.Node != nil {
@@ -99,11 +98,14 @@ func cellExtents(cell *Box, m Metrics) (minW, maxW int) {
 }
 
 // buildGrid places every cell of a table's row-group children into grid
-// rows, left to right, and returns the grid plus its column count. Column
-// count is the widest row by cell count; a colspan is clamped to the row's
-// remaining columns (Task 3 honors it). Rows that end up with no cell are
-// dropped (an empty row emits no content line). Task-2 boundary: every cell
-// occupies one column.
+// rows and returns the grid plus its column count. Column count is the
+// widest row by cell count - a colspan never mints empty spacer columns
+// beyond the cells that define them, so a 20-character colspan attribute
+// cannot build a million-column grid. Cells are placed left to right,
+// stepping past columns still claimed by a rowspan above; a colspan is
+// clamped to the free columns remaining in the row. Rows that end up with
+// no cell are dropped (they emit no content line), but rowspan countdowns
+// still tick across them.
 func buildGrid(t *Box) (rows []gridRow, cols int) {
 	for _, g := range t.Children {
 		if g.Tbl != "row-group" {
@@ -124,6 +126,7 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 			}
 		}
 	}
+	busy := make(map[int]int) // grid col -> rows still claimed by a rowspan above
 	for _, g := range t.Children {
 		if g.Tbl != "row-group" {
 			continue
@@ -138,11 +141,50 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 				if cb.Tbl != "cell" {
 					continue
 				}
-				gr.cells = append(gr.cells, gridCell{box: cb, start: cur, colspan: 1})
-				cur++
+				cs, rs := spanOf(cb)
+				for cur < cols && busy[cur] > 0 {
+					cur++
+				}
+				if cur >= cols {
+					break // only rowspan-claimed columns remain: drop the rest
+				}
+				if cs > cols-cur {
+					cs = cols - cur
+				}
+				for {
+					free := 0
+					for cur+free < cols && free < cs && busy[cur+free] == 0 {
+						free++
+					}
+					if free == cs {
+						break
+					}
+					cur += free + 1 // a busy column blocks the span; retry after it
+					for cur < cols && busy[cur] > 0 {
+						cur++
+					}
+					if cur >= cols {
+						break
+					}
+				}
+				if cur >= cols {
+					break
+				}
+				gr.cells = append(gr.cells, gridCell{box: cb, start: cur, colspan: cs})
+				if rs > 1 {
+					busy[cur] = rs // countdown includes this row
+				}
+				cur += cs
 			}
 			if len(gr.cells) > 0 {
 				rows = append(rows, gr)
+			}
+			for c, n := range busy { // one row passed: tick every claim down
+				if n <= 1 {
+					delete(busy, c)
+				} else {
+					busy[c] = n - 1
+				}
 			}
 		}
 	}
@@ -208,14 +250,45 @@ func assignColumns(min, max []int, cols, avail int, norm bool) (U int, colX, col
 	return U, colX, colW
 }
 
-// columnWidths measures a grid's single-span columns (Task-2 boundary) and
-// resolves their widths. Task 3 replaces the measurement with
-// measureColumns and keeps this call shape.
-func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics) (U int, colX, colW []int) {
-	min := make([]int, cols)
-	max := make([]int, cols)
+// measureColumns accumulates each grid column's min/max column-box width
+// from the cells that start in it. Single-span cells seed the base; a
+// spanning cell's excess over the current sum of its columns is distributed
+// proportionally to the columns' max widths (weasyprint preferred.py, which
+// passes max_content_widths as the weights for both the min and max
+// passes). Spans run in row-major order and see earlier distributions.
+func measureColumns(rows []gridRow, cols int, m Metrics) (min, max []int) {
+	min = make([]int, cols)
+	max = make([]int, cols)
+	distribute := func(arr []int, a, b, excess int, weight []int) {
+		total := 0
+		for j := a; j <= b; j++ {
+			total += weight[j]
+		}
+		if total == 0 {
+			share := excess / (b - a + 1)
+			rem := excess % (b - a + 1)
+			for j := a; j <= b; j++ {
+				arr[j] += share
+				if j-a < rem {
+					arr[j]++
+				}
+			}
+			return
+		}
+		used := 0
+		for j := a; j < b; j++ {
+			add := excess * weight[j] / total
+			arr[j] += add
+			used += add
+		}
+		arr[b] += excess - used
+	}
+	// pass 1: base from single-span cells
 	for _, gr := range rows {
 		for _, c := range gr.cells {
+			if c.colspan != 1 {
+				continue
+			}
 			cmin, cmax := cellExtents(c.box, m)
 			if cmin > min[c.start] {
 				min[c.start] = cmin
@@ -225,6 +298,39 @@ func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics) (U int,
 			}
 		}
 	}
+	// pass 2: spanning cells distribute their excess (row-major order)
+	for _, gr := range rows {
+		for _, c := range gr.cells {
+			if c.colspan == 1 {
+				continue
+			}
+			a, b := c.start, c.start+c.colspan-1
+			if b >= cols {
+				b = cols - 1
+			}
+			spanSum := func(arr []int) int {
+				sum := tableSpacing * (b - a)
+				for j := a; j <= b; j++ {
+					sum += arr[j]
+				}
+				return sum
+			}
+			cmin, cmax := cellExtents(c.box, m)
+			if ex := cmax - spanSum(max); ex > 0 {
+				distribute(max, a, b, ex, max)
+			}
+			if ex := cmin - spanSum(min); ex > 0 {
+				distribute(min, a, b, ex, max)
+			}
+		}
+	}
+	return min, max
+}
+
+// columnWidths measures a grid's columns and resolves their used widths at
+// the available width.
+func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics) (U int, colX, colW []int) {
+	min, max := measureColumns(rows, cols, m)
 	return assignColumns(min, max, cols, avail, norm)
 }
 
@@ -240,8 +346,9 @@ func cellRows(cell *Box, w int, m Metrics, norm bool) []Row {
 }
 
 // tableRows emits a table box into the row stream at content (x, w),
-// consuming the ambient seam on its first emitted line. Task-2 boundary:
-// cells occupy one column each; cell content is uniform-inline.
+// consuming the ambient seam on its first emitted line. A spanning cell's
+// box sums its columns' widths plus the gutters between them. Cell content
+// is uniform-inline until Task 4 (block-in-cell content).
 func tableRows(t *Box, x, w int, s *seam, m Metrics, norm bool) []Row {
 	rows, cols := buildGrid(t)
 	if len(rows) == 0 || cols == 0 {
@@ -257,7 +364,13 @@ func tableRows(t *Box, x, w int, s *seam, m Metrics, norm bool) []Row {
 		var all []laid
 		maxLines := 0
 		for _, c := range gr.cells {
-			boxW := colW[c.start] // single span: one column (Task 3 sums spans)
+			boxW := 0
+			for j := c.start; j < c.start+c.colspan && j < cols; j++ {
+				boxW += colW[j]
+				if j > c.start {
+					boxW += tableSpacing
+				}
+			}
 			contentW := boxW - 2*tablePad
 			if contentW < 0 {
 				contentW = 0

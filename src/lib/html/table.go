@@ -77,6 +77,11 @@ func runExtents(as []atom, m Metrics) (minW, maxW int) {
 			continue
 		}
 		w := a.width(m)
+		if a.img != nil {
+			// extent width, never the last layout's used px: a measure
+			// pass must not read a % width resolved at a narrower avail
+			w = imgExtentW(a.img)
+		}
 		smax += w
 		if a.sep {
 			continue // a separator is a break point, not an unbreakable piece

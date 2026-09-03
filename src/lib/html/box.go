@@ -37,12 +37,13 @@ type Box struct {
 	Node     *xhtml.Node // originating element (img src, a href, table)
 	St       *Style
 	WS       WS
-	Tbl      string // table grid slot: table|row-group|row|cell|caption|column-group|column ("" outside tables)
-	tblMin   int    // memoized table min-content border-box width (tableExtents)
-	tblMax   int    // memoized table max-content border-box width (tableExtents)
-	tblMeas  bool   // tblMin/tblMax valid; extents are width-independent and the tree is immutable, so never stale
-	Marker   string // list-item marker type: disc|circle|square|decimal
-	Text     string // RoleText only
+	Tbl      string  // table grid slot: table|row-group|row|cell|caption|column-group|column ("" outside tables)
+	tblMin   int     // memoized table min-content border-box width (tableExtents)
+	tblMax   int     // memoized table max-content border-box width (tableExtents)
+	tblMeas  bool    // tblMin/tblMax valid; extents are width-independent and the tree is immutable, so never stale
+	res      *imgRes // image geometry (RoleImg only): intrinsic + last resolved used size (img.go)
+	Marker   string  // list-item marker type: disc|circle|square|decimal
+	Text     string  // RoleText only
 	Children []*Box
 }
 
@@ -153,6 +154,9 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 		}
 	}
 	b := &Box{Role: role, Tag: tag, Node: n, St: st, WS: st.WS}
+	if role == RoleImg {
+		b.res = &imgRes{} // image geometry filled by ResolveImages/layout (img.go)
+	}
 	if role == RoleTable {
 		b.Tbl = tableSlot(d)
 		switch b.Tbl {

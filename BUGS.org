@@ -306,3 +306,23 @@ plain blocks, where weasyprint anonymous-repairs it into a grid. x/net/html
 cannot nest a real table into that shape, it is not a mail pattern, and a
 normalizer for non-HTML5 DOM sources would be the future opt-in. Pointers:
 src/lib/html/box.go role gate (~147-150), plan 4 Task 1a conformance.
+
+* OPEN html images: px height never advances the vertical stream (stage-1 deferral)
+Rows are terminal-height strips with no line-box height, so an image's used
+uH is carried on the box for stage 2 and does not push later rows down;
+weasyprint grows the line box. Fine for the terminal (a stage-2 image block
+reserves its own rows); a PDF backend would need line-box height. Pointers:
+src/lib/html/img.go usedImg, src/lib/html/block.go Row.
+
+* OPEN html images: an inline image shares its text line (stage-1 deferral)
+A <p>x<img>y</p> lays the image on the x/y line (weasyprint-faithful). The
+mail walker renders every image on its own line; stage 2 (the plan-6
+quantizer) decides terminal own-row emission, which must split the line
+around the image atom. Pointers: src/lib/html/inline.go LayoutInline img
+dispatch, plan 5 decisions.
+
+* OPEN html images: a broken or unloadable image lays out at zero width
+An img with no loadable src and no CSS width has no intrinsic, so it emits a
+zero-width row; weasyprint paints the alt text and a broken-image box. Alt
+text is a stage-2 render choice (the walker today drops it too). Pointers:
+src/lib/html/img.go ResolveImages/imgExtentW, plan 5 decisions.

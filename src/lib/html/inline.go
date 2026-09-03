@@ -47,7 +47,7 @@ type atom struct {
 func (a atom) width(m Metrics) int {
 	if a.img != nil {
 		if r := a.img.res; r != nil && r.uSet {
-			return r.uW // resolved at the line's width by LayoutInline
+			return r.uW // valid: LayoutInline resolves right before emit at this width
 		}
 		return imgExtentW(a.img) // not laid out yet: extent width
 	}

@@ -305,3 +305,28 @@ func TestTableCellSeatsAnImageColumn(t *testing.T) {
 		t.Fatalf("cell content width = %d, want 600", frag.W)
 	}
 }
+
+func TestImageConsumesUsedWidthInWrapBudget(t *testing.T) {
+	// text after an inline image wraps only after the image's used px: x(1)
+	// + sep + 60px img fill the 62px line, so y wraps to line 2. Laying the
+	// image at zero width would keep all three on one line.
+	rs := layoutImg(t, `<p>x <img src="b.png"> y</p>`,
+		func(string) (int, int, bool) { return 60, 30, true }, 62)
+	got := rowsText(rs)
+	if len(got) != 2 || got[1] != "y" {
+		t.Fatalf("rows = %v, want 2 with y on line 2 (the 60px image consumed the budget)", got)
+	}
+}
+
+func TestRelayoutAtNewWidthReResolvesImages(t *testing.T) {
+	// the memoized used px is valid per layout pass; a second LayoutBlock of
+	// the same tree at a different width must re-resolve, not serve the old uW
+	bs := buildBody(`<img src="p.png" style="width:50%">`)
+	ResolveImages(bs, func(string) (int, int, bool) { return 100, 50, true })
+	LayoutBlock(bs, 200, mono(1), false) // first pass resolves uW=100
+	rs := LayoutBlock(bs, 400, mono(1), false)
+	_, a := imgAtomIn(t, rs)
+	if res := a.img.res; res == nil || res.uW != 200 {
+		t.Fatalf("re-laid 50%% img at 400px = %+v, want uW 200 (re-resolved, not stale 100)", res)
+	}
+}

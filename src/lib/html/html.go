@@ -63,6 +63,13 @@ type Style struct {
 	Pre       bool   // white-space: pre* -> no wrap, keep spaces (legacy; mail reads it, WS is precise)
 	WS        WS     // white-space class (precise); zero = normal. Inherits.
 	WSSet     bool   // an explicit white-space declaration at this node, not inherited
+
+	// Resolved-px box geometry (stage 1). Non-inherited: StyleOf zeroes
+	// these each node. *Set marks a side the author declared; the UA floor
+	// fills only unset sides. The mail walker never reads these.
+	MarginTop, MarginRight, MarginBottom, MarginLeft             int
+	MarginTopSet, MarginRightSet, MarginBottomSet, MarginLeftSet bool
+	PadLeft                                                      int // padding-left px (ul/ol gutter; UA-only)
 }
 
 // cssColor normalizes a CSS color value to #rrggbb, or "" when not a
@@ -109,6 +116,58 @@ func cssColor(v string) string {
 func mustInt(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
+}
+
+// parseLen folds one CSS length to px: em resolves against the 16px base
+// (the only length scale), px passes through, auto and a bare 0 are 0.
+// Percentages and other units are not values.
+func parseLen(v string) (int, bool) {
+	v = strings.ToLower(strings.TrimSpace(v))
+	switch {
+	case v == "0" || v == "auto":
+		return 0, true
+	case strings.HasSuffix(v, "px"):
+		if n, err := strconv.Atoi(strings.TrimSpace(strings.TrimSuffix(v, "px"))); err == nil && n >= 0 {
+			return n, true
+		}
+	case strings.HasSuffix(v, "em") || strings.HasSuffix(v, "rem"):
+		f, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(strings.TrimSuffix(v, "rem"), "em")), 64)
+		if err == nil && f >= 0 {
+			return int(math.Round(f * 16)), true
+		}
+	}
+	return 0, false
+}
+
+// marginSides expands a margin value list to top/right/bottom/left.
+func marginSides(v string) ([]string, bool) {
+	f := strings.Fields(v)
+	switch len(f) {
+	case 1:
+		return []string{f[0], f[0], f[0], f[0]}, true
+	case 2:
+		return []string{f[0], f[1], f[0], f[1]}, true
+	case 3:
+		return []string{f[0], f[1], f[2], f[1]}, true
+	case 4:
+		return f, true
+	}
+	return nil, false
+}
+
+func setMargin(s *Style, side string, v string) {
+	if px, ok := parseLen(v); ok {
+		switch side {
+		case "top":
+			s.MarginTop, s.MarginTopSet = px, true
+		case "right":
+			s.MarginRight, s.MarginRightSet = px, true
+		case "bottom":
+			s.MarginBottom, s.MarginBottomSet = px, true
+		case "left":
+			s.MarginLeft, s.MarginLeftSet = px, true
+		}
+	}
 }
 
 // ParseDecls parses one declaration block ("color: red; font-weight:
@@ -197,6 +256,18 @@ func (s *Style) apply(decls map[string]string) {
 			s.Pre = false
 		}
 	}
+	if v, ok := decls["margin"]; ok {
+		if sides, ok := marginSides(v); ok {
+			for i, side := range []string{"top", "right", "bottom", "left"} {
+				setMargin(s, side, sides[i])
+			}
+		}
+	}
+	for _, side := range []string{"top", "right", "bottom", "left"} {
+		if v, ok := decls["margin-"+side]; ok {
+			setMargin(s, side, v)
+		}
+	}
 }
 
 // CSSRule is one <style> block rule with its selector parsed and the
@@ -271,6 +342,9 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s.WSSet = false    // white-space inherits; its explicit-source flag never does
 	// display is not inherited (CSS): don't carry the parent's display into children
 	s.Display = ""
+	s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft = 0, 0, 0, 0
+	s.MarginTopSet, s.MarginRightSet, s.MarginBottomSet, s.MarginLeftSet = false, false, false, false
+	s.PadLeft = 0 // geometry is not inherited
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {

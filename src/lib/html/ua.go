@@ -69,3 +69,58 @@ func listMarker(tag string, depth int) string {
 		return "disc"
 	}
 }
+
+// uaMargins fills the UA margin defaults for a tag where the author did
+// not set the side, and the ul/ol padding-left gutter. depth is the list
+// nesting the box sits under (0 = no list ancestor): nested lists drop
+// their vertical margins. Layered by the box builder after StyleOf, so
+// the running mail walker never sees these. Heading margins are the UA
+// em values folded to px at the base-16 ladder (html5_ua.css fonts:
+// h1 2em .. h6 .67em), since stage 1 has no font-size property.
+func uaMargins(tag string, depth int, s *Style) {
+	t, b := 0, 0
+	switch tag {
+	case "h1":
+		t, b = 21, 21
+	case "h2":
+		t, b = 20, 20
+	case "h3":
+		t, b = 19, 19
+	case "h4":
+		t, b = 21, 21
+	case "h5":
+		t, b = 22, 22
+	case "h6":
+		t, b = 25, 25
+	case "p", "dl", "pre", "blockquote", "figure", "dd":
+		t, b = 16, 16
+	case "ul", "ol":
+		if depth == 0 {
+			t, b = 16, 16
+		}
+		if tag == "ul" || tag == "ol" {
+			s.PadLeft = 40 // the hanging-marker gutter
+		}
+	case "hr":
+		t, b = 8, 8
+	}
+	if !s.MarginTopSet {
+		s.MarginTop = t
+	}
+	if !s.MarginBottomSet {
+		s.MarginBottom = b
+	}
+	l, r := 0, 0
+	switch tag {
+	case "blockquote", "figure":
+		l, r = 40, 40
+	case "dd":
+		l = 40
+	}
+	if !s.MarginLeftSet {
+		s.MarginLeft = l
+	}
+	if !s.MarginRightSet {
+		s.MarginRight = r
+	}
+}

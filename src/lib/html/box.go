@@ -134,6 +134,7 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 	// box. StyleOf copies the parent wholesale, so the promotion reaches
 	// every child before their own declarations re-apply.
 	st.WS = effectiveWS(tag, st)
+	uaMargins(tag, listDepth, st)
 	var role Role
 	switch tag {
 	case "br":

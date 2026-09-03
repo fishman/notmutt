@@ -58,6 +58,36 @@ migration, pinned behaviors preserved.
   holds plus the additions this spec names (margin, width/max-width,
   white-space values, font-size, list-style).
 
+## Library consumption contract (locked 2026-09-03)
+
+Every stage-1 plan (this one and all future html plans) consumes what the
+vendored libraries already do; nothing they handle is reimplemented:
+
+- **x/net/html is the only parser and tree constructor.** Its HTML5
+  output IS the input grammar to the box builder. A plan must not specify
+  repair or normalization of its output - implied structure (tbody for
+  stray rows/cells), foster-parenting of misplaced content, tag/attribute
+  fixes, character handling - because any such step reimplements the
+  parser. Boxes consume x/net/html's shapes exactly as they arrive; tests
+  pin consume-side shapes built by a real parse (`xhtml.Parse` /
+  `buildBody`), never by hand-assembled DOM that a real parse could not
+  produce.
+- **cascadia is the only selector engine.** A plan must not specify its
+  own selector matching over the DOM; selector work consumes cascadia
+  over x/net/html nodes (the library's own contract).
+- **Neither library reads computed styles.** Author `display`/role
+  derivation and everything downstream (CSS cascade, layout) is
+  legitimately written in `lib/html`. Each plan names which layer owns
+  each behavior: parse and tree construction to x/net/html, selector
+  match to cascadia, computed style and layout to `lib/html`. Only the
+  last is written from scratch.
+- A future stage that needs something neither library provides (for
+  example a non-HTML5 DOM source) declares a new boundary explicitly and
+  justifies it in the plan - it is never grown quietly inside a task.
+
+The tables plan enforces this as its conformance rule; later plans hold
+the same contract by default.
+
 ## Architecture
 
 Three layers:

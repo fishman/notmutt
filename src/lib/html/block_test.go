@@ -106,8 +106,8 @@ func TestBlockListContentInGutterWithMarker(t *testing.T) {
 		}
 	}
 	for i, want := range []string{"disc", "disc"} {
-		if rs[i].Marker != want {
-			t.Fatalf("row %d marker = %q, want %q", i, rs[i].Marker, want)
+		if len(rs[i].Markers) != 1 || rs[i].Markers[0].Type != want {
+			t.Fatalf("row %d markers = %+v, want [%s]", i, rs[i].Markers, want)
 		}
 	}
 }
@@ -125,8 +125,9 @@ func TestBlockNestedListIndentsAndMarks(t *testing.T) {
 	if rs[0].X != 40 || rs[1].X != 80 {
 		t.Fatalf("content X = %d/%d, want 40/80", rs[0].X, rs[1].X)
 	}
-	if rs[0].Marker != "disc" || rs[1].Marker != "circle" {
-		t.Fatalf("markers = %q/%q, want disc/circle", rs[0].Marker, rs[1].Marker)
+	if len(rs[0].Markers) != 1 || rs[0].Markers[0].Type != "disc" ||
+		len(rs[1].Markers) != 1 || rs[1].Markers[0].Type != "circle" {
+		t.Fatalf("markers = %+v / %+v, want [disc] / [circle]", rs[0].Markers, rs[1].Markers)
 	}
 }
 
@@ -139,5 +140,50 @@ func TestBlockBlockquoteInsetsContent(t *testing.T) {
 	// blockquote: 16px margins + 40px each side; its line wraps at 200-80
 	if rs[1].X != 40 || rs[1].W != 120 {
 		t.Fatalf("blockquote X/W = %d/%d, want 40/120", rs[1].X, rs[1].W)
+	}
+}
+
+func TestBlockEmptyListItemGetsMarkerRow(t *testing.T) {
+	// An empty <li> renders its marker on its own line (weasyprint probe):
+	// it must emit a marker-only row, not vanish.
+	bs := buildBody(`<ul><li></li><li>two</li></ul>`)
+	rs := LayoutBlock(bs, 200, mono(1), false)
+	if got := rowsText(rs); !reflect.DeepEqual(got, []string{"", "two"}) {
+		t.Fatalf("rows = %q, want [\"\" \"two\"] (empty li keeps a marker row)", got)
+	}
+	if got := gaps(rs); !reflect.DeepEqual(got, []int{16, 0}) {
+		t.Fatalf("gaps = %v, want [16 0]", got)
+	}
+	if len(rs) != 2 || rs[0].X != 40 || len(rs[0].Markers) != 1 || rs[0].Markers[0].Type != "disc" {
+		t.Fatalf("row0 = X%d markers%v, want X40 [disc]", rs[0].X, rs[0].Markers)
+	}
+}
+
+func TestBlockTextlessNestedLiHangsOuterInOwnGutter(t *testing.T) {
+	// A text-less li whose content is a nested ul hangs BOTH markers on the
+	// nested first line: the inner (circle) at the nested content edge x80 and
+	// the outer (disc) at the outer li's own content edge x40 (weasyprint probe).
+	bs := buildBody(`<ul><li><ul><li>inner</li></ul></li></ul>`)
+	rs := LayoutBlock(bs, 200, mono(1), false)
+	if got := rowsText(rs); !reflect.DeepEqual(got, []string{"inner"}) {
+		t.Fatalf("rows = %q", got)
+	}
+	if len(rs) != 1 || rs[0].X != 80 {
+		t.Fatalf("want one row at X80, got %d row(s) X%d", len(rs), rs[0].X)
+	}
+	var circle, disc *RowMarker
+	for i := range rs[0].Markers {
+		switch rs[0].Markers[i].Type {
+		case "circle":
+			circle = &rs[0].Markers[i]
+		case "disc":
+			disc = &rs[0].Markers[i]
+		}
+	}
+	if circle == nil || circle.X != 80 {
+		t.Fatalf("inner circle marker = %+v, want X80", circle)
+	}
+	if disc == nil || disc.X != 40 {
+		t.Fatalf("outer disc marker = %+v, want X40", disc)
 	}
 }

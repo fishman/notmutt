@@ -7,13 +7,22 @@ package html
 // 2px hr rule, positioned in px. Rows are pure vertical flow (no floats),
 // so a flat ordered stream is lossless for stage 2.
 type Row struct {
-	Gap    int     // collapsed px of margin above this row's content edge
-	X      int     // absolute px left edge of the content box
-	W      int     // content-box px width (wrap/align budget)
-	Box    *Box    // the block that owns the row (style/theme)
-	Line   LineBox // filled content line (unused when HR)
-	HR     bool    // this row is the 2px hr rule
-	Marker string  // list marker type; hangs in the gutter before X (a list item's first row)
+	Gap     int         // collapsed px of margin above this row's content edge
+	X       int         // absolute px left edge of the content box
+	W       int         // content-box px width (wrap/align budget)
+	Box     *Box        // the block that owns the row (style/theme)
+	Line    LineBox     // filled content line (unused when HR)
+	HR      bool        // this row is the 2px hr rule
+	Markers []RowMarker // list markers hanging in this row's gutters
+}
+
+// RowMarker is one list marker hanging before its row. X is the px content
+// edge of the OWNING list item (where its own text would start) - not
+// necessarily the row's X: a text-less li whose first content line is a
+// nested block hangs its marker in its own gutter while the row sits deeper.
+type RowMarker struct {
+	Type string // disc|circle|square|decimal
+	X    int
 }
 
 // seam is the run of mutually-adjoining vertical margins since the last
@@ -92,8 +101,16 @@ func flow(cs []*Box, x0, w int, s *seam, m Metrics, norm bool) []Row {
 				rows = append(rows, Row{Gap: gap, X: cx + line.X, W: cw, Box: c, Line: line})
 			}
 		}
-		if c.Marker != "" && len(rows) > first {
-			rows[first].Marker = c.Marker // hangs on the item's first content row
+		if c.Marker != "" {
+			if len(rows) == first {
+				// the item emitted no content row (empty li, or content that
+				// collapsed away): its marker still gets a line (weasyprint)
+				rows = append(rows, Row{Gap: s.take(), X: cx, W: cw, Box: c,
+					Markers: []RowMarker{{Type: c.Marker, X: cx}}})
+			} else {
+				rows[first].Markers = append(rows[first].Markers,
+					RowMarker{Type: c.Marker, X: cx})
+			}
 		}
 		s.add(mb)
 	}

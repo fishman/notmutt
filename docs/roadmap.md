@@ -83,18 +83,7 @@ completion (notifications landed with the filter job's completion event,
 Impact: query completion arrives with the filter pipeline.
 Pointers: AGENTS.md R2, `references/muttrc/afew/config` (the reference side effects).
 
-### 6. Lua IPC channel (R8) - effort M
-
-`notmutt lua '<chunk>'` hands a Lua chunk to the live client over a
-same-user unix socket; the client runs it as a Lua hook in the R8 VM -
-the notification-activate action and external scripting. The IPC seam
-was designed when Lua shipped but the channel itself was not built.
-
-Impact: notification actions and external tools drive the client without
-a TUI round trip. Pointers: AGENTS.md R8, `src/app/lua_plugin.go`, the
-notification side (`src/app/notify_beeep.go`).
-
-### 7. Markdown compose, HTML send (R4) - effort M
+### 6. Markdown compose, HTML send (R4) - effort M
 
 Compose the body in markdown and emit multipart/alternative with an HTML
 part; code blocks get syntax highlighting. Sits at the same assemble
@@ -170,6 +159,13 @@ Implemented since this backlog was drafted; kept here as the audit trail.
 - **Notifications as a filter side effect** - `src/app/notify_beeep.go`,
   wired to the filter job's completion event (filterjob.go); the address
   cache half remains Tier 2 item 5.
+- **Lua IPC channel (R8)** - `notmutt lua '<chunk>'` relays a chunk to a
+  live session over a same-user unix socket (0700 runtime dir,
+  SO_PEERCRED on linux), runs it on the R8 VM with the metadata ctx
+  surface, and returns the print capture; the reply stays off the TUI
+  bus. Spec: docs/superpowers/specs/2026-09-03-lua-ipc-design.md.
+  Pointers: `src/app/lua_ipc.go` (client), `src/app/lua_ipc_server.go`,
+  the shared `runLuaChunk` runner in `src/app/lua_action.go`.
 
 ## Process notes
 

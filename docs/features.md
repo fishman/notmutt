@@ -125,9 +125,6 @@ in-process (pkcs7 + stdlib x509, emailProtection EKU enforced). Both
 sit between MIME assembly and fcc, with decrypt/verify as an async job
 on the read path.
 
-- **Lua IPC** - `notmutt lua '<chunk>'` sends a chunk over a same-user
-  unix socket to the live client, which runs it as a Lua hook - the
-  notification-activate action and external scripting on the R8 VM.
 - **Markdown compose** - write the body in markdown and send as
   multipart/alternative with an HTML part; code blocks render with
   syntax highlighting. Same assemble-stage slot as the signer.

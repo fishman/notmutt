@@ -55,6 +55,7 @@ type Style struct {
 	FgSet     bool   // an explicit color source at this node, not inherited
 	Bg        string
 	Bold      bool
+	BoldSet   bool // an explicit font-weight source at this node, sticky down the tree (UA th-bold gate)
 	Italic    bool
 	Underline bool
 	Align     string // left|center|right|justify, "" = inherit
@@ -211,6 +212,7 @@ func (s *Style) apply(decls map[string]string) {
 		}
 	}
 	if v, ok := decls["font-weight"]; ok {
+		s.BoldSet = true
 		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
 			s.Bold = n >= 600
 		} else {

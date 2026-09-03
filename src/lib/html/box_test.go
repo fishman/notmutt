@@ -233,12 +233,27 @@ func TestAuthorListItemGate(t *testing.T) {
 	}
 }
 
-func TestTableIsLeaf(t *testing.T) {
-	bs := buildBody(`<table><tr><td>c</td></tr></table>`)
-	if len(bs) != 1 || bs[0].Role != RoleTable {
-		t.Fatalf("table role = %v, want RoleTable leaf", bs[0].Role)
+func TestTableExpandsToGridTree(t *testing.T) {
+	// <table><tr><td>a</td></tr></table> (rawTable: the HTML5 parser wraps a
+	// literal <tr> under <table> in an implied tbody, so the anonymous
+	// row-group repair needs the author's raw structure)
+	bs := rawTable(tnode("tr", tnode("td", tnodeText("a"))))
+	tbl := bs[0]
+	if tbl.Role != RoleTable || tbl.Tbl != "table" {
+		t.Fatalf("table role/tbl = %v/%q, want RoleTable/table", tbl.Role, tbl.Tbl)
 	}
-	if bs[0].Node == nil {
-		t.Fatal("table leaf must carry its element node")
+	if len(tbl.Children) != 1 || tbl.Children[0].Tbl != "row-group" || tbl.Children[0].Tag != "" {
+		t.Fatalf("table child = %+v, want an anonymous row-group wrapping the tr", tbl.Children)
+	}
+	row := tbl.Children[0].Children[0]
+	if len(tbl.Children[0].Children) != 1 || row.Tbl != "row" || row.Tag != "tr" {
+		t.Fatalf("row-group child = %+v, want the tr as a row", tbl.Children[0].Children)
+	}
+	cell := row.Children[0]
+	if len(row.Children) != 1 || cell.Tbl != "cell" || cell.Tag != "td" {
+		t.Fatalf("row child = %+v, want a td cell", row.Children)
+	}
+	if len(cell.Children) != 1 || cell.Children[0].Role != RoleText || cell.Children[0].Text != "a" {
+		t.Fatalf("cell content = %+v, want one RoleText 'a'", cell.Children)
 	}
 }

@@ -10,35 +10,71 @@ Question: render HTML mail in the pager with Go, stdlib-first, the main
 risk being CSS. Claim to test: mail HTML uses a very small CSS subset,
 so a subset parser + renderer is tractable.
 
-## Current state (2026-08-19): the renderer shipped
+## Current state (2026-09-04): the stage-2 terminal engine
 
-The in-client flow renderer from the sketch below is live: `text/html`
-bodies render through src/mail/html.go (x/net/html parse -> css.go
-cascade -> flow walk to pager lines) and are the default view for html
-mail. What shipped:
+The renderer is now a two-stage pipeline; the old one-pass DOM walker is
+deleted (Task 6 cutover). `text/html` bodies render through
+src/mail/html_stage2.go and are the default view for html mail.
 
-- Phase 1 AND phase 2 of the sequencing below: inline `style=""` plus
-  `<style>` blocks, selectors matched with cascadia (the mature,
-  fuzzed companion - never reimplemented, per the go-css verdict).
-- The ~22-property whitelist from the subset claim; everything else
-  (position, float, flex, media queries) drops.
-- Tables column-align per cell width, ol/ul lists with counters or
-  bullets, block spacing between content blocks, `white-space: pre`.
-- Link mode (the pager F key): `[N]` labels inline, label order = link
-  list (RenderHTMLWithLinks).
-- Images render as placeholders: the bytes travel with the line, the
-  TUI decodes and paints only on the render-images key (privacy gate);
-  remote srcs never fetch (tracking pixels stay dead).
-- Budget: 5000 rendered lines, then a truncation marker - a hostile
-  doc cannot balloon the thread.
-- Fuzz targets live on the boundary: FuzzRenderHTML and
-  FuzzCSSDeclarations (src/mail/fuzz_test.go), per the F10 standard.
+Stage 1 (src/lib/html, px-pure) parses (x/net/html), cascades the
+inline `style=""` + `<style>` subset (selectors matched with cascadia),
+builds a box tree (`Build`), and lays it out into a flat px row stream
+(`LayoutBlock -> []Row`). Stage 2 (src/mail/html_stage2.go, terminal)
+quantizes that stream into `core.Line` pager lines. The pipeline:
+
+```
+x/net/html.Parse -> html.ParseStyleSheets -> html.Build (box tree)
+        -> html.LayoutBlock (px Row stream) -> stage-2 quantize -> core.Line
+```
+
+The terminal frame constants (stage 2, mail-owned):
+
+- `charW = 10` px per cell (horizontal); forced by the locked
+  `TestImageDeclaredSizes` (50% of an 80-cell layout = 400px).
+- `lineH = 16` px per pager row (the base em); blank quantization is
+  `blankRows = round(gapPx / 16)`.
+- `htmlWrapWidth = 120` cells and `maxHTMLLines = 5000` unchanged.
+
+Stage 2 quantizes each `Row`: a gap becomes `round(Gap/16)` blank
+`core.Line`s carrying the mail background; text spans become styled runs
+(punctuation binding, tab expansion, F1 sanitize); a lone image becomes
+an own-line image block, an image sharing its line an inline
+`core.ImagePos`; list markers hang in their gutters; an `hr` becomes a
+rule-glyph row; a table grid row (`Row.Cells`) becomes one horizontal
+strip with each cell fragment at its absolute px column. Link mode (the
+F key) injects `[N]` label boxes before layout so labels flow into line
+building. Dark-mode adaptation (light-declared bg reflection onto the
+theme bg, luma gate, fg inversion) stays in stage 2's run builder.
 
 Mailcap (R6) shipped on the attachment-preview path: a
 `copiousoutput`-style rule replaces the bytes with its output
 (src/app/app.go, `previewMailcap`), with `<configdir>/mailcap`
 overrides by type - the options table's fallback row, scoped to
 attachments rather than the primary html path.
+
+## Divergences from the old walker (recorded, deliberate)
+
+The migration gate is the locked test suite, not byte parity. Each row is
+a deliberate consequence of CSS-true layout; none is pinned by a locked
+mail test.
+
+| # | Behavior | Old walker | Stage-2 engine |
+| --- | --- | --- | --- |
+| A | `<hr>` | invisible block boundary | a visible `─` rule row |
+| B | list items | blank line between items, marker inline at col 0 | contiguous items, 4-col gutter indent, hanging marker |
+| C | inter-column gutter | 2 blank cells | px spacing (<1 cell at charW 10): columns abut |
+| D | main-flow inline image | `x<img>y` splits to 3 lines | shares the line (inline ImagePos); isolated images still own-line |
+| E | ordered lists | inline `1.` counter | hanging `N.` glyph from the box ordinal |
+| F | heading/`blockquote` rhythm | one blank between any two content blocks | same, for UA margins (16-25 px round to one blank); author margins >= 32 px give 2+ blanks |
+| G | list/quote insets | none (col 0 text) | content indented by the real 40px padding/margins |
+| H | blank lines carry bg | yes | yes (unchanged, pinned) |
+| I | bare URLs in pre-family text | never labeled (walker never linkifies in pre) | never labeled (collapse-text bare URLs are; real `<a href>` labels work in pre) - pinned by TestStage2PreTextBareUrlNotLabeled |
+| J | inline-image reservation | never emitted inline image rows | ImagePos reserves the alt placeholder's cells; X = placeholder text column - pinned by TestStage2InlineImageXAtPlaceholderColumns |
+
+Two recorded follow-ups live in TODO.org: list-marker glyph transforms
+are a mail-side data map today (a config override is R11 future work);
+and `Style.Label` is a renderer-synthesized flag a future Lua/RPC
+consumer must never treat as authored content.
 
 ## What "go stdlib html" actually is
 

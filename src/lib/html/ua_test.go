@@ -89,7 +89,7 @@ func TestUADisplayDefaults(t *testing.T) {
 		"table": "table", "tr": "table-row", "td": "table-cell",
 		"thead": "table-row-group", "caption": "table-caption",
 		"script": "none", "title": "none", "style": "none",
-		"li": "block", "img": "", "br": "",
+		"li": "list-item", "img": "", "br": "",
 	}
 	for tag, want := range cases {
 		if got := uaDisplay(tag); got != want {
@@ -127,6 +127,9 @@ func TestListMarkerByDepth(t *testing.T) {
 	}
 	if got := listMarker("ul", 3); got != "square" {
 		t.Errorf("ul depth3 = %q, want square", got)
+	}
+	if got := listMarker("ul", 4); got != "square" {
+		t.Errorf("ul depth4 = %q, want square", got)
 	}
 	if got := listMarker("ol", 2); got != "decimal" {
 		t.Errorf("ol = %q, want decimal", got)

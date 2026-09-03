@@ -14,9 +14,11 @@ func uaDisplay(tag string) string {
 	case "address", "article", "aside", "blockquote", "body", "dd",
 		"details", "dialog", "div", "dl", "dt", "fieldset", "figcaption",
 		"figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6",
-		"header", "hr", "html", "legend", "li", "main", "nav", "ol", "p",
+		"header", "hr", "html", "legend", "main", "nav", "ol", "p",
 		"pre", "section", "ul":
 		return "block"
+	case "li":
+		return "list-item"
 	case "table":
 		return "table"
 	case "thead", "tbody", "tfoot":
@@ -58,11 +60,11 @@ func listMarker(tag string, depth int) string {
 	if tag == "ol" {
 		return "decimal"
 	}
-	switch depth {
-	case 2:
-		return "circle"
-	case 3:
+	switch {
+	case depth >= 3:
 		return "square"
+	case depth == 2:
+		return "circle"
 	default:
 		return "disc"
 	}

@@ -57,3 +57,11 @@ func FuzzCSSDeclarations(f *testing.F) {
 		ParseStyleSheet(s)
 	})
 }
+
+// TestRuneWidth pins the rune-level cell width: ASCII 1, wide 2, C0
+// control 0 - the measure cellMeter steps per rune with.
+func TestRuneWidth(t *testing.T) {
+	if RuneWidth('a') != 1 || RuneWidth('界') != 2 || RuneWidth(0x01) != 0 {
+		t.Fatalf("RuneWidth wide/control mismatch")
+	}
+}

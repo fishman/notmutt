@@ -472,6 +472,10 @@ func TextWidth(s string) int {
 	return n
 }
 
+// RuneWidth reports a rune's terminal cell width (0 for control chars, 2 for
+// wide/emoji) - the rune-level twin of TextWidth for per-rune stepping.
+func RuneWidth(r rune) int { return runewidth.RuneWidth(r) }
+
 // ContrastFG picks a readable foreground for a background: Rec.709
 // luma, dark text on light, light on dark.
 func ContrastFG(bg string) string {

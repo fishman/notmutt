@@ -418,3 +418,19 @@ func TestPreservedWrapFillDoesNotRescanRemainder(t *testing.T) {
 		t.Fatalf("preserved fill measured %d runes for %d chars, want <= %d (whole-tail re-measure)", m.scanned, len(s), 30*len(s))
 	}
 }
+
+func TestPreservedWrapTailFitsWhole(t *testing.T) {
+	// The running remainder width must account for the break space
+	// breakAtSpace drops (head + " " are consumed). Without it the width
+	// drifts +1px per wrap, and a long run's final tail that fits gets
+	// split onto an extra line: 186 lines here, not 187.
+	s := strings.Repeat("ab ", 5000) + "x" // 15001 chars
+	bs := buildBody(`<p style="white-space:pre-wrap">` + s + `</p>`)
+	ls := LayoutInline(bs[0], 80, mono(1), false)
+	if len(ls) != 186 {
+		t.Fatalf("pre-wrap layout = %d lines, want 186 (tail must fit whole)", len(ls))
+	}
+	if got := linesText(ls)[185]; got != "ab ab ab ab ab x" {
+		t.Fatalf("final line = %q, want the whole fitting tail %q", got, "ab ab ab ab ab x")
+	}
+}

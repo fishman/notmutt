@@ -225,7 +225,7 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 				}
 				if head, tail, ok := breakAtSpace(rest, width-cw, m); ok {
 					emit(atom{st: a.st, ws: a.ws, text: head})
-					restW -= m.Width(head)
+					restW -= m.Width(head) + m.Width(" ") // breakAtSpace drops one space from both pieces
 					flush()
 					rest = tail
 					continue

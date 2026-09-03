@@ -405,3 +405,16 @@ func TestPreservedSpaceDenseTokenLaysOutLinearly(t *testing.T) {
 		t.Fatal("LayoutInline of a 96k space-dense preserved run did not finish in 3s (cubic breakAtSpace)")
 	}
 }
+
+func TestPreservedWrapFillDoesNotRescanRemainder(t *testing.T) {
+	// The preserved-wrap fill used to re-measure the whole remaining tail
+	// once per emitted line (O(n^2/budget)). Keeping a running tail width
+	// makes the per-line check O(1); a countMeter counts every Width scan.
+	s := strings.Repeat("ab ", 20000) // 60000 chars, ~770 wrapped lines at width 80
+	m := &countMeter{}
+	bs := buildBody(`<p style="white-space:pre-wrap">` + s + `</p>`)
+	LayoutInline(bs[0], 80, m, false)
+	if m.scanned > 30*len(s) {
+		t.Fatalf("preserved fill measured %d runes for %d chars, want <= %d (whole-tail re-measure)", m.scanned, len(s), 30*len(s))
+	}
+}

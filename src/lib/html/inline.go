@@ -217,13 +217,15 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 			// preserved text that wraps at interior spaces (pre-wrap in
 			// author mode; pre and pre-wrap under normalize)
 			rest := a.text
+			restW := a.width(m) // total px, kept by subtracting emitted heads
 			for rest != "" {
-				if m.Width(rest) <= width-cw {
+				if restW <= width-cw {
 					emit(atom{st: a.st, ws: a.ws, text: rest})
 					break
 				}
 				if head, tail, ok := breakAtSpace(rest, width-cw, m); ok {
 					emit(atom{st: a.st, ws: a.ws, text: head})
+					restW -= m.Width(head)
 					flush()
 					rest = tail
 					continue

@@ -33,25 +33,29 @@ func wsBehavior(w WS) wsB {
 	}
 }
 
-// atom is one laid-out fragment of inline content. Exactly one of
-// text / img / br is live; sep marks a single collapsible space.
-type atom struct {
-	st   *Style
-	ws   WS // effective white-space of the text that made this atom
-	text string
-	img  *Box // atomic image (px width resolved by the image plan)
-	br   bool // <br> or preserved newline: forces a break
-	sep  bool // one collapsed space (a break point iff the text wraps)
+// Span is one laid-out piece of a filled line, in order: a text run, an
+// inter-word space, or an inline image. It is the stage-2 consumer surface
+// (the terminal backend renders spans into pager runs). Text is raw - the
+// consumer sanitizes (F1), expands tabs, and applies terminal punctuation
+// binding at render. A break never reaches an emitted line (it forces a
+// flush inside the package), so no external consumer ever sees one.
+type Span struct {
+	Text string // the run's text (a word, a preserved-space chunk, or a single space when Sep)
+	St   *Style // computed style (never nil)
+	WS   WS     // effective white-space class of the source run
+	Sep  bool   // renders as one space unless the following text binds left
+	Img  *Box   // inline image (RoleImg); Text is empty
+	br   bool   // unexported: forced break, consumed by LayoutInline's flush (never emitted)
 }
 
-func (a atom) width(m Metrics) int {
-	if a.img != nil {
-		if r := a.img.res; r != nil && r.uSet {
+func (s Span) width(m Metrics) int {
+	if s.Img != nil {
+		if r := s.Img.res; r != nil && r.uSet {
 			return r.uW // valid: LayoutInline resolves right before emit at this width
 		}
-		return imgExtentW(a.img) // not laid out yet: extent width
+		return imgExtentW(s.Img) // not laid out yet: extent width
 	}
-	return m.Width(a.text)
+	return m.Width(s.Text)
 }
 
 // collapsible reports a CSS-collapsible rune (space, tab, LF, CR, FF).
@@ -74,27 +78,27 @@ func normalizeLF(s string) string {
 // space atoms (sep); the pre family keeps text verbatim, splitting only
 // on newlines (a trailing LF drops; blank source lines leave only their
 // break, mirroring the walker's empty-line drop).
-func atomizeText(txt string, st *Style, ws WS) []atom {
+func atomizeText(txt string, st *Style, ws WS) []Span {
 	b := wsBehavior(ws)
 	txt = normalizeLF(txt)
 	if !b.collapse {
-		var out []atom
+		var out []Span
 		for i, ln := range strings.Split(strings.TrimSuffix(txt, "\n"), "\n") {
 			if i > 0 {
-				out = append(out, atom{st: st, ws: ws, br: true})
+				out = append(out, Span{St: st, WS: ws, br: true})
 			}
 			if ln == "" {
 				continue
 			}
-			out = append(out, atom{st: st, ws: ws, text: ln})
+			out = append(out, Span{St: st, WS: ws, Text: ln})
 		}
 		return out
 	}
-	var out []atom
+	var out []Span
 	var word strings.Builder
 	flush := func() {
 		if word.Len() > 0 {
-			out = append(out, atom{st: st, ws: ws, text: word.String()})
+			out = append(out, Span{St: st, WS: ws, Text: word.String()})
 			word.Reset()
 		}
 	}
@@ -103,7 +107,7 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 		if collapsible(r) {
 			if b.newlineBreak && r == '\n' { // pre-line: LF is a kept break
 				flush()
-				out = append(out, atom{st: st, ws: ws, br: true})
+				out = append(out, Span{St: st, WS: ws, br: true})
 				sep = false
 			} else {
 				sep = true
@@ -112,14 +116,14 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 		}
 		if sep {
 			flush() // the prior word atomizes before its break space
-			out = append(out, atom{st: st, ws: ws, text: " ", sep: true})
+			out = append(out, Span{St: st, WS: ws, Text: " ", Sep: true})
 			sep = false
 		}
 		word.WriteRune(r)
 	}
 	flush()
 	if sep {
-		out = append(out, atom{st: st, ws: ws, text: " ", sep: true})
+		out = append(out, Span{St: st, WS: ws, Text: " ", Sep: true})
 	}
 	return out
 }
@@ -130,8 +134,8 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 // builder), so the tag is irrelevant at layout time. Consecutive sep
 // atoms from adjacent leaves collapse at fill (one rendered space), not
 // here.
-func flattenInline(cs []*Box) []atom {
-	var out []atom
+func flattenInline(cs []*Box) []Span {
+	var out []Span
 	for _, c := range cs {
 		switch c.Role {
 		case RoleInline:
@@ -139,9 +143,9 @@ func flattenInline(cs []*Box) []atom {
 		case RoleText:
 			out = append(out, atomizeText(c.Text, c.St, c.WS)...)
 		case RoleImg:
-			out = append(out, atom{st: c.St, ws: c.WS, img: c})
+			out = append(out, Span{St: c.St, WS: c.WS, Img: c})
 		case RoleBR:
-			out = append(out, atom{st: c.St, ws: c.WS, br: true})
+			out = append(out, Span{St: c.St, WS: c.WS, br: true})
 		}
 	}
 	return out
@@ -149,7 +153,7 @@ func flattenInline(cs []*Box) []atom {
 
 // LineBox is one filled line: its laid-out atoms in order.
 type LineBox struct {
-	Atoms []atom
+	Atoms []Span
 	Width int // content px width (trailing space already dropped)
 	X     int // lead offset for block text-align (px), 0 = flush left
 }
@@ -161,16 +165,16 @@ type LineBox struct {
 func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 	atoms := flattenInline(block.Children)
 	var lines []LineBox
-	var cur []atom
+	var cur []Span
 	cw := 0
 	curBreak := false // the trailing atom is a legal break point
-	emit := func(a atom) {
+	emit := func(a Span) {
 		cur = append(cur, a)
 		cw += a.width(m)
 		curBreak = false
 	}
 	flush := func() {
-		if n := len(cur); n > 0 && cur[n-1].sep {
+		if n := len(cur); n > 0 && cur[n-1].Sep {
 			cw -= cur[n-1].width(m)
 			cur = cur[:n-1] // a line never renders a trailing space
 		}
@@ -184,12 +188,12 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 	}
 	// charBreak emits a text atom in width-wide pieces, one per line
 	// (normalize's overflow-wrap:anywhere).
-	charBreak := func(a atom) {
-		for a.text != "" {
-			head, tail := cutText(a.text, width, m)
-			a.text = tail
-			emit(atom{st: a.st, ws: a.ws, text: head})
-			if a.text != "" {
+	charBreak := func(a Span) {
+		for a.Text != "" {
+			head, tail := cutText(a.Text, width, m)
+			a.Text = tail
+			emit(Span{St: a.St, WS: a.WS, Text: head})
+			if a.Text != "" {
 				flush()
 			}
 		}
@@ -199,36 +203,36 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 			flush()
 			continue
 		}
-		if a.img != nil {
-			usedImg(a.img, width) // resolve px against this line width
+		if a.Img != nil {
+			usedImg(a.Img, width) // resolve px against this line width
 			emit(a)
 			continue
 		}
-		if a.sep {
+		if a.Sep {
 			// one space between words on the same line; a separator
 			// that opens a line (or follows one) drops here or at flush
-			if len(cur) > 0 && !cur[len(cur)-1].sep {
+			if len(cur) > 0 && !cur[len(cur)-1].Sep {
 				emit(a)
 			}
-			curBreak = wsBehavior(a.ws).wrap || norm
+			curBreak = wsBehavior(a.WS).wrap || norm
 			continue
 		}
-		b := wsBehavior(a.ws)
+		b := wsBehavior(a.WS)
 		if norm {
 			b.wrap = true // normalize wraps every class
 		}
 		if !b.collapse && b.wrap {
 			// preserved text that wraps at interior spaces (pre-wrap in
 			// author mode; pre and pre-wrap under normalize)
-			rest := a.text
+			rest := a.Text
 			restW := a.width(m) // total px, kept by subtracting emitted heads
 			for rest != "" {
 				if restW <= width-cw {
-					emit(atom{st: a.st, ws: a.ws, text: rest})
+					emit(Span{St: a.St, WS: a.WS, Text: rest})
 					break
 				}
 				if head, tail, ok := breakAtSpace(rest, width-cw, m); ok {
-					emit(atom{st: a.st, ws: a.ws, text: head})
+					emit(Span{St: a.St, WS: a.WS, Text: head})
 					restW -= m.Width(head) + m.Width(" ") // breakAtSpace drops one space from both pieces
 					flush()
 					rest = tail
@@ -239,9 +243,9 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 					continue
 				}
 				if norm {
-					charBreak(atom{st: a.st, ws: a.ws, text: rest})
+					charBreak(Span{St: a.St, WS: a.WS, Text: rest})
 				} else {
-					emit(atom{st: a.st, ws: a.ws, text: rest}) // overflow whole
+					emit(Span{St: a.St, WS: a.WS, Text: rest}) // overflow whole
 				}
 				break
 			}
@@ -258,10 +262,10 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 			if width-cw <= 0 {
 				flush() // line exactly full: break at the token's leading edge
 			} else {
-				head, tail := cutText(a.text, width-cw, m)
-				a.text = tail
+				head, tail := cutText(a.Text, width-cw, m)
+				a.Text = tail
 				aw = a.width(m)
-				emit(atom{st: a.st, ws: a.ws, text: head})
+				emit(Span{St: a.St, WS: a.WS, Text: head})
 				flush()
 			}
 			// tail (or the whole token, when budget was 0) continues from a

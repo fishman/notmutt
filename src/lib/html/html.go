@@ -64,6 +64,7 @@ type Style struct {
 	Pre       bool   // white-space: pre* -> no wrap, keep spaces (legacy; mail reads it, WS is precise)
 	WS        WS     // white-space class (precise); zero = normal. Inherits.
 	WSSet     bool   // an explicit white-space declaration at this node, not inherited
+	Label     bool   // synthesized F-key link marker run (mail injects label boxes); not inherited content
 
 	// Resolved-px box geometry (stage 1). Non-inherited: StyleOf zeroes
 	// these each node. *Set marks a side the author declared; the UA floor

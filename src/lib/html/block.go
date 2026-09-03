@@ -25,6 +25,7 @@ type Row struct {
 type RowMarker struct {
 	Type string // disc|circle|square|decimal
 	X    int
+	Ord  int // 1-based ordinal for a decimal marker of an ordered list (0 otherwise)
 }
 
 // seam is the run of mutually-adjoining vertical margins since the last
@@ -112,10 +113,10 @@ func flow(cs []*Box, x0, w int, s *seam, m Metrics, norm bool) []Row {
 				// the item emitted no content row (empty li, or content that
 				// collapsed away): its marker still gets a line (weasyprint)
 				rows = append(rows, Row{Gap: s.take(), X: cx, W: cw, Box: c,
-					Markers: []RowMarker{{Type: c.Marker, X: cx}}})
+					Markers: []RowMarker{{Type: c.Marker, X: cx, Ord: c.Ord}}})
 			} else {
 				rows[first].Markers = append(rows[first].Markers,
-					RowMarker{Type: c.Marker, X: cx})
+					RowMarker{Type: c.Marker, X: cx, Ord: c.Ord})
 			}
 		}
 		s.add(mb)

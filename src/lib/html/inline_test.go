@@ -18,13 +18,13 @@ type mono int
 func (m mono) Width(s string) int { return int(m) * utf8.RuneCountInString(s) }
 
 // renderAtoms joins atom text, br as newline, for asserting a raw stream.
-func renderAtoms(as []atom) string {
+func renderAtoms(as []Span) string {
 	var b strings.Builder
 	for _, a := range as {
 		if a.br {
 			b.WriteByte('\n')
 		} else {
-			b.WriteString(a.text)
+			b.WriteString(a.Text)
 		}
 	}
 	return b.String()
@@ -36,7 +36,7 @@ func linesText(ls []LineBox) []string {
 	for i, l := range ls {
 		var b strings.Builder
 		for _, a := range l.Atoms {
-			b.WriteString(a.text)
+			b.WriteString(a.Text)
 		}
 		out[i] = b.String()
 	}
@@ -121,7 +121,7 @@ func TestFlattenKeepsBRAndImg(t *testing.T) {
 	if got := renderAtoms(as); got != "x\ny" {
 		t.Fatalf("flatten = %q, want %q", got, "x\ny")
 	}
-	if len(as) != 4 || !as[1].br || as[2].img == nil {
+	if len(as) != 4 || !as[1].br || as[2].Img == nil {
 		t.Fatalf("atoms must be x, br, img, y in order, got %d", len(as))
 	}
 }

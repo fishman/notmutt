@@ -24,7 +24,7 @@ func rowsText(rs []Row) []string {
 		}
 		var b strings.Builder
 		for _, a := range r.Line.Atoms {
-			b.WriteString(a.text)
+			b.WriteString(a.Text)
 		}
 		return b.String()
 	}
@@ -198,5 +198,24 @@ func TestBlockTextlessNestedLiHangsOuterInOwnGutter(t *testing.T) {
 	}
 	if disc == nil || disc.X != 40 {
 		t.Fatalf("outer disc marker = %+v, want X40", disc)
+	}
+}
+
+func TestBlockOrderedListNumbersItems(t *testing.T) {
+	bs := buildBody(`<ol><li>one</li><li>two</li></ol>`)
+	rs := LayoutBlock(bs, 200, mono(1), false)
+	if len(rs) != 2 {
+		t.Fatalf("rows = %d, want 2", len(rs))
+	}
+	for i, ord := range []int{1, 2} {
+		if len(rs[i].Markers) != 1 || rs[i].Markers[0].Type != "decimal" || rs[i].Markers[0].Ord != ord {
+			t.Fatalf("row %d markers = %+v, want decimal Ord %d", i, rs[i].Markers, ord)
+		}
+	}
+	// a second ol restarts at 1
+	bs = buildBody(`<ol><li>a</li></ol><ol><li>b</li></ol>`)
+	rs = LayoutBlock(bs, 200, mono(1), false)
+	if len(rs) != 2 || rs[1].Markers[0].Ord != 1 {
+		t.Fatalf("second ol must restart at 1: %+v", rs)
 	}
 }

@@ -17,6 +17,8 @@ type imgRes struct {
 	iw, ih int
 	uW, uH int
 	uSet   bool
+	dispW  int // declared display px resolved at that layout width (0 = axis undeclared)
+	dispH  int
 }
 
 // imgSpec is an image's effective specified geometry after the cascade and
@@ -154,9 +156,33 @@ func usedImg(b *Box, avail int) (w, h int) {
 		}
 	}
 	if b.res != nil {
+		if wSet {
+			b.res.dispW = at(s.wPx, s.wPct)
+		}
+		b.res.dispH = s.hPx // a px height is never a % (pct height is auto); 0 = undeclared
 		b.res.uW, b.res.uH, b.res.uSet = w, h, true
 	}
 	return w, h
+}
+
+// ImgDisp returns the image's declared display px: the width/height the
+// author declared (attr or CSS), a % width resolved against the containing
+// layout width. An undeclared axis is 0. Valid after the box was laid out
+// at some width (usedImg ran).
+func (b *Box) ImgDisp() (w, h int) {
+	if b.res == nil {
+		return 0, 0
+	}
+	return b.res.dispW, b.res.dispH
+}
+
+// ImgUsed returns the image's used px at its last layout (0, 0, false when
+// never laid out).
+func (b *Box) ImgUsed() (w, h int, set bool) {
+	if b.res == nil {
+		return 0, 0, false
+	}
+	return b.res.uW, b.res.uH, b.res.uSet
 }
 
 // ResolveImages walks the box tree once and fills each RoleImg box's

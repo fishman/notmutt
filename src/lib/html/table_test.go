@@ -118,7 +118,7 @@ func fragText(r Row) string {
 	}
 	var b strings.Builder
 	for _, a := range r.Line.Atoms {
-		b.WriteString(a.text)
+		b.WriteString(a.Text)
 	}
 	return b.String()
 }

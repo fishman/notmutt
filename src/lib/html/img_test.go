@@ -215,17 +215,17 @@ func layoutImg(t *testing.T, body string, load func(string) (int, int, bool), wi
 }
 
 // imgAtomIn scans rows for the first row whose Line carries an image atom.
-func imgAtomIn(t *testing.T, rs []Row) (Row, atom) {
+func imgAtomIn(t *testing.T, rs []Row) (Row, Span) {
 	t.Helper()
 	for _, r := range rs {
 		for _, a := range r.Line.Atoms {
-			if a.img != nil {
+			if a.Img != nil {
 				return r, a
 			}
 		}
 	}
 	t.Fatal("no row carries an image atom")
-	return Row{}, atom{}
+	return Row{}, Span{}
 }
 
 func TestLoneImageEmitsItsOwnRowAtUsedWidth(t *testing.T) {
@@ -239,7 +239,7 @@ func TestLoneImageEmitsItsOwnRowAtUsedWidth(t *testing.T) {
 		t.Fatalf("img row box/atoms = tag %q/%d, want the anonymous run holding just the img",
 			r.Box.Tag, len(r.Line.Atoms))
 	}
-	if res := a.img.res; res == nil || res.uW != 60 || res.uH != 30 {
+	if res := a.Img.res; res == nil || res.uW != 60 || res.uH != 30 {
 		t.Fatalf("img used = %+v, want 60x30 resolved at the 800px block width", res)
 	}
 }
@@ -259,7 +259,7 @@ func TestImageSharesATextLine(t *testing.T) {
 	if len(r.Line.Atoms) != 3 {
 		t.Fatalf("img row atoms = %d, want x img z", len(r.Line.Atoms))
 	}
-	if res := a.img.res; res == nil || res.uW != 60 || res.uH != 30 {
+	if res := a.Img.res; res == nil || res.uW != 60 || res.uH != 30 {
 		t.Fatalf("inline img used = %+v, want 60x30", res)
 	}
 }
@@ -274,7 +274,7 @@ func TestPercentWidthResolvesThroughLayout(t *testing.T) {
 		t.Fatalf("rows = %d, want 1 (the image)", len(rs))
 	}
 	_, a := imgAtomIn(t, rs)
-	if res := a.img.res; res == nil || res.uW != 150 || res.uH != 100 {
+	if res := a.Img.res; res == nil || res.uW != 150 || res.uH != 100 {
 		t.Fatalf("50%% img at 300px = %+v, want 150x100 (ratio 600:400)", res)
 	}
 }
@@ -288,16 +288,16 @@ func TestTableCellSeatsAnImageColumn(t *testing.T) {
 			len(rs), len(rs[0].Cells))
 	}
 	frag := rs[0].Cells[0]
-	var imgAtom *atom
+	var imgAtom *Span
 	for i := range frag.Line.Atoms {
-		if frag.Line.Atoms[i].img != nil {
+		if frag.Line.Atoms[i].Img != nil {
 			imgAtom = &frag.Line.Atoms[i]
 		}
 	}
 	if imgAtom == nil {
 		t.Fatal("cell fragment has no image atom")
 	}
-	if res := imgAtom.img.res; res == nil || res.uW != 600 || res.uH != 400 {
+	if res := imgAtom.Img.res; res == nil || res.uW != 600 || res.uH != 400 {
 		t.Fatalf("cell img used = %+v, want 600x400", res)
 	}
 	if frag.W != 600 {
@@ -326,7 +326,7 @@ func TestRelayoutAtNewWidthReResolvesImages(t *testing.T) {
 	LayoutBlock(bs, 200, mono(1), false) // first pass resolves uW=100
 	rs := LayoutBlock(bs, 400, mono(1), false)
 	_, a := imgAtomIn(t, rs)
-	if res := a.img.res; res == nil || res.uW != 200 {
+	if res := a.Img.res; res == nil || res.uW != 200 {
 		t.Fatalf("re-laid 50%% img at 400px = %+v, want uW 200 (re-resolved, not stale 100)", res)
 	}
 }
@@ -349,6 +349,32 @@ func TestPctHeightAttrIsAuto(t *testing.T) {
 	w, h := usedImg(b, 800)
 	if w != 60 || h != 30 {
 		t.Fatalf("usedImg = %dx%d, want 60x30 (auto: a %% height attr is not px)", w, h)
+	}
+}
+
+func TestImgDeclaredDispSeparateFromUsed(t *testing.T) {
+	// the declared display px (a decode target) is 0 per undeclared axis even
+	// when used px came from the intrinsic: an attrless 10x10 image must
+	// report declared 0x0 though used is 10x10.
+	b := imgBox(t, `<img src="x.png">`, 10, 10)
+	usedImg(b, 800)
+	if w, h, set := b.ImgUsed(); !set || w != 10 || h != 10 {
+		t.Fatalf("used = %d,%d (%v), want intrinsic 10,10", w, h, set)
+	}
+	if w, h := b.ImgDisp(); w != 0 || h != 0 {
+		t.Fatalf("declared = %d,%d, want 0,0 (undeclared)", w, h)
+	}
+
+	b2 := imgBox(t, `<img src="x.png" width="600" height="400">`, 10, 10)
+	usedImg(b2, 800)
+	if w, h := b2.ImgDisp(); w != 600 || h != 400 {
+		t.Fatalf("declared = %d,%d, want attr 600,400", w, h)
+	}
+
+	b3 := imgBox(t, `<img src="x.png" style="width:50%;height:300px">`, 10, 10)
+	usedImg(b3, 800)
+	if w, h := b3.ImgDisp(); w != 400 || h != 300 {
+		t.Fatalf("declared = %d,%d, want pct 400,300 at 800", w, h)
 	}
 }
 

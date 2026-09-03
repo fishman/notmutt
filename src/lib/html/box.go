@@ -43,6 +43,7 @@ type Box struct {
 	tblMeas  bool    // tblMin/tblMax valid; extents are width-independent and the tree is immutable, so never stale
 	res      *imgRes // image geometry (RoleImg only): intrinsic + last resolved used size (img.go)
 	Marker   string  // list-item marker type: disc|circle|square|decimal
+	Ord      int     // 1-based ordinal when the box is a direct li child of an ol (0 otherwise)
 	Text     string  // RoleText only
 	Children []*Box
 }
@@ -72,16 +73,10 @@ func ParseStyleSheets(doc *xhtml.Node) []CSSRule {
 // inherited from the html element when present - is the inheritance
 // root, so body/html declarations reach content.
 func Build(doc *xhtml.Node, rules []CSSRule) []*Box {
-	body := findBody(doc)
+	body, st := bodyCascade(doc, rules)
 	if body == nil {
 		return nil
 	}
-	root := &Style{}
-	if body.Parent != nil && body.Parent.Type == xhtml.ElementNode && body.Parent.Data == "html" {
-		root = StyleOf(body.Parent, root, rules)
-	}
-	st := StyleOf(body, root, rules)
-	st.WS = effectiveWS("body", st)
 	var out []*Box
 	for c := body.FirstChild; c != nil; c = c.NextSibling {
 		out = append(out, buildNode(c, st, rules, 0)...)
@@ -90,6 +85,32 @@ func Build(doc *xhtml.Node, rules []CSSRule) []*Box {
 		out = splitRuns(out, st)
 	}
 	return out
+}
+
+// bodyCascade resolves the body element and its computed style under the
+// cascade (html-element style inherited first when present). Build lays out
+// content with it; BodyStyle exposes the style for stage 2's page
+// background/contrast decision.
+func bodyCascade(doc *xhtml.Node, rules []CSSRule) (*xhtml.Node, *Style) {
+	body := findBody(doc)
+	if body == nil {
+		return nil, nil
+	}
+	root := &Style{}
+	if body.Parent != nil && body.Parent.Type == xhtml.ElementNode && body.Parent.Data == "html" {
+		root = StyleOf(body.Parent, root, rules)
+	}
+	st := StyleOf(body, root, rules)
+	st.WS = effectiveWS("body", st)
+	return body, st
+}
+
+// BodyStyle returns the body's computed style under the cascade, or nil for
+// a document without a body. Stage 2 reads the page background and the
+// contrast default from it.
+func BodyStyle(doc *xhtml.Node, rules []CSSRule) *Style {
+	_, st := bodyCascade(doc, rules)
+	return st
 }
 
 // findBody descends to the document's body element. Parse yields
@@ -196,6 +217,7 @@ func fillFlowChildren(b *Box, n *xhtml.Node, st *Style, rules []CSSRule, listDep
 	if b.Tag == "ul" || b.Tag == "ol" {
 		nextDepth++
 	}
+	ord := 0
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		switch c.Type {
 		case xhtml.TextNode:
@@ -207,6 +229,10 @@ func fillFlowChildren(b *Box, n *xhtml.Node, st *Style, rules []CSSRule, listDep
 			}
 			if (b.Tag == "ul" || b.Tag == "ol") && isListItem(child) {
 				child.Marker = listMarker(b.Tag, nextDepth)
+				if b.Tag == "ol" {
+					ord++
+					child.Ord = ord
+				}
 			}
 			b.Children = append(b.Children, child)
 		}

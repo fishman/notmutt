@@ -60,7 +60,7 @@ func spanOf(cell *Box) (colspan, rowspan int) {
 // line (words plus their separators). A br splits the run: segments stack
 // vertically, so each segment is measured alone and the run's extents are
 // the max over segments.
-func runExtents(as []atom, m Metrics) (minW, maxW int) {
+func runExtents(as []Span, m Metrics) (minW, maxW int) {
 	smin, smax := 0, 0
 	flush := func() {
 		if smin > minW {
@@ -77,13 +77,13 @@ func runExtents(as []atom, m Metrics) (minW, maxW int) {
 			continue
 		}
 		w := a.width(m)
-		if a.img != nil {
+		if a.Img != nil {
 			// extent width, never the last layout's used px: a measure
 			// pass must not read a % width resolved at a narrower avail
-			w = imgExtentW(a.img)
+			w = imgExtentW(a.Img)
 		}
 		smax += w
-		if a.sep {
+		if a.Sep {
 			continue // a separator is a break point, not an unbreakable piece
 		}
 		if w > smin {

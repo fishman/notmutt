@@ -353,7 +353,7 @@ func atomizeText(txt string, st *Style, ws WS) []atom {
 	sep := false
 	for _, r := range txt {
 		if collapsible(r) {
-			if b.newlineBreak { // pre-line: LF is a kept break
+			if b.newlineBreak && r == '\n' { // pre-line: LF is a kept break
 				out = append(out, atom{st: st, ws: ws, br: true})
 				sep = false
 			} else {
@@ -719,6 +719,19 @@ func LayoutInline(block *Box, width int, m Metrics, norm bool) []LineBox {
 		}
 		if len(cur) > 0 && cw+aw > width && curBreak {
 			flush() // break before the word; the trailing space drops
+		}
+		if len(cur) > 0 && cw+aw > width && norm {
+			if width-cw <= 0 {
+				flush() // line exactly full: break at the token's leading edge
+			} else {
+				head, tail := cutText(a.text, width-cw, m)
+				a.text = tail
+				aw = a.width(m)
+				emit(atom{st: a.st, ws: a.ws, text: head})
+				flush()
+			}
+			// tail (or the whole token, when budget was 0) continues from a
+			// fresh line: the len(cur)==0 && aw>width gate handles it below
 		}
 		if len(cur) == 0 && aw > width {
 			if norm {

@@ -21,18 +21,22 @@ const (
 	RoleTable              // table grid (leaf in this plan)
 )
 
-// Box is one node of the stage-1 flow tree. St is the computed style;
-// WS is the effective white-space class. Text carries raw text
-// (whitespace is collapsed at layout, never at build).
+// Box is one node of the stage-1 flow tree. St is the computed style
+// the box renders with; text leaves and anonymous run blocks share
+// their container's style pointer, never nil. WS is the effective
+// white-space class. Text carries raw text (whitespace is collapsed at
+// layout, never at build). A block box's children are uniformly
+// block-level or uniformly inline-level; mixed content is split into
+// anonymous run blocks.
 type Box struct {
-	Role   Role
-	Tag    string      // element tag, "" on anonymous boxes
-	Node   *xhtml.Node // originating element (img src, table ref, list tag)
-	St     *Style
-	WS     WS
-	Marker string // list-item marker type: disc|circle|square|decimal
-	Text   string // RoleText only
-	Child  []*Box
+	Role     Role
+	Tag      string      // element tag, "" on anonymous boxes
+	Node     *xhtml.Node // originating element (img src, a href, table)
+	St       *Style
+	WS       WS
+	Marker   string // list-item marker type: disc|circle|square|decimal
+	Text     string // RoleText only
+	Children []*Box
 }
 
 // ParseStyleSheets gathers every <style> element's text into one
@@ -56,30 +60,40 @@ func ParseStyleSheets(doc *xhtml.Node) []CSSRule {
 
 // Build returns the body's top-level flow boxes under the cascade. A
 // document without a body yields nil. display:none and the
-// head/script/skip set produce no box.
+// head/script/skip set produce no box. The body element's own style is
+// the inheritance root, so body/html declarations reach content.
 func Build(doc *xhtml.Node, rules []CSSRule) []*Box {
-	var body *xhtml.Node
-	var find func(n *xhtml.Node)
-	find = func(n *xhtml.Node) {
-		for c := n.FirstChild; c != nil && body == nil; c = c.NextSibling {
-			if c.Type == xhtml.ElementNode {
-				if c.Data == "body" {
-					body = c
-					return
-				}
-				find(c)
-			}
-		}
-	}
-	find(doc)
+	body := findBody(doc)
 	if body == nil {
 		return nil
 	}
+	st := StyleOf(body, &Style{}, rules)
+	st.WS = effectiveWS("body", st)
 	var out []*Box
 	for c := body.FirstChild; c != nil; c = c.NextSibling {
-		out = append(out, buildNode(c, &Style{}, rules, 0)...)
+		out = append(out, buildNode(c, st, rules, 0)...)
+	}
+	if hasBlockChild(out) {
+		out = splitRuns(out, st)
 	}
 	return out
+}
+
+// findBody descends to the document's body element. Parse yields
+// DocumentNode > html > (head, body), so a direct-child scan misses it.
+func findBody(n *xhtml.Node) *xhtml.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type == xhtml.ElementNode && n.Data == "body" {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if b := findBody(c); b != nil {
+			return b
+		}
+	}
+	return nil
 }
 
 // buildNode turns one body child (text or element) into boxes; a
@@ -87,7 +101,7 @@ func Build(doc *xhtml.Node, rules []CSSRule) []*Box {
 func buildNode(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) []*Box {
 	switch n.Type {
 	case xhtml.TextNode:
-		return []*Box{{Role: RoleText, Text: n.Data, WS: effectiveWS("", parent)}}
+		return []*Box{{Role: RoleText, St: parent, WS: parent.WS, Text: n.Data}}
 	case xhtml.ElementNode:
 		if b := buildElement(n, parent, rules, listDepth); b != nil {
 			return []*Box{b}
@@ -135,21 +149,38 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		switch c.Type {
 		case xhtml.TextNode:
-			b.Child = append(b.Child, &Box{Role: RoleText, Text: c.Data, WS: st.WS})
+			b.Children = append(b.Children, &Box{Role: RoleText, St: st, WS: st.WS, Text: c.Data})
 		case xhtml.ElementNode:
 			if child := buildElement(c, st, rules, nextDepth); child != nil {
-				if tag == "ul" || tag == "ol" {
+				if (tag == "ul" || tag == "ol") && isListItem(child) {
 					child.Marker = listMarker(tag, nextDepth)
 				}
-				b.Child = append(b.Child, child)
+				b.Children = append(b.Children, child)
 			}
 		}
 	}
-	if role == RoleInline && hasBlockChild(b.Child) {
+	// A block box's children are uniformly block-level or uniformly
+	// inline-level (CSS 9.2.1.1): an inline element that grew a block
+	// child becomes a block container, and any block container with
+	// mixed children gets its inline runs wrapped in anonymous blocks.
+	if role == RoleInline && hasBlockChild(b.Children) {
 		b.Role = RoleBlock
-		b.Child = splitRuns(b.Child)
+		role = RoleBlock
+	}
+	if role == RoleBlock && hasBlockChild(b.Children) {
+		b.Children = splitRuns(b.Children, st)
 	}
 	return b
+}
+
+// isListItem reports whether a box came from a list-item (li or an
+// element with display:list-item) rather than a stray block.
+func isListItem(b *Box) bool {
+	d := b.St.Display
+	if d == "" {
+		d = uaDisplay(b.Tag)
+	}
+	return d == "list-item"
 }
 
 // roleOf maps an effective display keyword to a Role. Unknown values
@@ -167,8 +198,7 @@ func roleOf(d string) Role {
 	return RoleInline
 }
 
-// hasBlockChild reports whether any direct child is a block-level box
-// (the block-in-inline trigger).
+// hasBlockChild reports whether any direct child is a block-level box.
 func hasBlockChild(cs []*Box) bool {
 	for _, c := range cs {
 		if c.Role == RoleBlock || c.Role == RoleTable {
@@ -178,18 +208,19 @@ func hasBlockChild(cs []*Box) bool {
 	return false
 }
 
-// splitRuns wraps consecutive inline-level children of a now-blockified
-// container into anonymous blocks, separating them from block children
-// (the block-in-inline split): text before a block does not bleed into
-// it.
-func splitRuns(cs []*Box) []*Box {
+// splitRuns wraps consecutive inline-level children of a block
+// container into anonymous run blocks around its block children: text
+// before a block does not bleed into it, and the container's children
+// come out uniformly block-level. Anonymous runs inherit the
+// container's style and white-space class.
+func splitRuns(cs []*Box, st *Style) []*Box {
 	var out []*Box
 	var run []*Box
 	flush := func() {
 		if len(run) == 0 {
 			return
 		}
-		out = append(out, &Box{Role: RoleBlock, Child: run})
+		out = append(out, &Box{Role: RoleBlock, St: st, WS: st.WS, Children: run})
 		run = nil
 	}
 	for _, c := range cs {

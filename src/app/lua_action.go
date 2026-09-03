@@ -218,11 +218,24 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 		bus.Publish(core.LuaResult{Err: fmt.Errorf("unknown command: %q", command)})
 		return
 	}
-	ac := &actionCtx{bus: bus, cfg: cfg, worker: worker, tid: threadID}
+	output, err := runLuaChunk(code, threadID, bus, cfg, worker, func(ac *actionCtx, vm *lua.LState) *lua.LTable {
+		return ac.ctxTable(vm, false)
+	})
+	bus.Publish(core.LuaResult{Output: output, Err: err})
+}
+
+// runLuaChunk runs one Lua chunk on a fresh action VM and returns the
+// print-captured output and the error. ctx builds the table the chunk
+// reads - a global named ctx, also passed as the first argument (a chunk
+// is a bare statement list, never a plugin file). The VM is sandboxed
+// (the shared lib whitelist) and dies with the action deadline. The
+// caller owns surfacing the result: the :lua command publishes LuaResult,
+// the IPC server (lua_ipc_server.go) replies over its socket.
+func runLuaChunk(code, tid string, bus *core.Bus, cfg *config.Config, worker workerAPI, ctx func(*actionCtx, *lua.LState) *lua.LTable) (string, error) {
+	ac := &actionCtx{bus: bus, cfg: cfg, worker: worker, tid: tid}
 	vm, _, cancel, err := ac.newVM(false)
 	if err != nil {
-		bus.Publish(core.LuaResult{Err: err})
-		return
+		return "", err
 	}
 	defer cancel()
 	defer vm.Close()
@@ -230,21 +243,16 @@ func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, 
 	if fn, err := vm.LoadString(code); err != nil {
 		runErr = err
 	} else {
-		// the chunk is a bare statement list, not function(ctx): the ctx
-		// table is a global it reads by name (and its first arg too).
-		// :lua chunks are user-typed, never plugin files - no network
-		// section exists for them, so they keep the full ctx but never
-		// ai_chat
-		ctx := ac.ctxTable(vm, false)
-		vm.SetGlobal("ctx", ctx)
+		tbl := ctx(ac, vm)
+		vm.SetGlobal("ctx", tbl)
 		vm.Push(fn)
-		vm.Push(ctx)
+		vm.Push(tbl)
 		if err := vm.PCall(1, 0, nil); err != nil {
 			runErr = err
 		}
 	}
 	ac.drain()
-	bus.Publish(core.LuaResult{Output: ac.print.String(), Err: runErr})
+	return ac.print.String(), runErr
 }
 
 // newSandboxVM builds one fresh sandboxed VM: the whitelisted libs

@@ -74,6 +74,11 @@ func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "smime-verify" {
 		return smimeVerifyOnce()
 	}
+	if len(os.Args) > 1 && os.Args[1] == "lua" {
+		// the lua IPC client (lua_ipc.go): relays a chunk to a live
+		// session over its unix socket - unconditional, needs no Lua
+		return luaOnce(os.Args[2:])
+	}
 	seedFile(configDir(), "config.toml", configSeed)
 	seedFile(configDir(), "ai.toml", aiConfigSeed)
 	seedAICommands(configDir())
@@ -416,6 +421,11 @@ func Run() error {
 			}
 		}
 	}()
+
+	// the lua IPC socket (R8, roadmap item 6): the `notmutt lua` client's
+	// door into the live session. ctx-bound like every server above; a
+	// busy socket (a second client) is logged and skipped, never fatal.
+	wireLuaIPC(ctx, bus, worker, &cfg)
 
 	busCh := bus.Subscribe()
 	// The loop owns the screen (tcell, record 23): keys and resizes

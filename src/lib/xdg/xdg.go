@@ -31,6 +31,14 @@ func CacheHome() string {
 	return base
 }
 
+// RuntimeHome returns $XDG_RUNTIME_DIR when set, else "" - the home for
+// per-session files (sockets) that must never persist. The caller falls
+// back to StateHome when unset; the XDG spec makes the runtime dir 0700
+// and owned by the user, which is the socket's same-user boundary.
+func RuntimeHome() string {
+	return os.Getenv("XDG_RUNTIME_DIR")
+}
+
 // StateHome returns $XDG_STATE_HOME or ~/.local/state, "" when
 // unresolvable.
 func StateHome() string {

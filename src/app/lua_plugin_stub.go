@@ -6,6 +6,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 
 	"notmutt/config"
@@ -48,6 +49,11 @@ func deliverPickerResult(e core.PickerResult) {}
 func runLuaCommand(command, threadID string, bus *core.Bus, cfg *config.Config, worker workerAPI) {
 	bus.Publish(core.LuaResult{Err: fmt.Errorf("lua: not built in (compile with -tags lua)")})
 }
+
+// wireLuaIPC is a no-op in default builds: no Lua runtime, so no session
+// ever serves the IPC socket - the `notmutt lua` client's "no live
+// client" error is correct in every build.
+func wireLuaIPC(ctx context.Context, bus *core.Bus, worker workerAPI, cfg *config.Config) {}
 
 // deliverPromptResult is a no-op in default builds: no Lua action can
 // block on a prompt, so no waiter exists to resume.

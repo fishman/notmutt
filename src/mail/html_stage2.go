@@ -64,7 +64,12 @@ func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, d
 	bg, fg := pageColors(bs, dark, themeBG)
 	q := &stage2{atts: atts, defaultBG: bg, defaultFG: fg, dark: dark,
 		themeBG: themeBG, linesLeft: maxHTMLLines}
-	// labelLinks (the F-key) injects numbered labels before layout: Task 5.
+	// The F-key render injects a numbered [N] marker box before every link
+	// (anchor href and bare URL) so labels flow into line building like any
+	// word; labelLinks=false never injects, so no label reaches the pager.
+	if labelLinks {
+		boxes = q.injectLinkLabels(boxes)
+	}
 	rows := html.LayoutBlock(boxes, widthPx, cellMeter{}, true)
 	q.emitRows(rows) // Tasks 3-4 grow the row dispatch
 	if q.truncated {
@@ -74,6 +79,110 @@ func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, d
 		return nil, q.links
 	}
 	return q.lines, q.links
+}
+
+// injectLinkLabels numbers every link (anchor href and bare URL) in document
+// order with a synthesized [N] marker box (D13), mirroring the old walker's
+// F-key render. Runs before layout so the markers flow into line building.
+// Style.Label is set only on these synthesized boxes; the unlabeled render
+// never calls this.
+func (q *stage2) injectLinkLabels(bs []*html.Box) []*html.Box {
+	return q.injectInto(bs)
+}
+
+// injectInto walks one child list pre-order (Build order mirrors DOM order).
+// An anchor box gets its marker at its lead inline position; a text box that
+// holds a bare URL splits into pieces around each labeled token. The split
+// can grow a list, so the walk returns the replacement slice.
+func (q *stage2) injectInto(bs []*html.Box) []*html.Box {
+	var out []*html.Box
+	for _, b := range bs {
+		switch {
+		case b.Tag == "a" && b.Node != nil:
+			if href := sanitize(html.Attr(b.Node, "href")); href != "" {
+				q.links = append(q.links, href)
+				label := labelBox(b.St, fmt.Sprintf("[%d]", len(q.links)))
+				// A display:block anchor's content sits in a leading anonymous
+				// run when it mixed inline with a block child; the label joins
+				// that run's inline content. Otherwise the label leads the
+				// anchor's inline children directly.
+				if len(b.Children) > 0 && b.Children[0].Role == html.RoleBlock && b.Children[0].Tag == "" {
+					run := b.Children[0]
+					run.Children = append([]*html.Box{label}, run.Children...)
+				} else {
+					b.Children = append([]*html.Box{label}, b.Children...)
+				}
+			}
+		case b.Role == html.RoleText && urlText(b.Text):
+			out = append(out, q.splitTextURLs(b)...)
+			continue // replacement leaves carry the whole text node
+		}
+		if len(b.Children) > 0 {
+			b.Children = q.injectInto(b.Children)
+		}
+		out = append(out, b)
+	}
+	return out
+}
+
+// splitTextURLs splits one text box at its first bare-URL token into
+// [before][label][token][after], recursing into after for further URLs. The
+// pieces keep the original text (spaces included) so collapse still yields
+// single inter-word spaces and the token itself still renders behind its
+// label. All pieces share the source style pointer; only the label's copy
+// carries Label.
+func (q *stage2) splitTextURLs(b *html.Box) []*html.Box {
+	pos := 0
+	for _, f := range strings.Fields(b.Text) {
+		start := pos + strings.Index(b.Text[pos:], f)
+		if ls := html.Links(f, true); len(ls) > 0 {
+			q.links = append(q.links, ls[0])
+			var out []*html.Box
+			if start > 0 {
+				out = append(out, textBox(b.St, b.WS, b.Text[:start]))
+			}
+			out = append(out, labelBox(b.St, fmt.Sprintf("[%d]", len(q.links))))
+			out = append(out, textBox(b.St, b.WS, f))
+			if tail := b.Text[start+len(f):]; tail != "" {
+				rest := textBox(b.St, b.WS, tail)
+				if urlText(tail) {
+					out = append(out, q.splitTextURLs(rest)...)
+				} else {
+					out = append(out, rest)
+				}
+			}
+			return out
+		}
+		pos = start + len(f)
+	}
+	return nil // urlText gated the call: a URL field exists
+}
+
+// urlText reports whether a text leaf holds a bare URL token (a whitespace
+// field html.Links recognizes) - the split's trigger.
+func urlText(s string) bool {
+	for _, f := range strings.Fields(s) {
+		if ls := html.Links(f, true); len(ls) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// labelBox is a synthesized F-key marker: a RoleText box whose style is a
+// copy of the link/text style with Label set, so stage-2 run building keeps
+// it a separate run (D13).
+func labelBox(st *html.Style, text string) *html.Box {
+	cp := *st // do not mutate the shared style pointer
+	cp.Label = true
+	return &html.Box{Role: html.RoleText, St: &cp, Text: text}
+}
+
+// textBox is a RoleText leaf sharing its source's style pointer - the shape
+// the box builder gives text leaves. Split pieces must share the style so run
+// colors stay uniform across a split token.
+func textBox(st *html.Style, ws html.WS, s string) *html.Box {
+	return &html.Box{Role: html.RoleText, St: st, WS: ws, Text: s}
 }
 
 // pageColors resolves the page background and the default foreground for
@@ -447,6 +556,9 @@ func (q *stage2) runFor(st *html.Style) core.Run {
 	}
 	if st.Underline {
 		r.Attrs |= core.AttrUnderline
+	}
+	if st.Label {
+		r.Label = true
 	}
 	return r
 }

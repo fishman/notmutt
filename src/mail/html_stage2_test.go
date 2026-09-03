@@ -205,6 +205,70 @@ func TestStage2NestedStripRendersInnerCells(t *testing.T) {
 	}
 }
 
+func TestStage2LabelsAreOwnRuns(t *testing.T) {
+	// the label "[1]" precedes the anchor text as its OWN run (never merged
+	// with "alpha") and never merges with non-label text
+	lines, links := renderStage2HTML(`<p><a href="https://a.example.com/x">alpha</a> and beta</p>`, nil, 80, true, false, "")
+	if len(links) != 1 || links[0] != "https://a.example.com/x" {
+		t.Fatalf("links must list the anchor href: %v", links)
+	}
+	joined := renderText(lines)
+	if !strings.Contains(joined, "[1]alpha") {
+		t.Fatalf("label must sit at the link start: %q", joined)
+	}
+	labelRuns := 0
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Label {
+				labelRuns++
+				if r.Text != "[1]" {
+					t.Fatalf("label run text must be exactly [1], got %q", r.Text)
+				}
+				if strings.Contains(joined, "[1]alpha") && strings.HasSuffix(r.Text, "alpha") {
+					t.Fatalf("label must not merge with the anchor text: %q", r.Text)
+				}
+			}
+		}
+	}
+	if labelRuns != 1 {
+		t.Fatalf("want exactly one label run, got %d", labelRuns)
+	}
+}
+
+func TestStage2BareUrlLabeledInDocumentOrder(t *testing.T) {
+	// a bare URL token in text gets its own [N] and KEEPS its text (the old
+	// walker added the label AND the token); anchors and bare URLs number in
+	// document order into the links list
+	body := `<p><a href="https://a.example.com/x">alpha</a> see https://b.example.com/y now</p>`
+	lines, links := renderStage2HTML(body, nil, 80, true, false, "")
+	if len(links) != 2 || links[0] != "https://a.example.com/x" || links[1] != "https://b.example.com/y" {
+		t.Fatalf("links must be [anchor, bare URL] in document order: %v", links)
+	}
+	joined := renderText(lines)
+	if !strings.Contains(joined, "[2]https://b.example.com/y") {
+		t.Fatalf("bare URL keeps its text behind its label: %q", joined)
+	}
+}
+
+func TestStage2UnlabeledRenderCarriesNoLabels(t *testing.T) {
+	body := `<p><a href="https://a.example.com/x">alpha</a> see https://b.example.com/y now</p>`
+	lines, links := renderStage2HTML(body, nil, 80, false, false, "")
+	if links != nil {
+		t.Fatalf("the unlabeled render must return no links: %v", links)
+	}
+	joined := renderText(lines)
+	if strings.Contains(joined, "[") {
+		t.Fatalf("no label may reach the unlabeled render: %q", joined)
+	}
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Label {
+				t.Fatalf("no label run may exist in the unlabeled render")
+			}
+		}
+	}
+}
+
 func firstText(lines []core.Line) string {
 	if len(lines) == 0 {
 		return ""

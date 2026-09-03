@@ -10,7 +10,7 @@
 
 **Spec refs:** Sections "box model and build" (blockification, anonymous table repair), "UA floor" (th bold), "tables" (auto layout, shrink-to-fit cap, colspan/rowspan grid, th bold not centered, vertical-align not modeled, nested tables). WeasyPrint refs: `layout/table.py` (`auto_table_layout`, `distribute_excess_width`), `layout/preferred.py` (`table_and_columns_preferred_widths`, `table_cell_min_max_content_width`), `formatting_structure/build.py` (anonymous-table rules), `css/html5_ua.css` (`table { border-spacing: 2px; border-collapse: separate }`, `td, th { padding: 1px }`).
 
-**Threat model (locked):** a malicious sender can ship a megabyte HTML part. Every loop that scales with input must be O(n); any super-linear path is a content-reachable DoS on the read surface. Tables add new hazards that must stay single-pass: (1) each cell's text is measured exactly once for min/max content width (one atomize pass for measurement, one for layout - a bounded constant 2, never one per column or per row); (2) column count derives from the widest row by cell count, and a colspan is clamped to the row's remaining columns - an attacker cannot mint a million empty spacer columns from a 20-character `colspan=1000000` attribute; (3) span-width excess distribution touches only the columns the cell spans (bounded by the clamped colspan); (4) rowspan occupancy costs one check per column per populated row, and a rowspan blanks only rows that actually carry other cells (fully-occupied rows emit nothing), so blank placements are bounded by the cell count that mentions them; (5) nested tables are bounded by the node count - each nested table is measured once when an ancestor is measured and once more when it lays out, a constant depth-independent factor. No cell text is ever re-measured in a loop, no column array is rescanned per row, and no margin/seam list is rescanned.
+**Threat model (locked):** a malicious sender can ship a megabyte HTML part. Every loop that scales with input must be O(n); any super-linear path is a content-reachable DoS on the read surface. Tables add new hazards that must stay single-pass: (1) each cell's text is measured exactly once for min/max content width (one atomize pass for measurement, one for layout - a bounded constant 2, never one per column or per row); (2) column count derives from the widest row by cell count, and a colspan is clamped to the row's remaining columns - an attacker cannot mint a million empty spacer columns from a 20-character `colspan=1000000` attribute; (3) span-width excess distribution touches only the columns the cell spans (bounded by the clamped colspan); (4) rowspan occupancy costs one check per column per populated row, and a rowspan blanks only rows that actually carry other cells (fully-occupied rows emit nothing), so blank placements are bounded by the cell count that mentions them; (5) nested tables are bounded by the node count - each table's min/max content extents are memoized on its box the first time any measure pass reaches it (content extents are width-independent, so the cache is always valid, across widths and across LayoutBlock calls over the same tree). A deep chain of nested single-cell tables therefore costs ONE bottom-up measure pass over the whole tree, never one full subtree re-measure per ancestor (which would be O(depth^2) atomize/grid work - a content-reachable DoS in exactly this hostile shape). No cell text is ever re-measured in a loop, no column array is rescanned per row, and no margin/seam list is rescanned.
 
 ---
 
@@ -1324,10 +1324,13 @@ git commit -m "feat(html): colspan and rowspan grid occupancy"
 ### Task 4: Block content and nested tables inside cells
 
 **Files:**
-- Modify: `src/lib/html/table.go` - `cellExtents` measures block children (`flowExtents`/`boxExtents`/`tableExtents`); `cellRows` lays out block content via `LayoutBlock` and flattens intra-cell vertical rhythm; the table case in `boxExtents` makes nested tables feed outer column widths.
+- Modify: `src/lib/html/table.go` - `cellExtents` measures block children (`flowExtents`/`boxExtents`/`tableExtents`); `tableExtents` memoizes its result on the box (below); `cellRows` lays out block content via `LayoutBlock` and flattens intra-cell vertical rhythm; the table case in `boxExtents` makes nested tables feed outer column widths.
+- Modify: `src/lib/html/box.go` - three measure-cache fields on `Box` (after `Tbl`).
 - Test: `src/lib/html/table_test.go`.
 
 Task-3 boundary lifted: a cell may hold block content (divs, paragraphs, lists) and nested RoleTable boxes. The cell is laid out by the ordinary block engine at the column content width, so nested tables recurse into `tableRows` through `flow`.
+
+**Memoized nested-table extents (the O(n) requirement, not an optimization):** without caching, `tableExtents` is re-entered by every ancestor's measure pass AND by every ancestor's layout descent, and each entry re-runs `buildGrid` + `measureColumns` over the whole subtree beneath it - so a chain of D single-cell nested tables does O(D^2) grid/atomize work (the exact megabyte-of-nested-tables hostile shape the threat model names). Content min/max are width-independent (measured at infinite width), so each table caches them on its `Box` the first time any measure reaches it; later ancestor measures and layout reads O(1). Per table the cost is then its own cells' text measured once (extent pass) plus once more when it lays out - a bounded constant, never a per-ancestor rescan.
 
 - [ ] **Step 1: Write the failing nested-table test**
 
@@ -1386,6 +1389,11 @@ Expected: FAIL - a nested RoleTable child is invisible to the inline-only `cellE
 
 - [ ] **Step 3: Measure block content (nested tables included)**
 
+`src/lib/html/box.go`, add three measure-cache fields to `Box` next to the Task 1 `Tbl` field:
+`tblMin, tblMax int` and `tblMeas bool`. The zero value is "unmeasured"; a box
+is measured then never mutated, and content min/max are width-independent, so
+the cache never goes stale even across a second LayoutBlock over the same tree.
+
 `src/lib/html/table.go`, replace `cellExtents` and add the block/nested measuring helpers:
 
 ```go
@@ -1430,12 +1438,24 @@ func boxExtents(b *Box, m Metrics) (minW, maxW int) {
 }
 
 // tableExtents measures a nested table's min and max border-box width
-// (column widths plus the surrounding border-spacing) at infinite width.
-// Called once when an ancestor measures, and again when the nested table
-// lays out - a constant depth-independent factor.
+// (column widths plus the surrounding border-spacing) at infinite width,
+// memoized on the box (tblMin/tblMax/tblMeas, the box.go fields from the
+// note above). Content min/max are width-independent (measured at infinite
+// width), so the first measure pass to reach a table computes its extents and
+// every later ancestor measure and the table's own layout read the cache.
+// Without the memo, each ancestor's measure and layout pass would re-descend
+// the whole subtree below it - O(depth^2) buildGrid/atomize work on a deep
+// chain of single-cell tables (a content-reachable DoS). measureColumns
+// below the memo still runs per table when it lays out (assignColumns needs
+// per-column arrays), but its cellExtents reads deeper tables' caches, so it
+// costs only the table's own direct cell text - a constant, never a subtree.
 func tableExtents(t *Box, m Metrics) (minW, maxW int) {
+	if t.tblMeas {
+		return t.tblMin, t.tblMax
+	}
 	rows, cols := buildGrid(t)
 	if cols == 0 {
+		t.tblMeas = true
 		return 0, 0
 	}
 	min, max := measureColumns(rows, cols, m)
@@ -1444,6 +1464,7 @@ func tableExtents(t *Box, m Metrics) (minW, maxW int) {
 		sumMin += min[j]
 		sumMax += max[j]
 	}
+	t.tblMin, t.tblMax, t.tblMeas = sumMin, sumMax, true
 	return sumMin, sumMax
 }
 
@@ -1494,7 +1515,7 @@ Expected: PASS.
 
 - [ ] **Step 6: Verify deep nesting stays linear**
 
-Run a scratch test over a fabricated chain of 200 nested single-cell tables (each nesting a one-cell table), plus the existing `TestTableFillsBetweenMinAndMax`. Expected: completes promptly. Each nested table is measured once by its ancestor's measure pass and once when it lays out - a constant, never a per-depth rescan of the text.
+Run a scratch test over a fabricated chain of 5,000 nested single-cell tables (each nesting a one-cell table), plus the existing `TestTableFillsBetweenMinAndMax`. Expected: completes promptly. Without the Step 3 memo this is O(depth^2) - 25M re-entered buildGrid/measure passes that visibly stall; with it, the first outer measure warms every nested table's cache bottom-up and the rest reads O(1) - a constant, never a per-depth rescan of the text.
 
 - [ ] **Step 7: Full package gate**
 
@@ -1504,7 +1525,7 @@ Expected: PASS, vet clean, gofmt lists nothing.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add src/lib/html/table.go src/lib/html/table_test.go
+git add src/lib/html/table.go src/lib/html/box.go src/lib/html/table_test.go
 git commit -m "feat(html): nested tables and block content in cells"
 ```
 
@@ -1552,7 +1573,7 @@ git commit -m "docs: record html table stage-1 divergences"
 - **Staged boundaries are explicit, not silent:** Task 2's single-span inline `buildGrid`/`columnWidths`/`cellRows` are replaced in Task 3 (spans) and Task 4 (block content), and the plan says so at each task head. Each task's code is complete for what that task tests.
 - **Consistency:** `Row.Cells` is read nowhere in `mail/`; the only consumer is the new `table.go` and the `rowsText` helper. `hasBlockChild`, `splitRuns`, `geom`, `LayoutBlock`, `LayoutInline`, `flattenInline`, `buildBody`, `mono`, `el`, `Attr`, `mustInt` are existing in-package helpers. `rowsText` gains recursion; the existing block tests assert on rows without `Cells`, where it is behavior-identical.
 - **Regression discipline:** the pinned mail `html_*_test.go` suite is untouched; `TestMCPScopeEnforcement` is untouched. `TestTableIsLeaf` was a stub description of the pre-plan leaf, not a pinned behavior, and becomes `TestTableExpandsToGridTree`. No regression test is weakened.
-- **O(n) per stage:** Task 1 is one build pass per node (repair wraps without rescanning). Task 2 measures each cell's text once (measure pass) and lays it out once (layout pass); column count and widths are single passes over the grid. Task 3 keeps that and adds span distribution that touches only each spanning cell's clamped columns; rowspan costs one map tick per actual row plus one skip per rowspan-claimed column in a populated row. Task 4 recurses into nested tables with each nested table measured once by its ancestor and once by its own layout (constant factor), never per depth.
+- **O(n) per stage:** Task 1 is one build pass per node (repair wraps without rescanning). Task 2 measures each cell's text once (measure pass) and lays it out once (layout pass); column count and widths are single passes over the grid. Task 3 keeps that and adds span distribution that touches only each spanning cell's clamped columns; rowspan costs one map tick per actual row plus one skip per rowspan-claimed column in a populated row. Task 4 recurses into nested tables with each table's border-box min/max memoized on its box at first measure (content min/max are width-independent, so the cache is valid across widths and LayoutBlock calls). The first outer measure warms the whole nested subtree bottom-up once; later ancestor measures and each table's own layout read O(1) caches - a constant, never a per-ancestor subtree rescan (the O(n) requirement, not an optimization).
 
 ## Appendix: weasyprint parity probes (developer cross-check, not CI)
 

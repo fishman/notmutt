@@ -1,0 +1,270 @@
+#+title: Bugs
+* TODO drafts are not saved to the drafts folder but instead in the current folder
+* CLOSED 'c' to save attachments hangs until the full-walk finishes
+
+Report: "something hangs after I press 'c' to save attachments." Root
+cause: ONE notmuch worker served both the long full-walk reads (refresh
+full-reloads ~1.4-3.5s, search tabs) and the interactive ops (categorize,
+open). The walk held the single handle, so categorize's ActQueryMsgs +
+ActSnapshots queued behind it.
+
+Fix (6b05568): walks moved to a dedicated second worker with its own
+backend handle; interactive ops never queue behind a walk. The walk
+handle reopens (Backend.Reopen / ActReopen, cgo:
+notmuch_database_reopen; CLI: no-op) before each cycle and search so it
+stays current with the interactive worker's writes. Regression:
+src/app/walkworker_test.go TestWalkWorkerSplit - categorize completes
+while the walk backend blocks; a reversion to one shared worker fails it.
+
+* CLOSED opening a message from a search tab fails until the walk merges it
+
+Report: "search a query, open another tab, press 'c', then open a message
+- it opens in the inbox tab instead of the current view" and "when I
+press c it takes a while before I'm allowed to open a view."
+
+Root cause: in a flat search tab the cursor yields the SYNTHETIC thread
+id (= the message id, groupThreads src/app/refresh.go). The open
+resolves rows-first from the views (threadFromViews) - but until the
+search walk has merged that message, no view holds it, so the open falls
+back to ActThread(thread:<msgid>), and notmuch's thread: operator
+matches NOTHING for a message id (proven against the live DB:
+count thread:<msgid> = 0, count thread:<real-thread-id> = 1). The empty
+fetch rendered as "no messages in thread" (mail.RenderThread on an empty
+set), and the TUI's ThreadLoaded error branch drops the pager silently
+(src/tui/model.go onThreadLoaded) - so pressing enter did nothing until
+the walk happened to merge that message. That is the "wrong tab" and the
+"takes a while" delay: repeated enters silently failed until the search
+fill reached the cursor message. Unrelated to the Lua categorize script
+(the script is fast; the delay was the open failing, not Lua hanging).
+
+Fix: the open/attachment fallback (fetchMsgs, src/app/app.go) tries
+thread:<tid> first, and when it comes back empty for a message-id
+carrying open, resolves the message by id (ActSnapshots) instead of
+failing. A flat-view open now works instantly regardless of the search
+walk's merge state. The threaded fallback path is unchanged (ActThread),
+so the pinned TestOpenThreadRowsFirst still holds. Regression:
+src/app/open_flat_test.go TestOpenFromFlatSearchTabUnmerged - the
+faithful fake models thread:<msgid> = 0 and asserts the open renders the
+message, not "no messages in thread".
+
+* CLOSED 'c' to categorize attachments is a no-op in a search tab
+
+Report: "same tab appears" (pressing c in a search tab does nothing).
+The diag log confirmed the no-op: `categorize ids=0 snapshotted=0
+saved=0`. Root cause: in a flat search tab the cursor thread id is the
+message id (groupThreads, src/app/refresh.go), and the hotkey pass
+queried thread:<tid> - notmuch's thread: operator matches NOTHING for a
+message id (the same mechanism as the open-from-search-tab bug below).
+
+Fix (e464a65): categorizeThread builds the OR query
+`(thread:"<tid>") or (id:"<tid>")` - the threaded case is unchanged (the
+id term adds nothing), the message-id case resolves by id. Regression:
+src/app/attachsave_test.go TestCategorizeThreadFlatSearchTab - the
+faithful fake returns nothing for a query with no id: term and asserts
+the pass saves one attachment instead of zero.
+
+* CLOSED categorize.lua stopped working after a plugin deadline kill
+
+Report: "@~/.config/notmutt/lua/categorize.lua stopped working." Root
+cause: a busy-looping plugin was killed by the per-call budget, and the
+kill path set p.vm = nil - the plugin was permanently disabled for the
+session. Fix (f274745): the gopher-lua VM survives a context kill (PCall
+unwinds the stack; proven), so the kill now fails the call per-call and
+the plugin retries on the next message. LOCKED deadline tests updated
+with user approval; new regression TestLuaCategorizeRecovers (slow first
+call killed, second call succeeds).
+
+* OPEN self-sent mail (account A to account B) is one notmuch message, deleting moves only one of its files
+
+Scenario: send from an address at account A to your own address at account B (the
+classic self-test or a cross-account forward of your own mail). notmuch links the
+fcc copy (in A's Sent folder) and the received copy (in B's INBOX) by Message-ID
+into ONE message with TWO paths. In the index they are one thread. Delete it.
+
+Current behavior: the apply path resolves the physical move in
+`moveEntries` (src/app/apply.go) with `filter.AccountOf(cfg, paths)`
+(src/filter/filter.go), which returns the FIRST path's account - one account
+for the whole message. The deleted-folder candidates resolve for that one
+account, and the mover's Entry carries a single Account/Folder for ALL of the
+message's paths. The other account's file is not moved to its own deleted
+folder: it is either left behind, or moved toward the wrong account's folder
+space.
+
+Why it is hard: the R2 tag model says one message, one home - a single
+folder tag (+deleted) is the winner. The physical truth is one message,
+multiple files, multiple homes. To move each file correctly the resolution
+must be per-FILE per-ACCOUNT: each path under A's prefix goes to A's deleted
+folder, each path under B's prefix to B's. That means the move can no longer
+be one Account/Folder per message; it must fan out across the message's
+paths.
+
+Open questions (unsolved):
+- Should BOTH copies move to their respective deleted folders, or only the
+  received copy (keeping the sent record in A's Sent folder)? Deleting the
+  sent record removes the proof of sending.
+- How to express the fan-out: split the message's paths into one Entry per
+  account, or make the Entry carry a per-path folder map?
+- After the moves, the message keeps +deleted. If both files move, no file
+  remains in a live folder - is that the wanted end state? If only the
+  received copy moves, the message still has a file in A's Sent folder:
+  should it keep +deleted or revert to +sent?
+- The single-home tag cannot express per-account state; the move must derive
+  it from the paths without contradicting the tag model.
+- The same issue applies to any self-addressed thread (reply/forward to
+  yourself across accounts).
+
+Pointers: src/app/apply.go `moveEntries` + `AccountOf`, src/filter/filter.go
+`AccountOf`, src/filter/mover.go, AGENTS.md R2 (one message, one home).
+
+* OPEN cursor movement is buggy while the F display filter is active
+
+Report: "moving around while 'F' capital F filter is running is buggy." The F
+filter is the live display filter (src/tui/model.go ~1498): the prompt calls
+`activeView().SetFilter(text)` + `m.rows = Rows()` on every key, esc/enter
+keep or restore the text, and the view narrows to the in-memory rows matching
+a case-insensitive substring over author, subject, and tags (core/view.go
+`SetFilter` + `rowMatches`). It is display-only and synchronous - no async
+query - so "running" means while the prompt is open AND/OR while the filtered
+rows are active.
+
+Verified so far (scratch tests, src/tui/zz_scratch_filter_test.go - removed):
+- Flat (non-windowed) single-message-thread view: j/k through the filtered
+  set moves correctly (0 -> 1 -> 2, clamped at the last row). The filtered/
+  full index mapping in SetCursorIndex / CursorRowIndex (core/view.go) is
+  consistent, and a cursor the filter hides falls back to the first visible
+  row.
+- The movement code (moveCursor / cursorStepAt / windowSlideAt /
+  pageAtEdgeAt in src/tui/model.go) operates in filtered space and mostly
+  self-corrects indexOffset via the render clamp.
+
+Suspects (NOT yet reproduced end to end):
+- Windowed threads (default `[index.thread] max-rows = 10`): ghosts ("+N
+  more") are dropped by rowMatches (nil Msg -> false), so only matching rows
+  from the current window chunk are visible. Crossing a thread boundary calls
+  SlideWindow (core/view.go), which slides the FULL thread's window and
+  re-derives a DIFFERENT filtered subset - the visible rows can jump under
+  the cursor mid-move. The scratch windowed fixture collapsed to a single row
+  instead of the expected window+ghosts (itself suspicious, undiagnosed).
+- A background refresh while the prompt is open (ViewDiff -> EventMsg ->
+  `m.rows = Rows()` at src/tui/model.go ~870) re-materializes under the
+  mid-typed filter; m.indexOffset can be stale against the new filtered set.
+- The filter prompt captures j/k as typed text while open (expected prompt
+  behavior), but a user expecting movement sees the list jump as the filter
+  re-narrows - possibly the reported "buggy moving".
+
+Open questions (unsolved):
+- Is the report the windowed-thread jump, the refresh-under-prompt remap, or
+  the prompt-captures-keys expectation? Needs the user's exact repro (filter
+  text, thread depth, whether a sync/refresh was running).
+- Should the display filter suppress window sliding (pin the thread window
+  while a filter is active) so movement stays inside the filtered subset?
+
+Pointers: src/tui/model.go `moveCursor`/`windowSlideAt`/`SetFilter` prompt
+(~1498), src/core/view.go `SetFilter`/`rowMatches`/`SlideWindow`/`SetCursorIndex`
+(~325, ~650, ~736), src/tui/model.go EventMsg rows rematerialize (~870).
+
+* TODO html inline layout is O(n^2) on one unbroken token (content-reachable hang)
+
+A single long unbroken token (base64 blob, long URL, crafted mail) makes the
+stage-1 inline layout quadratic in two independent places:
+
+- atomizeText collapse mode grows a word one rune at a time:
+  `out[n-1].text += string(r)` (src/lib/html/inline.go ~106-107). Strings are
+  immutable, so every append copies the whole accumulated word - O(n^2) byte
+  copies for an n-rune token. Every collapse-mode text leaf hits this
+  (normal/nowrap/pre-line), i.e. most mail.
+- cutText (src/lib/html/inline.go ~303-310) re-measures from the string head
+  on every rune (`m.Width(s[:i+n])`): O(n) per step, O(n^2) total. This runs
+  on normalize's emergency char-break (overflow-wrap:anywhere) of an over-wide
+  token, so normalize over a giant preserved or collapsed run is quadratic too.
+
+A multi-hundred-KB unbroken word stalls the render for minutes. Mail HTML
+reaches this path on the read surface.
+
+Fix direction: accumulate collapse-mode words in a strings.Builder / []byte
+and flush an atom at a separator (keeps the sep atom contract); carry a
+running px width through cutText instead of re-measuring from the head. Both
+local to src/lib/html/inline.go; no shape change. Add an uneven-Metrics
+regression (double-width runes) so a rune-count-for-px regression cannot slip
+back in. Suggested first step: the two throwaway probes listed under the pin
+entry below already exist as verified expectations.
+
+Pointers: src/lib/html/inline.go atomizeText, cutText, LayoutInline charBreak.
+
+* CLOSED rebase: Task 5 html fill engine was committed inside a docs commit with an AI co-author
+
+`git log -S 'func LayoutInline' 5010a91..HEAD` shows the whole Plan 2 Task 5
+implementation (LineBox, LayoutInline, breakAtSpace, cutText, applyAlign; 197
+lines in inline.go + 139 in inline_test.go, including the two no-space-boundary
+regression tests) landed in commit 1b8d9b5, whose subject is "docs(spec):
+hubspot follow-up workflow design" and whose body carries "Co-Authored-By:
+Deepseek".
+
+Violations: code committed under a docs subject and with an AI co-author
+trailer (AGENTS.md: code commits carry no AI marker and no co-author line); the
+plan-mandated commit "feat(html): greedy inline line fill with normalize and
+alignment" is absent from history; the mixed commit entangles Plan 2 code with
+hubspot doc edits, so bisecting inline.go mis-fires and any amend of the docs
+commit drags the code with it. The code content itself is fine and HEAD is
+clean - this is history hygiene.
+
+Fix (2026-09-03): 1b8d9b5 split into three commits - 08cf685 feat(html):
+greedy inline line fill with normalize and alignment (no co-author), b7755a9
+docs(spec): hubspot follow-up workflow design (Co-Authored-By: Deepseek),
+c2d531f docs(plan): hubspot follow-up workflow implementation re-parented on
+top. The reconstructed tree equals the pre-split HEAD byte-for-byte
+(git diff 7c14303 c2d531f is empty), 08cf685 is identical to the reviewed,
+suite-green 36086a1, and the full tagged suite passes at the repaired HEAD.
+Root cause of the mislabel: a parallel session on the shared master used
+`git commit --amend` while 36086a1 was HEAD, folding the html code into its
+docs commit. Old hashes remain reachable in the reflog.
+
+Pointers: commits 08cf685/b7755a9/c2d531f; plan Task 5 (docs/superpowers/plans/2026-09-03-html-inline-normalize.md).
+
+* TODO html inline: pin Plan-2 contract gaps at the LayoutInline surface
+
+The fill engine is correct on audit and on live probes, but the suite (25
+inline test funcs; the "55" figure is the whole lib/html package across
+box/ua/html/adapt/links/inline) does not pin these:
+
+- Author-mode over-wide collapsible word overflows whole (only pre/nowrap
+  author overflow is pinned): `<p>aa abcdef</p>` at width 4 author ->
+  ["aa","abcdef"], normalize -> ["aa","abcd","ef"].
+- LineBox.X flush-left guard when pad <= 0: an over-width or exactly-full line
+  under center/right stays X = 0.
+- No empty lines at the fill surface: `a<br><br>b` -> ["a","b"].
+- Uneven Metrics (double-width runes) proving fill/breakAtSpace/cutText use px
+  widths, not rune counts - mono(n) scales uniformly, so a rune-count regression
+  would pass today.
+
+All four were verified against current code with throwaway probes on 2026-09-03
+(removed). These pins exist so a Plan 3+ regression in shared code is caught
+here.
+
+Pointers: src/lib/html/inline_test.go (helpers mono, renderAtoms, linesText).
+
+* TODO scheduled list sorts the display-time string, not the send time (misorders across weekday boundaries)
+
+Report: TestScheduledList (src/app/schedule_test.go:315) fails nightly ~22:00-23:00
+local and passes the rest of the day. It schedules two mails at now+1h and now+2h and
+asserts the s-key list sorts by send time (earlier first).
+
+Root cause: scheduledList (src/app/schedule.go:131) parses each spool record's RFC3339
+send time (line 145), then formats it to the DISPLAY string "Mon Jan 2 15:04" (line
+150) and sorts THAT lexicographically (line 153). The weekday name leads the sort key,
+and weekday names are not chronological under string order ("Fri" < "Thu", "Mon" <
+"Sun", and the week cycles anyway), so any two pending mails whose formatted weekday
+differs misorder. The test only passes when both target times share a weekday: the
+failure window is ~22:00-23:00 (+1h stays today, +2h crosses midnight -> "Fri Sep 4
+00:15" sorts before "Thu Sep 3 23:15" because "Fri" < "Thu"). The same comparator
+misorders across month ends, year ends, and any opposite-weekday pair, so it is wrong
+well beyond the nightly window - the clock only decides when the existing test trips.
+
+Fix direction: sort on the parsed time.Time, not the formatted string (sort a
+[]struct{ at time.Time; entry } by at, or sort.Slice with out[i].at.Before(out[j].at)),
+and emit the display string after the sort. One-line-class change; TestScheduledList
+then pins it and stops tripping on the clock.
+
+Pointers: src/app/schedule.go scheduledList (145-153); src/app/schedule_test.go:315
+TestScheduledList. App code, not lib/html - untouched by the html layout plans;
+recorded here so the nightly failure is a known bug, not a mystery.

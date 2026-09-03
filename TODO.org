@@ -1,0 +1,75 @@
+#+title: Nice-to-have backlog (auto-collected from code reviews)
+
+Reviewers' Minor / nice-to-have findings land here automatically. Important
+and Critical findings get fixed in-task; only the non-blocking tail is
+collected. Each entry notes why it matters so it can be picked up without
+re-deriving the context.
+
+* DONE list markers: hang-x must record the owning li's content edge, not the row's X
+Resolved by 869d31d + 2e12a22..869d31d re-review (Ready to merge: Yes):
+Row.Marker string became Row.Markers []RowMarker carrying the owning li's
+content edge x; empty <li> emits a marker-only row; the text-less nested case
+hangs outer+inner markers on one row at their own edges. Locked by
+TestBlockEmptyListItemGetsMarkerRow + TestBlockTextlessNestedLiHangsOuterInOwnGutter.
+
+* TODO marker slice order is deepest-first, not DOM order (a stage-2 paint hazard)
+An inner li's marker is appended while the recursion runs; the outer li's only
+after the subtree returns, so the nested text-less row yields [circle X80, disc
+X40]. At distinct Xs it is visually irrelevant, but if two markers ever coincide
+(a nested ul whose gutter the author zeroes, negative margins) a last-wins paint
+would cover the inner marker with the outer one. Nothing consumes Row yet; when
+stage 2 paints Markers, emit outer-to-inner or document the order unspecified.
+src/lib/html/block.go flow (110-113).
+* TODO RowMarker carries no owning-box/style reference (stage-2 marker styling)
+On the text-less nested row, Row.Box is the INNER li (the row's owner), so a
+future stage-2 styling a marker glyph from Row.Box would paint the OUTER disc
+with the inner li's computed style (color/font) - wrong when nested items
+differ. Stage 2 must derive marker style from the owning li (walk Box ancestry
+or extend RowMarker), never from Row.Box. Spec pins the {Type, X} shape; this
+is a design note, not a shape change. src/lib/html/block.go RowMarker.
+* TODO ordinary-case marker X is only indirectly pinned
+The normal <li>text</li> case hangs its marker on its own first content row at
+X: cx, but no test asserts that X directly (TestBlockListContentInGutterWithMarker
+and TestBlockNestedListIndentsAndMarks check presence/type only). The locked
+nested test pins X=40/X=80, so the invariant holds by construction; a
+non-locked test asserting a first-row marker sits at the content edge would
+harden it against an X regression. src/lib/html/block_test.go (108-131).
+* TODO body text-align is lost on a pure-inline body (implicit-run wrap drops container style)
+LayoutBlock wraps a body with no block child in an anonymous RoleBlock whose
+St is nil, so applyAlign reads no text-align: <body style="text-align:center">
+over bare text centers nothing. splitRuns anonymous runs inherit alignment via
+the shared style pointer; only this synthetic top-level run loses it. Fix:
+seed the wrapper's St from a shared leaf box's St (2 lines), which also gives
+the implicit-run branch its first real test (none of the TestBlock* cases
+exercise the !hasBlockChild wrap today). src/lib/html/block.go LayoutBlock.
+* TODO seam.minNeg is dead as shipped: no margin can parse negative in stage 1
+parseLen rejects n < 0, so every seam.add leaves minNeg == 0 and take() returns
+maxPos. The weasyprint-faithful negative branch is correct and activates for
+free if negative margins ever parse; add a one-line comment so a reader does
+not add an untestable "negative collapse" test. src/lib/html/block.go seam.
+* TODO recursion depth is unguarded at build ingestion (hostile-mail hardening)
+flow() recurses one frame per block-nesting level, but Build/buildElement/
+StyleOf in box.go already do with larger frames, so the builder is the weak
+point, not layout. A crafted deeply nested doc exhausts the goroutine stack in
+parse/build. Cap DOM depth at parse/build ingestion (one guard), not per
+visitor. Real mail nesting (blockquotes) is harmless today.
+* TODO the flat Row stream drops a trailing block's bottom margin (last mb)
+A lone <p>one</p> yields one Row at gap 16 and no representation of the final
+16px bottom margin; the "flat stream is lossless" claim holds only for
+inter-row margins. Fine for a terminal scroll, but the stage-2 quantizer must
+know the last margin is dropped. src/lib/html/block.go Row doc.
+* TODO give mono a RuneWidth method so DoS e2e drives the cutText stepping path
+countMeter and dbl unit pins exercise RuneStepper, but the giant-token DoS e2e
+tests use mono, which has no RuneWidth and so falls back to prefix re-measure.
+Adding func (mono) RuneWidth(r rune) int { return 1 } makes the linear stepping
+path the one the e2e tests actually stress. src/lib/html/metrics.go / inline_test.go.
+* TODO restW additivity assumption deserves a comment at the preserved-wrap fill
+The exact restW == Width(rest) invariant holds only while Width is additive
+(metrics.go documents a monospace per-rune meter). A future proportional/PDF
+meter with shaping could break it silently (under-subtract -> over-wide tail
+emitted whole). One-line comment: "valid while Width is additive". src/lib/html/inline.go.
+* TODO parseLen accepts rem beyond the documented em-only surface
+The plan mandated the rem branch (folded to the same 16px base, behaviorally
+== em) but the spec text names em only; the doc comment "other units are not
+values" is slightly broader than the code. Harmless over-acceptance; decide if
+strictness matters when more length units land. src/lib/html/html.go parseLen.

@@ -82,3 +82,53 @@ func TestExplicitNormalClearsInheritedWrap(t *testing.T) {
 		t.Fatalf("explicit normal on pre-wrap child: WS=%d WSSet=%v Pre=%v, want WSNormal set, Pre=false", s.WS, s.WSSet, s.Pre)
 	}
 }
+
+func TestUADisplayDefaults(t *testing.T) {
+	cases := map[string]string{
+		"p": "block", "div": "block", "span": "", "b": "", "a": "",
+		"table": "table", "tr": "table-row", "td": "table-cell",
+		"thead": "table-row-group", "caption": "table-caption",
+		"script": "none", "title": "none", "style": "none",
+		"li": "block", "img": "", "br": "",
+	}
+	for tag, want := range cases {
+		if got := uaDisplay(tag); got != want {
+			t.Errorf("uaDisplay(%q) = %q, want %q", tag, got, want)
+		}
+	}
+}
+
+func TestEffectiveWhiteSpacePreTag(t *testing.T) {
+	// a bare <pre> with no author declaration must behave as pre
+	s := StyleOf(el("pre"), &Style{}, nil)
+	if got := effectiveWS("pre", s); got != WSPre {
+		t.Fatalf("bare pre: effectiveWS = %d, want WSPre", got)
+	}
+	// an explicit author value wins over the tag default
+	s2 := StyleOf(el("pre"), &Style{}, nil)
+	s2.apply(ParseDecls("white-space: nowrap"))
+	if got := effectiveWS("pre", s2); got != WSNowrap {
+		t.Fatalf("author nowrap on pre: effectiveWS = %d, want WSNowrap", got)
+	}
+	// an inline element inherits the parent class
+	parent := &Style{WS: WSPreWrap}
+	s3 := StyleOf(el("span"), parent, nil)
+	if got := effectiveWS("span", s3); got != WSPreWrap {
+		t.Fatalf("inherited pre-wrap: effectiveWS = %d, want WSPreWrap", got)
+	}
+}
+
+func TestListMarkerByDepth(t *testing.T) {
+	if got := listMarker("ul", 1); got != "disc" {
+		t.Errorf("ul depth1 = %q, want disc", got)
+	}
+	if got := listMarker("ul", 2); got != "circle" {
+		t.Errorf("ul depth2 = %q, want circle", got)
+	}
+	if got := listMarker("ul", 3); got != "square" {
+		t.Errorf("ul depth3 = %q, want square", got)
+	}
+	if got := listMarker("ol", 2); got != "decimal" {
+		t.Errorf("ol = %q, want decimal", got)
+	}
+}

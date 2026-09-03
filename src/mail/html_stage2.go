@@ -6,7 +6,7 @@ package mail
 // Stage-2 terminal renderer: consumes lib/html's px Row stream (LayoutBlock)
 // and quantizes it to core.Line pager lines. All terminal knowledge lives
 // here; lib/html stays px-pure. See docs/superpowers/specs/2026-09-03-html-layout-engine-design.md
-// stage 2 + migration, and the stage-2 plan 6.
+// stage 2 + migration, and docs/superpowers/plans/2026-09-04-html-stage2-wiring.md.
 
 import (
 	"encoding/base64"
@@ -174,10 +174,12 @@ func urlText(s string) bool {
 	return false
 }
 
-// preserveWS reports a white-space class that keeps source whitespace verbatim
-// (the pre family). Bare-URL splitting must skip these: field-splitting a text
-// leaf strands a newline in a before piece, whose trailing LF atomizeText
-// trims, collapsing two pre lines into one.
+// preserveWS reports a white-space class in the pre family. Bare-URL splitting
+// must skip these for walker parity (the walker never linkifies inside pre);
+// only WSPre/WSPreWrap keep whitespace verbatim - WSPreLine collapses but is
+// gated here for policy uniformity. Field-splitting pre text also strands a
+// newline in a before piece, whose trailing LF atomizeText trims, collapsing
+// two pre lines into one.
 func preserveWS(w html.WS) bool {
 	switch w {
 	case html.WSPre, html.WSPreWrap, html.WSPreLine:
@@ -254,7 +256,7 @@ func (q *stage2) emitRows(rows []html.Row) {
 		if q.truncated {
 			return
 		}
-		if q.skipFor(r) { // tracking-pixel-only row (D9): no blanks, no line
+		if q.skipFor(r) || q.contentFreeStrip(r) { // dropped rows consume no gap (D9 + all-empty strips)
 			continue
 		}
 		if !q.firstRow {
@@ -275,14 +277,66 @@ func (q *stage2) emitRows(rows []html.Row) {
 	}
 }
 
-// skipFor reports a row whose only content is one declared 1x1 pixel
-// (a tracking beacon, D9): it emits nothing and consumes no gap.
+// skipFor reports a row whose atoms are all declared 1x1 pixels (tracking
+// beacons, D9) with only inter-word separators between them: it emits
+// nothing and consumes no gap.
 func (q *stage2) skipFor(r html.Row) bool {
-	if len(r.Markers) != 0 || len(r.Line.Atoms) != 1 || r.Line.Atoms[0].Img == nil {
+	if len(r.Markers) != 0 {
 		return false
 	}
-	w, h := r.Line.Atoms[0].Img.ImgDisp()
-	return w == 1 && h == 1
+	any := false
+	for _, a := range r.Line.Atoms {
+		switch {
+		case a.Img != nil:
+			w, h := a.Img.ImgDisp()
+			if w != 1 || h != 1 {
+				return false
+			}
+			any = true
+		case a.Sep:
+		default:
+			return false
+		}
+	}
+	return any
+}
+
+// contentFreeStrip reports a table grid row whose fragments all render
+// nothing (lone tracking pixels, hr cells, or nested all-empty strips).
+// Such a strip must drop before the row preamble consumes its gap, else a
+// spacer/tracking table emits an empty defaultBG line and stops the margin
+// collapse around it (spacer tables are endemic in HTML mail).
+func (q *stage2) contentFreeStrip(r html.Row) bool {
+	if len(r.Cells) == 0 {
+		return false
+	}
+	for _, f := range r.Cells {
+		if !q.fragmentContentFree(f) {
+			return false
+		}
+	}
+	return true
+}
+
+// fragmentContentFree reports a strip fragment that renders no visible
+// content: an hr (swallowed on strips by appendRow), a lone tracking
+// pixel, or a nested all-empty strip.
+func (q *stage2) fragmentContentFree(r html.Row) bool {
+	if r.HR {
+		return true
+	}
+	if len(r.Markers) > 0 {
+		return false
+	}
+	if len(r.Cells) > 0 {
+		for _, f := range r.Cells {
+			if !q.fragmentContentFree(f) {
+				return false
+			}
+		}
+		return true
+	}
+	return q.skipFor(r)
 }
 
 // acc is one horizontal pager line under construction. Runs sit at
@@ -335,14 +389,51 @@ func (a *acc) space() {
 
 // emitTextRow emits one content row: hanging markers (D10), then its
 // spans with binding (D6), tab expansion + F1 sanitize, and images
-// (D9). An isolated image the row owns outright becomes an image line.
+// (D9). A row that holds only isolated images emits one own-line per
+// image (the walker's per-image own-line render, pinned by
+// TestImageDeclaredSizes); an image sharing its row with text stays inline.
 func (q *stage2) emitTextRow(r html.Row) {
-	var a acc
-	if img := q.emitRowContent(&a, r, true); img != nil {
-		q.addLine(core.Line{Image: img, Text: img.Alt, Kind: core.LineBody, Bg: q.defaultBG})
+	if q.allImages(r) {
+		for _, sp := range r.Line.Atoms {
+			if sp.Img == nil {
+				continue // a separator between isolated images
+			}
+			if w, h := sp.Img.ImgDisp(); w == 1 && h == 1 {
+				continue // tracking pixel (D9)
+			}
+			if img := q.boxImage(sp.Img); img != nil {
+				q.addLine(core.Line{Image: img, Text: img.Alt, Kind: core.LineBody, Bg: q.defaultBG})
+			} else {
+				rn := q.runForBox(sp.Img)
+				rn.Text = sanitize(imgAlt(sp.Img))
+				q.addLine(core.Line{Text: rn.Text, Runs: []core.Run{rn}, Kind: core.LineBody, Bg: q.defaultBG})
+			}
+		}
 		return
 	}
+	var a acc
+	q.emitRowContent(&a, r)
 	q.addLine(core.Line{Text: joinRunText(a.runs), Runs: a.runs, Imgs: a.imgs, Kind: core.LineBody, Bg: q.defaultBG})
+}
+
+// allImages reports a text row that holds only image spans and inter-word
+// separators (no text, no markers): each image is isolated, so it renders
+// as its own line rather than an inline placeholder.
+func (q *stage2) allImages(r html.Row) bool {
+	if len(r.Markers) != 0 {
+		return false
+	}
+	has := false
+	for _, sp := range r.Line.Atoms {
+		switch {
+		case sp.Img != nil:
+			has = true
+		case sp.Sep:
+		default:
+			return false // a text span shares the line
+		}
+	}
+	return has
 }
 
 // emitMarkerRow emits a marker-only row (an empty li, or a nested item
@@ -357,8 +448,10 @@ func (q *stage2) emitMarkerRow(r html.Row) {
 // (D12): each fragment renders at its own absolute px X through appendRow;
 // recursion places nested-table strips inline at their shifted columns. A
 // cell's declared background rides its content runs (the td style carries
-// the bg down the cascade), so no region machinery. The strip line carries
-// defaultBG. The row-level preamble in emitRows already applied the gap.
+// the bg down the cascade), so no region machinery: blank interior columns
+// of a bg'd cell render line-default (accepted, not a bug to "fix"). The
+// strip line carries defaultBG. The row-level preamble in emitRows already
+// applied the gap.
 func (q *stage2) emitStrip(r html.Row) {
 	var a acc
 	for _, f := range r.Cells {
@@ -371,9 +464,11 @@ func (q *stage2) emitStrip(r html.Row) {
 // fragment with Cells hosts a nested table: its fragments are already
 // shifted to absolute X (shiftRow), so render them in directly. A cell is
 // table flow or inline content at the strip level (cellRows separates), so
-// a fragment is never both (guard on Cells first). ownImages is false: a
-// strip has no own-line image; every cell image is inline on the strip
-// (D9). emitRowContent pads the fragment to its own column.
+// a fragment is never both (guard on Cells first). A strip has no own-line
+// image; every cell image is inline on the strip (D9). emitRowContent pads
+// the fragment to its own column. A non-table non-inline fragment (an hr
+// row) drops here: emitRowContent ignores HR, matching the walker's
+// no-lines output for a lone hr cell.
 func (q *stage2) appendRow(a *acc, f html.Row) {
 	if len(f.Cells) > 0 {
 		for _, inner := range f.Cells {
@@ -381,7 +476,7 @@ func (q *stage2) appendRow(a *acc, f html.Row) {
 		}
 		return
 	}
-	q.emitRowContent(a, f, false)
+	q.emitRowContent(a, f)
 }
 
 // emitHR emits one horizontal-rule row (D11): a run of rule glyphs over
@@ -397,21 +492,9 @@ func (q *stage2) emitHR(r html.Row) {
 
 // emitRowContent lays one row's content into the accumulator. It owns
 // the content lead: after hanging gutter markers it pads to the row's
-// content column (round(r.X/charW)); callers must not pre-pad. ownImages
-// lets a top-level row claim an isolated image (the sole span, no
-// markers) as an own-line image, which it returns non-nil; strip
-// fragments always pass false so their images stay inline.
-func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image {
-	// A lone image resolves once: it may satisfy the own-line claim, or an
-	// unresolved (nil) resolution falls through to the inline loop below.
-	lone := len(r.Markers) == 0 && len(r.Line.Atoms) == 1 && r.Line.Atoms[0].Img != nil
-	var soleImg *core.Image
-	if lone {
-		soleImg = q.boxImage(r.Line.Atoms[0].Img)
-		if ownImages && soleImg != nil {
-			return soleImg
-		}
-	}
+// content column (round(r.X/charW)); callers must not pre-pad. Images
+// render inline here (the all-image own-line case is emitTextRow's).
+func (q *stage2) emitRowContent(a *acc, r html.Row) {
 	q.layMarkers(a, r)
 	a.pad(int(math.Round(float64(r.X) / charW)))
 	pending := false
@@ -422,10 +505,7 @@ func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image 
 			if w, h := sp.Img.ImgDisp(); w == 1 && h == 1 {
 				continue // tracking pixel (D9): drops, leaving any pending space
 			}
-			img := soleImg
-			if !lone {
-				img = q.boxImage(sp.Img)
-			}
+			img := q.boxImage(sp.Img)
 			if img == nil {
 				// unresolved src: the alt renders as plain text, not an image
 				q.emitTextPiece(a, &pending, &started, sanitize(imgAlt(sp.Img)), sp.Img.St)
@@ -462,7 +542,6 @@ func (q *stage2) emitRowContent(a *acc, r html.Row, ownImages bool) *core.Image 
 			q.emitTextPiece(a, &pending, &started, text, sp.St)
 		}
 	}
-	return nil
 }
 
 // emitTextPiece appends one text piece: a pending inter-word space
@@ -653,3 +732,29 @@ func glyphText(mk html.RowMarker) string {
 // before the owning item's content edge, so the glyph occupies
 // [col-glyphCells, col) in the gutter.
 func glyphCells(mk html.RowMarker) int { return html.TextWidth(glyphText(mk)) }
+
+// joinRunText is the line's plain text (the Lua render contract reads
+// Line.Text; runs are the styled overlay).
+func joinRunText(runs []core.Run) string {
+	var b strings.Builder
+	for _, r := range runs {
+		b.WriteString(r.Text)
+	}
+	return b.String()
+}
+
+// bindsLeft reports a word that must hug the preceding word: a comma or
+// period split from its word by an inline boundary ("GitHub ," and
+// "unsubscribe ." artifacts - the field join adds a space the source
+// lacked) and an underscore-leading fragment (a URL split across spans
+// into "email" + "_source"). These bind left typographically anyway.
+func bindsLeft(s string) bool {
+	if s == "" {
+		return false // a control-only node sanitizes to ""; the join must not index it
+	}
+	switch s[0] {
+	case ',', '.', ';', ':', '!', '?', '%', '_', ')', ']', '}':
+		return true
+	}
+	return false
+}

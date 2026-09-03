@@ -181,7 +181,7 @@ func TestStage2CellBackgroundPaintsItsRuns(t *testing.T) {
 
 func TestStage2MultiColumnStripPlacesCells(t *testing.T) {
 	// two narrow cells: both texts present on one strip line, second cell's
-	// text starts strictly after the first's text end
+	// text starts at or after the first cell's text end (abutment tolerated, D12)
 	lines, _ := renderStage2HTML(`<table><tr><td>aa</td><td>bb</td></tr></table>`, nil, 0, false, false, "")
 	if len(lines) != 1 {
 		t.Fatalf("want one strip line, got %d: %q", len(lines), renderText(lines))
@@ -344,6 +344,72 @@ func TestStage2AdjacentLabelsStaySeparateRuns(t *testing.T) {
 	if !has1 || !has2 || merged {
 		t.Fatalf("labels must render as separate runs [1],[2]: %q", renderText(lines))
 	}
+}
+
+func TestStage2AllEmptyStripSkips(t *testing.T) {
+	// a grid row whose fragments all drop (a lone tracking pixel) must render
+	// nothing and consume no gap: it must not stop margin collapse between the
+	// surrounding paragraphs (TODO.org all-empty-strips).
+	body := `<p>a</p><table><tr><td><img width="1" height="1"></td></tr></table><p>b</p>`
+	lines, _ := renderStage2HTML(body, nil, 0, false, false, "")
+	if got := linesText(lines); got != "a//b" {
+		t.Fatalf("tracking-pixel table must drop with no blank line: %q", got)
+	}
+}
+
+func TestStage2DarkSmokeAdapts(t *testing.T) {
+	// dark=true: a light-declared page bg reflects onto the theme bg and
+	// rides every content line (pageColors + runFor dark adaptation, the
+	// luma gate). Mirrors the locked html_dark_test.go fixture shape.
+	lines, _ := renderStage2HTML(`<body style="background:#f4f4f4">x</body>`, nil, 0, false, true, "#282c34")
+	if len(lines) == 0 || lines[0].Bg != "#33373f" {
+		t.Fatalf("light body bg = %q, want reflected #33373f", firstBG(lines))
+	}
+	lines, _ = renderStage2HTML(`<body style="background:#111111">x</body>`, nil, 0, false, true, "#282c34")
+	if len(lines) == 0 || lines[0].Bg != "#111111" {
+		t.Fatalf("dark body bg = %q, want #111111 unchanged", firstBG(lines))
+	}
+	// a bgcolor table cell reflects its light bg through runFor's dark path
+	lines, _ = renderStage2HTML(`<table><tr><td bgcolor="#f4f4f4">x</td></tr></table>`, nil, 0, false, true, "#282c34")
+	found := false
+	for _, l := range lines {
+		for _, r := range l.Runs {
+			if r.Bg == "#33373f" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("bgcolor cell must carry the reflected #33373f run: %+v", lines)
+	}
+}
+
+func TestStage2DecimalMarkerShows(t *testing.T) {
+	lines, _ := renderStage2HTML(`<ol><li>one</li></ol>`, nil, 0, false, false, "")
+	if got := renderText(lines); !strings.Contains(got, "1.") || !strings.Contains(got, "one") {
+		t.Fatalf("ol item must show its decimal marker and text: %q", got)
+	}
+}
+
+func TestStage2EmptyLiShowsDisc(t *testing.T) {
+	lines, _ := renderStage2HTML(`<ul><li></li></ul>`, nil, 0, false, false, "")
+	if got := renderText(lines); !strings.Contains(got, "•") {
+		t.Fatalf("a lone li must show its disc: %q", got)
+	}
+}
+
+func TestStage2HRYieldsRuleLine(t *testing.T) {
+	lines, _ := renderStage2HTML(`<hr>`, nil, 0, false, false, "")
+	if got := renderText(lines); !strings.Contains(got, "─") {
+		t.Fatalf("an hr must yield a rule-glyph line: %q", got)
+	}
+}
+
+func firstBG(lines []core.Line) string {
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0].Bg
 }
 
 func firstText(lines []core.Line) string {

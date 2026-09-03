@@ -8,7 +8,7 @@ import "testing"
 func TestParseMarginLengths(t *testing.T) {
 	cases := map[string]int{
 		"12px": 12, "0": 0, "0px": 0, "auto": 0,
-		"1em": 16, "1.5em": 24, "2em": 32, "0.67em": 11,
+		"1em": 16, "1.5em": 24, "2em": 32, "0.67em": 11, "2rem": 32,
 	}
 	for in, want := range cases {
 		got, ok := parseLen(in)
@@ -38,6 +38,16 @@ func TestApplyMarginShorthandSetsSides(t *testing.T) {
 	s.apply(ParseDecls("margin: 1em 0"))
 	if s.MarginTop != 16 || s.MarginBottom != 16 || s.MarginRight != 0 || s.MarginLeft != 0 {
 		t.Fatalf("2-value margin = %d/%d/%d/%d", s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft)
+	}
+	s = Style{}
+	s.apply(ParseDecls("margin: 7px"))
+	if s.MarginTop != 7 || s.MarginRight != 7 || s.MarginBottom != 7 || s.MarginLeft != 7 {
+		t.Fatalf("1-value margin = %d/%d/%d/%d", s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft)
+	}
+	s = Style{}
+	s.apply(ParseDecls("margin: 1px 2px 3px"))
+	if s.MarginTop != 1 || s.MarginRight != 2 || s.MarginBottom != 3 || s.MarginLeft != 2 {
+		t.Fatalf("3-value margin = %d/%d/%d/%d", s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft)
 	}
 }
 
@@ -79,7 +89,10 @@ func TestUAMarginsFillUnsetSides(t *testing.T) {
 		{"dd", 0, 16, 0, 16, 40, 0},
 		{"hr", 0, 8, 0, 8, 0, 0},
 		{"h1", 0, 21, 0, 21, 0, 0},
+		{"h2", 0, 20, 0, 20, 0, 0},
+		{"h3", 0, 19, 0, 19, 0, 0},
 		{"h4", 0, 21, 0, 21, 0, 0},
+		{"h5", 0, 22, 0, 22, 0, 0},
 		{"h6", 0, 25, 0, 25, 0, 0},
 		{"span", 0, 0, 0, 0, 0, 0},
 	}

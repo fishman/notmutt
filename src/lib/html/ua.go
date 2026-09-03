@@ -5,7 +5,7 @@ package html
 
 // The UA floor (html5_ua.css analog): tag defaults the cascade does not
 // carry. uaDisplay and effectiveWS are layered over StyleOf by the box
-// builder; the running mail walker never reads them.
+// builder.
 
 // uaDisplay is the UA default display keyword for a tag, "" when the
 // default is inline. The head/script/skip set mirrors mail's skipTags.
@@ -73,10 +73,12 @@ func listMarker(tag string, depth int) string {
 // uaMargins fills the UA margin defaults for a tag where the author did
 // not set the side, and the ul/ol padding-left gutter. depth is the list
 // nesting the box sits under (0 = no list ancestor): nested lists drop
-// their vertical margins. Layered by the box builder after StyleOf, so
-// the running mail walker never sees these. Heading margins are the UA
-// em values folded to px at the base-16 ladder (html5_ua.css fonts:
-// h1 2em .. h6 .67em), since stage 1 has no font-size property.
+// their vertical margins. Layered by the box builder after StyleOf, so UA
+// geometry never rides an inherited copy. Heading margins fold the
+// html5_ua.css em coefficients against each heading's own em-scaled font
+// (h1 .67em at 2em, h2 .83em at 1.5em, h3 1em at 1.17em, h4 1.33em at
+// 1em, h5 1.67em at .83em, h6 2.33em at .67em) to 21/20/19/21/22/25 px;
+// stage 1 has no font-size property.
 func uaMargins(tag string, depth int, s *Style) {
 	t, b := 0, 0
 	switch tag {
@@ -98,9 +100,7 @@ func uaMargins(tag string, depth int, s *Style) {
 		if depth == 0 {
 			t, b = 16, 16
 		}
-		if tag == "ul" || tag == "ol" {
-			s.PadLeft = 40 // the hanging-marker gutter
-		}
+		s.PadLeft = 40 // the hanging-marker gutter
 	case "hr":
 		t, b = 8, 8
 	}

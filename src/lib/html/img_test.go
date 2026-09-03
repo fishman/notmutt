@@ -171,25 +171,27 @@ func TestResolveImagesFillsIntrinsics(t *testing.T) {
 		switch src {
 		case "ok.png":
 			return 60, 30, true
-		case "tiny.png":
-			return 1, 1, true
+		case "deep.png":
+			return 12, 6, true
+		case "broken.png":
+			return 40, 20, false // decode failed: nonzero dims must NOT land
 		}
-		return 0, 0, false // broken.png, empty src
+		return 0, 0, false // empty src, unknown
 	}
-	bs := buildBody(`<p><img src="ok.png"></p><div><ul><li><img src="broken.png"></li></ul></div><p><img src="tiny.png"><img src=""></p>`)
+	bs := buildBody(`<p><img src="ok.png"></p><div><ul><li><img src="deep.png"></li></ul></div><p><img src="broken.png"><img src=""></p>`)
 	ResolveImages(bs, load)
 	if b := bs[0].Children[0].res; b == nil || b.iw != 60 || b.ih != 30 {
 		t.Fatalf("ok.png intrinsic = %+v, want 60x30", b)
 	}
-	// descend to the img under div > ul > li
+	// descend to the img under div > ul > li: the walk must reach depth 3
 	div := bs[1]
 	li := div.Children[0].Children[0]
-	if b := li.Children[0].res; b == nil || b.iw != 0 || b.ih != 0 {
-		t.Fatalf("broken.png intrinsic = %+v, want 0x0 (load ok=false)", b)
+	if b := li.Children[0].res; b == nil || b.iw != 12 || b.ih != 6 {
+		t.Fatalf("deep.png intrinsic = %+v, want 12x6", b)
 	}
 	p3 := bs[2]
-	if b := p3.Children[0].res; b == nil || b.iw != 1 || b.ih != 1 {
-		t.Fatalf("tiny.png intrinsic = %+v, want 1x1", b)
+	if b := p3.Children[0].res; b == nil || b.iw != 0 || b.ih != 0 {
+		t.Fatalf("broken.png intrinsic = %+v, want 0x0 (load ok=false)", b)
 	}
 	if b := p3.Children[1].res; b == nil || b.iw != 0 {
 		t.Fatalf("empty-src intrinsic = %+v, want 0x0", b)

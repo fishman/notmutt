@@ -87,9 +87,10 @@ flush, so pixels never race the text.
 An image that owns its line (a chart or photo sitting alone in its
 row) fills the text column - an email that sizes a figure for a ~600px
 browser column is not left at half the width of a wide terminal - and
-centers in the window, capped at its natural pixels and the 100-cell
-paint cap. Small images render at natural size; an image sharing its
-row with text keeps its authored width and flow position.
+seats at its block's text-align (left, center, or right), flush when
+the block does not align it, capped at its natural pixels and the
+100-cell paint cap. Small images render at natural size; an image
+sharing its row with text keeps its authored width and flow position.
 
 ## HTML rendering
 

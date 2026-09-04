@@ -101,17 +101,25 @@ the explicit extension of that posture:
   was "no ResolveImages on the mail path" is now "no pixels on the mail
   path" - geometry (px dimensions) may cross, decoded pixels may not.
 
-Standalone images fill + center (2026-09-04): an image that owns its
+Standalone images fill + align (2026-09-04): an image that owns its
 line - a lone own-line image, or an inline placeholder on an otherwise
 empty text row (how a table cell's single chart emits) - drops the
 authored disp cap at decode (`pager.standaloneLine`, `prepareImages`),
 so it fills the window's text column at natural px (no upscale, capped
 at the 100-cell paint cap) instead of staying at a browser-column
-width; `visibleImages` centers such a block. An image that shares its
-row with text keeps its authored disp and flow offset. Markers and the
-images-off layout are untouched - this is decode/paint-only in the
+width. It seats at its block's text-align lead like any block: the
+allImages emit carries `round(Row.X/charW)` (the same text-align-shifted
+content edge text pads to) on `core.Image.X`, and `visibleImages`
+paints the decode's left edge there, clamped into the window. No
+text-align = flush left - the earlier unconditional center was dropped.
+An image that shares its row with text keeps its authored disp and flow
+offset (inline `ImagePos.X` already follows text-align). Markers and
+the images-off layout are untouched - this is decode/paint-only in the
 TUI. Inline row geometry is unchanged; a wide decode paints over the
-image's own blank rows, never text.
+image's own blank rows, never text. Alignment geometry is real only on
+the images-on layout (a 0-width images-off row shifts a center/right
+block by the full box); the toggle's reopen installs that before
+decode seats.
 
 Height divergence remains (BUGS.org): intrinsic px height still does not
 advance stage-1 rows; vertical room is the pager's decode expansion

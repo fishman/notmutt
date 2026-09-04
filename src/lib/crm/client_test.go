@@ -71,7 +71,7 @@ func nextCall(t *testing.T, calls <-chan call) call {
 // request JSON) and the contact mapping when no createdAfter filter is
 // requested.
 func TestListUnprocessed(t *testing.T) {
-	wantBody := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"}]}],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100}`
+	wantBody := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"}]}],"properties":["email","firstname","lastname","jobtitle"],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100}`
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
 		io.WriteString(w, `{"results":[`+alphaContactJSON+`,`+atlasContactJSON+`]}`)
 	})
@@ -120,8 +120,8 @@ func TestListUnprocessedPaging(t *testing.T) {
 	// createdAfter arrives as RFC3339 (the config shape); the wire filter
 	// value must be the same instant as epoch-ms.
 	const createdAfter = "2023-11-14T22:13:20Z"
-	wantPage1 := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"},{"propertyName":"createdate","operator":"GT","value":"1700000000000"}]}],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100}`
-	wantPage2 := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"},{"propertyName":"createdate","operator":"GT","value":"1700000000000"}]}],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100,"after":"1"}`
+	wantPage1 := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"},{"propertyName":"createdate","operator":"GT","value":"1700000000000"}]}],"properties":["email","firstname","lastname","jobtitle"],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100}`
+	wantPage2 := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"},{"propertyName":"createdate","operator":"GT","value":"1700000000000"}]}],"properties":["email","firstname","lastname","jobtitle"],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100,"after":"1"}`
 	var served bool
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
 		if !served {
@@ -167,8 +167,8 @@ func TestContact(t *testing.T) {
 	if req.method != http.MethodGet {
 		t.Errorf("method = %s, want GET", req.method)
 	}
-	if req.target != "/crm/v3/objects/contacts/201?associations=company" {
-		t.Errorf("target = %s, want /crm/v3/objects/contacts/201?associations=company", req.target)
+	if req.target != "/crm/v3/objects/contacts/201?associations=company&properties=email,firstname,lastname,jobtitle" {
+		t.Errorf("target = %s, want /crm/v3/objects/contacts/201?associations=company&properties=email,firstname,lastname,jobtitle", req.target)
 	}
 	if req.auth != "Bearer "+testKey {
 		t.Errorf("Authorization = %q, want Bearer %s", req.auth, testKey)
@@ -213,8 +213,8 @@ func TestCompany(t *testing.T) {
 	if req.method != http.MethodGet {
 		t.Errorf("method = %s, want GET", req.method)
 	}
-	if req.target != "/crm/v3/objects/companies/901" {
-		t.Errorf("target = %s, want /crm/v3/objects/companies/901", req.target)
+	if req.target != "/crm/v3/objects/companies/901?properties=name,domain,industry,description" {
+		t.Errorf("target = %s, want /crm/v3/objects/companies/901?properties=name,domain,industry,description", req.target)
 	}
 	if req.auth != "Bearer "+testKey {
 		t.Errorf("Authorization = %q, want Bearer %s", req.auth, testKey)

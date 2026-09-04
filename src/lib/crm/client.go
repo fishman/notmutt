@@ -21,10 +21,23 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
-const apiBase = "https://api.hubspot.com"
+const (
+	apiBase          = "https://api.hubspot.com"
+	maxResponseBytes = 8 << 20 // success-path decode cap, mirrors the bounded-body habit
+)
+
+// contactProps and companyProps are the properties the mapping reads,
+// requested explicitly because HubSpot's default search/read property set
+// does not reliably include jobtitle (and excludes custom properties).
+// Read-only.
+var (
+	contactProps = []string{"email", "firstname", "lastname", "jobtitle"}
+	companyProps = []string{"name", "domain", "industry", "description"}
+)
 
 // ErrRetry marks a HubSpot failure the caller may retry (HTTP 429 or any
 // 5xx); the caller decides the backoff.
@@ -82,6 +95,7 @@ func (c *Client) ListUnprocessed(ctx context.Context, marker, createdAfter strin
 	}
 	body := searchRequest{
 		FilterGroups: []filterGroup{{Filters: filters}},
+		Properties:   contactProps,
 		Sorts:        []sortSpec{{PropertyName: "createdate", Direction: "DESCENDING"}},
 		Limit:        100,
 	}
@@ -105,7 +119,7 @@ func (c *Client) ListUnprocessed(ctx context.Context, marker, createdAfter strin
 // id (CompanyID is empty when there is no association).
 func (c *Client) Contact(ctx context.Context, id string) (Contact, error) {
 	var w contactWire
-	path := "/crm/v3/objects/contacts/" + id + "?associations=company"
+	path := "/crm/v3/objects/contacts/" + id + "?associations=company&properties=" + strings.Join(contactProps, ",")
 	if err := c.do(ctx, http.MethodGet, path, nil, &w); err != nil {
 		return Contact{}, err
 	}
@@ -115,7 +129,7 @@ func (c *Client) Contact(ctx context.Context, id string) (Contact, error) {
 // Company returns one company by id.
 func (c *Client) Company(ctx context.Context, id string) (Company, error) {
 	var w companyWire
-	path := "/crm/v3/objects/companies/" + id
+	path := "/crm/v3/objects/companies/" + id + "?properties=" + strings.Join(companyProps, ",")
 	if err := c.do(ctx, http.MethodGet, path, nil, &w); err != nil {
 		return Company{}, err
 	}
@@ -141,6 +155,7 @@ func (c *Client) MarkFollowedUp(ctx context.Context, id, marker string) error {
 
 type searchRequest struct {
 	FilterGroups []filterGroup `json:"filterGroups"`
+	Properties   []string      `json:"properties,omitempty"`
 	Sorts        []sortSpec    `json:"sorts"`
 	Limit        int           `json:"limit"`
 	After        string        `json:"after,omitempty"`
@@ -260,10 +275,13 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 		return c.apiErr(resp)
 	}
 	if out == nil {
-		io.Copy(io.Discard, resp.Body)
+		io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(out); err != nil {
+		return fmt.Errorf("hubspot: decode response: %w", err)
+	}
+	return nil
 }
 
 // apiErr maps a non-2xx response: 429 and any 5xx become ErrRetry; other

@@ -300,6 +300,23 @@ func TestErrorMapping(t *testing.T) {
 	}
 }
 
+// TestDecodeBound pins the bounded success decode: a response body larger
+// than maxResponseBytes must fail to decode rather than be slurped whole.
+// The payload is valid JSON complete with a pad string, so without the
+// cap the decode would succeed; the truncating LimitReader cuts the JSON
+// and Decode errors instead.
+func TestDecodeBound(t *testing.T) {
+	pad := strings.Repeat("A", maxResponseBytes) // pushes the closing braces past the cap
+	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"results":[{"id":"201","properties":{"pad":"`+pad+`"}}]}`)
+	})
+	_, err := c.ListUnprocessed(context.Background(), "notmutt_followed_up", "")
+	nextCall(t, calls)
+	if err == nil {
+		t.Fatal("ListUnprocessed: want a decode error from the response cap")
+	}
+}
+
 // TestParseDate pins the createdate decoding: epoch millis and ISO-8601
 // both parse; empty and garbage yield the zero time.
 func TestParseDate(t *testing.T) {

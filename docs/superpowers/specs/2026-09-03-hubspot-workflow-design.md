@@ -20,18 +20,26 @@ Decisions locked in brainstorm:
   call opens a prefilled compose. Nothing is ever sent automatically.
 - Write-back: yes - marking the contact processed is written to HubSpot, which
   is the source of truth (no local dedup DB).
-- Client architecture: the CRM core consolidates in one lua-gated subsystem,
-  `src/lib/crm` (package `crm`, the `src/lib/html` / `src/lib/crypto`
-  precedent): stdlib-only purpose-built clients (option B), no OpenAPI codegen
-  - none exists in the tree and ~6 endpoints do not justify one. A shared
-  vendor core is extracted only when a second vendor appears (YAGNI). The lib
-  injects the app-only capabilities it must not import: the HubSpot bearer key
-  is resolved upstream and passed in, the `[ai]` chat call arrives as a ChatFn,
+- Client architecture: one lua-gated subsystem `src/lib/crm` (package `crm`,
+  the `src/lib/html` / `src/lib/crypto` precedent) holds the CRM core and stays
+  vendor-neutral: `client.go` declares a neutral `Client` interface (including
+  `Provider()`, the routing id) plus the `Contact`/`Company` domain types - no
+  wire code, no vendor name. HubSpot is a concrete implementation under it:
+  `src/lib/crm/hubspot` (package `hubspot`, the sibling-of-`crm` layering)
+  implements `crm.Client` with stdlib `net/http` only - no OpenAPI codegen,
+  none exists in the tree and ~6 endpoints do not justify one. Research, the
+  briefing builder, and the workflow job bodies live in `crm`, take the
+  `Client` interface, and publish rows/briefings/drafts carrying
+  `client.Provider()`, so `crm` names no vendor. The lib injects the app-only
+  capabilities it must not import: the bearer key is resolved upstream and
+  passed to `hubspot.NewClient`, the `[ai]` chat call arrives as a ChatFn,
   gated mail grounding as a MailGroundFn. Code above the lib is a THIN adapter
-  (`src/app/hubspot_engine.go` + `!lua` stub): it resolves the key via
+  (`src/app/crm_engine.go` + `!lua` stub): it routes on `cfg.Crm.Provider`
+  (today `case "hubspot"` builds `hubspot.NewClient`), resolves the key via
   `ai.FetchKey` and the AI entry via the existing resolveAIProvider rule,
-  opens compose, and feeds tui hooks. The lib never names a vendor beyond its
-  own provider id.
+  opens compose, and feeds tui hooks. The only vendor string above the vendor
+  impls is `cfg.Crm.Provider` itself; a second CRM is a new subpackage + a new
+  switch case, no core/TUI/lib rename.
 
 The whole feature is `//go:build lua`: it calls the AI provider path
 (`src/app/ai`, `src/app/ai_stream.go`) which is lua-gated today. The tag is a
@@ -127,17 +135,16 @@ created_after   = ""                     # RFC3339; empty = all unprocessed
   does not depend on any account's folder/tag state except the opt-in
   `[ai-data]` grant for mail grounding.
 
-## 3. The subsystem: `src/lib/crm`
+## 3. The subsystem: `src/lib/crm` (neutral) + `src/lib/crm/hubspot`
 
-One lua-gated package, `src/lib/crm`, holds the whole CRM core (`net/http` +
-`encoding/json`, the `src/app/ai/ai.go` precedent; lib layering rule: it
-imports nothing from app/tui/notmuch/compose - only config, core, stdlib):
+The neutral package `src/lib/crm` holds the vendor-independent core (`net/http`
+is confined to vendor subpackages; `crm` itself imports only context/config/
+core/stdlib - the lib layering rule: nothing from app/tui/notmuch/compose):
 
-- `client.go` - the HubSpot client. `NewClient(ctx, key []byte) *Client`: the
-  bearer key is resolved upstream (the adapter, via `token_cmd`) and injected,
-  never resolved here. Fixed base URL, per-request timeout, paging loop,
-  rate-limit mapped to a retryable error. Data types (Contact, Company) carry
-  only the fields the workflow uses.
+- `client.go` - the neutral seam. `Client` is an interface: `Provider() string`
+  plus `ListUnprocessed`, `Contact`, `Company`, `MarkFollowedUp`. `Contact`/
+  `Company` are the domain types, carrying only the fields the workflow uses.
+  No wire code, no HTTP, no vendor name lives here.
 - `research.go` - `Research(ctx, p config.AIProvider, company Company, chat
   ChatFn) ([]Result, error)`: queries on the company domain and name over the
   referenced `[ai]` entry's connection. The chat call is INJECTED (`ChatFn`,
@@ -154,15 +161,24 @@ imports nothing from app/tui/notmuch/compose - only config, core, stdlib):
 - `workflow.go` + `crm.go` - the job core: `runPull`, `runAnalyze`,
   `runDraft`, `runMark` publish core events over an injected `*core.Bus`
   (queue snapshot, briefing, draft, row error) and carry the shared types.
+  Every job takes `client Client` and stamps rows/briefings/drafts with
+  `client.Provider()` - the routing id comes from the client, never a literal.
   `runDraft` takes the injected ChatFn and MailGroundFn; grounding is "an
   inbound thread with the address exists AND its `[ai-data.<account>]` grant
   permits it, else empty (no mail context)".
 
-Client methods:
+The vendor implementation is `src/lib/crm/hubspot` (package `hubspot`, the
+parent-imports-interface shape reversed: the impl imports the parent for
+`crm.Client`). It holds `NewClient(ctx, key []byte) *Client`, the wire structs,
+the paging loop, and the HTTP error mapping (429/5xx -> a retryable sentinel
+surfaced through the interface). Fixed base URL, per-request timeout (the
+ai-package posture). `Provider()` returns `"hubspot"`. Its methods:
 
 - `ListUnprocessed(createdAfter string) ([]Contact, error)` - the search
   endpoint, filter "marker property is unset", sort by createdAt desc, page
-  until exhausted.
+  until exhausted. Search rows carry no association, so returned contacts have
+  an empty `CompanyID`; the per-row company comes from an analyze-time
+  `Contact(id)` refetch (never an N+1 in the pull).
 - `Contact(id) (Contact, error)` + associated company id.
 - `Company(id) (Company, error)` - name, domain, industry, size, description.
 - `MarkFollowedUp(id, marker string) error` - set `marker_property`.
@@ -175,13 +191,15 @@ are pinned in the plan and locked by the httptest tests.
 The job core lives in the lib (`src/lib/crm/workflow.go`): `runPull`,
 `runAnalyze`, `runDraft`, `runMark` are launched on fresh goroutines from the
 adapter, publish to `*core.Bus`, cancellable via the existing Task machinery.
-Each takes its capabilities as injected args - the `*Client`, the resolved
-`config.AIProvider`, the ChatFn, the MailGroundFn - so none of them needs an
-app import.
+Each takes its capabilities as injected args - the `crm.Client` interface, the
+resolved `config.AIProvider`, the ChatFn, the MailGroundFn - so none of them
+needs an app import, and none names a vendor.
 
-`src/app/hubspot_engine.go` (new, lua-gated) is a THIN adapter mirroring
+`src/app/crm_engine.go` (new, lua-gated) is a THIN adapter mirroring
 `src/app/ai_engine.go` and `src/app/send.go`. It no-ops unless
-`cfg.Crm.Provider == "hubspot"`, then:
+`cfg.Crm.Provider != ""`, and builds the vendor client by switching on that
+value (`case "hubspot": hubspot.NewClient(ctx, key)` from
+`src/lib/crm/hubspot`), then:
 
 - Resolves the bearer key via `ai.FetchKey(hs.TokenCmd)` and the AI entry via
   the existing resolveAIProvider rule (`hs.AI`, empty = first configured),
@@ -193,9 +211,11 @@ app import.
 - On a queue-ready event launches `runPull`; on `core.CrmDraft` opens the
   compose - prefills a `compose.State` (`To`, subject, body), publishes
   `compose.ToEvent` - and tracks `composeID -> {Provider, ContactID}` for the
-  send hook; on send-OK/dismiss launches `runMark`; on row errors drives
-  write-back. Supplies the queue surface into tui hooks (the
-  SetAICommandSource/Handler shape); the `!lua` build carries a stub.
+  send hook (Provider from the draft; the send hook matches it against the
+  client it built, i.e. `cfg.Crm.Provider`); on send-OK/dismiss launches
+  `runMark`; on row errors drives write-back. Supplies the queue surface into
+  tui hooks (the SetAICommandSource/Handler shape); the `!lua` build carries a
+  stub.
 
 Context assembly for the briefing is a sibling of `BuildContext`, not a
 reuse: `BuildContext` is structured around mail messages (body caps, quoted
@@ -213,9 +233,9 @@ Selection shows the briefing in a detail region of the view.
 The row model and this surface are provider-neutral: the core type is
 `CrmContact` carrying a `provider` id - the routing key (`hubspot` today; a
 future CRM is a new value, no core/TUI rename). Core and TUI never name a
-vendor; only the vendor clients and the engine do. The engine fills rows with
-`provider = "hubspot"` and the surface dispatches every action with the full
-row so the owning engine filters on its provider.
+vendor; only the vendor subpackage and the adapter (via `cfg.Crm.Provider`) do.
+The engine fills rows with `client.Provider()` and the surface dispatches every
+action with the full row so the owning engine filters on its provider.
 
 Row actions (vim scheme, R9 declarative bindings, configurable):
 - `a` analyze - runs the briefing job; guard: not while a job is running on

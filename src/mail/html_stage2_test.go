@@ -510,6 +510,40 @@ func TestStage2ImagesOnResolvesIntrinsicSizes(t *testing.T) {
 	}
 }
 
+// TestStage2OwnLineImageLead pins the isolated-image lead carrier: an
+// own-line (allImages) image carries the same text-align-shifted content
+// lead (round(Row.X/charW)) text on its row pads to, so the pager can
+// seat the decoded image where the block aligned it instead of centering
+// it. Center and right shifts come from applyAlign on the real (declared)
+// width; an unaligned block's lead is the content edge (0 for a top-level
+// image).
+func TestStage2OwnLineImageLead(t *testing.T) {
+	uri := pngURI(t, 360, 180)
+	img := func(body string) *core.Image {
+		lines, _ := renderStage2Full(body, nil, 80, false, false, "", true, nil)
+		for _, l := range lines {
+			if l.Image != nil {
+				return l.Image
+			}
+		}
+		t.Fatalf("an own-line image must render, got %q", linesText(lines))
+		return nil
+	}
+	for _, tc := range []struct {
+		name string
+		body string
+		want int
+	}{
+		{"unaligned", `<p><img src="` + uri + `" width="300"></p>`, 0},
+		{"center", `<div style="text-align:center"><img src="` + uri + `" width="300"></div>`, 25},
+		{"right", `<div style="text-align:right"><img src="` + uri + `" width="300"></div>`, 50},
+	} {
+		if got := img(tc.body).X; got != tc.want {
+			t.Fatalf("%s: own-line image lead X=%d want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
 // pngURI encodes a w x h NRGBA image to a data:image/png;base64 URI.
 func pngURI(t *testing.T, w, h int) string {
 	t.Helper()

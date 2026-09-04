@@ -422,6 +422,10 @@ func (q *stage2) emitTextRow(r html.Row) {
 				continue // tracking pixel (D9)
 			}
 			if img := q.boxImage(sp.Img); img != nil {
+				// seat the own-line image at the same lead text on this row
+				// pads to (round(r.X/charW), the text-align-shifted content
+				// edge); the pager paints its left edge there, not centered.
+				img.X = int(math.Round(float64(r.X) / charW))
 				q.addLine(core.Line{Image: img, Text: img.Alt, Kind: core.LineBody, Bg: q.defaultBG})
 			} else {
 				rn := q.runForBox(sp.Img)

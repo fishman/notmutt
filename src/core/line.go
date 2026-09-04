@@ -62,6 +62,10 @@ type Image struct {
 	// width/height attrs or style; 0 = unspecified); the decode targets it.
 	DispW int
 	DispH int
+	// X is the owning block's text-align-shifted content lead in cells
+	// (own-line images only; inline images carry it as ImagePos.X). 0 =
+	// flush / unknown. The pager seats a decoded image's left edge here.
+	X int
 }
 
 // Line is one pager render line: the text plus the style kind. All text

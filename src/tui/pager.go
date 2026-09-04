@@ -424,9 +424,9 @@ type imgBlock struct {
 // visibleImages lists the window's image lines, one block per image:
 // the expanded block (rows walked back to the first doc row for the
 // anchor) or the collapsed Alt row (Rows 0 - listed as the decoder's
-// trigger, painted as text). The dims may still be 0. A standalone
-// image (alone on its line) centers in the window; an inline image
-// keeps its flow offset.
+// trigger, painted as text). The dims may still be 0. A block image
+// seats at its block's text-align lead (Image.X, the lead its text
+// row pads to); an inline image keeps its flow offset.
 func (p *pager) visibleImages() []imgBlock {
 	if p.imgRow == nil {
 		return nil
@@ -449,12 +449,12 @@ func (p *pager) visibleImages() []imgBlock {
 		}
 		if l.Image != nil {
 			out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows,
-				img: l.Image, x: max(0, (p.width-l.Image.Cols)/2)})
+				img: l.Image, x: seatX(l.Image.X, l.Image.Cols, p.width)})
 		}
 		for _, im := range l.Imgs {
 			x := im.X
 			if p.standaloneLine(li, im.Image) {
-				x = max(0, (p.width-im.Image.Cols)/2)
+				x = seatX(im.X, im.Image.Cols, p.width)
 			}
 			out = append(out, imgBlock{line: li, doc: doc, cols: im.Image.Cols, rows: im.Image.Rows, img: im.Image, x: x})
 		}
@@ -462,13 +462,28 @@ func (p *pager) visibleImages() []imgBlock {
 	return out
 }
 
+// seatX returns a decoded block's left column: the block's text-align
+// lead (Image.X / ImagePos.X, matching where text on the row starts),
+// clamped into the window so a fill-sized decode wider than the leaded
+// slot never overflows the right edge (it then sits flush).
+func seatX(lead, cols, width int) int {
+	if lead < 0 {
+		lead = 0
+	}
+	if lead+cols > width {
+		return max(0, width-cols)
+	}
+	return lead
+}
+
 // standaloneLine reports whether img is the sole content of its line (a
 // lone own-line image, or an inline placeholder on an otherwise empty
-// text row). Such an image fills the text column and centers instead of
-// holding its authored disp size - a mail that sizes a chart for a
-// 600px browser column must not leave it half the width of a 120-cell
-// terminal. The inline check blanks the Alt placeholder the flow glued
-// in: whatever text remains is what truly shares the row.
+// text row). Such an image fills the text column (seated by its block's
+// text-align) instead of holding its authored disp size - a mail that
+// sizes a chart for a 600px browser column must not leave it half the
+// width of a 120-cell terminal. The inline check blanks the Alt
+// placeholder the flow glued in: whatever text remains is what truly
+// shares the row.
 func (p *pager) standaloneLine(li int, img *core.Image) bool {
 	l := &p.lines[li]
 	if l.Image == img {

@@ -513,15 +513,15 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	}
 	paint()
 	// the block sits at doc row 2 (before, blank, image) - screen row 4,
-	// centered in the 80-cell window (10 decoded cols, offset 35)
-	// the first sight transmits the full decode under id 0 (a=t), then
-	// places the visible slice at the cursor (a=p with the decode's crop
-	// rows) - no delete-all, no EL sweep
+	// flush-left in the 80-cell window (the block has no text-align; its
+	// lead Image.X is 0). The first sight transmits the full decode under
+	// id 0 (a=t), then places the visible slice at the cursor (a=p with
+	// the decode's crop rows) - no delete-all, no EL sweep
 	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,m=0;") {
 		t.Fatalf("the paint must transmit the decode first, got %q", show(buf.String()[:min(36, buf.Len())]))
 	}
-	if !strings.Contains(buf.String(), "\x1b[4;36H\x1b_Ga=p,i=0,p=1,y=0,h=") {
-		t.Fatalf("the paint must place the visible slice at the centered rows, got %q", show(buf.String()))
+	if !strings.Contains(buf.String(), "\x1b[4;1H\x1b_Ga=p,i=0,p=1,y=0,h=") {
+		t.Fatalf("the paint must place the visible slice at the block lead, got %q", show(buf.String()))
 	}
 	if len(m.painted) != 1 {
 		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
@@ -576,15 +576,17 @@ func TestKittyClearImageRectsFreeAll(t *testing.T) {
 	}
 }
 
-// TestModelStandaloneImageFillsAndCenters pins the images-on sizing for
-// an image that owns its line (the semianalysis chart regression): a
-// chart inside a table cell renders inline on an otherwise empty row,
-// so it fills the text column (natural px, capped at the window) and
-// centers instead of holding the authored disp width - a 550px chart
-// authored for a ~600px browser column must not stay half the width of
-// a 120-cell terminal. An image that shares its row with text keeps its
-// authored disp size and flow offset.
-func TestModelStandaloneImageFillsAndCenters(t *testing.T) {
+// TestModelStandaloneImageAlignsLeft pins the images-on sizing and
+// seating for an image that owns its line (the semianalysis chart
+// regression): a chart inside a table cell renders inline on an
+// otherwise empty row, so it fills the text column (natural px, capped
+// at the window) and seats at its block's lead (the cell has no
+// text-align, so flush left) instead of holding the authored disp width
+// or centering - a 550px chart authored for a ~600px browser column
+// must not stay half the width of a 120-cell terminal. An image that
+// shares its row with text keeps its authored disp size and flow
+// offset.
+func TestModelStandaloneImageAlignsLeft(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
@@ -640,12 +642,13 @@ func TestModelStandaloneImageFillsAndCenters(t *testing.T) {
 	if img := byCols[80]; img == nil {
 		t.Fatalf("the standalone chart must fill the column to 80 cols, got cols %v", colsOf(next))
 	}
-	// the narrower standalone image centers: 20 cols in an 80-cell window
+	// the narrower standalone image seats flush-left: 20 cols in an
+	// 80-cell window at the cell's content lead (0)
 	if img := byCols[20]; img == nil {
 		t.Fatalf("the small standalone image must decode at natural 20 cols, got cols %v", colsOf(next))
 	}
-	if rect := next[byCols[20]]; rect.rect.x != 30 {
-		t.Fatalf("the standalone image must center, rect.x=%d want 30", rect.rect.x)
+	if rect := next[byCols[20]]; rect.rect.x != 0 {
+		t.Fatalf("the unaligned standalone image must sit flush, rect.x=%d want 0", rect.rect.x)
 	}
 	// the inline-with-text image keeps its authored disp width (300px)
 	if img := byCols[30]; img == nil {
@@ -680,13 +683,13 @@ func labelImgLine(label string, img *core.Image) core.Line {
 	}
 }
 
-// TestModelLabelLinkImageFillsAndCenters pins the easyjump render parity:
-// a link-wrapped isolated image under F carries its [N] label on the same
+// TestModelLabelLinkImageFillsAligned pins the easyjump render parity: a
+// link-wrapped isolated image under F carries its [N] label on the same
 // row as the image (the mail render's labelLinks shape), and that chrome
-// must not flip the standalone verdict - the image centers and fills like
-// its unlabeled counterpart instead of holding the authored disp width at
-// the label's flow offset.
-func TestModelLabelLinkImageFillsAndCenters(t *testing.T) {
+// must not flip the standalone verdict - the image fills like its
+// unlabeled counterpart instead of holding the authored disp width. It
+// seats at its row's flow offset (after the label), never a hard center.
+func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
 	st := config.NewStore(cfg)
@@ -747,14 +750,14 @@ func TestModelLabelLinkImageFillsAndCenters(t *testing.T) {
 	if img := has(80); img == nil {
 		t.Fatalf("the labeled standalone chart must fill the column to 80 cols, got %v", colsOf(next))
 	}
-	// the narrower labeled image centers: 20 cols in an 80-cell window,
-	// not the label's flow offset
+	// the narrower labeled image keeps its flow offset (after the [N]
+	// label at col 3): 20 cols in an 80-cell window, not centered
 	nimg := has(20)
 	if nimg == nil {
 		t.Fatalf("the labeled small image must decode at natural 20 cols, got %v", colsOf(next))
 	}
-	if rect := next[nimg]; rect.rect.x != 30 {
-		t.Fatalf("the labeled standalone image must center, rect.x=%d want 30", rect.rect.x)
+	if rect := next[nimg]; rect.rect.x != 3 {
+		t.Fatalf("the labeled standalone image must seat at its flow offset, rect.x=%d want 3", rect.rect.x)
 	}
 	if len(m.painted) != 2 {
 		t.Fatalf("two blocks must paint, got %d", len(m.painted))

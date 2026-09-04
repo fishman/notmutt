@@ -181,11 +181,15 @@ func RunDraft(bus *core.Bus, client Client, aiCfg config.AIProvider, contact Con
 
 // splitDraftReply splits the model reply at its "Subject:" line (leading
 // whitespace tolerated, case-insensitive): the rest of that line is the
-// subject, everything after it the body. A reply without a subject line - or
-// with an empty one - returns an empty subject and the whole reply as the
-// body, so RunDraft falls back to the default subject.
+// subject, everything after it the body. CRLF input normalizes to LF first
+// so no stray carriage return survives into the body. A reply with no
+// "Subject:" line - or with an empty one - returns an empty subject and the
+// whole reply as the body, so RunDraft falls back to the default subject. A
+// late "Subject:" line after preamble text still splits at it, dropping the
+// preamble - that is not the same as the no-subject fallback, which keeps
+// the whole reply.
 func splitDraftReply(out string) (subject, body string) {
-	lines := strings.Split(out, "\n")
+	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
 	for i, line := range lines {
 		t := strings.TrimSpace(line)
 		if len(t) < len("Subject:") || !strings.EqualFold(t[:len("Subject:")], "Subject:") {

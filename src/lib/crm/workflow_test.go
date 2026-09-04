@@ -653,3 +653,76 @@ func recvCrmDraft(t *testing.T, ch <-chan core.Event) core.CrmDraft {
 		return core.CrmDraft{}
 	}
 }
+
+// TestRunDraftNilChatErrors pins the nil-chat guard: RunDraft refuses before
+// any mail-ground or chat call and publishes one CrmRowError.
+func TestRunDraftNilChatErrors(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &draftClient{provider: "test-crm"}
+	contact := Contact{ID: "303", Email: "acme@example.com"}
+
+	RunDraft(bus, client, analyzeProvider(), contact, "briefing", nil, nil)
+
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "303" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 303)", e.Provider, e.ContactID)
+	}
+	if e.Err == nil || !strings.Contains(e.Err.Error(), "crm: draft: nil chat fn") {
+		t.Errorf("CrmRowError Err = %v, want the nil-chat guard error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunDraftGroundingErrorPublishesRowError pins the grounding failure
+// path: a MailGroundFn error aborts the draft before any chat call and
+// publishes one CrmRowError with the grounding wrap.
+func TestRunDraftGroundingErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &draftClient{provider: "test-crm"}
+	contact := Contact{ID: "304", Email: "acme@example.com"}
+	sentinel := errors.New("grounding exploded")
+	grounding := func(context.Context, string) (string, error) { return "", sentinel }
+	calls := 0
+	chat := func(context.Context, config.AIProvider, string, string, string, func(string)) (string, error) {
+		calls++
+		return "", nil
+	}
+
+	RunDraft(bus, client, analyzeProvider(), contact, "briefing", grounding, chat)
+
+	if calls != 0 {
+		t.Errorf("chat calls = %d, want 0 (grounding error stops before chat)", calls)
+	}
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "304" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 304)", e.Provider, e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) || !strings.Contains(e.Err.Error(), "crm: draft: grounding:") {
+		t.Errorf("CrmRowError Err = %v, want the grounding wrap", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunDraftChatErrorPublishesRowError pins the chat failure path: the
+// draft-writer chat error publishes one CrmRowError with the crm: draft: wrap
+// and no CrmDraft.
+func TestRunDraftChatErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &draftClient{provider: "test-crm"}
+	contact := Contact{ID: "305", Email: "acme@example.com"}
+	sentinel := errors.New("draft chat down")
+
+	RunDraft(bus, client, analyzeProvider(), contact, "briefing", nil, chatError(sentinel))
+
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "305" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 305)", e.Provider, e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) || !strings.Contains(e.Err.Error(), "crm: draft:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: draft: wrap", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}

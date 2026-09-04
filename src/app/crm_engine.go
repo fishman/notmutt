@@ -135,18 +135,15 @@ func crmMailGround(cfg config.Config, worker workerAPI) crm.MailGroundFn {
 		if err != nil || rpl.Err != nil {
 			return "", fmt.Errorf("search from %s: %w", email, errors.Join(err, rpl.Err))
 		}
-		best := -1
-		for i := range found {
-			if best < 0 || found[i].Timestamp > found[best].Timestamp {
-				best = i
-			}
-		}
-		if best < 0 || found[best].ThreadID == "" {
+		// Both backends sort newest-first (cgo SORT_NEWEST_FIRST, cli
+		// --sort=newest-first), so the capped query's first row is the newest
+		// inbound message from the address.
+		if len(found) == 0 || found[0].ThreadID == "" {
 			return "", nil // no inbound thread from the address
 		}
-		rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: found[best].ThreadID})
+		rpl, err = worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: found[0].ThreadID})
 		if err != nil || rpl.Err != nil {
-			return "", fmt.Errorf("thread %s: %w", found[best].ThreadID, errors.Join(err, rpl.Err))
+			return "", fmt.Errorf("thread %s: %w", found[0].ThreadID, errors.Join(err, rpl.Err))
 		}
 		account := ""
 		if m := newestOf(rpl.Msgs); m != nil {

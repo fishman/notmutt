@@ -8,6 +8,7 @@ package crm
 import (
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -15,7 +16,11 @@ import (
 // research field renders, and the total stays under the cap. The signature
 // takes no mail input, so no mail field can even be passed.
 func TestBriefingFull(t *testing.T) {
-	contact := Contact{FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement"}
+	contact := Contact{
+		FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement",
+		ID: "12345", Email: "alpha@example.com", CompanyID: "67890",
+		CreatedAt: time.Unix(1700000000, 0),
+	}
 	company := Company{
 		Name: "Acme Corp", Domain: "acme.example.com", Industry: "Industrial widgets",
 		Description: "Acme builds industrial widgets for the shipping trade.",
@@ -41,6 +46,24 @@ func TestBriefingFull(t *testing.T) {
 			t.Errorf("briefing missing %q\n%s", want, out)
 		}
 	}
+	// The routing fields (id, email, company id, created) are identity, not
+	// briefing content: none may leak into the prompt.
+	for _, leak := range []string{
+		"12345", "alpha@example.com", "67890", contact.CreatedAt.Format("2006-01-02"),
+	} {
+		if strings.Contains(out, leak) {
+			t.Errorf("briefing leaks routing field %q\n%s", leak, out)
+		}
+	}
+	// Research lines are 1-indexed and carry the source URL.
+	for _, want := range []string{
+		"\n1. Acme opens a Detroit plant | https://news.example.com/acme-plant | Acme announced a new widget plant.",
+		"\n2. Acme hires a CTO | https://news.example.com/acme-cto | Atlas joins from a robotics firm.",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("briefing missing research line %q\n%s", want, out)
+		}
+	}
 }
 
 // TestBriefingEmptyFieldsUnknown pins the placeholder rendering: blank
@@ -58,6 +81,19 @@ func TestBriefingEmptyFieldsUnknown(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("briefing missing %q\n%s", want, out)
 		}
+	}
+}
+
+// TestBriefingResearchBlanksUnknown pins the never-blank posture for
+// research lines: a wrapping Result (blank title and URL by construction)
+// renders placeholder cells, not empty gaps.
+func TestBriefingResearchBlanksUnknown(t *testing.T) {
+	out, err := briefing(Contact{}, Company{}, []Result{{Snippet: "no structured facts returned"}})
+	if err != nil {
+		t.Fatalf("briefing: %v", err)
+	}
+	if want := "\n1. unknown | unknown | no structured facts returned"; !strings.Contains(out, want) {
+		t.Errorf("briefing research line missing %q\n%s", want, out)
 	}
 }
 

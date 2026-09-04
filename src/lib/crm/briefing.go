@@ -84,8 +84,8 @@ func companySection(c Company) (string, error) {
 }
 
 // researchSection renders one numbered line per Result. An empty slice
-// yields no section. Lines are not re-truncated here: the snippets are
-// already capped by Research and the whole joins under the briefing cap.
+// yields no section. Lines are not re-truncated here: the joined output is
+// capped as a whole by briefing.
 func researchSection(rs []Result) (string, error) {
 	if len(rs) == 0 {
 		return "", nil
@@ -93,19 +93,19 @@ func researchSection(rs []Result) (string, error) {
 	var b strings.Builder
 	b.WriteString("Research:")
 	for i, r := range rs {
-		title, err := briefField("research title", r.Title)
+		title, err := briefField(fmt.Sprintf("research title %d", i+1), r.Title)
 		if err != nil {
 			return "", err
 		}
-		url, err := briefField("research url", r.URL)
+		url, err := briefField(fmt.Sprintf("research url %d", i+1), r.URL)
 		if err != nil {
 			return "", err
 		}
-		snippet, err := briefField("research snippet", r.Snippet)
+		snippet, err := briefField(fmt.Sprintf("research snippet %d", i+1), r.Snippet)
 		if err != nil {
 			return "", err
 		}
-		fmt.Fprintf(&b, "\n%d. %s | %s | %s", i+1, title, url, snippet)
+		fmt.Fprintf(&b, "\n%d. %s | %s | %s", i+1, orUnknown(title), orUnknown(url), orUnknown(snippet))
 	}
 	return b.String(), nil
 }

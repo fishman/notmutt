@@ -186,12 +186,12 @@ func crmAIServer() (srv *httptest.Server, briefing, draft string) {
 	return srv, briefing, draft
 }
 
-// TestCRMHubspotWorkflow drives the whole follow-up wire through crmWire's
+// TestCrmHubspotWorkflow drives the whole follow-up wire through crmWire's
 // bus reactions: pull -> queue rows, analyze -> briefing, draft -> compose,
 // send-OK -> mark write-back, and a failing dismiss mark leaving its row on
 // the next pull. The only place the test names a vendor is cfg.Crm.Provider
 // and the seam's httptest base URL; every assertion reads bus events.
-func TestCRMHubspotWorkflow(t *testing.T) {
+func TestCrmHubspotWorkflow(t *testing.T) {
 	bus := core.NewBus()
 	events := bus.Subscribe()
 

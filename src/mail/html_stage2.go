@@ -71,7 +71,7 @@ func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, d
 		boxes = q.injectLinkLabels(boxes)
 	}
 	rows := html.LayoutBlock(boxes, widthPx, cellMeter{}, true)
-	q.emitRows(rows) // Tasks 3-4 grow the row dispatch
+	q.emitRows(rows)
 	if q.truncated {
 		q.lines = append(q.lines, core.Line{Text: "[content truncated]", Kind: core.LineBody})
 	}
@@ -256,7 +256,7 @@ func (q *stage2) emitRows(rows []html.Row) {
 		if q.truncated {
 			return
 		}
-		if q.skipFor(r) || q.contentFreeStrip(r) { // dropped rows consume no gap (D9 + all-empty strips)
+		if q.allTrackingPixels(r) || q.contentFreeStrip(r) { // dropped rows consume no gap (D9 + all-empty strips)
 			continue
 		}
 		if !q.firstRow {
@@ -277,10 +277,10 @@ func (q *stage2) emitRows(rows []html.Row) {
 	}
 }
 
-// skipFor reports a row whose atoms are all declared 1x1 pixels (tracking
-// beacons, D9) with only inter-word separators between them: it emits
-// nothing and consumes no gap.
-func (q *stage2) skipFor(r html.Row) bool {
+// allTrackingPixels reports a row whose atoms are all declared 1x1 pixels
+// (tracking beacons, D9) with only inter-word separators between them: it
+// emits nothing and consumes no gap.
+func (q *stage2) allTrackingPixels(r html.Row) bool {
 	if len(r.Markers) != 0 {
 		return false
 	}
@@ -336,7 +336,7 @@ func (q *stage2) fragmentContentFree(r html.Row) bool {
 		}
 		return true
 	}
-	return q.skipFor(r)
+	return q.allTrackingPixels(r)
 }
 
 // acc is one horizontal pager line under construction. Runs sit at

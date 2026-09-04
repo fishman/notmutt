@@ -45,7 +45,7 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 	lead := func(l core.Line) int { return len(l.Text) - len(strings.TrimLeft(l.Text, " ")) }
 	trim := func(l core.Line) string { return strings.TrimSpace(l.Text) }
 
-	var forwarded, title, readInApp, sources, last int
+	forwarded, title, readInApp, sources, last := -1, -1, -1, -1, -1
 	var buttonLines, marks []int
 	left := func(i int) bool { return lead(lines[i]) < 20 }
 	for i, l := range lines {
@@ -70,6 +70,18 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 		last = i
 	}
 
+	if forwarded < 0 {
+		t.Fatal("forwarded header missing")
+	}
+	if title < 0 {
+		t.Fatal("title missing")
+	}
+	if readInApp < 0 {
+		t.Fatal("READ IN APP missing")
+	}
+	if sources < 0 {
+		t.Fatal("Sources missing")
+	}
 	if !left(forwarded) {
 		t.Fatalf("forwarded header must be left-aligned, lead=%d", lead(lines[forwarded]))
 	}

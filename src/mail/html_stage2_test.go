@@ -189,7 +189,7 @@ func TestStage2MultiColumnStripPlacesCells(t *testing.T) {
 	text := lines[0].Text
 	i, j := strings.Index(text, "aa"), strings.Index(text, "bb")
 	if i < 0 || j <= i+1 {
-		t.Fatalf("cells must both render, second strictly after the first: %q", text)
+		t.Fatalf("cells must both render, second at or after the first's text end: %q", text)
 	}
 }
 
@@ -357,10 +357,23 @@ func TestStage2AllEmptyStripSkips(t *testing.T) {
 	}
 }
 
+func TestStage2MainFlowAllPixelsSkip(t *testing.T) {
+	// a lone 1x1 tracking pixel between paragraphs drops and consumes no gap:
+	// the surrounding paragraphs keep their single blank (allTrackingPixels).
+	// Without the skip the pixel's row would add a spurious blank line.
+	body := `<p>a</p><img width="1" height="1"><p>b</p>`
+	lines, _ := renderStage2HTML(body, nil, 0, false, false, "")
+	if got := linesText(lines); got != "a//b" {
+		t.Fatalf("main-flow tracking pixel must drop with no extra line: %q", got)
+	}
+}
+
 func TestStage2DarkSmokeAdapts(t *testing.T) {
 	// dark=true: a light-declared page bg reflects onto the theme bg and
 	// rides every content line (pageColors + runFor dark adaptation, the
 	// luma gate). Mirrors the locked html_dark_test.go fixture shape.
+	// #33373f is AdaptBG's reflection of the fixture's light #f4f4f4 onto
+	// the theme bg #282c34, not a wiring constant.
 	lines, _ := renderStage2HTML(`<body style="background:#f4f4f4">x</body>`, nil, 0, false, true, "#282c34")
 	if len(lines) == 0 || lines[0].Bg != "#33373f" {
 		t.Fatalf("light body bg = %q, want reflected #33373f", firstBG(lines))

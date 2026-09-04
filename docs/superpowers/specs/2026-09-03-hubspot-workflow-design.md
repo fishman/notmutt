@@ -20,9 +20,18 @@ Decisions locked in brainstorm:
   call opens a prefilled compose. Nothing is ever sent automatically.
 - Write-back: yes - marking the contact processed is written to HubSpot, which
   is the source of truth (no local dedup DB).
-- Client architecture: purpose-built stdlib Go clients (option B). No OpenAPI
-  codegen - none exists in the tree and ~6 endpoints do not justify one. A
-  shared client core is extracted only when a second vendor appears (YAGNI).
+- Client architecture: the CRM core consolidates in one lua-gated subsystem,
+  `src/lib/crm` (package `crm`, the `src/lib/html` / `src/lib/crypto`
+  precedent): stdlib-only purpose-built clients (option B), no OpenAPI codegen
+  - none exists in the tree and ~6 endpoints do not justify one. A shared
+  vendor core is extracted only when a second vendor appears (YAGNI). The lib
+  injects the app-only capabilities it must not import: the HubSpot bearer key
+  is resolved upstream and passed in, the `[ai]` chat call arrives as a ChatFn,
+  gated mail grounding as a MailGroundFn. Code above the lib is a THIN adapter
+  (`src/app/hubspot_engine.go` + `!lua` stub): it resolves the key via
+  `ai.FetchKey` and the AI entry via the existing resolveAIProvider rule,
+  opens compose, and feeds tui hooks. The lib never names a vendor beyond its
+  own provider id.
 
 The whole feature is `//go:build lua`: it calls the AI provider path
 (`src/app/ai`, `src/app/ai_stream.go`) which is lua-gated today. The tag is a
@@ -118,54 +127,75 @@ created_after   = ""                     # RFC3339; empty = all unprocessed
   does not depend on any account's folder/tag state except the opt-in
   `[ai-data]` grant for mail grounding.
 
-## 3. Clients
+## 3. The subsystem: `src/lib/crm`
 
-Two small stdlib packages (`net/http` + `encoding/json`, the
-`src/app/ai/ai.go` precedent), both `//go:build lua`:
+One lua-gated package, `src/lib/crm`, holds the whole CRM core (`net/http` +
+`encoding/json`, the `src/app/ai/ai.go` precedent; lib layering rule: it
+imports nothing from app/tui/notmuch/compose - only config, core, stdlib):
 
-`src/hubspot/client.go` - the CRM client. Bearer auth from the hubspot table's
-`token_cmd`, fixed base URL, per-request timeout, paging loop, rate-limit
-mapped to a retryable error. Data types (Contact, Company) carry only the
-fields the workflow uses.
+- `client.go` - the HubSpot client. `NewClient(ctx, key []byte) *Client`: the
+  bearer key is resolved upstream (the adapter, via `token_cmd`) and injected,
+  never resolved here. Fixed base URL, per-request timeout, paging loop,
+  rate-limit mapped to a retryable error. Data types (Contact, Company) carry
+  only the fields the workflow uses.
+- `research.go` - `Research(ctx, p config.AIProvider, company Company, chat
+  ChatFn) ([]Result, error)`: queries on the company domain and name over the
+  referenced `[ai]` entry's connection. The chat call is INJECTED (`ChatFn`,
+  defaulted to `ai.Chat` by the adapter), so the lib rides the `[ai]` config
+  without importing the lua-gated ai package. Returns `[]Result{Title, URL,
+  Snippet}` with a cap on count and per-result length (bounded, like the aicmd
+  body caps). Whether research is a distinct search/extract endpoint on that
+  connection or is served by the model itself is a per-provider detail - a
+  provider that fronts neither limits research to model knowledge, an accepted
+  constraint of riding one connection.
+- `briefing.go` - the non-mail context assembler: `briefing(contact Contact,
+  company Company, rs []Result) (string, error)`. It accepts no mail input, so
+  mail content cannot reach it by construction (section 8 item 3).
+- `workflow.go` + `crm.go` - the job core: `runPull`, `runAnalyze`,
+  `runDraft`, `runMark` publish core events over an injected `*core.Bus`
+  (queue snapshot, briefing, draft, row error) and carry the shared types.
+  `runDraft` takes the injected ChatFn and MailGroundFn; grounding is "an
+  inbound thread with the address exists AND its `[ai-data.<account>]` grant
+  permits it, else empty (no mail context)".
+
+Client methods:
 
 - `ListUnprocessed(createdAfter string) ([]Contact, error)` - the search
   endpoint, filter "marker property is unset", sort by createdAt desc, page
   until exhausted.
 - `Contact(id) (Contact, error)` + associated company id.
 - `Company(id) (Company, error)` - name, domain, industry, size, description.
-- `MarkFollowedUp(id) error` - set `marker_property`.
-
-`src/search/client.go` - the research call: queries on the company domain and
-name over the referenced `[ai]` provider connection (base-url + `pass_cmd`
-from that `[ai]` entry; no own token). Returns `[]Result{Title, URL, Snippet}`
-with a cap on count and per-result length (bounded, like the aicmd body caps).
-Whether research is a distinct search/extract endpoint on that connection or
-is served by the model itself is a per-provider detail - a provider that
-fronts neither limits research to model knowledge, an accepted constraint of
-riding one connection (the hubspot client below is unaffected).
+- `MarkFollowedUp(id, marker string) error` - set `marker_property`.
 
 Endpoint paths are illustrative; the exact HubSpot and research request shapes
 are pinned in the plan and locked by the httptest tests.
 
-## 4. The workflow driver
+## 4. Workflow core + app adapter
 
-`src/app/hubspot_engine.go` (new, lua-gated) mirrors `src/app/ai_engine.go`
-and `src/app/send.go`: package-private job funcs launched on fresh goroutines,
-publishing to `core.Bus`, cancellable via the existing Task machinery.
+The job core lives in the lib (`src/lib/crm/workflow.go`): `runPull`,
+`runAnalyze`, `runDraft`, `runMark` are launched on fresh goroutines from the
+adapter, publish to `*core.Bus`, cancellable via the existing Task machinery.
+Each takes its capabilities as injected args - the `*Client`, the resolved
+`config.AIProvider`, the ChatFn, the MailGroundFn - so none of them needs an
+app import.
 
-- `runHubspotPull` - calls `ListUnprocessed`, publishes queue rows.
-- `runHubspotAnalyze(contact)` - gathers contact + company, runs research
-  queries over the `[crm.hubspot] ai` entry's connection, assembles a non-mail
-  context, streams the briefing via `ai.Chat` on that connection. Publishes
-  progress; cancellable mid-stream.
-- `runHubspotDraft(contact, briefing)` - resolves the contact's email address
-  and searches for an inbound thread with it across accounts; grounding is
-  applied only from accounts that hold mail from that address AND whose
-  `[ai-data.<account>]` grant permits it (each account contributes through
-  `BuildContext` independently; no grant, no contribution). Composes the
-  follow-up, prefills a `compose.State` (`To`, subject, body), publishes
-  `compose.ToEvent`.
-- `runHubspotMark(id)` - `MarkFollowedUp`, called on send-OK and on dismiss.
+`src/app/hubspot_engine.go` (new, lua-gated) is a THIN adapter mirroring
+`src/app/ai_engine.go` and `src/app/send.go`. It no-ops unless
+`cfg.Crm.Provider == "hubspot"`, then:
+
+- Resolves the bearer key via `ai.FetchKey(hs.TokenCmd)` and the AI entry via
+  the existing resolveAIProvider rule (`hs.AI`, empty = first configured),
+  supplies the ChatFn (default `ai.Chat`), and builds the MailGroundFn that
+  returns "" unless an inbound thread with the contact's address exists AND
+  its account's `[ai-data.<account>]` grant permits it (each account
+  contributes through `BuildContext` independently; no grant, no
+  contribution).
+- On a queue-ready event launches `runPull`; on `core.CrmDraft` opens the
+  compose - prefills a `compose.State` (`To`, subject, body), publishes
+  `compose.ToEvent` - and tracks `composeID -> {Provider, ContactID}` for the
+  send hook; on send-OK/dismiss launches `runMark`; on row errors drives
+  write-back. Supplies the queue surface into tui hooks (the
+  SetAICommandSource/Handler shape); the `!lua` build carries a stub.
 
 Context assembly for the briefing is a sibling of `BuildContext`, not a
 reuse: `BuildContext` is structured around mail messages (body caps, quoted

@@ -478,6 +478,187 @@ model = "x"
 	}
 }
 
+// TestLoadCrmHubspot pins the [crm] section: provider routes the engine
+// (NOT the [ai] registry), and the per-vendor params live in the nested
+// [crm.hubspot] table - ai names a configured [ai] entry, token_cmd is a
+// tokenized argv (F4 - never a shell string), marker_property overrides
+// the default, and created_after carries an RFC3339 instant.
+func TestLoadCrmHubspot(t *testing.T) {
+	cfg, err := Load(write(t, `
+[ai.deepseek]
+type = "openai"
+model = "deepseek-chat"
+
+[crm]
+provider = "hubspot"
+
+[crm.hubspot]
+ai = "deepseek"
+token_cmd = ["gpg", "-q", "-d", "/home/alpha/.hubspot/token.gpg"]
+marker_property = "hubspot_followed_up"
+created_after = "2024-01-02T15:04:05Z"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Crm.Provider != "hubspot" {
+		t.Fatalf("crm.provider = %q", cfg.Crm.Provider)
+	}
+	h := cfg.Crm.Hubspot
+	if h == nil {
+		t.Fatal("[crm.hubspot] must decode into the nested struct")
+	}
+	if h.AI != "deepseek" || h.MarkerProperty != "hubspot_followed_up" {
+		t.Fatalf("crm.hubspot = %+v", h)
+	}
+	if len(h.TokenCmd) != 4 || h.TokenCmd[3] != "/home/alpha/.hubspot/token.gpg" {
+		t.Fatalf("crm.hubspot token_cmd = %v", h.TokenCmd)
+	}
+	if h.CreatedAfter != "2024-01-02T15:04:05Z" {
+		t.Fatalf("crm.hubspot created_after = %q", h.CreatedAfter)
+	}
+}
+
+// TestLoadCrmEmptyDormant: an empty or absent [crm] section loads and
+// stays dormant - no provider, and Hubspot stays nil (a pointer table
+// only allocates when [crm.hubspot] is present).
+func TestLoadCrmEmptyDormant(t *testing.T) {
+	cfg, err := Load(write(t, "[crm]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Crm.Provider != "" || cfg.Crm.Hubspot != nil {
+		t.Fatalf("empty [crm] must stay dormant, got %+v", cfg.Crm)
+	}
+	if cfg, err := Load(t.TempDir()); err != nil {
+		t.Fatal(err)
+	} else if cfg.Crm.Provider != "" || cfg.Crm.Hubspot != nil {
+		t.Fatalf("absent [crm] must stay dormant, got %+v", cfg.Crm)
+	}
+}
+
+// TestLoadCrmHubspotMarkerPropertyDefault: omitting marker_property keeps
+// the default - a present [crm.hubspot] table materializes it, like the
+// flat defaults Default() carries for the value sections.
+func TestLoadCrmHubspotMarkerPropertyDefault(t *testing.T) {
+	cfg, err := Load(write(t, `
+[crm]
+provider = "hubspot"
+
+[crm.hubspot]
+token_cmd = ["hubspot-token"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Crm.Hubspot == nil || cfg.Crm.Hubspot.MarkerProperty != DefaultHubspotMarkerProperty {
+		t.Fatalf("blank marker_property = %+v, want %q", cfg.Crm.Hubspot, DefaultHubspotMarkerProperty)
+	}
+}
+
+// TestLoadCrmUnknownKeyErrors: a typo in [crm] is a load error (strict,
+// R8) - a silently dead section would hide a misconfigured workflow.
+func TestLoadCrmUnknownKeyErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm]
+providor = "hubspot"
+`))
+	if err == nil || !strings.Contains(err.Error(), "providor") {
+		t.Fatalf("unknown crm key must be a load error naming it, got: %v", err)
+	}
+}
+
+// TestLoadCrmHubspotUnknownKeyErrors: a typo inside [crm.hubspot] is a
+// load error naming it (the strict per-vendor rule).
+func TestLoadCrmHubspotUnknownKeyErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm.hubspot]
+marker_propertyy = "x"
+`))
+	if err == nil || !strings.Contains(err.Error(), "marker_propertyy") {
+		t.Fatalf("unknown crm.hubspot key must be a load error naming it, got: %v", err)
+	}
+}
+
+// TestLoadCrmUnknownVendorTableErrors: a [crm.<vendor>] table with no
+// sibling struct is an unknown-key load error (the per-vendor tables
+// parse strictly until a struct exists).
+func TestLoadCrmUnknownVendorTableErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm.salesforce]
+token_cmd = ["sf-token"]
+`))
+	if err == nil || !strings.Contains(err.Error(), "crm.salesforce") {
+		t.Fatalf("unknown [crm.*] table must be a load error naming it, got: %v", err)
+	}
+}
+
+func TestLoadCrmHubspotInvalidCreatedAfterErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm.hubspot]
+token_cmd = ["hubspot-token"]
+created_after = "2024-01-02"
+`))
+	if err == nil || !strings.Contains(err.Error(), "created_after") {
+		t.Fatalf("non-RFC3339 created_after must be a load error, got: %v", err)
+	}
+}
+
+// TestLoadCrmHubspotUnknownAIErrors: ai naming a missing [ai] entry is a
+// load error naming it (empty ai is allowed - resolveAIProvider falls
+// back later).
+func TestLoadCrmHubspotUnknownAIErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm]
+provider = "hubspot"
+
+[crm.hubspot]
+ai = "nonesuch"
+token_cmd = ["hubspot-token"]
+`))
+	if err == nil || !strings.Contains(err.Error(), "nonesuch") {
+		t.Fatalf("ai naming a missing [ai] entry must error naming it, got: %v", err)
+	}
+}
+
+// TestLoadCrmHubspotBlankTokenCmdErrors: a blank token_cmd argv element
+// is a load error (mirror the ai pass_cmd rule); an empty argv is
+// allowed - an absent or empty [crm] loads dormant.
+func TestLoadCrmHubspotBlankTokenCmdErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm.hubspot]
+token_cmd = ["hubspot-token", ""]
+`))
+	if err == nil || !strings.Contains(err.Error(), "token_cmd") {
+		t.Fatalf("blank token_cmd argv element must be a load error, got: %v", err)
+	}
+}
+
+// TestLoadCrmProviderWithoutTableErrors: provider naming "hubspot"
+// requires the [crm.hubspot] table to exist (Hubspot != nil); a bare
+// provider is a load error naming the missing table.
+func TestLoadCrmProviderWithoutTableErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm]
+provider = "hubspot"
+`))
+	if err == nil || !strings.Contains(err.Error(), "[crm.hubspot]") {
+		t.Fatalf("provider without a [crm.hubspot] table must error, got: %v", err)
+	}
+}
+
+// TestLoadCrmUnknownProviderErrors: a non-empty provider naming a vendor
+// with no config table is a load error naming it.
+func TestLoadCrmUnknownProviderErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[crm]
+provider = "salesforce"
+`))
+	if err == nil || !strings.Contains(err.Error(), "salesforce") {
+		t.Fatalf("provider naming an unknown vendor must error naming it, got: %v", err)
+	}
+}
+
 // TestLoadOpener pins the opener key (the pager F key's urlopener):
 // the value decodes as argv - the url is appended as the last element
 // at open time (F4, never shell-interpolated) - and an empty argv is

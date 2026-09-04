@@ -117,7 +117,7 @@ clients will render:
    no pseudo-elements, no media queries. Specificity counting for that
    set is ~20 lines.
 
-## Architecture sketch (in-client renderer)
+## Architecture sketch (in-client renderer) - superseded by the stage-1/stage-2 pipeline above (2026-09-04 cutover)
 
 ```
 x/net/html.Parse  ->  DOM (never fails, HTML5 recovery)

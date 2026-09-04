@@ -1,7 +1,7 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build lua
+//go:build lua && crm
 
 // Package crm holds the CRM follow-up workflow's vendor-neutral core: the
 // Client interface the workflow drives plus the Contact/Company domain

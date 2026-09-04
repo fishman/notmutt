@@ -1,7 +1,7 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-//go:build lua
+//go:build lua && crm
 
 // Package hubspot implements the crm.Client seam for HubSpot: bearer-auth
 // HTTP against the CRM v3 API, the caller-supplied marker property, and

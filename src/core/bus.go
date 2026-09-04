@@ -130,9 +130,9 @@ func (b *Bus) LatestAddressIndex() (AddressIndex, bool) {
 	return *b.addrLast, true
 }
 
-// LatestCrmQueue returns the last published queue snapshot: the write
-// never drops, so a CrmQueue dropped under backpressure still lets the
-// TUI render the queue surface from state.
+// LatestCrmQueue returns the last published queue page. Queue rows stream
+// one page per CrmQueue event, so the snapshot is a tail net, never the
+// full queue - accumulate from the subscription, not this.
 func (b *Bus) LatestCrmQueue() (CrmQueue, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -439,17 +439,17 @@ type AiResult struct {
 
 // CrmContact is one queue row; provider-neutral - core never names a
 // vendor. Provider is the CRM source routing id ("hubspot"; a future CRM
-// adds a value). ID is provider-local.
+// adds a value).
 type CrmContact struct {
 	Provider                      string
-	ID, Email, First, Last, Title string
+	ID, Email, First, Last, Title string // ID is provider-local
 	Company                       string
 	CreatedAt                     time.Time
 	Status                        string // new|briefing|drafted|sent|dismissed
 }
 
-// CrmQueue is a queue fetch's rows (lua -> TUI); the last value is
-// snapshotted so a drop never wedges the queue surface.
+// CrmQueue carries one page of queue rows (lua -> TUI); the last page is
+// snapshotted as a tail net against drops.
 type CrmQueue struct {
 	Contacts []CrmContact
 }

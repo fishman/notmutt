@@ -12,13 +12,13 @@ import (
 	"notmutt/core"
 )
 
-// pullMu serializes pull runs: the app adapter launches runPull on a fresh
+// pullMu serializes pull runs: the app adapter launches RunPull on a fresh
 // goroutine per pull request, and an overlapping run no-ops (the refresher's
 // non-blocking guard, refresh.go) instead of stacking ListUnprocessed calls
 // against the CRM.
 var pullMu sync.Mutex
 
-// runPull lists the client's unprocessed contacts and publishes them as
+// RunPull lists the client's unprocessed contacts and publishes them as
 // core.CrmContact rows in one core.CrmQueue page (the R3 refresh shape: each
 // pull publishes its own page the queue view diff-inserts, never a rebuild).
 // marker and createdAfter pass through to ListUnprocessed unchanged;
@@ -27,7 +27,7 @@ var pullMu sync.Mutex
 // Company stays empty (analyze refetches and fills it) and Status starts at
 // statusNew. A ListUnprocessed error publishes CrmRowError and stops; rows
 // already published stay visible.
-func runPull(bus *core.Bus, client Client, marker, createdAfter string) {
+func RunPull(bus *core.Bus, client Client, marker, createdAfter string) {
 	if !pullMu.TryLock() {
 		return
 	}

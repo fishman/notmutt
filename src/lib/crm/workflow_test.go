@@ -16,7 +16,7 @@ import (
 	"notmutt/core"
 )
 
-// fakeClient is a scripted crm.Client for runPull tests: ListUnprocessed
+// fakeClient is a scripted crm.Client for RunPull tests: ListUnprocessed
 // returns the recorded contacts or error and captures its filter params.
 type fakeClient struct {
 	provider        string
@@ -53,7 +53,7 @@ func TestRunPullPublishesRows(t *testing.T) {
 			{ID: "202", Email: "atlas@example.com", FirstName: "Atlas", LastName: "Beta", JobTitle: "VP Eng", CompanyID: "901", CreatedAt: now.Add(time.Minute)},
 		},
 	}
-	runPull(bus, client, "notmutt_followed_up", "")
+	RunPull(bus, client, "notmutt_followed_up", "")
 
 	if client.gotMarker != "notmutt_followed_up" {
 		t.Errorf("ListUnprocessed marker = %q, want the pass-through", client.gotMarker)
@@ -87,7 +87,7 @@ func TestRunPullErrorPublishesRowError(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
 	client := &fakeClient{provider: "test-crm", err: errors.New("search exploded")}
-	runPull(bus, client, "m", "2023-01-01T00:00:00Z")
+	RunPull(bus, client, "m", "2023-01-01T00:00:00Z")
 
 	if client.gotCreatedAfter != "2023-01-01T00:00:00Z" {
 		t.Errorf("ListUnprocessed createdAfter = %q, want the pass-through", client.gotCreatedAfter)
@@ -110,7 +110,7 @@ func TestRunPullErrorPublishesRowError(t *testing.T) {
 }
 
 // blockingClient counts ListUnprocessed calls and parks the first until
-// release closes, so a test can hold the runPull guard open.
+// release closes, so a test can hold the RunPull guard open.
 type blockingClient struct {
 	provider string
 	entered  chan struct{}
@@ -131,7 +131,7 @@ func (f *blockingClient) Company(context.Context, string) (Company, error)     {
 func (f *blockingClient) MarkFollowedUp(context.Context, string, string) error { return nil }
 
 // TestRunPullOverlapNoops pins the run guard: a pull already in flight makes
-// an overlapping runPull return without a second ListUnprocessed call.
+// an overlapping RunPull return without a second ListUnprocessed call.
 func TestRunPullOverlapNoops(t *testing.T) {
 	bus := core.NewBus()
 	client := &blockingClient{provider: "test-crm", entered: make(chan struct{}), release: make(chan struct{})}
@@ -141,7 +141,7 @@ func TestRunPullOverlapNoops(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		runPull(bus, client, "m", "")
+		RunPull(bus, client, "m", "")
 		close(done)
 	}()
 	select {
@@ -149,7 +149,7 @@ func TestRunPullOverlapNoops(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("first pull never reached ListUnprocessed")
 	}
-	runPull(bus, client, "m", "") // overlapping: the guard no-ops
+	RunPull(bus, client, "m", "") // overlapping: the guard no-ops
 	release()
 	select {
 	case <-done:

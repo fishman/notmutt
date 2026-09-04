@@ -8,11 +8,13 @@ package crm
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -188,5 +190,326 @@ func recvCrmRowError(t *testing.T, ch <-chan core.Event) core.CrmRowError {
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for CrmRowError")
 		return core.CrmRowError{}
+	}
+}
+
+// clientStub implements every Client method as a no-op so a test fake embeds
+// it and overrides only the calls it scripts.
+type clientStub struct{}
+
+func (clientStub) Provider() string { return "" }
+func (clientStub) ListUnprocessed(context.Context, string, string) ([]Contact, error) {
+	return nil, nil
+}
+func (clientStub) Contact(context.Context, string) (Contact, error)     { return Contact{}, nil }
+func (clientStub) Company(context.Context, string) (Company, error)     { return Company{}, nil }
+func (clientStub) MarkFollowedUp(context.Context, string, string) error { return nil }
+
+// analyzeClient is a scripted crm.Client for RunAnalyze tests: Contact and
+// Company return the recorded value (or error) and count their calls.
+type analyzeClient struct {
+	clientStub
+	provider     string
+	contact      Contact
+	contactErr   error
+	company      Company
+	companyErr   error
+	contactCalls int
+	companyCalls int
+}
+
+func (f *analyzeClient) Provider() string { return f.provider }
+func (f *analyzeClient) Contact(_ context.Context, _ string) (Contact, error) {
+	f.contactCalls++
+	if f.contactErr != nil {
+		return Contact{}, f.contactErr
+	}
+	return f.contact, nil
+}
+func (f *analyzeClient) Company(_ context.Context, _ string) (Company, error) {
+	f.companyCalls++
+	if f.companyErr != nil {
+		return Company{}, f.companyErr
+	}
+	return f.company, nil
+}
+
+// analyzeCall records one RunAnalyze chat invocation.
+type analyzeCall struct {
+	model  string
+	system string
+	text   string
+}
+
+// analyzeChat returns a fake ChatFn that records every invocation and replies
+// to the research pass (researchSystem) with researchReply and to the
+// briefing pass with briefingText.
+func analyzeChat(researchReply, briefingText string, calls *[]analyzeCall) ChatFn {
+	return func(_ context.Context, _ config.AIProvider, model, system, text string, _ func(string)) (string, error) {
+		*calls = append(*calls, analyzeCall{model: model, system: system, text: text})
+		if system == researchSystem {
+			return researchReply, nil
+		}
+		return briefingText, nil
+	}
+}
+
+// chatError returns a fake ChatFn that fails every call with err.
+func chatError(err error) ChatFn {
+	return func(context.Context, config.AIProvider, string, string, string, func(string)) (string, error) {
+		return "", err
+	}
+}
+
+func recvCrmBriefing(t *testing.T, ch <-chan core.Event) core.CrmBriefing {
+	t.Helper()
+	select {
+	case e := <-ch:
+		b, ok := e.(core.CrmBriefing)
+		if !ok {
+			t.Fatalf("event is %T, want core.CrmBriefing", e)
+		}
+		return b
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CrmBriefing")
+		return core.CrmBriefing{}
+	}
+}
+
+func analyzeProvider() config.AIProvider {
+	return config.AIProvider{Type: "anthropic", Model: "claude-acme"}
+}
+
+// TestRunAnalyzePublishesBriefing pins the happy path: the contact is
+// refetched to learn CompanyID, the company is fetched once, research and the
+// briefing pass both run over chat, and one CrmBriefing carries the chat text
+// with the client's Provider and the row's ContactID.
+func TestRunAnalyzePublishesBriefing(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	row := Contact{ID: "201", FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement"}
+	refetched := row
+	refetched.CompanyID = "901"
+	client := &analyzeClient{
+		provider: "test-crm",
+		contact:  refetched,
+		company:  Company{ID: "901", Name: "Acme Corp", Domain: "acme.example", Industry: "Software", Description: "Makes example software"},
+	}
+	const researchReply = "1. Acme makes analytics software | https://acme.example/products | Core product.\n"
+	const briefingText = "Alpha Atlas heads procurement at Acme Corp, which makes example software."
+	var calls []analyzeCall
+
+	RunAnalyze(bus, client, analyzeProvider(), row, analyzeChat(researchReply, briefingText, &calls))
+
+	if client.contactCalls != 1 {
+		t.Errorf("Contact calls = %d, want 1", client.contactCalls)
+	}
+	if client.companyCalls != 1 {
+		t.Errorf("Company calls = %d, want 1", client.companyCalls)
+	}
+	b := recvCrmBriefing(t, ch)
+	if b.Provider != "test-crm" {
+		t.Errorf("CrmBriefing Provider = %q, want test-crm", b.Provider)
+	}
+	if b.ContactID != "201" {
+		t.Errorf("CrmBriefing ContactID = %q, want 201", b.ContactID)
+	}
+	if b.Text != briefingText {
+		t.Errorf("CrmBriefing Text = %q, want the fake chat reply", b.Text)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("chat calls = %d, want 2", len(calls))
+	}
+	if calls[0].system != researchSystem || calls[0].model != analyzeProvider().Model {
+		t.Errorf("research chat = (model %q, system %q), want the provider model and researchSystem", calls[0].model, calls[0].system)
+	}
+	if !strings.Contains(calls[0].text, "Acme Corp") {
+		t.Errorf("research text = %q, want the refetched company name", calls[0].text)
+	}
+	if calls[1].system != briefingSystem || calls[1].model != analyzeProvider().Model {
+		t.Errorf("briefing chat = (model %q, system %q), want the provider model and briefingSystem", calls[1].model, calls[1].system)
+	}
+	for _, want := range []string{"Alpha Atlas", "Acme Corp", "makes analytics software"} {
+		if !strings.Contains(calls[1].text, want) {
+			t.Errorf("briefing context missing %q\n%s", want, calls[1].text)
+		}
+	}
+	select {
+	case e := <-ch:
+		t.Fatalf("unexpected extra event %T after the briefing", e)
+	default:
+	}
+}
+
+// TestRunAnalyzeEmptyCompanyIDSkipsCompanyFetch pins the no-association path:
+// a refetched contact without CompanyID skips the company fetch, research
+// degrades to the unknown-company placeholder, and the briefing still
+// publishes.
+func TestRunAnalyzeEmptyCompanyIDSkipsCompanyFetch(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	row := Contact{ID: "201", FirstName: "Alpha", LastName: "Atlas", JobTitle: "CTO"}
+	client := &analyzeClient{provider: "test-crm", contact: row}
+	const briefingText = "Alpha Atlas leads the CTO office."
+	var calls []analyzeCall
+
+	RunAnalyze(bus, client, analyzeProvider(), row, analyzeChat("", briefingText, &calls))
+
+	if client.companyCalls != 0 {
+		t.Errorf("Company calls = %d, want 0 when the contact has no company", client.companyCalls)
+	}
+	b := recvCrmBriefing(t, ch)
+	if b.Text != briefingText {
+		t.Errorf("CrmBriefing Text = %q, want the fake chat reply", b.Text)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("chat calls = %d, want 2", len(calls))
+	}
+	if !strings.Contains(calls[0].text, "unknown company") {
+		t.Errorf("research text = %q, want the unknown-company placeholder", calls[0].text)
+	}
+}
+
+// TestRunAnalyzeContactErrorPublishesRowError pins the refetch failure path: a
+// Contact error publishes one CrmRowError naming the row and no CrmBriefing,
+// so the row keeps its prior status.
+func TestRunAnalyzeContactErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	sentinel := errors.New("contact lookup failed")
+	client := &analyzeClient{provider: "test-crm", contactErr: sentinel}
+	var calls []analyzeCall
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, analyzeChat("", "", &calls))
+
+	if client.contactCalls != 1 {
+		t.Errorf("Contact calls = %d, want 1", client.contactCalls)
+	}
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "201" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 201)", e.Provider, e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) {
+		t.Errorf("CrmRowError Err = %v, want the contact error", e.Err)
+	}
+	if !strings.Contains(e.Err.Error(), "crm: contact:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: contact: wrap", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunAnalyzeCompanyErrorPublishesRowError pins the company fetch failure
+// path after a successful contact refetch.
+func TestRunAnalyzeCompanyErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	sentinel := errors.New("company lookup failed")
+	client := &analyzeClient{
+		provider:   "test-crm",
+		contact:    Contact{ID: "201", CompanyID: "901"},
+		companyErr: sentinel,
+	}
+	var calls []analyzeCall
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, analyzeChat("", "", &calls))
+
+	if client.contactCalls != 1 || client.companyCalls != 1 {
+		t.Errorf("fetches = (contact %d, company %d), want (1, 1)", client.contactCalls, client.companyCalls)
+	}
+	e := recvCrmRowError(t, ch)
+	if e.ContactID != "201" {
+		t.Errorf("CrmRowError ContactID = %q, want 201", e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) || !strings.Contains(e.Err.Error(), "crm: company:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: company: wrapped error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunAnalyzeChatErrorPublishesRowError pins a mid-flow chat failure: the
+// research pass error publishes one CrmRowError and no CrmBriefing.
+func TestRunAnalyzeChatErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	sentinel := errors.New("chat down")
+	client := &analyzeClient{
+		provider: "test-crm",
+		contact:  Contact{ID: "201", CompanyID: "901"},
+		company:  Company{ID: "901", Name: "Acme Corp"},
+	}
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, chatError(sentinel))
+
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "201" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 201)", e.Provider, e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) {
+		t.Errorf("CrmRowError Err = %v, want the chat error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunAnalyzeBriefingChatErrorPublishesRowError pins the second-chat
+// failure path: research succeeds but the briefing-writer chat errors, so one
+// CrmRowError publishes and no CrmBriefing does.
+func TestRunAnalyzeBriefingChatErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	sentinel := errors.New("briefing chat down")
+	client := &analyzeClient{
+		provider: "test-crm",
+		contact:  Contact{ID: "201", CompanyID: "901"},
+		company:  Company{ID: "901", Name: "Acme Corp"},
+	}
+	chat := func(_ context.Context, _ config.AIProvider, _ string, system, _ string, _ func(string)) (string, error) {
+		if system == briefingSystem {
+			return "", sentinel
+		}
+		return "1. Acme sells widgets | https://acme.example | Snip.", nil
+	}
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, chat)
+
+	e := recvCrmRowError(t, ch)
+	if e.ContactID != "201" {
+		t.Errorf("CrmRowError ContactID = %q, want 201", e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) {
+		t.Errorf("CrmRowError Err = %v, want the briefing-chat error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunAnalyzeNilChatErrors pins the nil-chat guard: RunAnalyze refuses
+// before any fetch and publishes one CrmRowError.
+func TestRunAnalyzeNilChatErrors(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &analyzeClient{provider: "test-crm", contact: Contact{ID: "201", CompanyID: "901"}}
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, nil)
+
+	if client.contactCalls != 0 {
+		t.Errorf("Contact calls = %d, want 0 (nil chat guards before any fetch)", client.contactCalls)
+	}
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "201" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 201)", e.Provider, e.ContactID)
+	}
+	if e.Err == nil || !strings.Contains(e.Err.Error(), "crm: analyze: nil chat fn") {
+		t.Errorf("CrmRowError Err = %v, want the nil-chat guard error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// assertNoCrmEvent fails if any further event follows the one already
+// received, pinning that a run publishes exactly one Crm* event.
+func assertNoCrmEvent(t *testing.T, ch <-chan core.Event) {
+	t.Helper()
+	select {
+	case e := <-ch:
+		t.Fatalf("unexpected extra event %T after the row error", e)
+	default:
 	}
 }

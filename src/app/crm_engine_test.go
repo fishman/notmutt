@@ -257,6 +257,12 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	}
 
 	// draft: the handler looks up the cached briefing and opens the compose.
+	// The wait on the events channel above proves the CrmBriefing reached the
+	// test, not that crmWire already ran its cache write - poll the cache so
+	// the dispatch depends on that write, not on goroutine wake order.
+	if !crmEventually(t, func() bool { return crmBriefingText("hubspot", "201") != "" }) {
+		t.Fatal("draft leg: the wire never cached the briefing")
+	}
 	crmRowAction("draft", q.Contacts[0])
 	opened := crmWaitFor(t, events, func(e core.Event) bool {
 		_, ok := e.(core.ComposeOpened)

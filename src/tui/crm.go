@@ -398,8 +398,9 @@ func crmPageStep(height int) int {
 	return s
 }
 
-// crmFooter mirrors the log/task footers: the scroll keys (cursor move)
-// and the action/close keys derive from the pager binding data (R9).
+// crmFooter mirrors the log/task footers: the scroll and close keys derive
+// from the pager binding data (R9); the a/d/x action keys are the surface's
+// own literal keys - queue actions are surface-local, not bound data.
 func (m Model) crmFooter() string {
 	pm := m.bindings["pager"]
 	var parts []string
@@ -413,7 +414,7 @@ func (m Model) crmFooter() string {
 	return strings.Join(parts, "  ")
 }
 
-// renderCrm is the Q style overlay surface: the queue's list/detail render
+// renderCrm is the Q overlay (crm-queue): the queue's list/detail render
 // through the shared frame (the tab bar, this footer, the status row).
 func (m Model) renderCrm() string {
 	if m.crm == nil {

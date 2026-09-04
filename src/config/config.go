@@ -13,6 +13,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"golang.org/x/text/language"
@@ -138,6 +139,10 @@ type Config struct {
 	// the fields an account permits toward an LLM, deny-by-default; "*"
 	// grants every account or field. Independent of [mcp].
 	AIAccounts map[string]AIDataGrant `toml:"ai-data"`
+	// Crm is the [crm] section: a vendor-neutral CRM follow-up workflow.
+	// Provider routes the engine ("" = dormant); per-vendor params sit in
+	// a sibling [crm.<vendor>] table. Empty = dormant.
+	Crm CrmConfig `toml:"crm"`
 	// Opener is the link opener argv (pager F key): the url is appended
 	// as the final argv element (F4 - argv only, never a shell string).
 	// Empty = xdg-open.
@@ -241,6 +246,35 @@ type AIProvider struct {
 	Timeout   int      `toml:"timeout"`    // seconds, streaming budget; default 180
 	PassCmd   []string `toml:"pass_cmd"`
 }
+
+// CrmConfig is the [crm] section: Provider routes the active CRM engine
+// ("" = dormant; "hubspot" today). The section is vendor-neutral - only
+// the per-vendor [crm.<vendor>] table names a vendor. Per-vendor tables
+// parse strictly: any [crm.<other>] table is a load error until a sibling
+// struct exists.
+type CrmConfig struct {
+	Provider string         `toml:"provider"` // active crm engine; "" = dormant, "hubspot" today
+	Hubspot  *HubspotConfig `toml:"hubspot"`  // per-vendor params, nil when [crm.hubspot] unset
+}
+
+// HubspotConfig is the [crm.hubspot] table: AI names the [ai] entry the
+// workflow's analysis/research/draft commands run on (empty = the
+// resolveAIProvider fallback, the first configured); TokenCmd is the argv
+// that prints the portal token on stdout (F4: tokenized at load, never a
+// shell string). MarkerProperty is the contact property that records a
+// follow-up (blank = DefaultHubspotMarkerProperty); CreatedAfter is an
+// RFC3339 instant that filters to contacts created after it (blank = all
+// unprocessed).
+type HubspotConfig struct {
+	AI             string   `toml:"ai"`              // an [ai] entry name; empty = first configured
+	TokenCmd       []string `toml:"token_cmd"`       // argv printing the portal token
+	MarkerProperty string   `toml:"marker_property"` // blank = DefaultHubspotMarkerProperty
+	CreatedAfter   string   `toml:"created_after"`   // RFC3339; empty = all unprocessed
+}
+
+// DefaultHubspotMarkerProperty is the contact property a HubSpot follow-up
+// marks when [crm.hubspot] marker_property is blank.
+const DefaultHubspotMarkerProperty = "notmutt_followed_up"
 
 // AIProviderDef is one known provider type: the wire protocol and the
 // vendor default base URL. Type selects a row; a config base-url
@@ -1515,6 +1549,7 @@ func Load(dir string) (Config, error) {
 		return cfg, err
 	}
 	applyGlyphSet(&cfg, merged)
+	crmDefaults(&cfg)
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
 	deriveAccountViews(&cfg)
 	cfg.ActiveView = defaultView(cfg)
@@ -1568,6 +1603,17 @@ func applyGlyphSet(cfg *Config, merged map[string]any) {
 	apply(&cfg.UI.Glyphs.TreeBranch, "tree_branch", "├─")
 	apply(&cfg.UI.Glyphs.TreeLeaf, "tree_leaf", "└─")
 	apply(&cfg.UI.Glyphs.TreeLeafDesc, "tree_leaf_desc", "┌─")
+}
+
+// crmDefaults fills the per-vendor defaults the [crm] pointer tables leave
+// zero: a present [crm.hubspot] table with a blank marker_property
+// materializes DefaultHubspotMarkerProperty. Pointer nil = table absent
+// (dormant), never defaulted - a Default()-pre-set pointer would make a
+// bare `provider = "hubspot"` (no table) pass validation.
+func crmDefaults(cfg *Config) {
+	if cfg.Crm.Hubspot != nil && cfg.Crm.Hubspot.MarkerProperty == "" {
+		cfg.Crm.Hubspot.MarkerProperty = DefaultHubspotMarkerProperty
+	}
 }
 
 // configLast moves config.toml to the end of the load order: it wins
@@ -1830,6 +1876,33 @@ func validate(cfg Config) error {
 				sort.Strings(fields)
 				return fmt.Errorf("ai-data.%s: unknown data field %q (known: %s)", account, f, strings.Join(fields, ", "))
 			}
+		}
+	}
+	if h := cfg.Crm.Hubspot; h != nil {
+		for i, a := range h.TokenCmd {
+			if strings.TrimSpace(a) == "" {
+				return fmt.Errorf("crm.hubspot: token_cmd[%d] must not be blank", i)
+			}
+		}
+		if p := h.AI; p != "" {
+			if _, ok := cfg.AI[p]; !ok {
+				return fmt.Errorf("crm.hubspot: ai %q does not name a configured [ai] entry", p)
+			}
+		}
+		if ca := h.CreatedAfter; ca != "" {
+			if _, err := time.Parse(time.RFC3339, ca); err != nil {
+				return fmt.Errorf("crm.hubspot: created_after %q must be RFC3339 (got: %v)", ca, err)
+			}
+		}
+	}
+	if p := cfg.Crm.Provider; p != "" {
+		switch p {
+		case "hubspot":
+			if cfg.Crm.Hubspot == nil {
+				return fmt.Errorf("crm: provider %q needs a [crm.hubspot] table", p)
+			}
+		default:
+			return fmt.Errorf("crm: unknown provider %q (known: hubspot)", p)
 		}
 	}
 	return nil

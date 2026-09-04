@@ -129,6 +129,7 @@ opener = ["xdg-open"]
 "?" = { fun = "help", desc = "Show this help", show = true }
 "~" = { fun = "log", desc = "Show the session log", show = true }
 "T" = { fun = "tasks", desc = "Show running tasks", show = true }
+"Q" = { fun = "crm-queue", desc = "Review the CRM follow-up queue", show = true }
 "=" = { fun = "refresh", desc = "Check for new mail now", show = true }
 
 [schemes.vim.pager]

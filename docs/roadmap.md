@@ -166,6 +166,19 @@ Implemented since this backlog was drafted; kept here as the audit trail.
   bus. Spec: docs/superpowers/specs/2026-09-03-lua-ipc-design.md.
   Pointers: `src/app/lua_ipc.go` (client), `src/app/lua_ipc_server.go`,
   the shared `runLuaChunk` runner in `src/app/lua_action.go`.
+- **HubSpot follow-up workflow** - a `lua && crm`-gated queue over the
+  index (Q): pulls contacts scanned into HubSpot, briefs one from its CRM
+  record plus website and web/news research over the referenced `[ai]`
+  provider, then drafts a personalized follow-up into a prefilled compose
+  - nothing sends automatically. Send (or dismiss) writes the processed
+  marker back to HubSpot, the source of truth, so the next pull skips it.
+  The core is vendor-neutral in `src/lib/crm` behind a `Client` interface,
+  with HubSpot the concrete `src/lib/crm/hubspot` implementation; the app
+  side is a thin adapter (`src/app/crm_engine.go`, stub-split on
+  `!lua || !crm`) feeding the tui surface. Spec:
+  docs/superpowers/specs/2026-09-03-hubspot-workflow-design.md. Pointers:
+  `src/lib/crm` (workflow.go, briefing.go, research.go),
+  `src/lib/crm/hubspot/client.go`, `src/app/crm_engine.go`, `src/tui/crm.go`.
 
 ## Process notes
 

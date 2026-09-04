@@ -290,6 +290,15 @@ func Run() error {
 		go runAICommand(name, threadID, extra, bus, cfg, worker, root)
 	})
 
+	// the CRM follow-up workflow ([crm]): crmWire builds the configured
+	// provider's client and pulls on the refresh key - a dormant no-op in
+	// builds without the lua && crm tags (crm_engine_stub.go). The pull
+	// source and the row-action handler gate the TUI queue surface open and
+	// route its a/d/x dispatches; the stub variants keep the surface closed.
+	tui.SetCrmPullSource(crmPullSource)
+	tui.SetCrmActionHandler(crmRowAction)
+	crmWire(ctx, bus, worker, cfg, root)
+
 	// attach commands: config tables register first, then Lua plugin
 	// registrations (per-plugin load order) - both land in the registry;
 	// the TUI reads it through the seam

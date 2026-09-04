@@ -3,7 +3,10 @@
 
 package core
 
-import "sync"
+import (
+	"sync"
+	"time"
+)
 
 type Event any
 
@@ -11,13 +14,14 @@ type Event any
 // (coalescing) - consumers repaint from state. Completion events keep
 // last-value snapshots so a drop never wedges a dialogue.
 type Bus struct {
-	mu       sync.Mutex
-	subs     []chan Event
-	progress map[string]Progress
-	sendLast map[string]SendResult
-	openLast []ComposeOpened
-	addrLast *AddressIndex
-	aiLast   map[string]AiResult
+	mu           sync.Mutex
+	subs         []chan Event
+	progress     map[string]Progress
+	sendLast     map[string]SendResult
+	openLast     []ComposeOpened
+	addrLast     *AddressIndex
+	aiLast       map[string]AiResult
+	crmQueueLast *CrmQueue
 }
 
 func NewBus() *Bus {
@@ -46,6 +50,8 @@ func (b *Bus) Publish(e Event) {
 		b.addrLast = &e
 	case AiResult:
 		b.aiLast[e.JobID] = e
+	case CrmQueue:
+		b.crmQueueLast = &e
 	}
 	for _, s := range b.subs {
 		select {
@@ -122,6 +128,18 @@ func (b *Bus) LatestAddressIndex() (AddressIndex, bool) {
 		return AddressIndex{}, false
 	}
 	return *b.addrLast, true
+}
+
+// LatestCrmQueue returns the last published queue page. Queue rows stream
+// one page per CrmQueue event, so the snapshot is a tail net, never the
+// full queue - accumulate from the subscription, not this.
+func (b *Bus) LatestCrmQueue() (CrmQueue, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.crmQueueLast == nil {
+		return CrmQueue{}, false
+	}
+	return *b.crmQueueLast, true
 }
 
 // AddressEntry is one deduplicated sender address (go.notmuch harvest
@@ -417,6 +435,42 @@ type AiResult struct {
 	JobID        string
 	Err          error
 	CloseSummary bool
+}
+
+// CrmContact is one queue row; provider-neutral - core never names a
+// vendor. Provider is the CRM source routing id ("hubspot"; a future CRM
+// adds a value).
+type CrmContact struct {
+	Provider                      string
+	ID, Email, First, Last, Title string // ID is provider-local
+	Company                       string
+	CreatedAt                     time.Time
+	Status                        string // new|briefing|drafted|sent|dismissed
+}
+
+// CrmQueue carries one page of queue rows (lua -> TUI); the last page is
+// snapshotted as a tail net against drops.
+type CrmQueue struct {
+	Contacts []CrmContact
+}
+
+// CrmBriefing carries one contact's generated briefing text to the queue
+// surface.
+type CrmBriefing struct {
+	Provider, ContactID, Text string
+}
+
+// CrmDraft is a compose-ready draft; the adapter opens compose on it (the
+// crm lib cannot import compose, so the finished draft crosses the bus).
+type CrmDraft struct {
+	Provider, ContactID, Email, Subject, Body string
+}
+
+// CrmRowError reports one queue row's failure, JobError-style (ids only,
+// never content).
+type CrmRowError struct {
+	Provider, ContactID string
+	Err                 error
 }
 
 // PickerRequest asks the TUI to run an external picker (R8): the Lua

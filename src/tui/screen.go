@@ -41,16 +41,44 @@ type pushedState struct {
 
 var pushedFrames = map[tcell.Screen]pushedState{}
 
+// clearedRows lists screen rows an out-of-band image clear has erased
+// since the last push. The clear (clearRects) ELs the image block's
+// background straight to the tty - tcell never writes those rows, so
+// an unchanged frame skips them and the erase's color lingers on the
+// vacated rows as a band (black on a dark theme). The next push
+// re-emits them so tcell reconciles the terminal with the model.
+var clearedRows = map[tcell.Screen]map[int]struct{}{}
+
+// markRowsCleared records screen rows an out-of-band image clear
+// touched; the next pushFrame re-emits them. y is 0-based, h rows tall.
+func markRowsCleared(s tcell.Screen, y, h int) {
+	if s == nil || h < 1 {
+		return
+	}
+	rs := clearedRows[s]
+	if rs == nil {
+		rs = map[int]struct{}{}
+		clearedRows[s] = rs
+	}
+	for r := y; r < y+h; r++ {
+		rs[r] = struct{}{}
+	}
+}
+
 // resetPushedFrames forgets a screen's last-pushed rows: the suspend
 // cycle wipes the tcell cell buffer while this cache survives, so the
 // next push must re-emit every row - a row-skip against the fresh
 // buffer leaves the terminal blank and later repaints skip the same
 // rows forever. execCmd calls this after Resume.
-func resetPushedFrames(s tcell.Screen) { delete(pushedFrames, s) }
+func resetPushedFrames(s tcell.Screen) {
+	delete(pushedFrames, s)
+	delete(clearedRows, s)
+}
 
 func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bool) {
 	w, h := s.Size()
-	if last, seen := pushedFrames[s]; seen && last.frame == frame && last.cursorX == cursorX &&
+	cleared := clearedRows[s]
+	if last, seen := pushedFrames[s]; seen && cleared == nil && last.frame == frame && last.cursorX == cursorX &&
 		last.cursorY == cursorY && last.showCursor == showCursor && last.w == w && last.h == h {
 		return
 	}
@@ -67,7 +95,9 @@ func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bo
 			row = rows[y]
 		}
 		if seen && y < len(last.rows) && last.rows[y] == row {
-			continue
+			if _, force := cleared[y]; !force {
+				continue
+			}
 		}
 		cs, end := parseSGR(row, style)
 		x := 0
@@ -91,6 +121,9 @@ func pushFrame(s tcell.Screen, frame string, cursorX, cursorY int, showCursor bo
 		last.rows[y] = row
 	}
 	pushedFrames[s] = pushedState{frame: frame, rows: last.rows, cursorX: cursorX, cursorY: cursorY, showCursor: showCursor, w: w, h: h}
+	if cleared != nil {
+		delete(clearedRows, s)
+	}
 	if showCursor {
 		s.ShowCursor(cursorX, cursorY)
 	} else {

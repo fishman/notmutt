@@ -20,6 +20,7 @@ import (
 	"image/png"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/gdamore/tcell/v3"
 	"github.com/mattn/go-sixel"
@@ -190,7 +191,7 @@ func TestPagerVisibleImages(t *testing.T) {
 
 func TestDecodeImage(t *testing.T) {
 	// 400x900 px at an 80x30 window: the row budget binds first (aspect kept: 2/3), the pixel dims snap to exact cell multiples
-	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30, 0, 0)
+	img, cols, rows, err := decodeImage(testPNG(t, 400, 900), 80, 30, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +203,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// the same image in a 100-row window binds on the width instead: a tall chart renders at its natural aspect, not squashed
-	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100, 0, 0); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 400, 900), 80, 100, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 40 || rows != 45 {
@@ -210,7 +211,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// a wide image binds on the width cap
-	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80, 100, 0, 0); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 2000, 10), 80, 100, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 80 || rows != 1 {
@@ -218,7 +219,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// a tiny image still occupies one cell (no zero-size expansion)
-	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80, 100, 0, 0); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 3, 3), 80, 100, 0, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 1 || rows != 1 {
@@ -226,7 +227,7 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// garbage bytes never decode
-	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100, 0, 0); err == nil {
+	if _, _, _, err := decodeImage([]byte("not an image"), 80, 100, 0, 0, false); err == nil {
 		t.Fatal("garbage must fail the decode")
 	}
 
@@ -236,19 +237,19 @@ func TestDecodeImage(t *testing.T) {
 	if err := jpeg.Encode(&jbuf, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, rows, err := decodeImage(jbuf.Bytes(), 80, 100, 0, 0); err != nil || cols != 40 || rows != 15 {
+	if _, cols, rows, err := decodeImage(jbuf.Bytes(), 80, 100, 0, 0, false); err != nil || cols != 40 || rows != 15 {
 		t.Fatalf("jpeg must decode at its aspect, got %dx%d err=%v", cols, rows, err)
 	}
 	var gbuf bytes.Buffer
 	if err := gif.Encode(&gbuf, src, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, cols, rows, err := decodeImage(gbuf.Bytes(), 80, 100, 0, 0); err != nil || cols != 40 || rows != 15 {
+	if _, cols, rows, err := decodeImage(gbuf.Bytes(), 80, 100, 0, 0, false); err != nil || cols != 40 || rows != 15 {
 		t.Fatalf("gif must decode at its aspect, got %dx%d err=%v", cols, rows, err)
 	}
 
 	// a declared display size is the target: a 200x300 image declared 600x600 upscales to 600px wide (2x) - with no declaration the scale would cap at 1 and render 200px
-	if _, cols, rows, err = decodeImage(testPNG(t, 200, 300), 80, 100, 600, 600); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 200, 300), 80, 100, 600, 600, false); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 40 || rows != 30 {
@@ -256,11 +257,41 @@ func TestDecodeImage(t *testing.T) {
 	}
 
 	// the window cap still binds: a declared 10000px image cannot leave the view, and a one-axis declaration scales the other axis with it (aspect kept)
-	if _, cols, rows, err = decodeImage(testPNG(t, 400, 300), 80, 100, 10000, 0); err != nil {
+	if _, cols, rows, err = decodeImage(testPNG(t, 400, 300), 80, 100, 10000, 0, false); err != nil {
 		t.Fatal(err)
 	}
 	if cols != 80 || rows != 30 {
 		t.Fatalf("declared size must cap at the window, got %dx%d", cols, rows)
+	}
+}
+
+// TestDecodeImageFillUpscale pins the standalone fill's upscale window: a
+// figure whose natural width sits below the column (600px in an 80-cell
+// window) stretches to fill when the caller asks for a fill, stays at
+// natural px otherwise; a small asset (20 cols natural) is never blown up
+// even on a fill request (the imgFillScaleCap guard).
+func TestDecodeImageFillUpscale(t *testing.T) {
+	img, cols, rows, err := decodeImage(testPNG(t, 600, 300), 80, 100, 0, 0, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cols != 60 || rows != 15 {
+		t.Fatalf("no fill must keep natural px, got %dx%d", cols, rows)
+	}
+	if _, cols, rows, err = decodeImage(testPNG(t, 600, 300), 80, 100, 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 80 {
+		t.Fatalf("a fill must stretch a near-column figure to the window, got %d cols", cols)
+	}
+	if img == nil {
+		t.Fatal("decode must return an image")
+	}
+	if _, cols, rows, err = decodeImage(testPNG(t, 200, 100), 80, 100, 0, 0, true); err != nil {
+		t.Fatal(err)
+	}
+	if cols != 20 || rows != 5 {
+		t.Fatalf("a small asset must never blow up on a fill, got %dx%d", cols, rows)
 	}
 }
 
@@ -332,11 +363,11 @@ func TestDetectImageProtocolTmux(t *testing.T) {
 	}
 }
 
-func TestKittyEncode(t *testing.T) {
+func TestKittyTransmit(t *testing.T) {
 	var buf bytes.Buffer
-	kittyEncode(&buf, testImg(600, 600))
+	kittyTransmit(&buf, 0, testImg(600, 600))
 	out := buf.String()
-	if !strings.HasPrefix(out, "\x1b_Gf=100,t=d,a=T,m=1;") {
+	if !strings.HasPrefix(out, "\x1b_Ga=t,i=0,f=100,t=d,m=1;") {
 		t.Fatalf("first chunk must open the transmit frame, got %q", show(out[:24]))
 	}
 	if !strings.HasSuffix(out, "\x1b\\") || !strings.Contains(out, "\x1b_Gm=0;") {
@@ -483,17 +514,25 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	paint()
 	// the block sits at doc row 2 (before, blank, image) - screen row 4,
 	// centered in the 80-cell window (10 decoded cols, offset 35)
-	if !strings.HasPrefix(buf.String(), "\x1b[4;36H\x1b_Gf=") {
-		t.Fatalf("the paint must emit a centered kitty frame at the image rows, got %q", show(buf.String()[:24]))
+	// the first sight transmits the full decode under id 0 (a=t), then
+	// places the visible slice at the cursor (a=p with the decode's crop
+	// rows) - no delete-all, no EL sweep
+	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,m=0;") {
+		t.Fatalf("the paint must transmit the decode first, got %q", show(buf.String()[:min(36, buf.Len())]))
+	}
+	if !strings.Contains(buf.String(), "\x1b[4;36H\x1b_Ga=p,i=0,p=1,y=0,h=") {
+		t.Fatalf("the paint must place the visible slice at the centered rows, got %q", show(buf.String()))
 	}
 	if len(m.painted) != 1 {
 		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
 	}
 
-	// toggle off: the second press (the cycle: off -> remote -> off) clears the rect BEFORE the collapsed frame renders
+	// toggle off: the second press tears the layer down BEFORE the
+	// collapsed frame renders - every placement AND its data goes, the
+	// transmit ids reset
 	m = press(t, m, "alt+i")
-	if !strings.Contains(buf.String(), "\x1b[4;36H") {
-		t.Fatalf("toggle-off must clear the centered painted rect")
+	if !strings.Contains(buf.String(), "\x1b_Ga=d,d=A\x1b\\") {
+		t.Fatalf("toggle-off must free the whole kitty layer")
 	}
 	m, _ = m.Update(frameTick{})
 	if out := m.View(); !strings.Contains(out, "[image]") {
@@ -501,6 +540,39 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	}
 	if len(m.painted) != 0 {
 		t.Fatalf("toggle-off must drop the rect bookkeeping")
+	}
+}
+
+// TestKittyClearImageRectsFreeAll pins the kitty clear path: a placement
+// is pixels EL erases text from but never removes, so tearing the layer
+// down must free every image AND its data (a=d,d=A) and reset the
+// transmit ids - never the sixel-style per-row EL sweep that would leave
+// the previous image frozen over the new frame. A scroll-away is NOT
+// this path: it deletes one placement by id and keeps the data.
+func TestKittyClearImageRectsFreeAll(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty"
+	img := &core.Image{Cols: 10, Rows: 5}
+	m.painted = map[*core.Image]cellRect{img: {x: 3, y: 4, w: 10, h: 5, bg: "#112233"}}
+	m.kimg = map[*core.Image]int{img: 3}
+	m.kimgNext = 4
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	m.clearImageRects()
+	if len(m.painted) != 0 || len(m.kimg) != 0 || m.kimgNext != 0 {
+		t.Fatalf("clear must reset the paint and transmit state (painted=%d kimg=%d next=%d)", len(m.painted), len(m.kimg), m.kimgNext)
+	}
+	if got := buf.String(); got != "\x1b_Ga=d,d=A\x1b\\" {
+		t.Fatalf("kitty clear must free-all the images, got %q", show(got))
 	}
 }
 
@@ -590,6 +662,103 @@ func colsOf(m map[*core.Image]imgPaint) []int {
 		out = append(out, img.Cols)
 	}
 	return out
+}
+
+// labelImgLine builds the worker's F-mode line for a link-wrapped isolated
+// image: the [N] marker shares the row with the image's alt (allImages is
+// false when a label is present), so the row carries Imgs plus the label
+// run - verified against the images-on renderStage2Full output shape.
+func labelImgLine(label string, img *core.Image) core.Line {
+	return core.Line{
+		Text: label + img.Alt,
+		Runs: []core.Run{
+			{Text: label, Label: true},
+			{Text: img.Alt, Image: img},
+		},
+		Imgs: []core.ImagePos{{Image: img, X: len(label)}},
+		Kind: core.LineBody,
+	}
+}
+
+// TestModelLabelLinkImageFillsAndCenters pins the easyjump render parity:
+// a link-wrapped isolated image under F carries its [N] label on the same
+// row as the image (the mail render's labelLinks shape), and that chrome
+// must not flip the standalone verdict - the image centers and fills like
+// its unlabeled counterpart instead of holding the authored disp width at
+// the label's flow offset.
+func TestModelLabelLinkImageFillsAndCenters(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	chart := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: 300}
+	narrow := &core.Image{Data: testPNG(t, 200, 100), Alt: "[image]"}
+	content := []core.Line{
+		{Text: "before", Kind: core.LineBody},
+		{Text: "", Kind: core.LineBody},
+		labelImgLine("[1]", chart),
+		{Text: "", Kind: core.LineBody},
+		labelImgLine("[2]", narrow),
+		{Text: "", Kind: core.LineBody},
+		{Text: "after", Kind: core.LineBody},
+	}
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			LinkLabels: true,
+			Images:     true,
+			Lines:      content,
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	_ = m.View() // the decode trigger: prepareImages sizes the visible images
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	next, stale := m.paintRects()
+	clearRects(imageWriter, stale)
+	m.paintImages(next)
+
+	// the link-wrapped chart fills the window's text column like the
+	// unlabeled standalone render, not its authored 300px/30 cols
+	has := func(cols int) *core.Image {
+		for img := range next {
+			if img.Cols == cols {
+				return img
+			}
+		}
+		return nil
+	}
+	if img := has(80); img == nil {
+		t.Fatalf("the labeled standalone chart must fill the column to 80 cols, got %v", colsOf(next))
+	}
+	// the narrower labeled image centers: 20 cols in an 80-cell window,
+	// not the label's flow offset
+	nimg := has(20)
+	if nimg == nil {
+		t.Fatalf("the labeled small image must decode at natural 20 cols, got %v", colsOf(next))
+	}
+	if rect := next[nimg]; rect.rect.x != 30 {
+		t.Fatalf("the labeled standalone image must center, rect.x=%d want 30", rect.rect.x)
+	}
+	if len(m.painted) != 2 {
+		t.Fatalf("two blocks must paint, got %d", len(m.painted))
+	}
 }
 
 // TestModelRenderImagesRemote pins the remote mode: the alt+i press
@@ -777,10 +946,11 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	}
 }
 
-// TestModelRenderImagesScrollCycle pins the scroll behavior: a below-
-// fold block image decodes when scrolled into view, its rect clears
-// when scrolled past, and the same rect paints again on the way back
-// (the decode cache keeps the bytes).
+// TestModelRenderImagesScrollCycle pins the kitty scroll: a below-fold
+// block image decodes when scrolled into view and transmits once, its
+// placement deletes by id (data kept) when scrolled past, and the way
+// back re-places with a bare a=p - never a retransmit, never a
+// full-window clear.
 func TestModelRenderImagesScrollCycle(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -849,7 +1019,8 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 		t.Fatalf("nothing may paint below the fold, got %d rects", len(m.painted))
 	}
 
-	// scroll into it: the decode expands the doc, the paint emits the rect
+	// scroll into it: the decode expands the doc, the first sight transmits
+	// the full decode under id 0 (a=t) and places its visible slice
 	m.pager.vp.offset = 25
 	m.View()
 	paint()
@@ -860,34 +1031,284 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	if len(m.painted) != 1 {
 		t.Fatalf("the visible image must paint one rect, got %d", len(m.painted))
 	}
+	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,m=0;") {
+		t.Fatalf("the first sight must transmit the decode, got %q", show(buf.String()[:min(30, buf.Len())]))
+	}
 
-	// scroll past: the rect stales (cleared before the frame) and the bookkeeping drops it
+	// scroll past: nothing paints and nothing stales - paintKitty deletes
+	// the departed placement by id (data kept for a cheap return)
 	m.pager.vp.offset = 60
 	m.View()
 	np, stale := m.paintRects()
-	if len(np) != 0 {
-		t.Fatalf("scrolled-past images must not paint, got %d", len(np))
+	if len(np) != 0 || len(stale) != 0 {
+		t.Fatalf("a scrolled-past kitty image must not paint or stale, got %d/%d", len(np), len(stale))
 	}
-	if len(stale) != 1 {
-		t.Fatalf("the scrolled-past rect must stale, got %d", len(stale))
-	}
-	clearRects(imageWriter, stale)
 	m.paintImages(np)
+	if len(m.painted) != 0 {
+		t.Fatalf("the scrolled-past image must drop its rect, got %d", len(m.painted))
+	}
+	if !strings.Contains(buf.String(), "\x1b_Ga=d,d=i,i=0,p=1\x1b\\") {
+		t.Fatalf("scroll-past must delete the placement by id (keeping the data), got %q", show(buf.String()))
+	}
 
-	// scroll back: the same rect paints again (the pixels were cleared when it left the window - the cache keeps the bytes, the dims stay decoded)
+	// scroll back: the retained data re-places with a bare a=p - the decode
+	// is never re-transmitted, so the transmit count stays one
 	m.pager.vp.offset = 25
 	m.View()
 	paint()
 	if len(m.painted) != 1 {
-		t.Fatalf("scrolling back must re-paint the image, got %d rects", len(m.painted))
+		t.Fatalf("scrolling back must re-place the image, got %d rects", len(m.painted))
+	}
+	if got := strings.Count(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,"); got != 1 {
+		t.Fatalf("returning must not retransmit the decode, transmit count=%d", got)
+	}
+	if !strings.Contains(buf.String(), "\x1b_Ga=p,i=0,p=1,y=") {
+		t.Fatalf("returning must re-place the image, got %q", show(buf.String()))
+	}
+	if m.imgSuppress {
+		t.Fatalf("kitty re-places in place and must never enter the scroll hold")
 	}
 }
 
-// TestModelImagesReopenCarriesFlag pins the images flag through the open
-// job (the alt+i relayout plumbing): an images-on reply replaces the
-// content and flips m.images, a refine reply forces the replacement even
-// with the flag unchanged, a no-change reply is idempotent, and an
-// images-off reply flips back.
+// TestModelScrollSettleFSM pins the scroll-burst settle: a paint whose
+// rects all translated as one (same size, new spot - the sixel scroll
+// case, where every frame re-encodes the visible set) clears the pixels
+// and enters the hold; motion while held keeps it and decode pauses; a
+// still pager past the debounce lifts it and repaints the settled
+// window once; and a paint that is NOT a pure translation - the first
+// decode, a rect leaving the window - never holds.
+func TestModelScrollSettleFSM(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "sixel" // the hold FSM is sixel-only: kitty re-places in place and never holds
+	m.width, m.height = 60, 100
+	var body strings.Builder
+	for range 8 {
+		body.WriteString("<p>head</p>")
+	}
+	body.WriteString("<img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(testPNG(t, 120, 200)) + "\">")
+	for range 60 {
+		body.WriteString("<p>tail</p>")
+	}
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Lines:      mail.RenderHTML(body.String(), nil, 0),
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	m = press(t, m, "alt+i")
+	m, _ = m.Update(frameTick{})
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	paint := func() (map[*core.Image]imgPaint, []cellRect) {
+		next, stale := m.paintRects()
+		clearRects(imageWriter, stale)
+		m.paintImages(next)
+		return next, stale
+	}
+
+	// the top-of-window decode: one block, painted once, no hold
+	m.View()
+	blocks := m.pager.visibleImages()
+	if len(blocks) != 1 || blocks[0].img.Rows == 0 {
+		t.Fatalf("the top-of-window image must decode, got %d blocks", len(blocks))
+	}
+	img := blocks[0].img
+	doc := blocks[0].doc
+	np, _ := paint()
+	if len(np) != 1 || len(m.painted) != 1 {
+		t.Fatalf("the first paint must emit one rect, got %d/%d", len(np), len(m.painted))
+	}
+	if m.imgSuppress {
+		t.Fatalf("a first paint must not enter the hold")
+	}
+
+	// a pure translation (image fully visible, doc still has head above
+	// it): the rects clear and the hold enters, nothing emits
+	m.pager.vp.offset = doc - 2
+	m.View()
+	if np, stale := paint(); np != nil || stale != nil {
+		t.Fatalf("a suppressed frame must emit nothing, got %d/%d", len(np), len(stale))
+	}
+	if !m.imgSuppress {
+		t.Fatalf("a translation scroll must enter the hold")
+	}
+	if len(m.painted) != 0 {
+		t.Fatalf("entering the hold must clear the painted rects")
+	}
+	if buf.Len() == 0 {
+		t.Fatalf("entering the hold must clear the stale pixels to the terminal")
+	}
+
+	// decode pauses while held: a would-be decode (fresh cache) does not run
+	img.Rows, img.Cols = 0, 0
+	delete(m.imgCache, img)
+	m.View()
+	if img.Rows != 0 {
+		t.Fatalf("decode must pause during the hold, rows=%d", img.Rows)
+	}
+
+	// motion while held refreshes the settle clock and keeps the hold
+	m.pager.vp.offset = doc
+	m, _ = m.Update(imgSettleTick{})
+	if !m.imgSuppress {
+		t.Fatalf("motion must keep the hold")
+	}
+
+	// a still pager under the debounce also stays held
+	m, _ = m.Update(imgSettleTick{})
+	if !m.imgSuppress {
+		t.Fatalf("a sub-debounce settle tick must keep the hold")
+	}
+
+	// a still pager past the debounce lifts the hold: decode resumes and
+	// the next render repaints the settled window once
+	m.imgSettleAt = time.Now().Add(-imgSettleDebounce - time.Millisecond)
+	m, _ = m.Update(imgSettleTick{})
+	if m.imgSuppress {
+		t.Fatalf("a settled pager must lift the hold")
+	}
+	if !m.paint {
+		t.Fatalf("lifting the hold must arm a repaint")
+	}
+	m.View()
+	np, stale := paint()
+	if len(np) != 1 || len(m.painted) != 1 {
+		t.Fatalf("the settle must repaint the translated rect, got %d/%d", len(np), len(m.painted))
+	}
+	if m.imgSuppress {
+		t.Fatalf("a settle repaint must not re-enter the hold")
+	}
+
+	// a rect leaving the window is not a translation: it stales, never holds
+	m.pager.vp.offset = doc + 40
+	m.View()
+	np, stale = paint()
+	if m.imgSuppress {
+		t.Fatalf("an image leaving the window must not hold")
+	}
+	if len(np) != 0 || len(stale) != 1 {
+		t.Fatalf("a leaving image must stale one rect, got %d/%d", len(np), len(stale))
+	}
+}
+
+// TestModelCropScrollBurstHolds pins the re-crop settle: a scroll that
+// keeps the same images visible but re-crops one (an image at a window
+// edge) re-encodes the whole set per frame - but a lone step must stay
+// live (a single page-down over a tall image would otherwise blank it),
+// while a second re-crop within the debounce window is a burst and enters
+// the hold. A settle repaint arms the lone path again.
+func TestModelCropScrollBurstHolds(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "sixel" // the re-crop burst hold is sixel-only
+	m.width, m.height = 60, 100
+	var body strings.Builder
+	for range 8 {
+		body.WriteString("<p>head</p>")
+	}
+	body.WriteString("<img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(testPNG(t, 120, 200)) + "\">")
+	for range 60 {
+		body.WriteString("<p>tail</p>")
+	}
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Lines:      mail.RenderHTML(body.String(), nil, 0),
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	m = press(t, m, "alt+i")
+	m, _ = m.Update(frameTick{})
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	paint := func() (map[*core.Image]imgPaint, []cellRect) {
+		next, stale := m.paintRects()
+		clearRects(imageWriter, stale)
+		m.paintImages(next)
+		return next, stale
+	}
+
+	m.View()
+	blk := m.pager.visibleImages()[0]
+	if blk.img.Rows == 0 {
+		t.Fatalf("the image must decode, rows=%d", blk.img.Rows)
+	}
+	doc := blk.doc
+	// first paint: empty set, live, no hold
+	m.pager.vp.offset = 0
+	m.View()
+	np, _ := paint()
+	if len(np) != 1 || m.imgSuppress {
+		t.Fatalf("the first paint must emit one rect live, got %d/%v", len(np), m.imgSuppress)
+	}
+
+	// a lone re-crop (the image crops at the top edge): live, no hold
+	m.pager.vp.offset = doc + 1
+	m.View()
+	np, _ = paint()
+	if len(np) != 1 {
+		t.Fatalf("a lone re-crop must paint one rect, got %d", len(np))
+	}
+	if m.imgSuppress {
+		t.Fatalf("a lone re-crop must not enter the hold")
+	}
+
+	// a second re-crop within the debounce window is a burst: hold, clear
+	m.pager.vp.offset = doc + 2
+	m.View()
+	if np, stale := paint(); np != nil || stale != nil {
+		t.Fatalf("a re-crop burst must emit nothing, got %d/%d", len(np), len(stale))
+	}
+	if !m.imgSuppress {
+		t.Fatalf("a re-crop burst must enter the hold")
+	}
+	if len(m.painted) != 0 {
+		t.Fatalf("a re-crop burst must clear the painted rects")
+	}
+
+	// a settled repaint arms the lone path again: the next re-crop is live
+	m.imgSettleAt = time.Now().Add(-imgSettleDebounce - time.Millisecond)
+	m, _ = m.Update(imgSettleTick{})
+	m.pager.vp.offset = doc + 3
+	m.View()
+	np, _ = paint()
+	if len(np) != 1 {
+		t.Fatalf("a re-crop after settle must paint one rect, got %d", len(np))
+	}
+	if m.imgSuppress {
+		t.Fatalf("a re-crop after settle must not hold")
+	}
+}
 func TestModelImagesReopenCarriesFlag(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
@@ -1100,6 +1521,68 @@ func TestModelRefineRemoteSeats(t *testing.T) {
 	}
 }
 
+// TestModelOpenLinksReopenKeepsSizes pins the F-key reopen on images-on
+// content: the easyjump re-render carries the seated remote sizes like
+// the images-on toggle does, so a fetched-and-seated remote image does
+// not lose its geometry when the link labels come up.
+func TestModelOpenLinksReopenKeepsSizes(t *testing.T) {
+	const u = "http://example.com/x.png"
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	content := []core.Line{
+		{Text: "alpha"},
+		{Text: "pic", Image: &core.Image{URL: u, Alt: "[image]"}},
+	}
+	var reqs []OpenReq
+	SetOpenHandler(func(req OpenReq) {
+		reqs = append(reqs, req)
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			MsgID:      req.MsgID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     req.Images,
+			Refine:     req.Refine,
+			LinkLabels: req.LabelLinks,
+			Lines:      content,
+		}})
+		m = next
+	})
+	SetImageFetchHandler(func(url string) {})
+	press(t, m, "enter") // discard: the open handler rebinds m
+
+	// the toggle + a fetch seat the remote image: the refine reply installs
+	// the images-on content with the measured px cached
+	press(t, m, "alt+i")
+	m, _ = m.Update(EventMsg{Event: core.ImageFetched{URL: u, Data: testPNG(t, 40, 20)}})
+	if sz, ok := m.imgRemoteSize[u]; !ok || sz.W != 40 {
+		t.Fatalf("the fetch must seat the remote px, got %+v", m.imgRemoteSize[u])
+	}
+	if !m.images {
+		t.Fatalf("the refine must install images-on content")
+	}
+
+	// the F reopen follows the images-on pattern: the seated sizes ride it
+	press(t, m, "F")
+	last := reqs[len(reqs)-1]
+	if !last.Images {
+		t.Fatalf("the F reopen must be images-on, got %+v", last)
+	}
+	if !last.LabelLinks {
+		t.Fatalf("the F reopen must request the labels")
+	}
+	if sz, ok := last.ImgSizes[u]; !ok || sz.W != 40 {
+		t.Fatalf("the F reopen must carry the seated remote sizes, got %+v", last.ImgSizes)
+	}
+}
+
 // TestModelImagesKeepsScroll pins the images/refine scroll preservation:
 // a same-message geometry re-render (the alt+i toggle reply, a refine)
 // keeps the reader's place and pan; a fresh open of another message
@@ -1189,7 +1672,7 @@ func TestModelImagesKeepsScroll(t *testing.T) {
 
 // TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave the cleared page background visible (P2=0 paints them in the terminal's default background), and the stream must round-trip to the same dims.
 func TestSixelEncodeTransparent(t *testing.T) {
-	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0)
+	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,13 @@ const (
 	// an error persists for investigation. The status line is transient
 	// (mutt's message window); the ~ overlay keeps the full ring.
 	statusTimeout = 5 * time.Second
+	// imgSettleInterval: the scroll-burst settle check's cadence while
+	// image suppression holds (the loop's gated arm).
+	imgSettleInterval = 33 * time.Millisecond
+	// imgSettleDebounce: how long the pager must rest before a scroll
+	// burst's held images decode and paint once. Longer than the tick so
+	// a mid-burst tick can never exit between keypresses.
+	imgSettleDebounce = 120 * time.Millisecond
 )
 
 // Layout.

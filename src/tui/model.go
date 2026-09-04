@@ -180,15 +180,34 @@ type Model struct {
 	// imgRemote caches fetched remote bytes by URL (they never cross into
 	// the worker - only their measured px ride the refine re-open as
 	// imgRemoteSize); refinePending single-flights that refine re-open.
-	imgProto      string
-	imgCache      map[*core.Image]image.Image
-	painted       map[*core.Image]cellRect
+	imgProto string
+	imgCache map[*core.Image]image.Image
+	painted  map[*core.Image]cellRect
+	// kimg is kitty's per-image transmit state: an entry holds the id the
+	// decode was uploaded under (a later re-place needs no pixel resend).
+	// A scroll-away delete keeps the entry so the image re-places cheaply
+	// on the way back; clearImageRects frees the data and resets ids.
+	kimg          map[*core.Image]int
+	kimgNext      int
 	imgMode       int
 	images        bool
 	imgFetching   map[string]bool
 	imgRemote     map[string][]byte
 	imgRemoteSize map[string]core.ImgSize
 	refinePending bool
+	// imgSuppress is the scroll-burst hold: while a scroll keeps shifting
+	// the painted rects, decode+encode pause (cleared once at entry) and
+	// the imgSettle tick lifts the hold once the pager rests - re-painting
+	// every frame would re-encode the whole visible set (sixel cannot move
+	// a placement). imgSettleAt/Off/X track the last motion for the tick.
+	imgSuppress  bool
+	imgSettleAt  time.Time
+	imgSettleOff int
+	imgSettleX   int
+	// cropLiveAt stamps the last live re-crop paint: a re-crop within the
+	// debounce window of it is a scroll burst and enters the hold, a lone
+	// re-crop (page-down over a tall image) stays live.
+	cropLiveAt time.Time
 	// attView is the pager's active attachment view (the v dialog's
 	// enter): back re-opens the message to restore; s prefills the
 	// save prompt from it. nil = the pager shows the message.
@@ -358,7 +377,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, progOwner: map[string]string{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, kimg: map[*core.Image]int{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, progOwner: map[string]string{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -696,6 +715,29 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			m.paint = false
 		}
 		return m, nil
+	case imgSettleTick:
+		// the scroll-burst settle: motion refreshes the settle clock; a
+		// still pager lifts the hold and decodes the burst-revealed window
+		// once (off the scroll path), so the next render paints it
+		if !m.imgSuppress {
+			return m, nil
+		}
+		if m.mode != "pager" || m.pager == nil || !m.pager.images {
+			m.imgSuppress = false
+			return m, nil
+		}
+		if m.pager.vp.offset != m.imgSettleOff || m.pager.x != m.imgSettleX {
+			m.imgSettleOff, m.imgSettleX = m.pager.vp.offset, m.pager.x
+			m.imgSettleAt = time.Now()
+			return m, nil
+		}
+		if time.Since(m.imgSettleAt) < imgSettleDebounce {
+			return m, nil
+		}
+		m.imgSuppress = false
+		m.prepareImages() // decode the settled window's new images now
+		m.paint = true
+		return m, nil
 	case chainTick:
 		// the armed prefix expires on its timer (a stale tick no-ops on
 		// the age check); the continuation view resets to base bindings
@@ -981,6 +1023,12 @@ func (m Model) busy() bool {
 }
 
 func (m Model) statusClearPending() bool { return m.statusClearOn && !m.statusMsgErr }
+
+// imgSettling is the scroll-burst hold gate: the loop arms the settle
+// ticker only while a hold is active on a live images-on pager.
+func (m Model) imgSettling() bool {
+	return m.imgSuppress && m.mode == "pager" && m.pager != nil && m.pager.images
+}
 
 // dispatchAction runs a bound action with its count, then the
 // legend-tick tail. Actions with their own cmds (quit, edit) return
@@ -1886,7 +1934,9 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 			keepVp, keepX = m.pager.vp.offset, m.pager.x
 		}
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList, m.images = e.RenderMode, e.Headers, e.LinkLabels, e.Links, e.Images
-		m.attView = nil // the attachment view ends with the restore
+		m.attView = nil            // the attachment view ends with the restore
+		m.imgSuppress = false      // fresh content paints immediately, never held
+		m.cropLiveAt = time.Time{} // ...and a re-crop is not a continued burst
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 		m.pager.setSMIME(e.SMIME)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
@@ -2366,10 +2416,16 @@ func (m *Model) openDispatch(tid, mid string, preview bool) {
 // (h/v/ctrl+u/F/back-from-attachment/alt+i): same seam with an explicit
 // view. Every re-open carries m.images so an images-on message's toggles
 // stay images-on (the images flag describes the current content, never a
-// request for a fetch); imgSizes/refine ride the alt+i refine re-open
-// only. Origin is the surface owning the pager being re-rendered - in
-// pager mode that is the active index surface.
+// request for a fetch). An images-on re-open lays remote images at their
+// fetched sizes like the toggle does - a nil size map falls back to the
+// model's remote-size cache, so the F/h/v/label re-renders keep a seated
+// remote image seated; refine rides the alt+i refine re-open only.
+// Origin is the surface owning the pager being re-rendered - in pager
+// mode that is the active index surface.
 func (m *Model) reopenDispatch(tid, mid string, mode core.RenderMode, headers bool, labelLinks bool, images bool, imgSizes map[string]core.ImgSize, refine bool) {
+	if images && imgSizes == nil {
+		imgSizes = m.imgRemoteSize
+	}
 	onOpen(OpenReq{ThreadID: tid, MsgID: mid, Mode: mode, Headers: headers, Width: m.width, LabelLinks: labelLinks, Images: images, ImgSizes: imgSizes, Refine: refine, Origin: m.activeView()})
 }
 
@@ -2606,6 +2662,11 @@ func legendTickCmd(moves int) Cmd {
 // frameTick lands one frameInterval after a navigation defers its
 // paint; the handler re-arms the render gate for that one update.
 type frameTick struct{}
+
+// imgSettleTick is the scroll-burst settle check (the loop's gated
+// arm): while image suppression holds it lifts the hold - decode and
+// encode resume - once the pager has been still for imgSettleDebounce.
+type imgSettleTick struct{}
 
 func frameTickCmd() Cmd {
 	return tickCmd(frameInterval, func(time.Time) any { return frameTick{} })

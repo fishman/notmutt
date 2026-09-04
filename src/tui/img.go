@@ -27,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	_ "golang.org/x/image/webp" // decoder registrations: mail charts arrive as jpeg/gif/webp
 
@@ -102,6 +103,11 @@ var tmuxSixel = func() bool {
 	return err == nil && strings.TrimSpace(string(out)) == "1"
 }
 
+// imgFillScaleCap: a standalone fill may upscale only this far - a figure
+// whose natural width is at least half the column tops up to full width on
+// a wide terminal; a small asset is never blown up to fill.
+const imgFillScaleCap = 2.0
+
 // decodeImage decodes and scales the raw bytes to the cell grid: at
 // most widthCells (capped at imgMaxCols) wide and heightRows tall,
 // aspect preserved, snapped UP to exact cell multiples so the pixel
@@ -109,9 +115,12 @@ var tmuxSixel = func() bool {
 // declared display size in pixels (0 = unspecified): the declared axis
 // is the target scale - an email that sizes its section for a 600px
 // chart gets a 600px chart, capped by the window. With no declared
-// size the scale caps at 1 (natural size, never upscale). Returns the
-// scaled image (always NRGBA) plus its cell dims.
-func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.Image, int, int, error) {
+// size the scale caps at 1 (natural size, never upscale); a fill
+// request relaxes that cap up to imgFillScaleCap so a standalone
+// figure whose natural width sits below the column still stretches
+// toward it. Returns the scaled image (always NRGBA) plus its cell
+// dims.
+func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int, fill bool) (image.Image, int, int, error) {
 	src, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, 0, 0, err
@@ -126,19 +135,22 @@ func decodeImage(data []byte, widthCells, heightRows, dispW, dispH int) (image.I
 	if dispH > 0 {
 		scale = math.Min(scale, float64(dispH)/sh)
 	}
-	if scale > 1 && dispW == 0 && dispH == 0 {
+	if scale > 1 && dispW == 0 && dispH == 0 && (!fill || scale > imgFillScaleCap) {
 		scale = 1
 	}
 	cols := max(1, int(sw*scale/float64(imgCellW)))
 	rows := max(1, int(sh*scale/float64(imgCellH)))
 	dw, dh := cols*imgCellW, rows*imgCellH
 	dst := image.NewNRGBA(image.Rect(0, 0, dw, dh))
-	draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	// ApproxBiLinear over CatmullRom: ~3x cheaper on downscale (the
+	// scroll settle + first-view decode), visually fine on terminal images.
+	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
 	return dst, cols, rows, nil
 }
 
-// kittyEncode transmits the image as PNG over the kitty graphics protocol: base64 chunks of kittyChunk bytes, the classic chunked frame (a=T transmit placement at the cursor).
-func kittyEncode(w io.Writer, img image.Image) {
+// kittySend writes the PNG of img as chunked kitty data under the given
+// action/qualifier head (first chunk carries it, later chunks only m).
+func kittySend(w io.Writer, head string, img image.Image) {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
 	data := base64.StdEncoding.EncodeToString(buf.Bytes())
@@ -150,11 +162,42 @@ func kittyEncode(w io.Writer, img image.Image) {
 			m = 0
 		}
 		if i == 0 {
-			fmt.Fprintf(w, "\x1b_Gf=100,t=d,a=T,m=%d;%s\x1b\\", m, data[i*kittyChunk:end])
+			fmt.Fprintf(w, "\x1b_G%s,m=%d;%s\x1b\\", head, m, data[i*kittyChunk:end])
 		} else {
 			fmt.Fprintf(w, "\x1b_Gm=%d;%s\x1b\\", m, data[i*kittyChunk:end])
 		}
 	}
+}
+
+// kittyTransmit first-sights an image: upload its full decode under a
+// stable image id (transmit-only - data, no placement yet). The visible
+// slice is placed right after, so a later scroll can re-crop ANY window
+// of the stored decode with a bare a=p, never a resend.
+func kittyTransmit(w io.Writer, id int, img image.Image) {
+	kittySend(w, fmt.Sprintf("a=t,i=%d,f=100,t=d", id), img)
+}
+
+// kittyPlace moves an already-transmitted image: re-issuing the (id, 1)
+// placement at the cursor replaces the old one in place - the vacated
+// cells clear themselves, nothing else needs deleting. yPx/hPx crop the
+// placement to the visible rows of the stored decode.
+func kittyPlace(w io.Writer, id, yPx, hPx int) {
+	fmt.Fprintf(w, "\x1b_Ga=p,i=%d,p=1,y=%d,h=%d\x1b\\", id, yPx, hPx)
+}
+
+// kittyDeletePlacement removes one placement but keeps its image data
+// (lowercase d=i): an image scrolled away re-places on the way back with
+// no resend.
+func kittyDeletePlacement(w io.Writer, id int) {
+	fmt.Fprintf(w, "\x1b_Ga=d,d=i,i=%d,p=1\x1b\\", id)
+}
+
+// kittyFreeAll wipes every kitty image AND frees its data (uppercase
+// d=A): the toggle-off/resize/exit paths tear the whole layer down, so
+// ids reset and the next transmit may reuse a number without colliding
+// with retained data.
+func kittyFreeAll(w io.Writer) {
+	fmt.Fprint(w, "\x1b_Ga=d,d=A\x1b\\")
 }
 
 // sixelEncode emits the image as sixels; go-sixel writes the complete
@@ -192,6 +235,7 @@ func clearRects(w io.Writer, rects []cellRect) {
 		if r.w < 1 || r.h < 1 {
 			continue
 		}
+		markRowsCleared(loopScreen, r.y, r.h)
 		for row := 0; row < r.h; row++ {
 			fmt.Fprintf(w, "\x1b[%d;%dH", r.y+1+row, r.x+1)
 			if rgb := hexRGB(r.bg); rgb != "" {
@@ -259,6 +303,9 @@ func (m *Model) prepareImages() {
 	if m.mode != "pager" || m.pager == nil || !m.pager.images || m.imgProto == "" {
 		return
 	}
+	if m.imgSuppress {
+		return // a scroll burst: decode resumes when the pager settles
+	}
 	if m.pager.width < 1 {
 		return
 	}
@@ -272,15 +319,17 @@ func (m *Model) prepareImages() {
 			continue
 		}
 		// a standalone image fills the text column (decodeImage's window
-		// budget at natural px, no upscale) instead of the email's authored
-		// disp width - a chart sized for a 600px browser column must not
-		// stay half the width of a 120-cell terminal. Inline-with-text
-		// images keep their authored disp (the mail's intent).
+		// budget - a near-column figure tops up a wide terminal, a chart
+		// sized for a 600px browser column must not stay half the width of a
+		// 120-cell terminal) instead of the email's authored disp width.
+		// Inline-with-text images keep their authored disp (the mail's
+		// intent).
 		dw, dh := img.DispW, img.DispH
-		if m.pager.standaloneLine(b.line, img) {
+		fill := m.pager.standaloneLine(b.line, img)
+		if fill {
 			dw, dh = 0, 0
 		}
-		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height, dw, dh)
+		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height, dw, dh, fill)
 		if err != nil {
 			continue
 		}
@@ -303,6 +352,7 @@ func (m *Model) prepareImages() {
 // Toggling off drops the fetched bytes and the size caches - the network
 // never feeds the decode outside the mode.
 func (m *Model) setImgMode(mode int) {
+	m.imgSuppress = false // a mode toggle ends any scroll-burst hold
 	switch mode {
 	case 0:
 		m.clearImageRects() // before the frame: the collapsed markers render
@@ -456,13 +506,14 @@ type imgPaint struct {
 	h    int
 }
 
-// paintRects computes the frame's image state: the blocks to paint
-// (unchanged rects excluded) and the stale rects the frame displaces
-// or drops. The non-pager and toggled-off paths stale every painted
-// rect - the safety net for a mode change that skips the dispatch
-// clears. The caller clears the stale rects BEFORE the text frame (EL
-// removes sixel - an after-frame clear would erase the freshly drawn
-// text) and paints after it.
+// paintRects computes the frame's image state. Sixel: the blocks to
+// paint (unchanged rects excluded) plus the stale rects the frame
+// displaces or drops - the caller clears them BEFORE the text frame (EL
+// removes sixel, and an after-frame clear would erase the freshly drawn
+// text), then paints after it. Kitty: kittyRects returns every visible
+// image with no stale rects - its placements move and crop in place.
+// The non-pager and toggled-off paths stale every painted rect - the
+// safety net for a mode change that skips the dispatch clears.
 func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 	if m.imgProto == "" {
 		return nil, nil
@@ -472,6 +523,15 @@ func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 			stale = append(stale, r)
 		}
 		return nil, stale
+	}
+	if m.imgProto == "kitty" {
+		// kitty placements move and crop in place - nothing stale clears
+		// (EL erases text only) and paintKitty skips the unchanged ones,
+		// so every visible image returns.
+		return m.kittyRects()
+	}
+	if m.imgSuppress {
+		return nil, nil // a scroll burst: rects cleared at entry, text only until the settle tick
 	}
 	off, height := m.pager.vp.offset, m.pager.vp.height
 	next = map[*core.Image]imgPaint{}
@@ -492,13 +552,48 @@ func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 			continue
 		}
 		rect := cellRect{x: b.x, y: 1 + max(windowTop, 0), w: b.cols, h: visBot - visTop, bg: m.imgBG(b.line)}
+		p := imgPaint{rect: rect, img: scaled, top: visTop, h: visBot - visTop}
 		if prev, ok := m.painted[img]; ok && prev == rect {
 			continue // unchanged: the terminal still holds the pixels
 		}
 		if prev, ok := m.painted[img]; ok {
 			stale = append(stale, prev)
 		}
-		next[img] = imgPaint{rect: rect, img: scaled, top: visTop, h: visBot - visTop}
+		next[img] = p
+	}
+	// a scroll over still-visible images: the same set is painted again at a
+	// shifted spot. A pure translation (every rect the same size, just moved)
+	// enters the hold on the first frame - the pinned settle case. A re-crop
+	// (an image cropping at a window edge as the page moves under it) also
+	// re-encodes the whole set per frame, but a lone step must stay live (a
+	// single page-down over a tall image would otherwise blank it) - only a
+	// re-crop burst within the debounce window of the last live re-crop holds.
+	// A set change - an image entering or leaving - stays live: only the
+	// changed rect re-encodes, the untouched ones keep their pixels.
+	same := len(next) == len(m.painted) && len(next) > 0
+	if same {
+		for img := range m.painted {
+			if _, ok := next[img]; !ok {
+				same = false
+				break
+			}
+		}
+	}
+	translated := same
+	if same {
+		for img, prev := range m.painted {
+			if n := next[img]; n.rect.w != prev.w || n.rect.h != prev.h {
+				translated = false
+				break
+			}
+		}
+	}
+	if translated || (same && time.Since(m.cropLiveAt) < imgSettleDebounce) {
+		m.enterImgSuppress()
+		return nil, nil
+	}
+	if same {
+		m.cropLiveAt = time.Now() // a lone re-crop: paint it, arm the burst gate
 	}
 	for img, prev := range m.painted {
 		if _, ok := next[img]; !ok {
@@ -508,12 +603,58 @@ func (m *Model) paintRects() (next map[*core.Image]imgPaint, stale []cellRect) {
 	return next, stale
 }
 
+// kittyRects lists the frame's visible images for the kitty re-place
+// model. Nothing is stale and nothing is suppressed: paintKitty decides
+// per image between re-place, delete and skip, so the whole visible set
+// returns every frame.
+func (m *Model) kittyRects() (map[*core.Image]imgPaint, []cellRect) {
+	off, height := m.pager.vp.offset, m.pager.vp.height
+	next := map[*core.Image]imgPaint{}
+	for _, b := range m.pager.visibleImages() {
+		img := b.img
+		if img.Rows == 0 {
+			continue // not decoded: the Alt row shows
+		}
+		scaled, ok := m.imgCache[img]
+		if !ok {
+			continue
+		}
+		windowTop := b.doc - off
+		visTop := max(0, -windowTop)
+		visBot := min(img.Rows, height-windowTop)
+		if visBot <= visTop {
+			continue
+		}
+		rect := cellRect{x: b.x, y: 1 + max(windowTop, 0), w: b.cols, h: visBot - visTop, bg: m.imgBG(b.line)}
+		next[img] = imgPaint{rect: rect, img: scaled, top: visTop, h: visBot - visTop}
+	}
+	return next, nil
+}
+
+// enterImgSuppress starts the scroll-burst hold: the painted rects clear
+// once (the scrolled text would otherwise under-run stale pixels), and
+// decode+encode pause until imgSettleTick lifts the hold on a still pager.
+func (m *Model) enterImgSuppress() {
+	m.clearImageRects()
+	m.imgSuppress = true
+	m.cropLiveAt = time.Time{} // a hold ends any re-crop burst arm
+	m.imgSettleAt = time.Now()
+	if m.pager != nil {
+		m.imgSettleOff, m.imgSettleX = m.pager.vp.offset, m.pager.x
+	}
+}
+
 // paintImages writes the frame's image blocks to the terminal after
 // the text frame (pixels never race the text; the stale rects were
-// cleared before the frame). The whole batch composes into ONE
+// cleared before the frame). The sixel batch composes into ONE
 // offscreen canvas and transmits as one DCS: the terminal paints the
-// frame's images atomically instead of sweeping burst by burst.
+// frame's images atomically instead of sweeping burst by burst. Kitty
+// routes to paintKitty (per-image placements, no compose).
 func (m *Model) paintImages(next map[*core.Image]imgPaint) {
+	if m.imgProto == "kitty" {
+		m.paintKitty(next)
+		return
+	}
 	if imageWriter == nil || len(next) == 0 {
 		return
 	}
@@ -523,20 +664,66 @@ func (m *Model) paintImages(next map[*core.Image]imgPaint) {
 	}
 	canvas, union := composeImages(paints)
 	fmt.Fprintf(imageWriter, "\x1b[%d;%dH", union.y+1, union.x+1)
-	switch m.imgProto {
-	case "kitty":
-		kittyEncode(imageWriter, canvas)
-	case "sixel":
-		sixelEncode(imageWriter, canvas)
-	}
+	sixelEncode(imageWriter, canvas)
 	m.painted = make(map[*core.Image]cellRect, len(next))
 	for img, p := range next {
 		m.painted[img] = p.rect
 	}
 }
 
+// paintKitty places the frame's images under the per-image re-place
+// model: a decode is transmitted once under a stable id, then every
+// frame a moved/cropped image re-places with a tiny a=p (the vacated
+// cells clear themselves), a departed one is deleted by id - data kept,
+// so it re-places cheaply on the way back - and a static one is left
+// untouched. No full-window wipe, no hold.
+func (m *Model) paintKitty(next map[*core.Image]imgPaint) {
+	w := imageWriter
+	for img := range m.painted {
+		if _, ok := next[img]; ok {
+			continue
+		}
+		if id, ok := m.kimg[img]; ok && w != nil {
+			kittyDeletePlacement(w, id) // left the window: drop the placement, keep the data
+		}
+		delete(m.painted, img)
+	}
+	for img, p := range next {
+		prev, was := m.painted[img]
+		id, have := m.kimg[img]
+		if !have {
+			id = m.kimgNext
+			m.kimgNext++
+			m.kimg[img] = id
+			if w != nil {
+				kittyTransmit(w, id, p.img)
+			}
+		}
+		if was && prev == p.rect {
+			continue // unchanged: the terminal still holds this exact placement
+		}
+		if w != nil {
+			fmt.Fprintf(w, "\x1b[%d;%dH", p.rect.y+1, p.rect.x+1)
+			kittyPlace(w, id, p.top*imgCellH, p.h*imgCellH)
+		}
+		m.painted[img] = p.rect
+	}
+}
+
 // clearImageRects erases every painted rect to its block background - the toggle-off, mode-exit and resize paths run it BEFORE the next frame so the collapsed text never renders under stale pixels.
 func (m *Model) clearImageRects() {
+	if m.imgProto == "kitty" {
+		// a placement is pixels only a delete removes: free the whole layer
+		// (uppercase d=A drops the data too) and reset the transmit state so
+		// the next frame transmits under fresh ids.
+		if imageWriter != nil && (len(m.painted) > 0 || m.kimgNext > 0) {
+			kittyFreeAll(imageWriter)
+		}
+		m.kimg = map[*core.Image]int{}
+		m.kimgNext = 0
+		clear(m.painted)
+		return
+	}
 	if len(m.painted) == 0 {
 		return
 	}
@@ -552,6 +739,7 @@ func (m *Model) clearImageRects() {
 
 // resetImages drops the decode cache and painted rects on a resize (the cell math changed): the dims zero, the layout collapses, the next prepareImages re-decodes at the new width.
 func (m *Model) resetImages() {
+	m.imgSuppress = false // a resize ends any scroll-burst hold
 	m.imgCache = map[*core.Image]image.Image{}
 	m.clearImageRects()
 	if m.pager == nil {

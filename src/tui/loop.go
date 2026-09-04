@@ -99,11 +99,13 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 	spin := &gatedTicker{every: statusSpinTickInterval, gate: func() bool { return m.busy() }}
 	status := &gatedTicker{every: statusClearInterval, gate: func() bool { return m.statusClearPending() }}
 	progress := &gatedTicker{every: progressTickInterval, gate: func() bool { return m.progressOn }}
-	defer func() { spin.stop(); status.stop(); progress.stop() }()
+	imgSettle := &gatedTicker{every: imgSettleInterval, gate: func() bool { return m.imgSettling() }}
+	defer func() { spin.stop(); status.stop(); progress.stop(); imgSettle.stop() }()
 	for {
 		spin.sync()
 		status.sync()
 		progress.sync()
+		imgSettle.sync()
 		var msgs []any
 		select {
 		case ev := <-evCh:
@@ -151,12 +153,18 @@ func runLoop(m Model, s tcell.Screen, quitCh <-chan struct{}) error {
 		case <-progress.ch: // the progress bar's cadence while a job is on
 			m, cmd = m.Update(progressTick{})
 			run(cmd)
+		case <-imgSettle.ch: // the image scroll-burst settle check while a hold is on
+			m, cmd = m.Update(imgSettleTick{})
+			run(cmd)
 		case <-quitCh:
 			return nil
 		}
 		if m.ShouldRender() {
 			next, stale := m.paintRects()
-			clearRects(imageWriter, stale) // before the text frame: EL drops the stale pixels
+			// kitty returns no stale rects (its placements move in place);
+			// clearRects no-ops on the empty set. For sixel the EL runs
+			// before the text frame - it drops the stale pixels.
+			clearRects(imageWriter, stale)
 			x, y, show := m.textCursor()
 			pushFrame(s, m.View(), x, y, show)
 			m.paintImages(next) // pixels after the text frame, never before

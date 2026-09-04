@@ -477,7 +477,20 @@ func (p *pager) standaloneLine(li int, img *core.Image) bool {
 	if len(l.Imgs) != 1 || l.Imgs[0].Image != img {
 		return false
 	}
-	t := strings.ReplaceAll(l.Text, img.Alt, "")
+	// the F key's [N] markers are chrome, not content: a link-wrapped
+	// isolated image renders as its label plus alt on one row, and must
+	// still center and fill like the unlabeled render.
+	t := l.Text
+	if len(l.Runs) > 0 {
+		var b strings.Builder
+		for _, r := range l.Runs {
+			if !r.Label {
+				b.WriteString(r.Text)
+			}
+		}
+		t = b.String()
+	}
+	t = strings.ReplaceAll(t, img.Alt, "")
 	return strings.TrimSpace(t) == ""
 }
 

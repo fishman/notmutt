@@ -104,7 +104,7 @@ func RunAnalyze(bus *core.Bus, client Client, aiCfg config.AIProvider, contact C
 
 	rs, err := Research(ctx, aiCfg, company, chat)
 	if err != nil {
-		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: err})
+		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: fmt.Errorf("crm: analyze: research: %w", err)})
 		return
 	}
 
@@ -116,7 +116,7 @@ func RunAnalyze(bus *core.Bus, client Client, aiCfg config.AIProvider, contact C
 
 	text, err := chat(ctx, aiCfg, aiCfg.Model, briefingSystem, contextStr, func(string) {})
 	if err != nil {
-		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: err})
+		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: fmt.Errorf("crm: analyze: briefing: %w", err)})
 		return
 	}
 

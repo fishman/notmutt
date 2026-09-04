@@ -287,8 +287,9 @@ func analyzeProvider() config.AIProvider {
 func TestRunAnalyzePublishesBriefing(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	row := Contact{ID: "201", FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement"}
+	row := Contact{ID: "201", FirstName: "Alpha", LastName: "Atlas", JobTitle: "SDR (search result)"}
 	refetched := row
+	refetched.JobTitle = "Head of Procurement" // the refetch is fresher than the search row
 	refetched.CompanyID = "901"
 	client := &analyzeClient{
 		provider: "test-crm",
@@ -329,10 +330,15 @@ func TestRunAnalyzePublishesBriefing(t *testing.T) {
 	if calls[1].system != briefingSystem || calls[1].model != analyzeProvider().Model {
 		t.Errorf("briefing chat = (model %q, system %q), want the provider model and briefingSystem", calls[1].model, calls[1].system)
 	}
-	for _, want := range []string{"Alpha Atlas", "Acme Corp", "makes analytics software"} {
+	// The briefing context carries the REFETCHED contact, never the stale search
+	// row: the title the refetch returned is present and the row's is absent.
+	for _, want := range []string{"Alpha Atlas", "Head of Procurement", "Acme Corp", "makes analytics software"} {
 		if !strings.Contains(calls[1].text, want) {
 			t.Errorf("briefing context missing %q\n%s", want, calls[1].text)
 		}
+	}
+	if strings.Contains(calls[1].text, "SDR (search result)") {
+		t.Errorf("briefing context used the stale search row, not the refetch\n%s", calls[1].text)
 	}
 	select {
 	case e := <-ch:
@@ -384,6 +390,9 @@ func TestRunAnalyzeContactErrorPublishesRowError(t *testing.T) {
 
 	if client.contactCalls != 1 {
 		t.Errorf("Contact calls = %d, want 1", client.contactCalls)
+	}
+	if client.companyCalls != 0 {
+		t.Errorf("Company calls = %d, want 0 (contact error stops before the company fetch)", client.companyCalls)
 	}
 	e := recvCrmRowError(t, ch)
 	if e.Provider != "test-crm" || e.ContactID != "201" {
@@ -447,6 +456,9 @@ func TestRunAnalyzeChatErrorPublishesRowError(t *testing.T) {
 	if !errors.Is(e.Err, sentinel) {
 		t.Errorf("CrmRowError Err = %v, want the chat error", e.Err)
 	}
+	if !strings.Contains(e.Err.Error(), "crm: analyze: research:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: analyze: research: wrap", e.Err)
+	}
 	assertNoCrmEvent(t, ch)
 }
 
@@ -477,6 +489,37 @@ func TestRunAnalyzeBriefingChatErrorPublishesRowError(t *testing.T) {
 	}
 	if !errors.Is(e.Err, sentinel) {
 		t.Errorf("CrmRowError Err = %v, want the briefing-chat error", e.Err)
+	}
+	if !strings.Contains(e.Err.Error(), "crm: analyze: briefing:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: analyze: briefing: wrap", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunAnalyzeBriefingErrorPublishesRowError pins the assembly failure path:
+// briefing refuses a refetched contact carrying malformed UTF-8, so one
+// CrmRowError publishes and no CrmBriefing does.
+func TestRunAnalyzeBriefingErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &analyzeClient{
+		provider: "test-crm",
+		contact:  Contact{ID: "201", FirstName: "Alpha", LastName: "\xff", JobTitle: "CTO", CompanyID: "901"},
+		company:  Company{ID: "901", Name: "Acme Corp"},
+	}
+	var calls []analyzeCall
+
+	RunAnalyze(bus, client, analyzeProvider(), Contact{ID: "201"}, analyzeChat("", "", &calls))
+
+	if client.contactCalls != 1 || client.companyCalls != 1 {
+		t.Errorf("fetches = (contact %d, company %d), want (1, 1)", client.contactCalls, client.companyCalls)
+	}
+	e := recvCrmRowError(t, ch)
+	if e.ContactID != "201" {
+		t.Errorf("CrmRowError ContactID = %q, want 201", e.ContactID)
+	}
+	if e.Err == nil || !strings.Contains(e.Err.Error(), "crm: briefing:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: briefing: assembly error", e.Err)
 	}
 	assertNoCrmEvent(t, ch)
 }

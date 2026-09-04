@@ -424,7 +424,9 @@ type imgBlock struct {
 // visibleImages lists the window's image lines, one block per image:
 // the expanded block (rows walked back to the first doc row for the
 // anchor) or the collapsed Alt row (Rows 0 - listed as the decoder's
-// trigger, painted as text). The dims may still be 0.
+// trigger, painted as text). The dims may still be 0. A standalone
+// image (alone on its line) centers in the window; an inline image
+// keeps its flow offset.
 func (p *pager) visibleImages() []imgBlock {
 	if p.imgRow == nil {
 		return nil
@@ -446,13 +448,37 @@ func (p *pager) visibleImages() []imgBlock {
 			doc--
 		}
 		if l.Image != nil {
-			out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows, img: l.Image})
+			out = append(out, imgBlock{line: li, doc: doc, cols: l.Image.Cols, rows: l.Image.Rows,
+				img: l.Image, x: max(0, (p.width-l.Image.Cols)/2)})
 		}
 		for _, im := range l.Imgs {
-			out = append(out, imgBlock{line: li, doc: doc, cols: im.Image.Cols, rows: im.Image.Rows, img: im.Image, x: im.X})
+			x := im.X
+			if p.standaloneLine(li, im.Image) {
+				x = max(0, (p.width-im.Image.Cols)/2)
+			}
+			out = append(out, imgBlock{line: li, doc: doc, cols: im.Image.Cols, rows: im.Image.Rows, img: im.Image, x: x})
 		}
 	}
 	return out
+}
+
+// standaloneLine reports whether img is the sole content of its line (a
+// lone own-line image, or an inline placeholder on an otherwise empty
+// text row). Such an image fills the text column and centers instead of
+// holding its authored disp size - a mail that sizes a chart for a
+// 600px browser column must not leave it half the width of a 120-cell
+// terminal. The inline check blanks the Alt placeholder the flow glued
+// in: whatever text remains is what truly shares the row.
+func (p *pager) standaloneLine(li int, img *core.Image) bool {
+	l := &p.lines[li]
+	if l.Image == img {
+		return true
+	}
+	if len(l.Imgs) != 1 || l.Imgs[0].Image != img {
+		return false
+	}
+	t := strings.ReplaceAll(l.Text, img.Alt, "")
+	return strings.TrimSpace(t) == ""
 }
 
 // styleLine maps one structured line to styled text (subject ->

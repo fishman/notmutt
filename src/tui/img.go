@@ -271,7 +271,16 @@ func (m *Model) prepareImages() {
 		if _, ok := m.imgCache[img]; ok {
 			continue
 		}
-		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height, img.DispW, img.DispH)
+		// a standalone image fills the text column (decodeImage's window
+		// budget at natural px, no upscale) instead of the email's authored
+		// disp width - a chart sized for a 600px browser column must not
+		// stay half the width of a 120-cell terminal. Inline-with-text
+		// images keep their authored disp (the mail's intent).
+		dw, dh := img.DispW, img.DispH
+		if m.pager.standaloneLine(b.line, img) {
+			dw, dh = 0, 0
+		}
+		scaled, cols, rows, err := decodeImage(img.Data, m.pager.width, m.pager.vp.height, dw, dh)
 		if err != nil {
 			continue
 		}

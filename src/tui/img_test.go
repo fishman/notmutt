@@ -481,9 +481,10 @@ func TestModelRenderImagesToggle(t *testing.T) {
 		t.Fatalf("the toggle must expand the image and keep the text:\n%s", out)
 	}
 	paint()
-	// the block sits at doc row 2 (before, blank, image) - screen row 4
-	if !strings.HasPrefix(buf.String(), "\x1b[4;1H\x1b_Gf=") {
-		t.Fatalf("the paint must emit a kitty frame at the image rows, got %q", show(buf.String()[:24]))
+	// the block sits at doc row 2 (before, blank, image) - screen row 4,
+	// centered in the 80-cell window (10 decoded cols, offset 35)
+	if !strings.HasPrefix(buf.String(), "\x1b[4;36H\x1b_Gf=") {
+		t.Fatalf("the paint must emit a centered kitty frame at the image rows, got %q", show(buf.String()[:24]))
 	}
 	if len(m.painted) != 1 {
 		t.Fatalf("the paint must track one rect, got %d", len(m.painted))
@@ -491,8 +492,8 @@ func TestModelRenderImagesToggle(t *testing.T) {
 
 	// toggle off: the second press (the cycle: off -> remote -> off) clears the rect BEFORE the collapsed frame renders
 	m = press(t, m, "alt+i")
-	if !strings.Contains(buf.String(), "\x1b[4;1H") {
-		t.Fatalf("toggle-off must clear the painted rect")
+	if !strings.Contains(buf.String(), "\x1b[4;36H") {
+		t.Fatalf("toggle-off must clear the centered painted rect")
 	}
 	m, _ = m.Update(frameTick{})
 	if out := m.View(); !strings.Contains(out, "[image]") {
@@ -501,6 +502,94 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	if len(m.painted) != 0 {
 		t.Fatalf("toggle-off must drop the rect bookkeeping")
 	}
+}
+
+// TestModelStandaloneImageFillsAndCenters pins the images-on sizing for
+// an image that owns its line (the semianalysis chart regression): a
+// chart inside a table cell renders inline on an otherwise empty row,
+// so it fills the text column (natural px, capped at the window) and
+// centers instead of holding the authored disp width - a 550px chart
+// authored for a ~600px browser column must not stay half the width of
+// a 120-cell terminal. An image that shares its row with text keeps its
+// authored disp size and flow offset.
+func TestModelStandaloneImageFillsAndCenters(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	chart := testPNG(t, 2000, 1000)
+	narrow := testPNG(t, 200, 100)
+	img := func(b []byte) string { return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b) }
+	body := "<p>before</p>" +
+		"<table><tr><td><img src=\"" + img(chart) + "\" width=\"300\"></td></tr></table>" +
+		"<table><tr><td><img src=\"" + img(narrow) + "\"></td></tr></table>" +
+		"<p>see <img src=\"" + img(chart) + "\" width=\"300\"> inline after</p>"
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Lines:      mail.RenderHTML(body, nil, 0),
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+
+	// embedded bytes decode on the toggle - no fetch, no reopen reply needed
+	m = press(t, m, "alt+i")
+	m, _ = m.Update(frameTick{})
+	if out := m.View(); strings.Contains(out, "[image]") {
+		t.Fatalf("the toggle must expand every image:\n%s", out)
+	}
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	next, stale := m.paintRects()
+	clearRects(imageWriter, stale)
+	m.paintImages(next)
+
+	byCols := map[int]*core.Image{}
+	for img := range next {
+		byCols[img.Cols] = img
+	}
+	// the standalone chart fills the window's text column (natural 2000px
+	// scaled to the 80-cell budget), not its authored 300px/30 cols
+	if img := byCols[80]; img == nil {
+		t.Fatalf("the standalone chart must fill the column to 80 cols, got cols %v", colsOf(next))
+	}
+	// the narrower standalone image centers: 20 cols in an 80-cell window
+	if img := byCols[20]; img == nil {
+		t.Fatalf("the small standalone image must decode at natural 20 cols, got cols %v", colsOf(next))
+	}
+	if rect := next[byCols[20]]; rect.rect.x != 30 {
+		t.Fatalf("the standalone image must center, rect.x=%d want 30", rect.rect.x)
+	}
+	// the inline-with-text image keeps its authored disp width (300px)
+	if img := byCols[30]; img == nil {
+		t.Fatalf("the inline image must keep its authored width (30 cols), got cols %v", colsOf(next))
+	}
+	if len(m.painted) != 3 {
+		t.Fatalf("three blocks must paint, got %d", len(m.painted))
+	}
+}
+
+func colsOf(m map[*core.Image]imgPaint) []int {
+	var out []int
+	for img := range m {
+		out = append(out, img.Cols)
+	}
+	return out
 }
 
 // TestModelRenderImagesRemote pins the remote mode: the alt+i press

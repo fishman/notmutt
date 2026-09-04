@@ -413,3 +413,19 @@ func TestCellTableListMarkerTranslatesWithRow(t *testing.T) {
 		t.Fatalf("marker X = %d, want %d (marker on a Cells row translates with it)", row.Markers[0].X, row.X)
 	}
 }
+
+func TestNestedInlineTableRendersOnOneLine(t *testing.T) {
+	// A real <table style="display:inline-table"> nested in another table's
+	// cell must keep grid identity. Before the fix, roleOf fell through to
+	// RoleInline and blockification demoted it to a RoleBlock carrying orphan
+	// row-group/row/cell furniture, so the outer table's column measure hit the
+	// stray cell and shrink-wrapped the column, wrapping the text. The fixture
+	// that caught this (linuxfoundation-registration.html) char-broke to ~1066
+	// pager lines. Same table with no display override renders fine - the
+	// collapse only bites under an ancestor that must measure it.
+	bs := buildBody(`<table><tr><td>aaa bbb</td><td><table style="display:inline-table"><tr><td>hello world</td></tr></table></td></tr></table>`)
+	rs := LayoutBlock(bs, 60, mono(1), false)
+	if got := rowsText(rs); !reflect.DeepEqual(got, []string{"aaa bbbhello world"}) {
+		t.Fatalf("rows = %q, want one line with the inline-table text intact", got)
+	}
+}

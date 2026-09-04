@@ -246,7 +246,7 @@ func fillFlowChildren(b *Box, n *xhtml.Node, st *Style, rules []CSSRule, listDep
 // displays return "".
 func tableSlot(d string) string {
 	switch d {
-	case "table":
+	case "table", "inline-table":
 		return "table"
 	case "table-row-group", "table-header-group", "table-footer-group":
 		return "row-group"
@@ -281,7 +281,7 @@ func roleOf(d string) Role {
 	switch d {
 	case "block", "flex", "grid", "inline-block", "flow-root", "list-item":
 		return RoleBlock
-	case "table", "table-row-group", "table-header-group",
+	case "table", "inline-table", "table-row-group", "table-header-group",
 		"table-footer-group", "table-row", "table-cell", "table-caption",
 		"table-column-group", "table-column":
 		return RoleTable

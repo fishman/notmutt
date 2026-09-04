@@ -101,6 +101,18 @@ the explicit extension of that posture:
   was "no ResolveImages on the mail path" is now "no pixels on the mail
   path" - geometry (px dimensions) may cross, decoded pixels may not.
 
+Standalone images fill + center (2026-09-04): an image that owns its
+line - a lone own-line image, or an inline placeholder on an otherwise
+empty text row (how a table cell's single chart emits) - drops the
+authored disp cap at decode (`pager.standaloneLine`, `prepareImages`),
+so it fills the window's text column at natural px (no upscale, capped
+at the 100-cell paint cap) instead of staying at a browser-column
+width; `visibleImages` centers such a block. An image that shares its
+row with text keeps its authored disp and flow offset. Markers and the
+images-off layout are untouched - this is decode/paint-only in the
+TUI. Inline row geometry is unchanged; a wide decode paints over the
+image's own blank rows, never text.
+
 Height divergence remains (BUGS.org): intrinsic px height still does not
 advance stage-1 rows; vertical room is the pager's decode expansion
 (`relayout`), which already pushes following lines down.

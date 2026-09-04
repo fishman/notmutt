@@ -84,6 +84,13 @@ same key, size-capped and time-bounded, and 1x1 tracking pixels drop
 unless `allow-tracking-images = true`. Images paint after the frame
 flush, so pixels never race the text.
 
+An image that owns its line (a chart or photo sitting alone in its
+row) fills the text column - an email that sizes a figure for a ~600px
+browser column is not left at half the width of a wide terminal - and
+centers in the window, capped at its natural pixels and the 100-cell
+paint cap. Small images render at natural size; an image sharing its
+row with text keeps its authored width and flow position.
+
 ## HTML rendering
 
 HTML mail renders inline - parsed and laid out in Go, never a browser.

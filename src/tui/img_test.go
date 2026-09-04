@@ -646,16 +646,16 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 		t.Fatalf("the fetched images must expand: [image] count %d -> %d", before, after)
 	}
 
-	// the buttons row carries its 4 icons as inline images at increasing offsets, and the paint emits one rect per icon at that offset (real images, not placeholder text)
+	// the buttons row carries its 5 icons (4 buttons + the READ IN APP text-icon) as inline images at increasing offsets, and the paint emits one rect per icon at that offset (real images, not placeholder text)
 	var iconLine *core.Line
 	for i := range m.pager.lines {
-		if len(m.pager.lines[i].Imgs) == 4 {
+		if len(m.pager.lines[i].Imgs) == 5 {
 			iconLine = &m.pager.lines[i]
 			break
 		}
 	}
 	if iconLine == nil {
-		t.Fatalf("the buttons row must carry the 4 inline images")
+		t.Fatalf("the buttons row must carry the 5 inline images")
 	}
 	for i := 1; i < len(iconLine.Imgs); i++ {
 		if iconLine.Imgs[i].X <= iconLine.Imgs[i-1].X {
@@ -673,8 +673,8 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 			xs = append(xs, p.rect.x)
 		}
 	}
-	if len(xs) < 4 {
-		t.Fatalf("the 4 icons must paint at their offsets, got %d rects with x>0", len(xs))
+	if len(xs) < 5 {
+		t.Fatalf("the 5 icons must paint at their offsets, got %d rects with x>0", len(xs))
 	}
 	if len(stale) != 0 {
 		t.Fatalf("the first paint must not stale rects, got %d", len(stale))

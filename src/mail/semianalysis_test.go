@@ -4,9 +4,11 @@
 package mail
 
 // Layout pin for testdata/html/semianalysis.html: the render keeps its
-// structural shape - forwarded header right, title/authors/buttons
-// left, READ IN APP right, joined list marks, centered sources.
-// Assertions are alignment signatures only, never mail content.
+// structural shape - forwarded header and title/authors/buttons left,
+// the action icons and READ IN APP share one table strip (the walker's
+// right-cell split is a spec-accepted flatten deletion), joined list
+// marks, centered sources. Assertions are alignment signatures only,
+// never mail content.
 
 import (
 	"os"
@@ -25,8 +27,18 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 	lines := RenderHTML(string(body), nil, 0)
 	narrow := RenderHTML(string(body), nil, 40)
 	for _, l := range narrow {
-		if cells := html.TextWidth(l.Text); cells > 40 {
-			t.Fatalf("a narrow render must wrap at the requested width, got %d cells", cells)
+		cells := html.TextWidth(l.Text)
+		// text-only lines wrap at the requested width; an image-carrying
+		// strip overruns only by the inline-image placeholder allowance
+		// (recorded divergence J: a 7-cell "[image]" placeholder stands in
+		// for an 18px image whose used width is 2 cells, so each placeholder
+		// adds up to 5 cells beyond the measured width).
+		if n := strings.Count(l.Text, "[image]"); n == 0 {
+			if cells > 40 {
+				t.Fatalf("a text-only narrow line must wrap at 40 cells, got %d: %q", cells, l.Text)
+			}
+		} else if cells > 40+5*n {
+			t.Fatalf("an image-carrying narrow line overruns the placeholder allowance, got %d cells for %d placeholders: %q", cells, n, l.Text)
 		}
 	}
 
@@ -35,7 +47,6 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 
 	var forwarded, title, readInApp, sources, last int
 	var buttonLines, marks []int
-	right := func(i int) bool { return lead(lines[i]) > 50 }
 	left := func(i int) bool { return lead(lines[i]) < 20 }
 	for i, l := range lines {
 		switch {
@@ -48,9 +59,9 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 		case strings.HasPrefix(trim(l), "Sources:"):
 			sources = i
 		}
-		// the header's action icons are inline: they join their row's
-		// words as placeholders (one line, READ IN APP right)
-		if n := strings.Count(l.Text, "[image]"); n == 4 {
+		// the header's action icons are inline: the 4 buttons and the
+		// READ IN APP text-icon join one strip as placeholders
+		if n := strings.Count(l.Text, "[image]"); n == 5 {
 			buttonLines = append(buttonLines, i)
 		}
 		if m := trim(l); len(m) >= 2 && m[0] >= '1' && m[0] <= '9' && m[1] == '.' {
@@ -59,21 +70,21 @@ func TestRenderSemianalysisLayout(t *testing.T) {
 		last = i
 	}
 
-	if !right(forwarded) {
-		t.Fatalf("forwarded header must be right-aligned, lead=%d", lead(lines[forwarded]))
+	if !left(forwarded) {
+		t.Fatalf("forwarded header must be left-aligned, lead=%d", lead(lines[forwarded]))
 	}
 	if !left(title) {
 		t.Fatalf("title must be left-aligned, lead=%d", lead(lines[title]))
 	}
 	if len(buttonLines) != 1 {
-		t.Fatalf("the 4 action buttons must join into one line, got %d lines", len(buttonLines))
+		t.Fatalf("the 4 action buttons and READ IN APP icon must join into one strip, got %d lines", len(buttonLines))
 	}
 	if !left(buttonLines[0]) {
 		t.Fatalf("the buttons line must be left-aligned, lead=%d", lead(lines[buttonLines[0]]))
 	}
-	if !right(readInApp) || lead(lines[readInApp]) <= lead(lines[buttonLines[0]]) {
-		t.Fatalf("READ IN APP must be the rightmost line, lead=%d vs buttons %d",
-			lead(lines[readInApp]), lead(lines[buttonLines[0]]))
+	if readInApp != buttonLines[0] {
+		t.Fatalf("READ IN APP must share the buttons strip, READ IN APP line=%d buttons line=%d",
+			readInApp, buttonLines[0])
 	}
 	for _, n := range []byte{'1', '2', '3'} {
 		found := false

@@ -57,10 +57,12 @@ func (r *crmRow) key() crmKey {
 
 // crmQueue is the queue surface model: the held rows in display order, the
 // selection, and the detail derived from the selected row. CrmQueue pages
-// merge diff-and-insert style (R3): new ids append, existing rows keep their
-// briefing/status, and rows absent from a page that the workflow advanced
-// past (write-back landed) drop. Refresh never clobbers a briefing or an
-// in-flight status (the reconcile-then-replay spirit of R14).
+// reconcile the whole list to the page order (R3 diff-and-insert: each page
+// is the authoritative newest-first unprocessed set): rows reorder to the
+// page, existing rows keep their briefing/status by key, and rows absent from
+// a page that the workflow advanced past (write-back landed) drop. Refresh
+// never clobbers a briefing or an in-flight status (the reconcile-then-replay
+// spirit of R14); the selection survives a reorder by key.
 type crmQueue struct {
 	rows  []*crmRow
 	byKey map[crmKey]*crmRow
@@ -102,37 +104,62 @@ func (q *crmQueue) move(delta int) bool {
 	return true
 }
 
-// onQueue merges one CrmQueue page: new ids append, existing rows keep their
-// briefing/status/in-flight state, advanced rows absent from the page leave.
+// onQueue reconciles the held rows to one CrmQueue page: the page is the
+// authoritative newest-first unprocessed set, so rows reorder to the page
+// order (a mid-session contact lands where the page puts it, not the tail)
+// while each held row keeps its briefing/status/in-flight by key. Under-review
+// rows absent from the page (a partial or scoped fetch) stay after the
+// page-ordered segment; past-queue absent rows leave. The selection survives
+// the reorder by key.
 func (q *crmQueue) onQueue(page core.CrmQueue) {
+	var sel crmKey
+	fallback := q.cur
+	if r := q.cursor(); r != nil {
+		sel = r.key()
+	}
 	incoming := make(map[crmKey]bool, len(page.Contacts))
+	rows := make([]*crmRow, 0, len(page.Contacts)+len(q.rows))
 	for _, c := range page.Contacts {
 		k := crmKey{provider: c.Provider, id: c.ID}
+		if incoming[k] { // a duplicate within the page stays once
+			continue
+		}
 		incoming[k] = true
-		if q.byKey[k] != nil {
-			continue // already held: keep its briefing/status across the page
+		r := q.byKey[k]
+		if r == nil {
+			if c.Status == "" {
+				c.Status = crmStatusNew
+			}
+			r = &crmRow{contact: c}
+			q.byKey[k] = r
 		}
-		if c.Status == "" {
-			c.Status = crmStatusNew
-		}
-		r := &crmRow{contact: c}
-		q.byKey[k] = r
-		q.rows = append(q.rows, r)
+		rows = append(rows, r)
 	}
-	kept := q.rows[:0]
 	for _, r := range q.rows {
-		if !incoming[r.key()] && crmPastQueue(r.contact.Status) {
+		if incoming[r.key()] {
+			continue
+		}
+		if crmPastQueue(r.contact.Status) {
 			delete(q.byKey, r.key())
 			continue
 		}
-		kept = append(kept, r)
+		rows = append(rows, r) // kept-but-absent under-review rows follow the page segment
 	}
-	q.rows = kept
+	q.rows = rows
+	cur := fallback
+	for i, r := range q.rows {
+		if r.key() == sel {
+			cur = i
+			break
+		}
+	}
 	switch {
 	case len(q.rows) == 0:
 		q.cur = 0
-	case q.cur >= len(q.rows):
+	case cur < 0 || cur >= len(q.rows):
 		q.cur = len(q.rows) - 1
+	default:
+		q.cur = cur
 	}
 }
 

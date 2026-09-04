@@ -229,3 +229,38 @@ func TestCrmHooksInertDefault(t *testing.T) {
 		t.Errorf("wired pull source = %v, want the one test-crm command", cmds)
 	}
 }
+
+// TestCrmQueuePageOrderPinsNewestFirst pins the R3 reconcile rule: each queue
+// page is the authoritative newest-first unprocessed set, so a mid-session
+// contact at the page head lands at index 0 (not the tail), a reorder keeps
+// each held row's briefing by key, and the selection follows the cursor's key
+// through the reorder.
+func TestCrmQueuePageOrderPinsNewestFirst(t *testing.T) {
+	alpha := crmContact("201", "alpha@example.com", "Alpha", "Able")
+	atlas := crmContact("202", "atlas@example.com", "Atlas", "Beta")
+	acme := crmContact("203", "acme@example.com", "Avery", "Chen")
+	q := newCrmQueue()
+	q.onQueue(core.CrmQueue{Contacts: []core.CrmContact{alpha, atlas, acme}})
+	q.onBriefing(core.CrmBriefing{Provider: "test-crm", ContactID: "201", Text: "Acme ships widgets."})
+
+	// a second pull with a newer contact at the page head
+	delta := crmContact("204", "delta@example.com", "Delta", "Dune")
+	q.onQueue(core.CrmQueue{Contacts: []core.CrmContact{delta, alpha, atlas, acme}})
+
+	if q.len() != 4 {
+		t.Fatalf("queue len = %d after a reordering page, want 4", q.len())
+	}
+	if got := q.rows[0].contact.ID; got != delta.ID {
+		t.Errorf("rows[0] = %s, want the newest contact %s at the head", got, delta.ID)
+	}
+	a := q.rows[1]
+	if a.contact.ID != alpha.ID {
+		t.Fatalf("rows[1] = %s, want the briefed alpha at index 1", a.contact.ID)
+	}
+	if a.contact.Status != crmStatusBriefing || a.briefing == "" {
+		t.Errorf("reorder lost alpha's briefing: status %q briefing %q", a.contact.Status, a.briefing)
+	}
+	if r := q.cursor(); r == nil || r.key() != a.key() {
+		t.Errorf("cursor did not follow the selection by key through the reorder, got %+v", r)
+	}
+}

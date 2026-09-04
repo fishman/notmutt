@@ -556,3 +556,100 @@ func assertNoCrmEvent(t *testing.T, ch <-chan core.Event) {
 	default:
 	}
 }
+
+// draftClient is a scripted crm.Client for RunDraft tests: only Provider is
+// exercised (the draft job never fetches); the embedded clientStub no-ops the
+// rest of the Client surface.
+type draftClient struct {
+	clientStub
+	provider string
+}
+
+func (f *draftClient) Provider() string { return f.provider }
+
+// TestRunDraftPublishesDraft pins the happy path: the model reply's subject
+// line and body split into the published CrmDraft, the gated mail-ground text
+// rides the chat prompt, and the draft carries the client's Provider, the
+// row's ContactID, and the contact's Email.
+func TestRunDraftPublishesDraft(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &draftClient{provider: "test-crm"}
+	contact := Contact{ID: "301", Email: "acme@example.com"}
+	const briefing = "Acme Corp sells analytics software."
+	const ground = "The contact asked for a pricing sheet on Tuesday."
+	gotEmail := ""
+	var gotText string
+	chat := func(_ context.Context, p config.AIProvider, model, system, text string, _ func(string)) (string, error) {
+		if p.Type != "anthropic" || model != analyzeProvider().Model || system != draftSystem {
+			t.Errorf("chat = (model %q, system %q), want the provider model and draftSystem", model, system)
+		}
+		gotText = text
+		return "Subject: Pricing sheet\n\nHere is the pricing sheet you asked about.", nil
+	}
+	grounding := func(_ context.Context, email string) (string, error) {
+		gotEmail = email
+		return ground, nil
+	}
+
+	RunDraft(bus, client, analyzeProvider(), contact, briefing, grounding, chat)
+
+	if gotEmail != "acme@example.com" {
+		t.Errorf("mailGround email = %q, want the contact's email", gotEmail)
+	}
+	for _, want := range []string{briefing, ground} {
+		if !strings.Contains(gotText, want) {
+			t.Errorf("chat prompt missing %q\n%s", want, gotText)
+		}
+	}
+	d := recvCrmDraft(t, ch)
+	if d.Provider != "test-crm" || d.ContactID != "301" || d.Email != "acme@example.com" {
+		t.Errorf("CrmDraft = (%q, %q, %q), want (test-crm, 301, acme@example.com)", d.Provider, d.ContactID, d.Email)
+	}
+	if d.Subject != "Pricing sheet" {
+		t.Errorf("CrmDraft Subject = %q, want the parsed subject line", d.Subject)
+	}
+	if d.Body != "Here is the pricing sheet you asked about." {
+		t.Errorf("CrmDraft Body = %q, want the parsed body", d.Body)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunDraftDefaultSubject pins the fallback: a model reply with no
+// "Subject:" line publishes the default subject and the whole reply as the
+// body, and a nil mailGround (no grant) still drafts - grounding absence is
+// not an error.
+func TestRunDraftDefaultSubject(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &draftClient{provider: "test-crm"}
+	chat := func(_ context.Context, _ config.AIProvider, _ string, _ string, _ string, _ func(string)) (string, error) {
+		return "Here is the pricing sheet you asked about.", nil
+	}
+
+	RunDraft(bus, client, analyzeProvider(), Contact{ID: "302", Email: "atlas@example.com"}, "briefing", nil, chat)
+
+	d := recvCrmDraft(t, ch)
+	if d.Subject != defaultDraftSubject {
+		t.Errorf("CrmDraft Subject = %q, want the default %q", d.Subject, defaultDraftSubject)
+	}
+	if d.Body != "Here is the pricing sheet you asked about." {
+		t.Errorf("CrmDraft Body = %q, want the whole reply", d.Body)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+func recvCrmDraft(t *testing.T, ch <-chan core.Event) core.CrmDraft {
+	t.Helper()
+	select {
+	case e := <-ch:
+		d, ok := e.(core.CrmDraft)
+		if !ok {
+			t.Fatalf("event is %T, want core.CrmDraft", e)
+		}
+		return d
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for CrmDraft")
+		return core.CrmDraft{}
+	}
+}

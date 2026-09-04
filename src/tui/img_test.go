@@ -873,6 +873,231 @@ func TestModelImagesReopenCarriesFlag(t *testing.T) {
 	}
 }
 
+// TestModelRefineRemoteSeats pins the remote-size flow: a fetch caches
+// the bytes and measured px, arms ONE refine reopen that re-lays the
+// page at real geometry, the refine reply re-attaches the cached bytes
+// and drops the arm, the off toggle clears the caches, and a stale
+// refine reply (images toggled off since) drops.
+func TestModelRefineRemoteSeats(t *testing.T) {
+	const u = "http://example.com/x.png"
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	content := []core.Line{
+		{Text: "alpha"},
+		{Text: "pic", Image: &core.Image{URL: u, Alt: "[image]"}},
+	}
+	var reqs []OpenReq
+	auto := true
+	SetOpenHandler(func(req OpenReq) {
+		reqs = append(reqs, req)
+		if !auto {
+			return // record only: the armed refine is driven by the test
+		}
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			MsgID:      req.MsgID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     req.Images,
+			Refine:     req.Refine,
+			Lines:      content,
+		}})
+		m = next
+	})
+	var fetched []string
+	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
+
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" || m.images {
+		t.Fatalf("a fresh open must be images-off, mode=%q images=%v", m.mode, m.images)
+	}
+
+	// on: the toggle arms the fetch AND lays the content out images-on
+	press(t, m, "alt+i")
+	if len(fetched) != 1 || fetched[0] != u {
+		t.Fatalf("the toggle must fetch the remote src, got %v", fetched)
+	}
+	if !m.images || m.imgMode != 1 {
+		t.Fatalf("the images-on reply must install images-on content, images=%v imgMode=%d", m.images, m.imgMode)
+	}
+
+	// the fetch lands: bytes cached, px measured, one refine armed
+	auto = false
+	next, _ := m.Update(EventMsg{Event: core.ImageFetched{URL: u, Data: testPNG(t, 40, 20)}})
+	m = next
+	if sz, ok := m.imgRemoteSize[u]; !ok || sz.W != 40 || sz.H != 20 {
+		t.Fatalf("the fetch must measure the px, got %+v", m.imgRemoteSize[u])
+	}
+	if len(m.imgRemote[u]) == 0 {
+		t.Fatalf("the fetch must cache the bytes")
+	}
+	if !m.refinePending {
+		t.Fatalf("the fetch must arm the refine reopen")
+	}
+	var refines int
+	for _, r := range reqs {
+		if r.Refine {
+			refines++
+		}
+	}
+	if refines != 1 {
+		t.Fatalf("exactly one refine reopen must dispatch, got %d", refines)
+	}
+	last := reqs[len(reqs)-1]
+	if !last.Refine || !last.Images || last.ImgSizes[u].W != 40 {
+		t.Fatalf("the refine must carry Images + the px map, got %+v", last)
+	}
+
+	// the refine reply re-lays the content and drops the arm; the cached
+	// bytes re-attach to the fresh lines (no refetch)
+	next, _ = m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		MsgID:      "a",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Refine:     true,
+		Lines:      content,
+	}})
+	m = next
+	if m.refinePending {
+		t.Fatalf("the refine reply must drop the arm")
+	}
+	found := false
+	for i := range m.pager.lines {
+		for _, img := range lineImages(&m.pager.lines[i]) {
+			if img.URL == u {
+				found = len(img.Data) > 0
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("the refine content must carry the fetched bytes")
+	}
+	if len(fetched) != 1 {
+		t.Fatalf("the re-attach must not refetch, got %d fetches", len(fetched))
+	}
+
+	// off: the toggle clears the caches and restores the markers
+	auto = true
+	press(t, m, "alt+i")
+	if m.images || m.imgMode != 0 {
+		t.Fatalf("the off reply must collapse, images=%v imgMode=%d", m.images, m.imgMode)
+	}
+	if len(m.imgRemote) != 0 || len(m.imgRemoteSize) != 0 {
+		t.Fatalf("the off toggle must clear the fetch caches")
+	}
+
+	// a stale refine reply (images now off) drops without re-laying
+	next, _ = m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		MsgID:      "a",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Refine:     true,
+		Lines:      content,
+	}})
+	m = next
+	if m.images || m.refinePending {
+		t.Fatalf("a stale refine must drop, images=%v refinePending=%v", m.images, m.refinePending)
+	}
+}
+
+// TestModelImagesKeepsScroll pins the images/refine scroll preservation:
+// a same-message geometry re-render (the alt+i toggle reply, a refine)
+// keeps the reader's place and pan; a fresh open of another message
+// starts at the top.
+func TestModelImagesKeepsScroll(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	content := make([]core.Line, 120)
+	for i := range content {
+		content[i] = core.Line{Text: "alpha"}
+	}
+	content[2] = core.Line{Text: strings.Repeat("x", 200)} // wide enough to pan
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			MsgID:      req.MsgID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     req.Images,
+			Lines:      content,
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" {
+		t.Fatalf("expected the pager, mode=%q", m.mode)
+	}
+	m.pager.scrollDown(25)
+	m.pager.x = 10
+	at := m.pager.vp.offset
+	if at == 0 {
+		t.Fatalf("fixture must sit scrolled past the top, offset=%d", at)
+	}
+
+	// same-message images-on reply: offset and pan survive the re-layout
+	next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		MsgID:      "a",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Lines:      content,
+	}})
+	m = next
+	if m.pager.vp.offset != at || m.pager.x != 10 {
+		t.Fatalf("an images-on re-render must keep the scroll, offset=%d x=%d, want %d/10", m.pager.vp.offset, m.pager.x, at)
+	}
+
+	// a refine reply on the same message keeps the scroll too
+	m.pager.scrollDown(3)
+	want := m.pager.vp.offset
+	next, _ = m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t1",
+		MsgID:      "a",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Refine:     true,
+		Lines:      content,
+	}})
+	m = next
+	if m.pager.vp.offset != want || m.pager.x != 10 {
+		t.Fatalf("a refine re-render must keep the scroll, offset=%d x=%d, want %d/10", m.pager.vp.offset, m.pager.x, want)
+	}
+
+	// a fresh open of another message starts at the top
+	next, _ = m.Update(EventMsg{Event: core.ThreadLoaded{
+		ThreadID:   "t2",
+		MsgID:      "b",
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Lines:      content,
+	}})
+	m = next
+	if m.pager.vp.offset != 0 || m.pager.x != 0 {
+		t.Fatalf("a fresh open must reset the scroll, offset=%d x=%d", m.pager.vp.offset, m.pager.x)
+	}
+}
+
 // TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave the cleared page background visible (P2=0 paints them in the terminal's default background), and the stream must round-trip to the same dims.
 func TestSixelEncodeTransparent(t *testing.T) {
 	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0)

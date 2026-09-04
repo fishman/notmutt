@@ -284,21 +284,30 @@ func (m *Model) prepareImages() {
 	}
 }
 
-// setImgMode applies the load-remote-images toggle (alt+i): off ->
-// remote (embedded cid:/data: bytes render, http(s) srcs fetch on
-// demand, gated by this key) -> off. Toggling off drops the fetched
-// bytes - the network never feeds the decode outside the mode.
+// setImgMode applies the load-remote-images toggle (alt+i): on lays the
+// page out images-on at real geometry (the reopen re-renders with the
+// images flag - embedded images size from their bytes, remote seat once
+// their measured px ride the refine), off restores the placeholder
+// markers. The local switch (setImages + fetch) is immediate so an
+// already-decoded image expands before the reopen reply lands; the reply
+// only replaces when its images flag differs from the installed content.
+// Toggling off drops the fetched bytes and the size caches - the network
+// never feeds the decode outside the mode.
 func (m *Model) setImgMode(mode int) {
 	switch mode {
 	case 0:
-		m.clearImageRects() // before the frame: the collapsed Alt row renders
+		m.clearImageRects() // before the frame: the collapsed markers render
 		m.dropRemoteData()
 		m.pager.setImages(false)
+		m.imgRemote = map[string][]byte{}
+		m.imgRemoteSize = map[string]core.ImgSize{}
+		m.refinePending = false
 	case 1:
 		m.pager.setImages(true)
 		m.fetchRemoteImages()
 	}
 	m.imgMode = mode
+	m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.linkMode, mode == 1, m.imgRemoteSize, false)
 }
 
 // fetchRemoteImages arms the message's remote-image fetches (the
@@ -333,11 +342,15 @@ func lineImages(l *core.Line) []*core.Image {
 	return out
 }
 
-// attachFetched attaches a fetch reply to its image lines (the remote
-// images mode): the bytes land on every line sharing the URL, the
-// pager re-expands, and the decode runs on the next prepareImages. A
-// failed fetch keeps the Alt row AND the URL, so the next toggle
-// refetches (a transient failure must not kill the image forever).
+// attachFetched caches a fetch reply and attaches it to its image lines
+// (the remote images mode): the bytes land on every line sharing the
+// URL and the measured px join the refine payload. A size that was
+// newly measured arms one coalesced refine reopen once the in-flight set
+// empties - the images-on content re-lays-out so the remote image seats
+// at real geometry. A failed fetch keeps the Alt row AND the URL, so
+// the next toggle refetches (a transient failure must not kill the image
+// forever). The bytes never cross into the worker - only the px ride
+// the refine.
 func (m *Model) attachFetched(e core.ImageFetched) {
 	delete(m.imgFetching, e.URL)
 	if m.pager == nil {
@@ -345,6 +358,18 @@ func (m *Model) attachFetched(e core.ImageFetched) {
 	}
 	if e.Err != nil {
 		return
+	}
+	if m.imgRemote == nil {
+		m.imgRemote = map[string][]byte{}
+		m.imgRemoteSize = map[string]core.ImgSize{}
+	}
+	m.imgRemote[e.URL] = e.Data
+	newSize := false
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(e.Data)); err == nil && cfg.Width > 0 && cfg.Height > 0 {
+		if prev, ok := m.imgRemoteSize[e.URL]; !ok || prev.W != cfg.Width || prev.H != cfg.Height {
+			newSize = true
+		}
+		m.imgRemoteSize[e.URL] = core.ImgSize{W: cfg.Width, H: cfg.Height}
 	}
 	dirty := false
 	for i := range m.pager.lines {
@@ -357,10 +382,35 @@ func (m *Model) attachFetched(e core.ImageFetched) {
 			dirty = true
 		}
 	}
-	if !dirty {
+	if dirty {
+		m.pager.relayout()
+	}
+	// a new size seats only once the images-on content is installed (the
+	// alt+i reopen reply): arm the refine when the in-flight set empties
+	if newSize && m.images && len(m.imgFetching) == 0 && !m.refinePending {
+		m.refinePending = true
+		m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, m.linkMode, true, m.imgRemoteSize, true)
+	}
+}
+
+// attachRemoteBytes copies the cached remote bytes onto a reopened
+// pager's URL lines (the images-on/refine replies carry fresh image
+// objects whose Data the worker never filled - the decode must find its
+// bytes without a refetch).
+func (m *Model) attachRemoteBytes() {
+	if m.pager == nil {
 		return
 	}
-	m.pager.relayout()
+	for i := range m.pager.lines {
+		for _, img := range lineImages(&m.pager.lines[i]) {
+			if img.URL == "" || len(img.Data) > 0 {
+				continue
+			}
+			if data, ok := m.imgRemote[img.URL]; ok {
+				img.Data = data
+			}
+		}
+	}
 }
 
 // dropRemoteData collapses the remote images (local mode): the fetched

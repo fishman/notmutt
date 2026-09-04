@@ -177,12 +177,18 @@ type Model struct {
 	// in-flight fetches. images mirrors the last ThreadLoaded reply: the
 	// installed content was laid out images-on, so every re-open of it
 	// stays images-on and a reply with the other flag replaces the pager.
-	imgProto    string
-	imgCache    map[*core.Image]image.Image
-	painted     map[*core.Image]cellRect
-	imgMode     int
-	images      bool
-	imgFetching map[string]bool
+	// imgRemote caches fetched remote bytes by URL (they never cross into
+	// the worker - only their measured px ride the refine re-open as
+	// imgRemoteSize); refinePending single-flights that refine re-open.
+	imgProto      string
+	imgCache      map[*core.Image]image.Image
+	painted       map[*core.Image]cellRect
+	imgMode       int
+	images        bool
+	imgFetching   map[string]bool
+	imgRemote     map[string][]byte
+	imgRemoteSize map[string]core.ImgSize
+	refinePending bool
 	// attView is the pager's active attachment view (the v dialog's
 	// enter): back re-opens the message to restore; s prefills the
 	// save prompt from it. nil = the pager shows the message.
@@ -1817,6 +1823,13 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 		return
 	}
+	// a stale refine: the user toggled images off (or opened another
+	// message) since the fetch armed it - the reply would lay an images-on
+	// render over content that is off again. Drop it and free the arm.
+	if e.Refine && !m.images {
+		m.refinePending = false
+		return
+	}
 	// the reply's surface: the index surface that dispatched the open
 	// (the app echoes OpenReq.Origin on the reply) - never wherever the
 	// user tabbed while the async load ran. Nil Origin (tests) falls
@@ -1861,6 +1874,17 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	// active replaces it (the back key's restore) - the reply's own
 	// mode/headers alone never differ
 	if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || e.Images != m.images || e.Refine || m.attView != nil {
+		// a same-message images/refine re-render keeps the scroll: the
+		// geometry changed, not the message - a toggle mid-read must not
+		// yank the reader to the top. A fresh open (new msg/mode/headers)
+		// or an attachment restore starts at the top.
+		keep := e.ThreadID == pagerThreadID(m.pager) && e.MsgID == pagerMsgID(m.pager) &&
+			e.RenderMode == m.renderMode && e.Headers == m.showHeaders &&
+			e.LinkLabels == m.linkMode && m.attView == nil
+		var keepVp, keepX int
+		if keep {
+			keepVp, keepX = m.pager.vp.offset, m.pager.x
+		}
 		m.renderMode, m.showHeaders, m.linkMode, m.linkList, m.images = e.RenderMode, e.Headers, e.LinkLabels, e.Links, e.Images
 		m.attView = nil // the attachment view ends with the restore
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
@@ -1872,6 +1896,26 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		// the images flag rides the render: the pager expands image rows
 		// only when the worker laid the message out images-on
 		m.pager.setImages(e.Images)
+		// images-on content: the worker laid sizes only - remote bytes ride
+		// the refine replies, so re-attach what the fetch caches hold. Off
+		// content drops the caches (fresh opens start collapsed - fetched
+		// bytes never survive outside the images-on mode).
+		if e.Images {
+			m.imgMode = 1
+			m.attachRemoteBytes()
+		} else {
+			m.imgMode = 0
+			m.imgRemote = map[string][]byte{}
+			m.imgRemoteSize = map[string]core.ImgSize{}
+		}
+		if e.Refine {
+			m.refinePending = false
+		}
+		if keep {
+			m.pager.vp.offset = keepVp
+			m.pager.vp.clamp()
+			m.pager.x = min(keepX, max(0, m.pager.maxX-m.pager.width))
+		}
 		// the F key's label mode arms with the labeled reply: digits
 		// start empty and links exist or the mode reports - never a
 		// silent dead entry
@@ -1890,13 +1934,6 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	// content - the covering tab keeps the screen
 	if o == m.stackSurface() {
 		m.mode = "pager"
-	}
-	// the render-images toggle is per-content: a fresh open starts
-	// collapsed - remote images never fetch without their own press. An
-	// images-on reply (the alt+i reopen or a refine) keeps the toggle on.
-	m.imgMode = 0
-	if e.Images {
-		m.imgMode = 1
 	}
 	m.legendPending = true
 }

@@ -20,7 +20,7 @@ Decisions locked in brainstorm:
   call opens a prefilled compose. Nothing is ever sent automatically.
 - Write-back: yes - marking the contact processed is written to HubSpot, which
   is the source of truth (no local dedup DB).
-- Client architecture: one lua-gated subsystem `src/lib/crm` (package `crm`,
+- Client architecture: one `lua && crm`-gated subsystem `src/lib/crm` (package `crm`,
   the `src/lib/html` / `src/lib/crypto` precedent) holds the CRM core and stays
   vendor-neutral: `client.go` declares a neutral `Client` interface (including
   `Provider()`, the routing id) plus the `Contact`/`Company` domain types - no
@@ -34,18 +34,20 @@ Decisions locked in brainstorm:
   capabilities it must not import: the bearer key is resolved upstream and
   passed to `hubspot.NewClient`, the `[ai]` chat call arrives as a ChatFn,
   gated mail grounding as a MailGroundFn. Code above the lib is a THIN adapter
-  (`src/app/crm_engine.go` + `!lua` stub): it routes on `cfg.Crm.Provider`
+  (`src/app/crm_engine.go` + `!lua || !crm` stub): it routes on `cfg.Crm.Provider`
   (today `case "hubspot"` builds `hubspot.NewClient`), resolves the key via
   `ai.FetchKey` and the AI entry via the existing resolveAIProvider rule,
   opens compose, and feeds tui hooks. The only vendor string above the vendor
   impls is `cfg.Crm.Provider` itself; a second CRM is a new subpackage + a new
   switch case, no core/TUI/lib rename.
 
-The whole feature is `//go:build lua`: it calls the AI provider path
-(`src/app/ai`, `src/app/ai_stream.go`) which is lua-gated today. The tag is a
-feature gate, not a licensing carve-out - the new clients are stdlib-only and
-Apache-clean, but default builds carry no AI/CRM/search code, mirroring the ai
-package precedent.
+The whole feature is `//go:build lua && crm`: it calls the AI provider path
+(`src/app/ai`, `src/app/ai_stream.go`) which is lua-gated today. With crm off,
+nothing from the feature compiles; a crm build without lua compiles nothing
+either - both tags are required. The tag pair is a feature gate, not a
+licensing carve-out - the new clients are stdlib-only and Apache-clean, but
+default builds and crm-less lua builds carry no AI/CRM/search code, mirroring
+the ai package precedent.
 
 ## 1. Goal and acceptance
 
@@ -195,7 +197,7 @@ Each takes its capabilities as injected args - the `crm.Client` interface, the
 resolved `config.AIProvider`, the ChatFn, the MailGroundFn - so none of them
 needs an app import, and none names a vendor.
 
-`src/app/crm_engine.go` (new, lua-gated) is a THIN adapter mirroring
+`src/app/crm_engine.go` (new, `lua && crm`-gated) is a THIN adapter mirroring
 `src/app/ai_engine.go` and `src/app/send.go`. It no-ops unless
 `cfg.Crm.Provider != ""`, and builds the vendor client by switching on that
 value (`case "hubspot": hubspot.NewClient(ctx, key)` from
@@ -214,8 +216,8 @@ value (`case "hubspot": hubspot.NewClient(ctx, key)` from
   send hook (Provider from the draft; the send hook matches it against the
   client it built, i.e. `cfg.Crm.Provider`); on send-OK/dismiss launches
   `runMark`; on row errors drives write-back. Supplies the queue surface into
-  tui hooks (the SetAICommandSource/Handler shape); the `!lua` build carries a
-  stub.
+  tui hooks (the SetAICommandSource/Handler shape); the `!lua || !crm` build
+  carries a stub.
 
 Context assembly for the briefing is a sibling of `BuildContext`, not a
 reuse: `BuildContext` is structured around mail messages (body caps, quoted

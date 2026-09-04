@@ -9,7 +9,7 @@
 reviewable company briefing and a personalized follow-up draft, with
 processed state written back to HubSpot.
 
-**Architecture:** one lua-gated subsystem `src/lib/crm` (package `crm`, the
+**Architecture:** one `lua && crm`-gated subsystem `src/lib/crm` (package `crm`, the
 `src/lib/html`/`src/lib/crypto` precedent) holds the CRM core and stays
 vendor-neutral. `client.go` declares a neutral `Client` interface plus the
 `Contact`/`Company` domain types - no wire code, no vendor name. The HubSpot
@@ -17,8 +17,8 @@ implementation is a subpackage, `src/lib/crm/hubspot` (package `hubspot`),
 that implements `crm.Client` (`Provider()` = `"hubspot"`). Research, the
 briefing builder, and the workflow job bodies live in `crm` and take the
 `Client` interface; the routing id on every published row/briefing/draft comes
-from `client.Provider()`, so `crm` names no vendor. The lua-gated
-`src/app/crm_engine.go` + `!lua` stub (the ai_engine split) is a THIN adapter
+from `client.Provider()`, so `crm` names no vendor. The `lua && crm`-gated
+`src/app/crm_engine.go` + `!lua || !crm` stub (the ai_engine split) is a THIN adapter
 that routes on `cfg.Crm.Provider` - it builds the matching vendor client
 (`case "hubspot": hubspot.NewClient`), injects the app-only capabilities (the
 bearer key via `ai.FetchKey`, the `[ai]` chat call, the gated mail context),
@@ -31,7 +31,7 @@ the engine (`"hubspot"`); params sit in `[crm.hubspot]`, whose `ai` names the
 one `[ai]` entry analysis/research/draft ride and whose `token_cmd` is the
 HubSpot portal token.
 
-**Tech Stack:** Go stdlib `net/http` + `encoding/json`; `//go:build lua`;
+**Tech Stack:** Go stdlib `net/http` + `encoding/json`; `//go:build lua && crm`;
 existing `ai` (Chat/FetchKey), `aicmd`, `compose`, `core.Bus`, notmuch worker,
 tui search-tab/index machinery. No new dependencies. The crm briefing path
 calls the injected chat directly and publishes a finished `CrmBriefing` - no
@@ -96,10 +96,10 @@ a `[crm] provider = "hubspot"` without `[crm.hubspot]` errors.
 
 **Files:** `src/core/bus.go`
 
-The tui surface and the lua crm lib are in different build tags; both must
+The tui surface and the gated crm lib are in different build tags; both must
 speak core types. Add plain data event structs beside `AiChunk`/`AiResult`
-(bus.go:389-417) - inert, default build, produced only under lua (the Ai*
-precedent):
+(bus.go:389-417) - inert, default build, produced only under `lua && crm` (the
+Ai* precedent):
 
 ```go
 type CrmContact struct {        // one queue row; provider-neutral - core never names a vendor
@@ -126,9 +126,9 @@ lib-to-adapter seam for opening a compose (Task 10) - the lib cannot import
 
 ## Task 4: neutral client seam + the HubSpot implementation
 
-**Files:** `src/lib/crm/client.go` (neutral, `//go:build lua`, package `crm`),
+**Files:** `src/lib/crm/client.go` (neutral, `//go:build lua && crm`, package `crm`),
 `src/lib/crm/hubspot/client.go` + `src/lib/crm/hubspot/client_test.go`
-(`//go:build lua`, package `hubspot`; no app imports - the bearer key is
+(`//go:build lua && crm`, package `hubspot`; no app imports - the bearer key is
 injected)
 
 `client.go` is vendor-neutral - only the `Client` contract and the domain
@@ -177,12 +177,12 @@ HTTP 429 and 5xx to `ErrRetry`; the company-missing association yields an empty
 Authorization/request JSON for all four calls, plus paging (two pages), 429 ->
 ErrRetry, and `Contact` without a company association; a compile-time assertion
 that `*Client` satisfies `crm.Client` and `Provider() == "hubspot"`.
-`cd src && go test -count=1 -tags lua ./lib/crm/...`.
+`cd src && go test -count=1 -tags "lua crm" ./lib/crm/...`.
 
 ## Task 5: research over the `[ai]` connection
 
 **Files:** `src/lib/crm/research.go`, `src/lib/crm/research_test.go` (both
-`//go:build lua`, package `crm`)
+`//go:build lua && crm`, package `crm`)
 
 Research rides the referenced `[ai]` entry (spec section 2/3): one model call
 returns concrete current facts about the company; there is no separate token or
@@ -205,12 +205,12 @@ as one `Result{Snippet: line}`. Cap: 8 results, each snippet <= 600 chars
 
 **Check:** unit test with a fake `ChatFn`: structured output parses into
 capped `[]Result`; garbage output degrades to a single wrapping Result; caps
-enforced. `cd src && go test -count=1 -tags lua ./lib/crm/`.
+enforced. `cd src && go test -count=1 -tags "lua crm" ./lib/crm/`.
 
 ## Task 6: briefing context builder
 
 **Files:** `src/lib/crm/briefing.go`, `src/lib/crm/briefing_test.go` (both
-`//go:build lua`, package `crm`)
+`//go:build lua && crm`, package `crm`)
 
 A sibling of `aicmd.BuildContext` (spec section 4) - non-mail, bounded, no mail
 params in the signature:
@@ -228,12 +228,12 @@ snippets already capped by `Research`. Empty contact/company render as
 
 **Check:** `briefing_test.go` with fabricated data: output bounded, fields
 present, no mail fields can even be passed (the signature is the guarantee);
-empty fields render "unknown". `cd src && go test -count=1 -tags lua ./lib/crm/ -run Briefing`.
+empty fields render "unknown". `cd src && go test -count=1 -tags "lua crm" ./lib/crm/ -run Briefing`.
 
 ## Task 7: app adapter + build split
 
-**Files:** `src/app/crm_engine.go` (`//go:build lua`),
-`src/app/crm_engine_stub.go` (`//go:build !lua`), `src/app/app.go`
+**Files:** `src/app/crm_engine.go` (`//go:build lua && crm`),
+`src/app/crm_engine_stub.go` (`//go:build !lua || !crm`), `src/app/app.go`
 
 The app side is a THIN adapter over the `src/lib/crm` job bodies (Tasks 8-11).
 It routes on `cfg.Crm.Provider`, never names a vendor beyond that config value
@@ -242,16 +242,16 @@ ai_engine_stub.go exactly. Default `app.go` calls the wire (place next to
 app.go:288-290); the symbols exist in both builds:
 
 ```go
-// crm_engine.go (lua):
+// crm_engine.go (lua && crm):
 func crmPullSource() []tui.CrmCommand                  // stub: nil
 func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) // stub: no-op
-// crm_engine_stub.go (!lua): matching no-op symbols, no lua imports
+// crm_engine_stub.go (!lua || !crm): matching no-op symbols, no lua imports
 ```
 
 `app.go` (after the AI-command wiring, ~app.go:290):
 
 ```go
-crmWire(ctx, bus, worker, cfg, root) // no-op in !lua builds
+crmWire(ctx, bus, worker, cfg, root) // no-op in !lua || !crm builds
 ```
 
 `crmWire` is the adapter (the subscriber pattern at app.go:393 or ai wiring)
@@ -272,7 +272,7 @@ bus output:
 - supplies the pull source and the action handler into the tui hooks
   (Task 13). Keep it thin; the job bodies are in `src/lib/crm/workflow.go`.
 
-**Check:** `cd src && go build .` and `go build -tags "lua mcp" ./...`.
+**Check:** `cd src && go build .` and `go build -tags "lua crm mcp" ./...`.
 
 ## Task 8: the pull (lib job)
 
@@ -295,7 +295,7 @@ rows already received stay. The app adapter builds the client and launches
 overlapping refreshes no-op via the mutex. `crm.go` holds the shared
 caps/consts the jobs and tests use.
 
-**Check:** `go build -tags lua ./lib/crm/`; the pull path is exercised in
+**Check:** `go build -tags "lua crm" ./lib/crm/`; the pull path is exercised in
 Task 13's httptest-driven integration test.
 
 ## Task 9: analyze -> briefing (lib job)
@@ -315,7 +315,7 @@ Cancellable through the existing Task machinery (task.go
 registerTask/completeTask); abort leaves the row at its prior status. The chat
 call is a plain injected function - no aiStream coupling in the lib.
 
-**Check:** `go build -tags lua ./lib/crm/`. Behavior verified in Task 13 with
+**Check:** `go build -tags "lua crm" ./lib/crm/`. Behavior verified in Task 13 with
 a fake provider (httptest OpenAI-compatible endpoint via the provider's
 `base-url`).
 
@@ -353,7 +353,7 @@ in `workflow.go` (`aiCfg` is the resolved `[ai]` entry, distinct from the CRM
    ContactID}` in a session-local map (a package var like `lastAIOutput`,
    ai_engine.go:44-49) for the send hook (Task 11).
 
-**Check:** `go build -tags lua ./lib/crm/ ./app/`; the map + subject/body parse
+**Check:** `go build -tags "lua crm" ./lib/crm/ ./app/`; the map + subject/body parse
 get a unit test in Task 13 (`crm_engine_test.go`, fake chat).
 
 ## Task 11: write-back on send and dismiss
@@ -375,7 +375,7 @@ consistent; the sent mail is the durable artifact. Dismiss publishes
 handler filters on the row's `Provider` before dispatching (a neutral surface
 must not assume a vendor).
 
-**Check:** `go build -tags lua ./lib/crm/ ./app/`; the once-per-contact rule is
+**Check:** `go build -tags "lua crm" ./lib/crm/ ./app/`; the once-per-contact rule is
 pinned in Task 13's test (fake client records calls).
 
 ## Task 12: TUI hooks + queue surface
@@ -412,7 +412,7 @@ row model transitions (new -> briefing -> drafted/sent/dismissed) and the
 ## Task 13: wire the surface + integration tests
 
 **Files:** `src/app/app.go`, `src/app/crm_engine.go`,
-`src/app/crm_engine_test.go` (lua), `src/tui/crm.go`
+`src/app/crm_engine_test.go` (lua && crm), `src/tui/crm.go`
 
 - Open path: register the queue surface behind a new index-mode keybinding
   (the binding map at key.go; mirror how the AI picker key opens). `crmWire`
@@ -422,7 +422,7 @@ row model transitions (new -> briefing -> drafted/sent/dismissed) and the
   `c.Provider == cfg.Crm.Provider` before acting (a neutral surface must not
   assume a vendor - the wire knows only the configured provider). First open
   triggers the pull.
-- `crm_engine_test.go` (lua): with `cfg.Crm.Provider = "hubspot"` (the only
+- `crm_engine_test.go` (lua && crm): with `cfg.Crm.Provider = "hubspot"` (the only
   place the test names a vendor), drive pull/analyze/draft/mark end-to-end
   through `crmWire` against an `httptest` OpenAI-compatible provider + an
   `httptest` HubSpot server: pull publishes `core.CrmQueue` rows whose
@@ -431,15 +431,15 @@ row model transitions (new -> briefing -> drafted/sent/dismissed) and the
   each call `MarkFollowedUp` once with the right id; a failing mark keeps the
   row (Task 11 rule). Fabricated data only.
 
-**Check:** `cd src && go test -count=1 -tags "lua mcp" ./app/ -run 'Crm'`,
-`go test -count=1 -tags "lua mcp" ./lib/crm/`, and
-`go test -count=1 -tags "lua mcp" ./tui/ -run Crm`.
+**Check:** `cd src && go test -count=1 -tags "lua crm mcp" ./app/ -run 'Crm'`,
+`go test -count=1 -tags "lua crm" ./lib/crm/`, and
+`go test -count=1 -tags "lua crm" ./tui/ -run Crm`.
 
 ## Task 14: full verification + docs sweep
 
 **Files:** `docs/features.md` (if a feature list exists), nothing else
 
-`cd src && go test -count=1 -tags "lua mcp" ./...` (locked tests green) and
+`cd src && go test -count=1 -tags "lua crm mcp" ./...` (locked tests green) and
 `go test ./...` default. Add the HubSpot workflow line to any feature/roadmap
 list the Lua-IPC work touched (match its wording). The user does the one
 interactive pass against a real portal.

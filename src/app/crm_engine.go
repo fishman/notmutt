@@ -228,6 +228,16 @@ func crmMailGround(cfg config.Config, worker workerAPI) crm.MailGroundFn {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
+		// a CRM-controlled value must look like an address before it shapes
+		// a query: reject anything outside the email charset (letters, digits,
+		// . + _ - @) as the no-grounding state, never a query fragment
+		for i := 0; i < len(email); i++ {
+			c := email[i]
+			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
+				c == '.' || c == '+' || c == '-' || c == '_' || c == '@') {
+				return "", nil
+			}
+		}
 		query := `from:"` + strings.ReplaceAll(email, `"`, "") + `"`
 		var found []core.Message
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActQuery, Query: query, Limit: 5, Flat: true, Emit: func(msgs []core.Message) bool {

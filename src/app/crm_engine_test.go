@@ -316,6 +316,37 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	}
 }
 
+// crmCountWorker records how many queries a ground closure runs (the reject
+// guard must drop before any worker call).
+type crmCountWorker struct{ calls int }
+
+func (w *crmCountWorker) Call(notmuch.Action) (notmuch.Reply, error) {
+	w.calls++
+	return notmuch.Reply{}, nil
+}
+
+// TestCrmMailGroundRejectsNonEmail pins the ground guard: a CRM-controlled
+// email outside the address charset drops to the no-grounding state without
+// shaping a worker query; a plausible address still queries.
+func TestCrmMailGroundRejectsNonEmail(t *testing.T) {
+	w := &crmCountWorker{}
+	ground := crmMailGround(config.Default(), w)
+	for _, bad := range []string{`alpha@example.com" OR from:*`, "alpha @example.com", "alpha<example.com", "al\npha@example.com"} {
+		if _, err := ground(context.Background(), bad); err != nil {
+			t.Fatalf("ground(%q) err = %v", bad, err)
+		}
+	}
+	if w.calls != 0 {
+		t.Fatalf("worker queried %d times for rejected emails, want 0", w.calls)
+	}
+	if _, err := ground(context.Background(), "alpha@example.com"); err != nil {
+		t.Fatalf("ground(valid) err = %v", err)
+	}
+	if w.calls != 1 {
+		t.Fatalf("worker queried %d times for a valid address, want 1", w.calls)
+	}
+}
+
 // crmWaitFor scans the bus until e satisfies pred (ignoring unrelated
 // events) or the deadline passes.
 func crmWaitFor(t *testing.T, ch <-chan core.Event, pred func(core.Event) bool) core.Event {

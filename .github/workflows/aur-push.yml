@@ -54,11 +54,14 @@ jobs:
           git clone "ssh://aur@aur.archlinux.org/notmutt.git" /tmp/aur-notmutt
           cp packaging/notmutt/PKGBUILD packaging/notmutt/.SRCINFO /tmp/aur-notmutt/
           cd /tmp/aur-notmutt
+          branch="$(git remote show origin | sed -n 's/^[[:space:]]*HEAD branch: //p')"
+          branch="${branch:-master}"
+          git checkout -B "$branch" "origin/$branch"
           git config user.name "notmutt release"
           git config user.email "reza.jelveh+git@gmail.com"
           git add PKGBUILD .SRCINFO
           git commit -m "notmutt $VERSION"
-          git push
+          git push origin "$branch"
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}
           VERSION: ${{ steps.ver.outputs.version }}

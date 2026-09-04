@@ -81,7 +81,7 @@ Enter opens the cursor message only, never the whole thread.
 | key | action |
 | --- | --- |
 | j / k, space, ctrl+d, pgdown/pgup, g / G | scroll |
-| alt+i | load remote images (and render embedded ones) - privacy gate |
+| alt+i | images on/off: the page re-lays-out at real image sizes (embedded seat immediately, remote once fetched); off restores the placeholders - privacy gate |
 | v | toggle the plain/html view |
 | ctrl+u | toggle the html part's raw source view |
 | F | easyjump link mode (type the [N] number to open) |

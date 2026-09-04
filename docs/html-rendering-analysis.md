@@ -76,6 +76,35 @@ are a mail-side data map today (a config override is R11 future work);
 and `Style.Label` is a renderer-synthesized flag a future Lua/RPC
 consumer must never treat as authored content.
 
+### Images-on geometry (recorded decision, 2026-09-04)
+
+The plan-6 facade shipped with "the mail path never calls ResolveImages":
+every image laid out at intrinsic 0, alt placeholders glued into the
+flow, and the alt+i toggle stayed pager-side (decode + vertical
+expansion only). The toggle now re-lays-out at real geometry, which is
+the explicit extension of that posture:
+
+- An images-on render calls `html.ResolveImages(boxes, loader)` between
+  `Build` and `LayoutBlock` (stage 2), so text flows around real boxes.
+  Images-off keeps the markers exactly as before - image-blind layout,
+  unchanged bytes.
+- The loader sizes each src with `image.DecodeConfig` (dimensions only,
+  never a pixel decode). Embedded `cid:`/`data:` images are measured in
+  the worker from bytes the parse already holds; a render with the
+  images flag makes a dimension read of bytes already in the message.
+- Remote `http(s)` bytes never enter the worker. The TUI DecodeConfigs
+  the fetched bytes (the same call `src/app/imgfetch.go` already makes)
+  and passes only the measured px map back on a "refine" reopen; the
+  image seats once its fetch lands.
+- The pixel decode/render boundary is unchanged: pixels decode only in
+  the TUI (`prepareImages`), never in a render. The privacy gate that
+  was "no ResolveImages on the mail path" is now "no pixels on the mail
+  path" - geometry (px dimensions) may cross, decoded pixels may not.
+
+Height divergence remains (BUGS.org): intrinsic px height still does not
+advance stage-1 rows; vertical room is the pager's decode expansion
+(`relayout`), which already pushes following lines down.
+
 ## What "go stdlib html" actually is
 
 - `html` (stdlib): escaping/unescaping only. No parser, no DOM, no CSS.

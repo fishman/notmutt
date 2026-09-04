@@ -68,12 +68,21 @@ notmuch.
 ## Terminal images
 
 Inline images render as placeholders until the load-remote-images key
-(alt+i) - a privacy gate, and an explicit one. Protocol selection is
-config data: sixel by default, kitty opt-in, both detected from the
-environment. Remote image srcs fetch on the same key, size-capped and
-time-bounded, and 1x1 tracking pixels drop unless
-`allow-tracking-images = true`. Images paint after the frame flush, so
-pixels never race the text.
+(alt+i) - a privacy gate, and an explicit one. Images-off keeps today's
+alt markers exactly; the layout is image-blind. The key turns images
+on and RE-LAYS-OUT the page at real geometry: the worker sizes each
+image (`image.DecodeConfig`, dimensions only) before the px layout
+runs, so text flows around real boxes instead of painting over the
+markers' reserved rows. Embedded images (cid:/data:) size from their
+bytes on the toggle; remote (http) images fetch, the measured px ride a
+second (refine) render, and the image seats once it lands. The bytes
+never leave the TUI - only dimensions cross to the worker; pixels
+decode in the terminal only. The toggle keeps the reader's scroll
+position. Protocol selection is config data: sixel by default, kitty
+opt-in, both detected from the environment. Remote srcs fetch on the
+same key, size-capped and time-bounded, and 1x1 tracking pixels drop
+unless `allow-tracking-images = true`. Images paint after the frame
+flush, so pixels never race the text.
 
 ## HTML rendering
 

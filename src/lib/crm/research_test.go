@@ -177,6 +177,33 @@ func TestResearchCapsAndTruncates(t *testing.T) {
 	}
 }
 
+// TestResearchCapsFactAndURL pins the per-field cap on a structured line: an
+// over-long fact or source runs through the same rune bound as the snippet,
+// truncating without splitting a multi-byte rune.
+func TestResearchCapsFactAndURL(t *testing.T) {
+	fact := strings.Repeat("界", 700)
+	url := strings.Repeat("a", 700)
+	reply := "1. " + fact + " | " + url + " | short snippet"
+	var got chatArgs
+	results, err := Research(context.Background(), researchProvider(), researchCompany(), chatRecorder(t, reply, &got))
+	if err != nil {
+		t.Fatalf("Research: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.Title != strings.Repeat("界", maxSnippetLen) {
+		t.Errorf("title = %d runes, want %d", len([]rune(r.Title)), maxSnippetLen)
+	}
+	if r.URL != strings.Repeat("a", maxSnippetLen) {
+		t.Errorf("url = %d runes, want %d", len([]rune(r.URL)), maxSnippetLen)
+	}
+	if r.Snippet != "short snippet" {
+		t.Errorf("snippet = %q, want short snippet", r.Snippet)
+	}
+}
+
 // TestResearchNilChat pins the nil-chat guard: a missing callback is a
 // caller error, not a panic.
 func TestResearchNilChat(t *testing.T) {

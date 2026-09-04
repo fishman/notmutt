@@ -42,7 +42,7 @@ type Result struct {
 // that does not match wraps as a Result carrying that line as its Snippet,
 // and a reply with no structured line at all collapses to one wrapping
 // Result, so a refusal stays readable. An empty reply returns no Results.
-// Snippets truncate to maxSnippetLen runes. Chat errors return unchanged.
+// Every field truncates to maxSnippetLen runes. Chat errors return unchanged.
 // Research touches no mail and imports no app package.
 func Research(ctx context.Context, p config.AIProvider, company Company, chat ChatFn) ([]Result, error) {
 	if chat == nil {
@@ -130,7 +130,7 @@ func parseLine(line string) (Result, bool) {
 	if src == "" || strings.EqualFold(src, "UNKNOWN") {
 		src = ""
 	}
-	return Result{Title: fact, URL: src, Snippet: capSnippet(snip)}, true
+	return Result{Title: capSnippet(fact), URL: capSnippet(src), Snippet: capSnippet(snip)}, true
 }
 
 // stripOrdinal removes a leading list ordinal ("1.", "1)", "1:") when one

@@ -614,7 +614,7 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
 	}
-	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG)
+	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, false, nil)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 		return

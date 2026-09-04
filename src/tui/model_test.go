@@ -1874,7 +1874,7 @@ func rowsModel(n int) Model {
 // attaches lines, it never renders).
 func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 	t.Helper()
-	lines, _, _, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, false, false, "")
+	lines, _, _, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, false, false, "", false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -5527,7 +5527,7 @@ func TestOpenLinksHTML(t *testing.T) {
 		" and <a href=\"https://beta.example.com/b\">beta</a></p>\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
 	inject := func(mode core.RenderMode, labelLinks bool) {
-		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks, false, "")
+		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks, false, "", false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5632,7 +5632,7 @@ func TestOpenLinksNoLinks(t *testing.T) {
 		SetOpenLinkHandler(func(string) {})
 	}()
 	inject := func(mode core.RenderMode, labelLinks bool) {
-		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks, false, "")
+		lines, _, links, err := mail.RenderThread(msgs, mode, false, 0, labelLinks, false, "", false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5677,7 +5677,7 @@ func TestHeadersTogglePager(t *testing.T) {
 	})
 	defer stubOpenHandler(t)
 	inject := func(headers bool) {
-		lines, _, _, err := mail.RenderThread(msgs, core.RenderPlain, headers, 0, false, false, "")
+		lines, _, _, err := mail.RenderThread(msgs, core.RenderPlain, headers, 0, false, false, "", false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -5745,7 +5745,7 @@ func TestLinkModeScrolls(t *testing.T) {
 	m = press(t, m, "enter") // open: the default handler is a no-op
 	var links []string
 	inject := func(labelLinks bool) {
-		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks, false, "")
+		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks, false, "", false, nil)
 		links = ls
 		if err != nil {
 			t.Fatal(err)
@@ -5811,7 +5811,7 @@ func TestEasyjumpHighlight(t *testing.T) {
 	}()
 	m = press(t, m, "enter") // open: the default handler is a no-op
 	inject := func(labelLinks bool) {
-		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks, false, "")
+		lines, _, ls, err := mail.RenderThread(msgs, core.RenderHTML, false, 0, labelLinks, false, "", false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

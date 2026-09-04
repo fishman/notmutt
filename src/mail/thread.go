@@ -43,7 +43,7 @@ const (
 // (RFC 2047 decoded at index time, so pager and index agree). width
 // caps the html wrap at htmlWrapWidth; links holds the F key's label
 // targets, non-empty only under labelLinks (labels are mode-scoped).
-func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int, labelLinks bool, dark bool, themeBG string) ([]core.Line, string, []string, error) {
+func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int, labelLinks bool, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, string, []string, error) {
 	if len(msgs) == 0 {
 		return nil, "", nil, fmt.Errorf("no messages in thread")
 	}
@@ -70,7 +70,7 @@ func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width
 		if subj == "" {
 			subj = parsed.Subject
 		}
-		ml, ls := renderMessage(parsed, subj, mode, headers, width, labelLinks, dark, themeBG)
+		ml, ls := renderMessage(parsed, subj, mode, headers, width, labelLinks, dark, themeBG, images, imgSizes)
 		lines = append(lines, ml...)
 		links = append(links, ls...)
 	}
@@ -376,7 +376,7 @@ func expandTabs(line string) string {
 
 // renderMessage renders one parsed message; links returns the html
 // view's link labels (the F key), empty in every other view.
-func renderMessage(m *Message, subject string, mode core.RenderMode, headers bool, width int, labelLinks bool, dark bool, themeBG string) (lines []core.Line, links []string) {
+func renderMessage(m *Message, subject string, mode core.RenderMode, headers bool, width int, labelLinks bool, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) (lines []core.Line, links []string) {
 	add := func(text string, kind core.LineKind, quoted int) {
 		lines = append(lines, core.Line{Text: core.SanitizeControls(text), Kind: kind, Quoted: quoted})
 	}
@@ -404,7 +404,7 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 			// the F key's label render carries the "[N]" labels + target list
 			var htmlLines []core.Line
 			var ls []string
-			htmlLines, ls = renderHTML(p.Body, m.Attachments, width, labelLinks, dark, themeBG)
+			htmlLines, ls = renderHTMLFull(p.Body, m.Attachments, width, labelLinks, dark, themeBG, images, imgSizes)
 			links = append(links, ls...)
 			if len(htmlLines) == 0 {
 				htmlLines = renderPlain(p.Body)
@@ -419,7 +419,7 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 				add("[content truncated]", core.LineBody, 0)
 			}
 		case p.HTML && !hasPlain:
-			htmlLines, _ := renderHTML(p.Body, m.Attachments, width, false, dark, themeBG)
+			htmlLines, _ := renderHTMLFull(p.Body, m.Attachments, width, false, dark, themeBG, images, imgSizes)
 			for i := range htmlLines {
 				htmlLines[i].Runs = nil // unstyled: plain has no colors
 			}

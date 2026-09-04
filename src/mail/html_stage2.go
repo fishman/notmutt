@@ -9,12 +9,18 @@ package mail
 // stage 2 + migration, and docs/superpowers/plans/2026-09-04-html-stage2-wiring.md.
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"math"
 	"sort"
 	"strings"
 
+	_ "golang.org/x/image/webp" // decode-config registrations: embedded mail images arrive as png/jpeg/gif/webp
 	xhtml "golang.org/x/net/html"
 
 	"notmutt/core"
@@ -42,8 +48,19 @@ func (cellMeter) RuneWidth(r rune) int { return html.RuneWidth(r) * charW }
 
 // renderStage2HTML is the stage-2 facade entry: parse + clamp (mirrors the
 // walker renderHTML head) then the engine. width is in cells; renderStage2
-// lays out at width*charW px.
+// lays out at width*charW px. This images-off entry keeps the marker layout
+// (intrinsic 0); renderStage2Full carries the images-on reopen.
 func renderStage2HTML(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string) ([]core.Line, []string) {
+	return renderStage2Full(body, atts, width, labelLinks, dark, themeBG, false, nil)
+}
+
+// renderStage2Full is the sized facade entry: images=true resolves every
+// img's intrinsic px before layout (html.ResolveImages, called here for the
+// first time on the mail path - the plan-6 facade decision extended now that
+// images-on needs real geometry); remote http(s) srcs size from imgSizes
+// (the TUI measured them - bytes never enter the worker), embedded from
+// their attachment/data bytes.
+func renderStage2Full(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, []string) {
 	doc, err := xhtml.Parse(strings.NewReader(body))
 	if err != nil {
 		return nil, nil // x/net/html recovers from malformed input by spec; guard anyway
@@ -51,10 +68,10 @@ func renderStage2HTML(body string, atts []Attachment, width int, labelLinks, dar
 	if width <= 0 || width > htmlWrapWidth {
 		width = htmlWrapWidth
 	}
-	return renderStage2(doc, atts, width*charW, labelLinks, dark, themeBG)
+	return renderStage2(doc, atts, width*charW, labelLinks, dark, themeBG, images, imgSizes)
 }
 
-func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, dark bool, themeBG string) ([]core.Line, []string) {
+func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, []string) {
 	rules := html.ParseStyleSheets(doc)
 	boxes := html.Build(doc, rules)
 	if len(boxes) == 0 {
@@ -69,6 +86,9 @@ func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, d
 	// word; labelLinks=false never injects, so no label reaches the pager.
 	if labelLinks {
 		boxes = q.injectLinkLabels(boxes)
+	}
+	if images {
+		html.ResolveImages(boxes, q.sizeLoader(imgSizes))
 	}
 	rows := html.LayoutBlock(boxes, widthPx, cellMeter{}, true)
 	q.emitRows(rows)
@@ -671,28 +691,61 @@ func (q *stage2) boxImage(b *html.Box) *core.Image {
 		return nil
 	}
 	src := html.Attr(b.Node, "src")
-	var data []byte
-	var url string
-	switch {
-	case strings.HasPrefix(src, "cid:"):
-		id := strings.Trim(strings.TrimSpace(src[4:]), "<>")
-		for _, a := range q.atts {
-			if strings.EqualFold(strings.Trim(a.ContentID, "<>"), id) {
-				data = a.Data
-				break
-			}
-		}
-	case strings.HasPrefix(src, "data:image/") && strings.Contains(src, ";base64,"):
-		data, _ = base64.StdEncoding.DecodeString(src[strings.IndexByte(src, ',')+1:])
-	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
-		url = src
-	}
+	data, url := q.resolveSrc(src)
 	if len(data) == 0 && url == "" {
 		return nil
 	}
 	img := &core.Image{Data: data, URL: url, Alt: sanitize(imgAlt(b))}
 	img.DispW, img.DispH = b.ImgDisp()
 	return img
+}
+
+// resolveSrc maps an img src attribute to its bytes and remote URL:
+// a cid: attachment's buffered data, a data:image base64 decode, an
+// http(s) src (URL only, no bytes), or nothing.
+func (q *stage2) resolveSrc(src string) (data []byte, url string) {
+	switch {
+	case strings.HasPrefix(src, "cid:"):
+		id := strings.Trim(strings.TrimSpace(src[4:]), "<>")
+		for _, a := range q.atts {
+			if strings.EqualFold(strings.Trim(a.ContentID, "<>"), id) {
+				return a.Data, ""
+			}
+		}
+	case strings.HasPrefix(src, "data:image/") && strings.Contains(src, ";base64,"):
+		data, _ = base64.StdEncoding.DecodeString(src[strings.IndexByte(src, ',')+1:])
+		return data, ""
+	case strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://"):
+		return nil, src
+	}
+	return nil, ""
+}
+
+// sizeLoader is the ResolveImages load callback (the images-on render):
+// it maps an img src to its intrinsic px so undeclared-size images lay
+// out at real geometry. Remote http(s) srcs take the TUI-measured px
+// from imgSizes (their bytes never enter the worker); embedded cid:/data:
+// bytes are measured here with image.DecodeConfig - dimensions only, never
+// a pixel decode. A src with no loadable image reports ok=false and the
+// box keeps its marker layout.
+func (q *stage2) sizeLoader(imgSizes map[string]core.ImgSize) func(src string) (w, h int, ok bool) {
+	return func(src string) (w, h int, ok bool) {
+		if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+			if s, ok := imgSizes[src]; ok && s.W > 0 && s.H > 0 {
+				return s.W, s.H, true
+			}
+			return 0, 0, false
+		}
+		data, _ := q.resolveSrc(src)
+		if len(data) == 0 {
+			return 0, 0, false
+		}
+		cfg, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || cfg.Width <= 0 || cfg.Height <= 0 {
+			return 0, 0, false
+		}
+		return cfg.Width, cfg.Height, true
+	}
 }
 
 // imgAlt is an image box's placeholder text: a non-blank alt attribute,

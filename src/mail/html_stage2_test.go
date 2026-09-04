@@ -10,6 +10,10 @@ package mail
 // expansion, image own-line/inline, list marker gutters, and table strips.
 
 import (
+	"bytes"
+	"encoding/base64"
+	"image"
+	"image/png"
 	"strings"
 	"testing"
 
@@ -416,6 +420,105 @@ func TestStage2HRYieldsRuleLine(t *testing.T) {
 	if got := renderText(lines); !strings.Contains(got, "─") {
 		t.Fatalf("an hr must yield a rule-glyph line: %q", got)
 	}
+}
+
+// TestStage2ImagesOnResolvesIntrinsicSizes pins the images-on render: an
+// undeclared-size inline image is glued mid-text at images=false (markers,
+// intrinsic 0), but images=true sizes it from its bytes so it occupies real
+// geometry and no longer shares the text row with the words around it. The
+// data: URI is measured by the worker's DecodeConfig loader (dimensions
+// only); the http src takes its px from the imgSizes map and stays markers
+// while unsized (the refine path seats it only once fetched/measured).
+func TestStage2ImagesOnResolvesIntrinsicSizes(t *testing.T) {
+	data := pngURI(t, 360, 180)
+	dataBody := `<p>alpha <img src="` + data + `"> beta</p>`
+	httpBody := `<p>alpha <img src="https://x.example.com/big.png"> beta</p>`
+	remote := "https://x.example.com/big.png"
+	for _, tc := range []struct {
+		name string
+		body string
+		img  func() ([]core.Line, []string)
+		want string // relayout: glued keeps the shared inline row; sized pushes the image off it
+	}{
+		{
+			// markers when off: the undeclared image stays a zero-width
+			// placeholder glued into the single text row (locked behavior)
+			name: "embedded off",
+			body: dataBody,
+			img:  func() ([]core.Line, []string) { return renderStage2HTML(dataBody, nil, 30, false, false, "") },
+			want: "glued",
+		},
+		{
+			// images on: the data bytes measure 360x180, the image lays at
+			// real width and wraps the words off its row
+			name: "embedded on",
+			body: dataBody,
+			img: func() ([]core.Line, []string) {
+				return renderStage2Full(dataBody, nil, 30, false, false, "", true, nil)
+			},
+			want: "sized",
+		},
+		{
+			// remote not yet fetched: no imgSizes entry, stays markers
+			name: "remote on unsized",
+			body: httpBody,
+			img: func() ([]core.Line, []string) {
+				return renderStage2Full(httpBody, nil, 30, false, false, "", true, nil)
+			},
+			want: "glued",
+		},
+		{
+			// remote fetched + measured: the TUI's imgSizes seats it at real px
+			name: "remote on sized",
+			body: httpBody,
+			img: func() ([]core.Line, []string) {
+				return renderStage2Full(httpBody, nil, 30, false, false, "", true, map[string]core.ImgSize{remote: {W: 360, H: 180}})
+			},
+			want: "sized",
+		},
+	} {
+		lines, _ := tc.img()
+		text := linesText(lines)
+		switch tc.want {
+		case "glued":
+			if len(lines) != 1 || !strings.Contains(text, "alpha ") || !strings.Contains(text, " beta") {
+				t.Fatalf("%s: image must stay glued into one shared text row, got %d lines %q", tc.name, len(lines), text)
+			}
+		case "sized":
+			// the image lays at real geometry: no text trails it on its own
+			// row (the off-mode trailing word wrapped below), and content
+			// follows on a later line
+			if len(lines) < 2 {
+				t.Fatalf("%s: images on must re-layout around the image, got %d lines %q", tc.name, len(lines), text)
+			}
+			found := false
+			for _, l := range lines {
+				if l.Image != nil || len(l.Imgs) > 0 {
+					found = true
+					if strings.Contains(l.Text, " beta") {
+						t.Fatalf("%s: text must not trail the sized image on its row, got %q", tc.name, linesText(lines))
+					}
+				}
+			}
+			if !found {
+				t.Fatalf("%s: a sized image must render, got %d lines %q", tc.name, len(lines), text)
+			}
+			if !strings.Contains(text, "beta") {
+				t.Fatalf("%s: the wrapped word must still render below, got %q", tc.name, text)
+			}
+		}
+	}
+}
+
+// pngURI encodes a w x h NRGBA image to a data:image/png;base64 URI.
+func pngURI(t *testing.T, w, h int) string {
+	t.Helper()
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("png encode: %v", err)
+	}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
 func firstBG(lines []core.Line) string {

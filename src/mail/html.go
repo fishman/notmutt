@@ -37,9 +37,18 @@ func RenderHTMLWithLinks(body string, atts []Attachment, width int) ([]core.Line
 }
 
 // renderHTML routes to the stage-2 engine (html_stage2.go); renderStage2HTML
-// parses, clamps width, and quantizes the lib/html row stream.
+// parses, clamps width, and quantizes the lib/html row stream. This
+// images-off default keeps the marker layout; renderHTMLFull carries the
+// images-on reopen.
 func renderHTML(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string) ([]core.Line, []string) {
-	return renderStage2HTML(body, atts, width, labelLinks, dark, themeBG)
+	return renderHTMLFull(body, atts, width, labelLinks, dark, themeBG, false, nil)
+}
+
+// renderHTMLFull is the images-aware render: images=true sizes embedded
+// images from their bytes before layout (the images-on reopen); imgSizes
+// holds the TUI's measured remote srcs. false/nil keeps today's markers.
+func renderHTMLFull(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, []string) {
+	return renderStage2Full(body, atts, width, labelLinks, dark, themeBG, images, imgSizes)
 }
 
 // sanitize is the F1 gate: DOM text is raw - ESC/C0 never reach the pager.

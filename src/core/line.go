@@ -94,3 +94,12 @@ type ImagePos struct {
 	Image *Image
 	X     int
 }
+
+// ImgSize is a measured image's pixel dimensions (the images-on render):
+// the TUI's remote-fetch sizes cross the reopen bus keyed by src so the
+// worker lays remote images at real geometry; embedded bytes are measured
+// in the worker. W/H 0 = unmeasured.
+type ImgSize struct {
+	W int
+	H int
+}

@@ -15,9 +15,10 @@ behind the `lua` build tag (they call the lua-gated `ai` package), a lua-gated
 non-mail queue surface in `tui`. Core and tui stay vendor-neutral: rows are
 `core.CrmContact` carrying a `provider` id that routes actions to the owning
 engine; nothing in `core`/`tui` names HubSpot. The surface stays inert in
-default builds via hook setters. Analysis/research/draft all ride one `[ai]`
-entry named by `[hubspot] provider`; only the HubSpot portal token is
-`[hubspot] token_cmd`.
+default builds via hook setters. Config is vendor-neutral at the top: `[crm]
+provider` names the engine (`"hubspot"`); params sit in `[crm.hubspot]`,
+whose `ai` names the one `[ai]` entry analysis/research/draft ride and whose
+`token_cmd` is the HubSpot portal token.
 
 **Tech Stack:** Go stdlib `net/http` + `encoding/json`; `//go:build lua`;
 existing `ai` (Chat/FetchKey/aiStream), `aicmd`, `compose`, `core.Bus`,
@@ -33,34 +34,50 @@ Code commits carry no co-author. The mailbox privacy rule applies: never run
 
 Then code.
 
-## Task 2: `[hubspot]` config
+## Task 2: `[crm]` config
 
 **Files:** `src/config/config.go`, `src/config/config_test.go`
 
-Add `Hubspot HubspotConfig` to `Config` (`toml:"hubspot"`, near the AI fields,
+Add `Crm CrmConfig` to `Config` (`toml:"crm"`, near the AI fields,
 config.go:136-243) and validate in the existing strict-load walk (find where
 `[ai]`/`pass_cmd` are validated, config.go:1817-1819, and add beside):
 
 ```go
+type CrmConfig struct {
+    Provider string         `toml:"provider"` // active crm engine; "" = dormant, "hubspot" today
+    Hubspot  *HubspotConfig `toml:"hubspot"`  // per-vendor params, nil when [crm.hubspot] unset
+}
 type HubspotConfig struct {
-    Provider       string   `toml:"provider"`         // an [ai] entry name; empty = first configured
-    TokenCmd       []string `toml:"token_cmd"`        // argv printing the portal token
-    MarkerProperty string   `toml:"marker_property"`  // default "notmutt_followed_up"
-    CreatedAfter   string   `toml:"created_after"`    // RFC3339; empty = all unprocessed
+    AI             string   `toml:"ai"`              // an [ai] entry name; empty = first configured
+    TokenCmd       []string `toml:"token_cmd"`       // argv printing the portal token
+    MarkerProperty string   `toml:"marker_property"` // default "notmutt_followed_up"
+    CreatedAfter   string   `toml:"created_after"`   // RFC3339; empty = all unprocessed
 }
 ```
 
-Validation rules:
-- `token_cmd` must be non-empty with no blank argv elements (mirror the
-  ai pass_cmd rule at config.go:1817).
-- empty `provider` is allowed (resolveAIProvider falls back); a non-empty
-  `provider` must name a configured `[ai]` entry, else a load error naming it.
+`[crm] provider` routes the engine (section 5's `provider` idea, NOT the `[ai]`
+registry): config may name vendors (it feeds the vendor engine), only the
+section it sits under is vendor-neutral. The per-vendor table parses strictly:
+any `[crm.<other>]` key is an unknown-key load error until a sibling struct
+exists.
+
+Validation rules (hubspot table, mirroring the `[ai]` walks):
+- `token_cmd` with a blank argv element is a load error (mirror the ai
+  pass_cmd rule at config.go:1817); an empty argv is allowed - an absent or
+  empty `[crm]` loads dormant.
 - `marker_property` defaults to `notmutt_followed_up` when blank.
 - `created_after`, when set, must parse as RFC3339, else a load error.
-- unknown `hubspot.*` keys = load errors (the strict rule already enforced).
+- `ai`, when non-empty, must name a configured `[ai]` entry, else a load error
+  naming it (empty is allowed; resolveAIProvider falls back).
+- non-empty `provider` must name a vendor whose table is configured: today the
+  only struct-backed value is `"hubspot"`, which also requires the
+  `[crm.hubspot]` table present (`Hubspot != nil`); a `provider` naming a
+  missing table is a load error naming it.
+- unknown `crm.*` and `crm.hubspot.*` keys = load errors (the strict rule).
 
 **Check:** `cd src && go test ./config/` (new strict-load tests green; existing
-`TestConfigUnknownKeys`-style tests still green). Empty-hubspot config loads.
+`TestConfigUnknownKeys`-style tests still green). Empty-`[crm]` config loads;
+a `[crm] provider = "hubspot"` without `[crm.hubspot]` errors.
 
 ## Task 3: queue bus events
 
@@ -204,7 +221,9 @@ hubspotWire(ctx, bus, worker, cfg, root) // no-op in !lua builds
 `hubspotWire` subscribes to `core.Bus` (the subscriber pattern at app.go:393
 or ai wiring): on `RefreshRequested` it re-runs the pull; on `core.SendResult`
 and `core.CrmRowError` it drives write-back (Tasks 11). Keep it a thin
-subscriber; the job bodies are separate.
+subscriber; the job bodies are separate. It is a no-op unless
+`cfg.Crm.Provider == "hubspot"`; jobs read params from `cfg.Crm.Hubspot`
+(resolve `ai` with `resolveAIProvider`, token from `token_cmd`).
 
 **Check:** `cd src && go build .` and `go build -tags "lua mcp" ./...`.
 
@@ -234,14 +253,14 @@ httptest-driven integration test.
 `runHubspotAnalyze(contact hubspot.Contact, ...)` - a cancellable job on the
 row: fetch company (`hubspot.Company` via `CompanyID`; empty CompanyID skips to
 research with company fields empty), `search.Research` on the company
-name/domain over the `[hubspot] provider` entry, assemble with `briefing`
+name/domain over the `[crm.hubspot] ai` entry, assemble with `briefing`
 (Task 6), then stream the model's briefing text. Stream via `aiStream` on that
 provider (ai_stream.go:54, the shape runAICommand uses) and publish
 `core.CrmBriefing{Provider: "hubspot", ContactID: contact.ID, Text}`.
 Cancellable through the existing
 Task machinery (task.go registerTask/completeTask); abort leaves the row at its
-prior status. Resolve the provider with `resolveAIProvider(cfg,
-cfg.Hubspot.Provider)` (ai_draft.go:22).
+prior status. Resolve the AI entry with `resolveAIProvider(cfg,
+cfg.Crm.Hubspot.AI)` (ai_draft.go:22).
 
 **Check:** `go build -tags lua ./app/`. Behavior verified in Task 13 with a
 fake provider (httptest OpenAI-compatible endpoint via the provider's

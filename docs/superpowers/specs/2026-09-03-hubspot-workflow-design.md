@@ -37,17 +37,18 @@ reviewable, personalized follow-up draft, with processed state written back.
 
 Acceptance (scripted tests; item 9 manual):
 
-1. Config: `[hubspot]` loads strictly (unknown keys = load errors, the R8
-   rule). `[hubspot] provider` references one `[ai]` entry (empty = first
-   configured); HubSpot's own token comes from `[hubspot] token_cmd`; no
+1. Config: the `[crm]` section loads strictly (unknown keys = load errors,
+   the R8 rule). `[crm] provider` names the CRM engine; the per-vendor
+   `[crm.hubspot]` table's `ai` references one `[ai]` entry (empty = first
+   configured); HubSpot's own token comes from `[crm.hubspot] token_cmd`; no
    literal secret and no second AI-side token surface exists.
 2. Pull (`ListUnprocessed`) lists contacts lacking the marker, newest first,
    paginated; refresh diff-and-inserts new rows into the queue view (the R3
    pattern, no full rebuild). A `created_after` knob (empty default) skips a
    pre-feature backlog.
 3. Analyze on a row runs a cancellable background job (contact + company from
-   HubSpot, research queries on the company domain/name over the `[hubspot]
-   provider` connection, snippets -> non-mail context -> `ai.Chat`) and
+   HubSpot, research queries on the company domain/name over the `[crm.hubspot]
+   ai` entry's connection, snippets -> non-mail context -> `ai.Chat`) and
    streams a briefing into the queue view's detail region. Row status
    advances only on success or explicit error.
 4. Draft is enabled only when a briefing exists for the row. It composes a
@@ -73,17 +74,29 @@ Acceptance (scripted tests; item 9 manual):
 
 ## 2. Config
 
-`src/config/config.go`, a new section parsed like `[ai]`:
+`src/config/config.go`, a vendor-neutral `[crm]` section with nested
+per-vendor tables, parsed strictly like `[ai]`:
 
 ```toml
-[hubspot]
-provider         = "deepseek"       # name of an [ai] provider driving the workflow; empty = first configured
-token_cmd        = "cmd printing the private-app token"   # HubSpot's own secret, never literal
-marker_property  = "notmutt_followed_up"                  # the processed marker
-created_after    = ""                                     # RFC3339; empty = all unprocessed
+[crm]
+provider = "hubspot"                    # which CRM engine; "" = dormant, "hubspot" today
+
+[crm.hubspot]
+ai              = "deepseek"             # an [ai] entry driving the workflow; empty = first configured
+token_cmd       = "cmd printing the private-app token"   # HubSpot's own secret, never literal
+marker_property = "notmutt_followed_up"  # the processed marker
+created_after   = ""                     # RFC3339; empty = all unprocessed
 ```
 
-- `provider` selects which `[ai]` entry drives the workflow. Multiple
+- `[crm] provider` names the CRM engine the client runs - the same routing
+  idea as the `provider` id on the neutral row model (section 5). Each
+  engine's parameters live in its own sub-table (`[crm.hubspot]` today); a
+  future CRM adds a `provider` value and a sibling sub-table. Config may name
+  vendors (it feeds the vendor engine, not core/tui), but the section it sits
+  under stays vendor-neutral: `crm`, not `hubspot`. Empty `provider` = the
+  feature is dormant; a non-empty `provider` must name a vendor whose table is
+  configured, else a load error.
+- `[crm.hubspot] ai` selects which `[ai]` entry drives the workflow. Multiple
   `[ai.<name>]` providers may be configured (the existing registry); the
   workflow references one by name. Analysis, research, and draft all ride that
   connection: its `base-url` is the host and its `pass_cmd` (the `[ai]` secret
@@ -101,18 +114,19 @@ created_after    = ""                                     # RFC3339; empty = all
   referenced `[ai]` entry's `base-url`, which already exists as config; the
   workflow adds no new host surface. A config-driven HubSpot base URL is
   deliberately not offered (deny-by-default; no new knob without a need).
-- `[hubspot]` is portal-scoped, not per mail account; the workflow does not
-  depend on any account's folder/tag state except the opt-in `[ai-data]` grant
-  for mail grounding.
+- The `[crm]` section is portal-scoped, not per mail account; the workflow
+  does not depend on any account's folder/tag state except the opt-in
+  `[ai-data]` grant for mail grounding.
 
 ## 3. Clients
 
 Two small stdlib packages (`net/http` + `encoding/json`, the
 `src/app/ai/ai.go` precedent), both `//go:build lua`:
 
-`src/hubspot/client.go` - the CRM client. Bearer auth from `token_cmd`, fixed
-base URL, per-request timeout, paging loop, rate-limit mapped to a retryable
-error. Data types (Contact, Company) carry only the fields the workflow uses.
+`src/hubspot/client.go` - the CRM client. Bearer auth from the hubspot table's
+`token_cmd`, fixed base URL, per-request timeout, paging loop, rate-limit
+mapped to a retryable error. Data types (Contact, Company) carry only the
+fields the workflow uses.
 
 - `ListUnprocessed(createdAfter string) ([]Contact, error)` - the search
   endpoint, filter "marker property is unset", sort by createdAt desc, page
@@ -141,7 +155,7 @@ publishing to `core.Bus`, cancellable via the existing Task machinery.
 
 - `runHubspotPull` - calls `ListUnprocessed`, publishes queue rows.
 - `runHubspotAnalyze(contact)` - gathers contact + company, runs research
-  queries over the `[hubspot] provider` connection, assembles a non-mail
+  queries over the `[crm.hubspot] ai` entry's connection, assembles a non-mail
   context, streams the briefing via `ai.Chat` on that connection. Publishes
   progress; cancellable mid-stream.
 - `runHubspotDraft(contact, briefing)` - resolves the contact's email address
@@ -196,7 +210,7 @@ of R14).
   prompt-bound strings pass `core.SanitizeText`; research/briefing content is
   length-capped before the prompt; JSON is decoded with `encoding/json` and
   never trusted as safe text (F1).
-- Secrets: the HubSpot token comes from `[hubspot] token_cmd`, argv exec (F4),
+- Secrets: the HubSpot token comes from `[crm.hubspot] token_cmd`, argv exec (F4),
   never logged (F6). AI-side auth is the referenced `[ai]` entry's `pass_cmd`,
   reused rather than duplicated - there is no second token surface to leak.
 - Rows/briefings are session-local like `lastAIOutput`; no new persistence.
@@ -218,9 +232,9 @@ of R14).
 
 1. Client tests: `httptest` servers pin method/path/auth-header/request JSON
    and exercise paging, rate-limit retry, and error mapping. A
-   provider-resolution test pins that `[hubspot] provider` selects that `[ai]`
-   entry (its base-url + pass_cmd) and that an empty value falls back to the
-   first configured provider.
+   provider-resolution test pins that `[crm] provider` routes to the hubspot
+   engine and that `[crm.hubspot] ai` selects that `[ai]` entry (its base-url
+   + pass_cmd), an empty `ai` falling back to the first configured provider.
 2. Pull test: fabricated contact set (generated names, never personal) -> the
    unprocessed filter and newest-first order, `created_after` honored.
 3. Context-assembler test: fabricated research data in -> bounded non-mail

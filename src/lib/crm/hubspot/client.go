@@ -29,6 +29,7 @@ import (
 const (
 	apiBase          = "https://api.hubspot.com"
 	maxResponseBytes = 8 << 20 // success-path decode cap, mirrors the bounded-body habit
+	maxErrBody       = 1 << 16 // error-path message read cap
 )
 
 // contactProps and companyProps are the properties the mapping reads,
@@ -283,11 +284,11 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 func (c *Client) apiErr(resp *http.Response) error {
 	var ae apiError
 	msg := ""
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<16)).Decode(&ae); err == nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxErrBody)).Decode(&ae); err == nil {
 		msg = ae.Message
 	}
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-		return ErrRetry
+		return fmt.Errorf("hubspot: %s: %w", resp.Status, ErrRetry)
 	}
 	if msg == "" {
 		return fmt.Errorf("hubspot: %s", resp.Status)

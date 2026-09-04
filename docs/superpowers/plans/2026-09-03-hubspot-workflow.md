@@ -281,9 +281,11 @@ bus output:
 `RunPull(bus *core.Bus, client Client, marker, createdAfter string)` - the
 first job in `src/lib/crm/workflow.go`; `Client` is the neutral interface from
 `client.go` (Task 4). On a `run` mutex guard
-(refresh.go:39-47), `ListUnprocessed`, publish `core.CrmQueue{Contacts}` as
-the rows arrive (one publish per page, so refresh diff-and-inserts - the R3
-shape). Map each `Contact` to a `core.CrmContact` row here with
+(refresh.go:39-47), `ListUnprocessed`, publish one `core.CrmQueue{Contacts}`
+per run as the view's diff-and-insert snapshot (the R3 shape). The client
+paginates internally and returns the full batch, so the pull publishes per
+run, not per wire page - the queue is human-scale; add a page callback only if
+a backfill ever needs streaming. Map each `Contact` to a `core.CrmContact` row here with
 `Provider: client.Provider()` - the routing id comes from the client, never a
 literal (client `FirstName`/`LastName`/`CreatedAt` -> row `First`/`Last`/
 `CreatedAt`; `Company` stays empty, the search rows carry no association so

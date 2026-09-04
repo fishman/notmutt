@@ -58,8 +58,8 @@ var Actions = map[string]map[string]bool{
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
 		"reply": true, "reply-all": true, "forward": true, "compose": true,
 		"tab-prev": true, "tab-next": true, "scheduled-list": true,
-		"ai-commands": true,
-		"help":        true, "log": true, "command": true, "tasks": true,
+		"ai-commands": true, "crm-queue": true,
+		"help": true, "log": true, "command": true, "tasks": true,
 	},
 	"pager": {
 		"scroll-down": true, "scroll-up": true,
@@ -248,6 +248,12 @@ type Model struct {
 	taskLayer  *layer
 	tasks      map[string]core.TaskChanged
 	taskCursor int
+	// crm is the CRM follow-up queue overlay: crmOpen the flag, crm the
+	// queue model fed by CrmQueue/CrmBriefing events, crmPulled whether
+	// the first open has already triggered the pull (RefreshRequested).
+	crmOpen   bool
+	crmPulled bool
+	crm       *crmQueue
 	// statusSpin is the status-line spinner's frame index (the loop's
 	// statusSpinTick advances it while the client is busy - the
 	// front-of-row working indicator).
@@ -377,7 +383,7 @@ type Model struct {
 // switches re-render live).
 func New(view *core.View, ch <-chan core.Event, bindings map[string]map[string]string, tagActions map[string]string, bus *core.Bus, st *config.Store, ui config.UI) Model {
 	cfg := st.Config()
-	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, kimg: map[*core.Image]int{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, surfOpen: map[*core.View]*parkedOpen{}, progOwner: map[string]string{}, fileDir: lastChooserDir()}
+	return Model{view: view, ch: ch, bus: bus, bindings: bindings, tagActions: tagActions, st: st, ui: ui, styles: ResolveStyles(cfg.Theme, cfg.Palette), accountTags: cfg.AccountTags(), opened: map[string]bool{}, mode: "index", rowCache: map[rowKey]string{}, pan: &panState{}, hintLayer: &layer{}, statusLayer: &layer{}, helpLayer: &layer{}, logLayer: &layer{}, taskLayer: &layer{}, formView: &viewport{}, previewPager: newPager("", "", nil), frameCache: &frameCache{}, styleVer: 1, imgCache: map[*core.Image]image.Image{}, painted: map[*core.Image]cellRect{}, kimg: map[*core.Image]int{}, imgFetching: map[string]bool{}, tasks: map[string]core.TaskChanged{}, crm: newCrmQueue(), surfOpen: map[*core.View]*parkedOpen{}, progOwner: map[string]string{}, fileDir: lastChooserDir()}
 }
 
 func (m Model) Init() Cmd {
@@ -459,6 +465,46 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			d, cmd := m.dialogue.handle(&m, msg)
 			m.dialogue = d
 			return m, cmd
+		}
+		if m.crmOpen {
+			// the CRM queue surface: the cursor keys move the selection
+			// (borrowing the pager scroll bindings), a/d/x run the row
+			// actions through the handler hook, anything else closes
+			// without firing
+			switch actionForKey(msg, m.bindings["pager"]) {
+			case "scroll-down":
+				m.crm.move(1)
+			case "scroll-up":
+				m.crm.move(-1)
+			case "scroll-top":
+				m.crm.cur = 0
+			case "scroll-bottom":
+				m.crm.cur = m.crm.len() - 1
+			case "page-down", "half-page-down":
+				for i := 0; i < crmPageStep(m.height); i++ {
+					if !m.crm.move(1) {
+						break
+					}
+				}
+			case "page-up", "half-page-up":
+				for i := 0; i < crmPageStep(m.height); i++ {
+					if !m.crm.move(-1) {
+						break
+					}
+				}
+			default:
+				switch {
+				case msg.Typed() && msg.Text == "a":
+					m.crm.action(crmActionAnalyze)
+				case msg.Typed() && msg.Text == "d":
+					m.crm.action(crmActionDraft)
+				case msg.Typed() && msg.Text == "x":
+					m.crm.action(crmActionDismiss)
+				default:
+					m.crmOpen = false
+				}
+			}
+			return m, nil
 		}
 		if m.logOpen {
 			// the log overlay borrows the pager keys like the help:
@@ -955,6 +1001,23 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				m.taskView.setLines(m.taskRows())
 				m.taskView.setSize(m.width, m.height-4)
 				m.taskView.ensureVisible(m.taskCursor)
+			}
+		case core.CrmQueue:
+			if m.crm == nil {
+				m.crm = newCrmQueue()
+			}
+			m.crm.onQueue(e)
+		case core.CrmBriefing:
+			if m.crm == nil {
+				m.crm = newCrmQueue()
+			}
+			m.crm.onBriefing(e)
+		case core.CrmRowError:
+			if e.Err != nil {
+				m.logEntry("crm: "+e.Err.Error(), true)
+			}
+			if m.crm != nil {
+				m.crm.onRowError(e)
 			}
 		}
 		m.refreshProgress()
@@ -1570,6 +1633,34 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			st.Phase = compose.PhaseAborting
 			m.dialogue = &confirmDialogue{label: i18n.T("Abort composition?"), action: "abort", draft: true}
 		}
+	case "crm-queue":
+		// the Q key: the CRM follow-up queue overlay. The first open of the
+		// session triggers the pull through the same RefreshRequested event
+		// the = key sends (crmWire launches the pull on it); re-opening
+		// shows the held rows. A closed wire (no CRM configured) leaves the
+		// surface closed.
+		if !crmAvailable() {
+			m.logEntry("no CRM configured", true)
+			break
+		}
+		if !m.crmPulled {
+			if m.bus != nil {
+				m.bus.Publish(core.RefreshRequested{})
+			}
+			m.crmPulled = true
+		}
+		if m.crm == nil {
+			m.crm = newCrmQueue()
+		}
+		if m.bus != nil {
+			if e, ok := m.bus.LatestCrmQueue(); ok {
+				m.crm.onQueue(e)
+			}
+		}
+		m.crmOpen = true
+		m.help = false
+		m.logOpen = false
+		m.taskOpen = false
 	case "help":
 		m.help = true
 		m.logOpen = false
@@ -3236,6 +3327,9 @@ func (m Model) frame(content []string, hint string) string {
 }
 
 func (m Model) renderBase() string {
+	if m.crmOpen {
+		return m.renderCrm()
+	}
 	if m.help {
 		return m.renderHelp()
 	}

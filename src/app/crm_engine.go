@@ -25,18 +25,57 @@ import (
 )
 
 // crmAdapterState is the crm wire's resolved state: the neutral client the
-// workflow drives, the [ai] entry its chat calls run on, and the gated
-// mail-grounding closure RunDraft consumes.
+// workflow drives, the [ai] entry its chat calls run on, the marker
+// property the write-back records, the bus jobs publish on, and the gated
+// mail-grounding closure RunDraft consumes. provider is the client's
+// routing id - the row filter the action handler applies.
 type crmAdapterState struct {
-	client crm.Client
-	aiCfg  config.AIProvider
-	ground crm.MailGroundFn
+	client   crm.Client
+	provider string
+	aiCfg    config.AIProvider
+	marker   string
+	bus      *core.Bus
+	ground   crm.MailGroundFn
 }
 
 // crmAdapter is the resolved wire state; nil while the CRM is dormant or
 // its setup failed. Written once in crmWire before the subscriber starts;
 // the workflow jobs read it, never rebuild the client. Session-local.
 var crmAdapter *crmAdapterState
+
+// crmHubspotNew is the hubspot client factory seam crmWire builds its
+// client through: the production value constructs against the live API,
+// and the integration test swaps it to point a real client at an httptest
+// server via hubspot.NewClientURL.
+var crmHubspotNew = func(ctx context.Context, key []byte) crm.Client {
+	return hubspot.NewClient(ctx, key)
+}
+
+// crmBriefMu guards crmBriefText, the adapter's briefing cache (the draft
+// seam's session map): each CrmBriefing the wire observes stores its text
+// keyed by (provider, contact id) so the action handler can hand RunDraft
+// the briefing the row's draft is grounded on - the 2-arg action hook
+// carries the contact row, never the text.
+var (
+	crmBriefMu   sync.Mutex
+	crmBriefText = map[string]string{}
+)
+
+func crmBriefKey(provider, id string) string {
+	return provider + "\x00" + id
+}
+
+func crmCacheBriefing(b core.CrmBriefing) {
+	crmBriefMu.Lock()
+	crmBriefText[crmBriefKey(b.Provider, b.ContactID)] = b.Text
+	crmBriefMu.Unlock()
+}
+
+func crmBriefingText(provider, id string) string {
+	crmBriefMu.Lock()
+	defer crmBriefMu.Unlock()
+	return crmBriefText[crmBriefKey(provider, id)]
+}
 
 // crmDraftRef is the compose map's value: the CRM routing id and row the
 // opened compose belongs to, for the send hook to write back.
@@ -56,10 +95,53 @@ var (
 	crmComposeRefs = map[string]crmDraftRef{}
 )
 
-// crmPullSource is the CRM pull-command source seam (SetCrmPullSource).
-// The surface-wiring task fills the command list; a nil list keeps the
-// CRM queue surface closed.
-func crmPullSource() []tui.CrmCommand { return nil }
+// crmPullSource is the CRM pull-command source seam (SetCrmPullSource):
+// one command when the wire is active, so the queue surface opens only for
+// a configured, resolved CRM. The command name is the provider routing id;
+// the surface currently offers no picker, so the list is availability-only.
+func crmPullSource() []tui.CrmCommand {
+	a := crmAdapter
+	if a == nil || a.client == nil {
+		return nil
+	}
+	return []tui.CrmCommand{{Name: a.provider, Desc: "review the " + a.provider + " follow-up queue"}}
+}
+
+// crmWireContact converts a queue row (core.CrmContact) to the neutral
+// contact type the workflow jobs consume. CompanyID is lost (the row
+// carries the display Company only); RunAnalyze refetches the contact and
+// recovers it, and RunDraft/RunMark never need it.
+func crmWireContact(c core.CrmContact) crm.Contact {
+	return crm.Contact{ID: c.ID, Email: c.Email, FirstName: c.First, LastName: c.Last, JobTitle: c.Title, CreatedAt: c.CreatedAt}
+}
+
+// crmRowAction is the queue surface's action seam (SetCrmActionHandler):
+// rows of another provider never dispatch here, and each action launches
+// the matching workflow step on its own goroutine (the bus carries the
+// outcome events back to the surface). "draft" needs the briefing text the
+// adapter cached from the CrmBriefing event; a missing cache line means the
+// surface's own guard let a draft through on an uncached briefing - skip.
+func crmRowAction(action string, c core.CrmContact) {
+	a := crmAdapter
+	if a == nil || a.client == nil || c.Provider != a.provider {
+		return
+	}
+	contact := crmWireContact(c)
+	switch action {
+	case "analyze":
+		go crm.RunAnalyze(a.bus, a.client, a.aiCfg, contact, ai.Chat)
+	case "draft":
+		text := crmBriefingText(c.Provider, c.ID)
+		if text == "" {
+			return
+		}
+		go crm.RunDraft(a.bus, a.client, a.aiCfg, contact, text, a.ground, ai.Chat)
+	case "dismiss":
+		// Marking writes the follow-up property; double-marking is accepted -
+		// the write is idempotent, and a re-x after a slow mark re-writes it.
+		go crm.RunMark(a.bus, a.client, contact.ID, a.marker)
+	}
+}
 
 // crmWire is the CRM follow-up workflow's app adapter: dormant unless
 // [crm] names a provider, then it builds that provider's neutral client
@@ -92,24 +174,36 @@ func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Co
 			diag.Warn("crm: disabled", "err", err.Error())
 			return
 		}
-		// NewClient retains the key for the client's lifetime, so the wire
-		// does not clear it (the ai-caller-clears rule yields here).
-		client = hubspot.NewClient(ctx, key)
+		// The factory seam (crmHubspotNew) lets the integration test point a
+		// real client at an httptest server. NewClient retains the key for the
+		// client's lifetime, so the wire does not clear it (the
+		// ai-caller-clears rule yields here).
+		client = crmHubspotNew(ctx, key)
 	default:
 		return // a provider with no client case: config load already rejects it
 	}
-	crmAdapter = &crmAdapterState{client: client, aiCfg: aiCfg, ground: crmMailGround(cfg, worker)}
-	// the pull trigger, the compose-open reaction, and the send write-back:
-	// each manual refresh launches a pull on its own goroutine (RunPull's
-	// mutex absorbs overlap, so no gate here); a generated CrmDraft opens the
-	// prefilled compose; a SendResult for such a compose marks the contact
-	// followed up.
+	crmAdapter = &crmAdapterState{
+		client:   client,
+		provider: client.Provider(),
+		aiCfg:    aiCfg,
+		marker:   hs.MarkerProperty,
+		bus:      bus,
+		ground:   crmMailGround(cfg, worker),
+	}
+	// the pull trigger, the briefing cache, the compose-open reaction, and
+	// the send write-back: each manual refresh launches a pull on its own
+	// goroutine (RunPull's mutex absorbs overlap, so no gate here); a
+	// generated CrmBriefing caches the text the draft seam needs; a generated
+	// CrmDraft opens the prefilled compose; a SendResult for such a compose
+	// marks the contact followed up.
+	ch := bus.Subscribe()
 	go func() {
-		ch := bus.Subscribe()
 		for e := range ch {
 			switch e := e.(type) {
 			case core.RefreshRequested:
 				go crm.RunPull(bus, client, hs.MarkerProperty, hs.CreatedAfter)
+			case core.CrmBriefing:
+				crmCacheBriefing(e)
 			case core.CrmDraft:
 				crmOpenDraftCompose(bus, cfg, root, e)
 			case core.SendResult:

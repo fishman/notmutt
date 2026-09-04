@@ -54,12 +54,24 @@ type Client struct {
 
 var _ crm.Client = (*Client)(nil)
 
-// NewClient returns a HubSpot CRM client. The bearer key is used verbatim
-// on every request; ctx is accepted for call-site symmetry.
-func NewClient(_ context.Context, key []byte) *Client {
+// NewClient returns a HubSpot CRM client against apiBase. The bearer key
+// is used verbatim on every request; ctx is accepted for call-site
+// symmetry.
+func NewClient(ctx context.Context, key []byte) *Client {
+	return NewClientURL(ctx, key, "")
+}
+
+// NewClientURL returns a HubSpot CRM client against baseURL, which must be
+// an absolute http(s) origin ("" = apiBase). The base override is the
+// wire seam a caller (the app integration test) uses to point a real
+// client at an httptest server.
+func NewClientURL(_ context.Context, key []byte, baseURL string) *Client {
+	if baseURL == "" {
+		baseURL = apiBase
+	}
 	return &Client{
 		key:  key,
-		base: apiBase,
+		base: baseURL,
 		// Per-request cap mirroring the ai-package posture; a caller ctx
 		// with an earlier deadline still wins.
 		hc: &http.Client{Timeout: 30 * time.Second},

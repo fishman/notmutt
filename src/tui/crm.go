@@ -386,3 +386,38 @@ func (q *crmQueue) detailLines(width int, st Styles) []string {
 	}
 	return lines
 }
+
+// crmPageStep is the queue's page-key step: half the frame's content rows,
+// the minimum the list region shows under a full briefing (render keeps at
+// least half the frame for the list), so a page never skips a row.
+func crmPageStep(height int) int {
+	s := (height - 3) / 2
+	if s < 1 {
+		s = 1
+	}
+	return s
+}
+
+// crmFooter mirrors the log/task footers: the scroll keys (cursor move)
+// and the action/close keys derive from the pager binding data (R9).
+func (m Model) crmFooter() string {
+	pm := m.bindings["pager"]
+	var parts []string
+	if s := scrollKeys(pm); len(s) > 0 {
+		parts = append(parts, strings.Join(s, "/")+" scroll")
+	}
+	parts = append(parts, "a analyze", "d draft", "x dismiss")
+	if q := keyFor(pm, "back"); q != "" {
+		parts = append(parts, q+" closes")
+	}
+	return strings.Join(parts, "  ")
+}
+
+// renderCrm is the Q style overlay surface: the queue's list/detail render
+// through the shared frame (the tab bar, this footer, the status row).
+func (m Model) renderCrm() string {
+	if m.crm == nil {
+		m.crm = newCrmQueue()
+	}
+	return m.frame(m.crm.render(m.width, m.height-3, m.styles), m.crmFooter())
+}

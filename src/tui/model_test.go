@@ -184,12 +184,12 @@ func TestChainExpiryResetsKeyhint(t *testing.T) {
 // keypress without firing it.
 func TestHelpListsBindings(t *testing.T) {
 	m := model()
-	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 24})
+	next, _ := m.Update(WindowSizeMsg{Width: 80, Height: 25})
 	m = next
 	m = press(t, m, "?")
 	frame := m.render()
-	if got := strings.Count(frame, "\n") + 1; got != 24 {
-		t.Fatalf("the help frame must be exactly 24 lines, got %d", got)
+	if got := strings.Count(frame, "\n") + 1; got != 25 {
+		t.Fatalf("the help frame must be exactly 25 lines, got %d", got)
 	}
 	clean := stripANSI(frame)
 	if !strings.Contains(clean, "help: index bindings") {
@@ -210,8 +210,8 @@ func TestHelpListsBindings(t *testing.T) {
 		t.Fatalf("the help footer must derive from the bindings:\n%s", clean)
 	}
 	// G scrolls the help to the bottom (a viewport like the mail
-	// pager): the t row is past the first frame (26 index rows in a
-	// 21-row window)
+	// pager): the t row is past the first frame (27 index rows in a
+	// 22-row window at this height)
 	m = press(t, m, "G")
 	clean = stripANSI(m.render())
 	if !strings.Contains(clean, "apply tag unread") {
@@ -2002,7 +2002,9 @@ func TestKeyhintRowInView(t *testing.T) {
 // binding - the ? overlay lists them with descriptions).
 func TestKeyhintHidesPaging(t *testing.T) {
 	m := model()
-	m.width, m.height = 160, 24
+	// 25 rows: the index binding set grew (crm-queue), and the asserted
+	// hidden binding must stay within the first help viewport page.
+	m.width, m.height = 160, 25
 	strip := stripANSI(m.View())
 	if strings.Contains(strip, "half-page-down") || strings.Contains(strip, "page-down") {
 		t.Fatalf("the paging bindings must stay out of the keyhint row:\n%s", strip)

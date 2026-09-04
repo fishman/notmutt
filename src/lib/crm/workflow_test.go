@@ -726,3 +726,61 @@ func TestRunDraftChatErrorPublishesRowError(t *testing.T) {
 	}
 	assertNoCrmEvent(t, ch)
 }
+
+// markClient is a scripted crm.Client for RunMark tests: it records
+// MarkFollowedUp calls (id and marker) and returns the scripted error.
+type markClient struct {
+	clientStub
+	provider string
+	markErr  error
+	id       string
+	marker   string
+	calls    int
+}
+
+func (f *markClient) Provider() string { return f.provider }
+func (f *markClient) MarkFollowedUp(_ context.Context, id, marker string) error {
+	f.calls++
+	f.id, f.marker = id, marker
+	return f.markErr
+}
+
+// TestRunMarkSuccessPublishesNothing pins the happy path: MarkFollowedUp runs
+// once with the right id and marker, and no event follows (row-leave is
+// pull-driven - a marked contact drops from the next pull page).
+func TestRunMarkSuccessPublishesNothing(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	client := &markClient{provider: "test-crm"}
+
+	RunMark(bus, client, "201", "notmutt_followed_up")
+
+	if client.calls != 1 {
+		t.Errorf("MarkFollowedUp calls = %d, want 1", client.calls)
+	}
+	if client.id != "201" || client.marker != "notmutt_followed_up" {
+		t.Errorf("MarkFollowedUp = (%q, %q), want (201, notmutt_followed_up)", client.id, client.marker)
+	}
+	assertNoCrmEvent(t, ch)
+}
+
+// TestRunMarkErrorPublishesRowError pins the failure path: a MarkFollowedUp
+// error publishes one CrmRowError with the client's Provider, the contact id,
+// and the crm: mark: wrap, so the row stays retryable.
+func TestRunMarkErrorPublishesRowError(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	sentinel := errors.New("mark exploded")
+	client := &markClient{provider: "test-crm", markErr: sentinel}
+
+	RunMark(bus, client, "201", "notmutt_followed_up")
+
+	e := recvCrmRowError(t, ch)
+	if e.Provider != "test-crm" || e.ContactID != "201" {
+		t.Errorf("CrmRowError = (%q, %q), want (test-crm, 201)", e.Provider, e.ContactID)
+	}
+	if !errors.Is(e.Err, sentinel) || !strings.Contains(e.Err.Error(), "crm: mark:") {
+		t.Errorf("CrmRowError Err = %v, want the crm: mark: wrapped error", e.Err)
+	}
+	assertNoCrmEvent(t, ch)
+}

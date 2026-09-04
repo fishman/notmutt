@@ -39,15 +39,18 @@ type crmAdapterState struct {
 var crmAdapter *crmAdapterState
 
 // crmDraftRef is the compose map's value: the CRM routing id and row the
-// opened compose belongs to, for the send hook (Task 11) to write back.
+// opened compose belongs to, for the send hook to write back.
 type crmDraftRef struct {
 	Provider  string
 	ContactID string
 }
 
 // crmComposeMu guards crmComposeRefs: entries are added on the CrmDraft
-// reaction and removed on SendResult (Task 11) - a mutex keeps that safe
-// when the send path races in from another goroutine.
+// reaction and removed when the SendResult they route arrives (OK:true) - a
+// mutex keeps that safe when the send path races in from another goroutine.
+// A CRM-origin compose closed without sending emits no SendResult and leaves
+// its entry for the session: accepted deliberately (bounded - one small pair
+// per discarded draft, session-local, lost on exit).
 var (
 	crmComposeMu   sync.Mutex
 	crmComposeRefs = map[string]crmDraftRef{}
@@ -63,8 +66,9 @@ func crmPullSource() []tui.CrmCommand { return nil }
 // (the switch on cfg.Crm.Provider - the only vendor string on the app
 // surface), resolves the [ai] entry the workflow runs on, and reacts to
 // the refresh key (launch a pull) and to generated CrmDrafts (open the
-// prefilled compose). The job bodies live in lib/crm/workflow.go; the
-// send write-back reaction attaches here in Task 11.
+// prefilled compose). The job bodies live in lib/crm/workflow.go; a
+// SendResult for a CRM-origin compose writes the follow-up marker back
+// through the client.
 func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) {
 	if cfg.Crm.Provider == "" {
 		return
@@ -95,9 +99,11 @@ func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Co
 		return // a provider with no client case: config load already rejects it
 	}
 	crmAdapter = &crmAdapterState{client: client, aiCfg: aiCfg, ground: crmMailGround(cfg, worker)}
-	// the pull trigger and the compose-open reaction: each manual refresh
-	// launches a pull on its own goroutine (RunPull's mutex absorbs overlap,
-	// so no gate here); a generated CrmDraft opens the prefilled compose.
+	// the pull trigger, the compose-open reaction, and the send write-back:
+	// each manual refresh launches a pull on its own goroutine (RunPull's
+	// mutex absorbs overlap, so no gate here); a generated CrmDraft opens the
+	// prefilled compose; a SendResult for such a compose marks the contact
+	// followed up.
 	go func() {
 		ch := bus.Subscribe()
 		for e := range ch {
@@ -106,6 +112,8 @@ func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Co
 				go crm.RunPull(bus, client, hs.MarkerProperty, hs.CreatedAfter)
 			case core.CrmDraft:
 				crmOpenDraftCompose(bus, cfg, root, e)
+			case core.SendResult:
+				crmWriteBackOnSend(bus, client, hs.MarkerProperty, e)
 			}
 		}
 	}()
@@ -163,7 +171,8 @@ func crmMailGround(cfg config.Config, worker workerAPI) crm.MailGroundFn {
 
 // crmOpenDraftCompose reacts to a generated follow-up draft: build the
 // prefilled compose, register its tab id -> {Provider, ContactID} for the
-// send hook (Task 11), and publish ComposeOpened for the TUI to attach.
+// send hook (crmWriteBackOnSend), and publish ComposeOpened for the TUI to
+// attach.
 func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.CrmDraft) {
 	if st := crmDraftCompose(cfg, root, d); st != nil {
 		st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
@@ -172,6 +181,30 @@ func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.C
 		crmComposeMu.Unlock()
 		bus.Publish(compose.ToEvent(st))
 	}
+}
+
+// crmWriteBackOnSend reacts to a send result for a CRM-origin compose: an OK
+// result consumes the compose map entry (the row leaves on the next pull
+// page, which omits a contact whose marker landed) and, when the entry's
+// provider matches the wired client, launches RunMark on its own goroutine.
+// A failed send leaves both the compose and the entry alone - the dialogue
+// retries, and a retried OK still marks. The mark's own outcome is
+// unobservable here (RunMark is void), so the entry drops at consumption
+// time; a failed mark keeps the row retryable via a fresh pull/action.
+func crmWriteBackOnSend(bus *core.Bus, client crm.Client, marker string, e core.SendResult) {
+	if !e.OK {
+		return
+	}
+	crmComposeMu.Lock()
+	ref, ok := crmComposeRefs[e.TabID]
+	if ok {
+		delete(crmComposeRefs, e.TabID)
+	}
+	crmComposeMu.Unlock()
+	if !ok || ref.Provider != client.Provider() {
+		return
+	}
+	go crm.RunMark(bus, client, ref.ContactID, marker)
 }
 
 // crmDraftCompose builds a compose dialogue from a CRM follow-up draft: the

@@ -179,6 +179,25 @@ func RunDraft(bus *core.Bus, client Client, aiCfg config.AIProvider, contact Con
 	bus.Publish(core.CrmDraft{Provider: provider, ContactID: contact.ID, Email: contact.Email, Subject: subject, Body: body})
 }
 
+// RunMark records a follow-up on one contact by writing the marker property -
+// the write-back after a sent mail or a dismissal. Success publishes nothing:
+// a marked contact drops from the next pull page, so row-leave is pull-driven,
+// and the sent mail (never the marker) is the durable artifact. A
+// MarkFollowedUp error publishes one core.CrmRowError with client.Provider()
+// as the routing id and the crm: mark: wrap; the row stays retryable because
+// a later pull still returns the unmarked contact. Nil client is a caller
+// error.
+func RunMark(bus *core.Bus, client Client, id, marker string) {
+	if client == nil {
+		bus.Publish(core.CrmRowError{ContactID: id, Err: errors.New("crm: mark: nil client")})
+		return
+	}
+	provider := client.Provider()
+	if err := client.MarkFollowedUp(context.Background(), id, marker); err != nil {
+		bus.Publish(core.CrmRowError{Provider: provider, ContactID: id, Err: fmt.Errorf("crm: mark: %w", err)})
+	}
+}
+
 // splitDraftReply splits the model reply at its "Subject:" line (leading
 // whitespace tolerated, case-insensitive): the rest of that line is the
 // subject, everything after it the body. CRLF input normalizes to LF first

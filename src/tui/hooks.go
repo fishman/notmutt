@@ -278,3 +278,34 @@ var onAICommand = func(name, threadID, extra string) {}
 func SetAICommandHandler(fn func(string, string, string)) {
 	onAICommand = fn
 }
+
+// CrmCommand is one CRM pull command the queue surface offers (the app's
+// pull source output): the name shown and the description under it,
+// mirroring the AICommand picker shape. A nil source list = no CRM; the
+// surface stays closed.
+type CrmCommand struct {
+	Name string
+	Desc string
+}
+
+// crmPull is the CRM queue source seam (the queue surface's first open):
+// the app wires it with SetCrmPullSource; nil source = no CRM configured -
+// the surface never opens and the hooks stay inert.
+var crmPull = func() []CrmCommand { return nil }
+
+func SetCrmPullSource(fn func() []CrmCommand) {
+	if fn != nil {
+		crmPull = fn
+	}
+}
+
+// onCrmAction runs a queue row action (a analyze, d draft, x dismiss): the
+// handler receives the full row, so dispatch is provider-aware - the app
+// filters on the row's Provider before acting; a no-op default.
+var onCrmAction = func(action string, c core.CrmContact) {}
+
+func SetCrmActionHandler(fn func(string, core.CrmContact)) {
+	if fn != nil {
+		onCrmAction = fn
+	}
+}

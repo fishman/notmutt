@@ -3,7 +3,7 @@
 
 //go:build lua
 
-package crm
+package hubspot
 
 import (
 	"context"
@@ -64,6 +64,16 @@ func nextCall(t *testing.T, calls <-chan call) call {
 	case <-time.After(5 * time.Second):
 		t.Fatal("client made no request")
 		return call{}
+	}
+}
+
+// TestProvider pins the routing id stamped on published rows/briefings.
+func TestProvider(t *testing.T) {
+	c, _ := start(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	if got := c.Provider(); got != "hubspot" {
+		t.Errorf("Provider() = %q, want hubspot", got)
 	}
 }
 

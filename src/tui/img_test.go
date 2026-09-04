@@ -794,6 +794,85 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	}
 }
 
+// TestModelImagesReopenCarriesFlag pins the images flag through the open
+// job (the alt+i relayout plumbing): an images-on reply replaces the
+// content and flips m.images, a refine reply forces the replacement even
+// with the flag unchanged, a no-change reply is idempotent, and an
+// images-off reply flips back.
+func TestModelImagesReopenCarriesFlag(t *testing.T) {
+	cfg := config.Default()
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m.width, m.height = 80, 100
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			MsgID:      req.MsgID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     req.Images,
+			Lines:      []core.Line{{Text: "alpha"}},
+		}})
+		m = next
+	})
+	press(t, m, "enter") // discard: the open handler rebinds m
+	if m.mode != "pager" || m.images {
+		t.Fatalf("a fresh open must be images-off, mode=%q images=%v", m.mode, m.images)
+	}
+
+	loaded := func(images, refine bool, text string) {
+		t.Helper()
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   "t1",
+			MsgID:      "a",
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     images,
+			Refine:     refine,
+			Lines:      []core.Line{{Text: text}},
+		}})
+		m = next
+	}
+
+	// an images-on reopen reply replaces the content and flips m.images
+	loaded(true, false, "beta")
+	if !m.images {
+		t.Fatalf("an images-on reply must flip m.images")
+	}
+	if len(m.pager.lines) != 1 || m.pager.lines[0].Text != "beta" {
+		t.Fatalf("an images-on reply must replace the content")
+	}
+	if m.imgMode != 1 {
+		t.Fatalf("an images-on reply must keep the toggle on, imgMode=%d", m.imgMode)
+	}
+
+	// a refine reply forces the replacement even with the flag unchanged
+	loaded(true, true, "gamma")
+	if len(m.pager.lines) != 1 || m.pager.lines[0].Text != "gamma" {
+		t.Fatalf("a refine reply must replace the content")
+	}
+
+	// a no-change reply stays idempotent: same flags, no refine
+	loaded(true, false, "delta")
+	if len(m.pager.lines) != 1 || m.pager.lines[0].Text != "gamma" {
+		t.Fatalf("a no-change reply must not replace the content")
+	}
+
+	// an images-off reply replaces and flips m.images back
+	loaded(false, false, "eps")
+	if m.images || len(m.pager.lines) != 1 || m.pager.lines[0].Text != "eps" {
+		t.Fatalf("an images-off reply must replace and flip m.images back")
+	}
+	if m.imgMode != 0 {
+		t.Fatalf("an images-off reply must collapse the toggle, imgMode=%d", m.imgMode)
+	}
+}
+
 // TestSixelEncodeTransparent pins the P2=1 flag: alpha pixels must leave the cleared page background visible (P2=0 paints them in the terminal's default background), and the stream must round-trip to the same dims.
 func TestSixelEncodeTransparent(t *testing.T) {
 	img, _, _, err := decodeImage(testPNG(t, 40, 20), 40, 20, 0, 0)

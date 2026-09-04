@@ -614,13 +614,13 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
 	}
-	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, false, nil)
+	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, req.Images, req.ImgSizes)
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Images: req.Images, Refine: req.Refine, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime})
 	// the read mark names the opened message, never the whole thread
 	if !req.Preview && msgID != "" {
 		rpl, err := worker.Call(notmuch.Action{

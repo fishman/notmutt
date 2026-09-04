@@ -30,10 +30,14 @@ func SetApplyHandler(fn func(*core.View)) {
 // RenderAuto (the default) resolves per sender domain on the open;
 // an explicit mode (plain/html/source) is the v/ctrl+u/F re-open.
 // LabelLinks (F) prefixes every link with its "[N]" label, the target
-// list riding the reply. Origin is the index surface that dispatched
-// the open - echoed back on the reply so the pager lands on the
-// requesting surface, never on wherever the user tabbed to while the
-// async load ran.
+// list riding the reply. Images marks an images-on render (the alt+i
+// toggle): the worker sizes images at real geometry instead of alt
+// markers. ImgSizes carries the TUI-measured remote px sizes (URL ->
+// W/H), the refine reply's payload; Refine marks that re-render after
+// a remote fetch. Origin is the index surface that dispatched the open
+// - echoed back on the reply so the pager lands on the requesting
+// surface, never on wherever the user tabbed to while the async load
+// ran.
 type OpenReq struct {
 	ThreadID   string
 	MsgID      string
@@ -42,6 +46,9 @@ type OpenReq struct {
 	Width      int
 	Mode       core.RenderMode
 	LabelLinks bool
+	Images     bool
+	ImgSizes   map[string]core.ImgSize
+	Refine     bool
 	Origin     *core.View
 }
 

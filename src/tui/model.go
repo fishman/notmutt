@@ -172,13 +172,16 @@ type Model struct {
 	pendingCollapse string
 	// imgProto is the terminal's image protocol ("" = unsupported);
 	// imgCache the decoded+scaled images; painted the terminal's rects
-	// (paint-diff source). imgMode cycles render-images (0 off, 1
-	// local bytes only, 2 remote fetch on the key); imgFetching
-	// single-flights in-flight fetches.
+	// (paint-diff source). imgMode is the load-remote-images toggle (0
+	// off, 1 on - the ImageFetched gate); imgFetching single-flights
+	// in-flight fetches. images mirrors the last ThreadLoaded reply: the
+	// installed content was laid out images-on, so every re-open of it
+	// stays images-on and a reply with the other flag replaces the pager.
 	imgProto    string
 	imgCache    map[*core.Image]image.Image
 	painted     map[*core.Image]cellRect
 	imgMode     int
+	images      bool
 	imgFetching map[string]bool
 	// attView is the pager's active attachment view (the v dialog's
 	// enter): back re-opens the message to restore; s prefills the
@@ -1078,7 +1081,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.showHeaders = !m.showHeaders
 			m.openCursorThread()
 		} else if m.mode == "pager" && m.pager != nil {
-			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, !m.showHeaders, false)
+			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, !m.showHeaders, false, m.images, nil, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1231,7 +1234,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				// the q key in an attachment view returns to the
 				// message: the re-open reply replaces the pager (the
 				// onThreadLoaded attView guard) and clears the view
-				m.reopenDispatch(m.attView.threadID, m.attView.msgID, m.renderMode, m.showHeaders, false)
+				m.reopenDispatch(m.attView.threadID, m.attView.msgID, m.renderMode, m.showHeaders, false, m.images, nil, false)
 				deferPaint()
 				deferred = true
 				break
@@ -1304,7 +1307,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			if m.renderMode == core.RenderHTML {
 				mode = core.RenderPlain
 			}
-			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), mode, m.showHeaders, false)
+			m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), mode, m.showHeaders, false, m.images, nil, false)
 			deferPaint()
 			deferred = true
 		}
@@ -1314,10 +1317,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// (v's html/plain cycle stays source-free).
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderSource {
-				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, false)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.prevRenderMode, m.showHeaders, false, m.images, nil, false)
 			} else {
 				m.prevRenderMode = m.renderMode
-				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, false)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), core.RenderSource, m.showHeaders, false, m.images, nil, false)
 			}
 			deferPaint()
 			deferred = true
@@ -1334,7 +1337,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		// before the reply, or the reply would match and skip replace.
 		if m.mode == "pager" && m.pager != nil {
 			if m.renderMode == core.RenderHTML {
-				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, true)
+				m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, true, m.images, nil, false)
 			} else if links := linksOfLines(m.pager.lines, m.renderMode == core.RenderSource); len(links) > 0 {
 				m.dialogue = &listDialogue{f: newFuzzy("openlink", "open link:", numberedLinks(links))}
 			} else {
@@ -1682,7 +1685,7 @@ func (m *Model) exitLinkMode() {
 	m.linkInput = ""
 	if m.pager != nil {
 		m.pager.setLinkSel("")
-		m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, false)
+		m.reopenDispatch(pagerThreadID(m.pager), pagerMsgID(m.pager), m.renderMode, m.showHeaders, false, m.images, nil, false)
 	}
 }
 
@@ -1848,7 +1851,8 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 		pg := newPager(e.ThreadID, e.MsgID, e.Lines)
 		pg.setSMIME(e.SMIME)
-		m.surfOpen[o] = &parkedOpen{pager: pg, renderMode: e.RenderMode, showHeaders: e.Headers, linkMode: e.LinkLabels, renderMime: e.Mime}
+		pg.setImages(e.Images)
+		m.surfOpen[o] = &parkedOpen{pager: pg, renderMode: e.RenderMode, showHeaders: e.Headers, linkMode: e.LinkLabels, images: e.Images, renderMime: e.Mime}
 		return
 	}
 	// the reply targets the surface whose open is installed (on display,
@@ -1856,8 +1860,8 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	// the attView term: any message render while an attachment view is
 	// active replaces it (the back key's restore) - the reply's own
 	// mode/headers alone never differ
-	if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || m.attView != nil {
-		m.renderMode, m.showHeaders, m.linkMode, m.linkList = e.RenderMode, e.Headers, e.LinkLabels, e.Links
+	if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) || e.RenderMode != m.renderMode || e.Headers != m.showHeaders || e.LinkLabels != m.linkMode || e.Images != m.images || e.Refine || m.attView != nil {
+		m.renderMode, m.showHeaders, m.linkMode, m.linkList, m.images = e.RenderMode, e.Headers, e.LinkLabels, e.Links, e.Images
 		m.attView = nil // the attachment view ends with the restore
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 		m.pager.setSMIME(e.SMIME)
@@ -1865,6 +1869,9 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
 		m.pager.setSize(w, h, m.styles)
+		// the images flag rides the render: the pager expands image rows
+		// only when the worker laid the message out images-on
+		m.pager.setImages(e.Images)
 		// the F key's label mode arms with the labeled reply: digits
 		// start empty and links exist or the mode reports - never a
 		// silent dead entry
@@ -1884,9 +1891,13 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 	if o == m.stackSurface() {
 		m.mode = "pager"
 	}
-	// the render-images toggle is per-pager: a fresh open starts
-	// collapsed - remote images never fetch without their own press
+	// the render-images toggle is per-content: a fresh open starts
+	// collapsed - remote images never fetch without their own press. An
+	// images-on reply (the alt+i reopen or a refine) keeps the toggle on.
 	m.imgMode = 0
+	if e.Images {
+		m.imgMode = 1
+	}
 	m.legendPending = true
 }
 
@@ -1938,14 +1949,15 @@ type summary struct {
 // parkedOpen is a non-active index surface's retained open: the pager
 // plus the render context the model would carry were that surface the
 // active one. The model's render fields (renderMode/showHeaders/
-// linkMode/renderMime) describe the INSTALLED pager, so a parked open
-// must snapshot them with the pager or the restore would mis-toggle a
-// parked surface's view (V/F act on the wrong render state).
+// linkMode/images/renderMime) describe the INSTALLED pager, so a parked
+// open must snapshot them with the pager or the restore would mis-toggle
+// a parked surface's view (V/F/alt+i act on the wrong render state).
 type parkedOpen struct {
 	pager       *pager
 	renderMode  core.RenderMode
 	showHeaders bool
 	linkMode    bool
+	images      bool
 	renderMime  string
 }
 
@@ -2314,11 +2326,14 @@ func (m *Model) openDispatch(tid, mid string, preview bool) {
 }
 
 // reopenDispatch is the re-render dispatch of the CURRENT open pager
-// (h/v/ctrl+u/F/back-from-attachment): same seam with an explicit view.
-// Origin is the surface owning the pager being re-rendered - in pager
-// mode that is the active index surface.
-func (m *Model) reopenDispatch(tid, mid string, mode core.RenderMode, headers bool, labelLinks bool) {
-	onOpen(OpenReq{ThreadID: tid, MsgID: mid, Mode: mode, Headers: headers, Width: m.width, LabelLinks: labelLinks, Origin: m.activeView()})
+// (h/v/ctrl+u/F/back-from-attachment/alt+i): same seam with an explicit
+// view. Every re-open carries m.images so an images-on message's toggles
+// stay images-on (the images flag describes the current content, never a
+// request for a fetch); imgSizes/refine ride the alt+i refine re-open
+// only. Origin is the surface owning the pager being re-rendered - in
+// pager mode that is the active index surface.
+func (m *Model) reopenDispatch(tid, mid string, mode core.RenderMode, headers bool, labelLinks bool, images bool, imgSizes map[string]core.ImgSize, refine bool) {
+	onOpen(OpenReq{ThreadID: tid, MsgID: mid, Mode: mode, Headers: headers, Width: m.width, LabelLinks: labelLinks, Images: images, ImgSizes: imgSizes, Refine: refine, Origin: m.activeView()})
 }
 
 // pagerStep advances the index cursor by dir rows and, if it landed on
@@ -4603,7 +4618,7 @@ func (m *Model) mountSurface(d *core.View) {
 		// model's render fields describe the installed pager)
 		m.surfOpen[home] = &parkedOpen{
 			pager: m.pager, renderMode: m.renderMode, showHeaders: m.showHeaders,
-			linkMode: m.linkMode, renderMime: m.renderMime,
+			linkMode: m.linkMode, images: m.images, renderMime: m.renderMime,
 		}
 		m.pager = nil
 	}
@@ -4611,7 +4626,7 @@ func (m *Model) mountSurface(d *core.View) {
 		delete(m.surfOpen, d)
 		if po.pager != nil {
 			m.pager = po.pager
-			m.renderMode, m.showHeaders, m.linkMode, m.renderMime = po.renderMode, po.showHeaders, po.linkMode, po.renderMime
+			m.renderMode, m.showHeaders, m.linkMode, m.images, m.renderMime = po.renderMode, po.showHeaders, po.linkMode, po.images, po.renderMime
 			// WindowSizeMsg only re-fits the installed pager: a parked
 			// open may predate a resize, re-fit it on install
 			w, h := m.pagerSize()

@@ -267,6 +267,14 @@ type ThreadLoaded struct {
 	// carries its "[N]" label inline; a same-thread reload without labels
 	// replaces the labeled content.
 	LinkLabels bool
+	// Images marks an images-on render (the pager alt+i toggle): images
+	// laid out at real measured size instead of alt markers; a same-thread
+	// reload with a different images flag replaces the content.
+	Images bool
+	// Refine marks a re-render after remote bytes landed (the alt+i
+	// remote mode): the worker sizes images from the px map a fetch filled;
+	// a stale refine reply (images toggled off meanwhile) drops.
+	Refine bool
 	// Links is the label-render's target list (label N opens Links[N-1],
 	// document order), empty unlabeled.
 	Links []string

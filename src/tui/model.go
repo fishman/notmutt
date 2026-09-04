@@ -2459,6 +2459,9 @@ func (m *Model) onComposeOpened(e core.ComposeOpened) {
 		tab.BodyPath = path
 	}
 	m.attachTab()
+	// the async compose takes the screen: close the queue overlay so it
+	// stops holding the keys (the surface-open sites clear their siblings)
+	m.crmOpen = false
 	m.paint = true
 }
 

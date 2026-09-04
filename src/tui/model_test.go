@@ -2387,6 +2387,22 @@ func TestComposeOpenedPaints(t *testing.T) {
 	}
 }
 
+// TestComposeOpenedClosesCrmOverlay pins the queue-overlay fix: a
+// ComposeOpened landing while the crm queue overlay (Q) is open must
+// close the overlay - left open, the compose tab never gets the keys
+// (a first d keystroke would re-fire a draft instead of typing).
+func TestComposeOpenedClosesCrmOverlay(t *testing.T) {
+	m := model()
+	m.crmOpen = true
+	m = openDialogue(t, m, "t1")
+	if m.crmOpen {
+		t.Fatal("an attached compose must close the crm queue overlay")
+	}
+	if m.mode != "compose" || len(m.tabs) != 1 {
+		t.Fatalf("the compose tab must attach under the closing overlay: mode %q tabs %d", m.mode, len(m.tabs))
+	}
+}
+
 func TestTabSwitchParksDialogue(t *testing.T) {
 	m := openDialogue(t, openDialogue(t, model(), "t1"), "t2")
 	if m.tabIdx != 2 {

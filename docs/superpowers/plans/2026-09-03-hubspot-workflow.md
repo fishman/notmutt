@@ -278,7 +278,7 @@ bus output:
 
 **Files:** `src/lib/crm/workflow.go`, `src/lib/crm/crm.go`
 
-`runPull(bus *core.Bus, client Client, marker, createdAfter string)` - the
+`RunPull(bus *core.Bus, client Client, marker, createdAfter string)` - the
 first job in `src/lib/crm/workflow.go`; `Client` is the neutral interface from
 `client.go` (Task 4). On a `run` mutex guard
 (refresh.go:39-47), `ListUnprocessed`, publish `core.CrmQueue{Contacts}` as
@@ -291,7 +291,7 @@ the pull does no N+1 company lookup - analyze refetches and fills it, Task 9;
 `Status` starts `"new"`). Any error
 publishes `core.CrmRowError{Provider: client.Provider(), Err}` and stops;
 rows already received stay. The app adapter builds the client and launches
-`runPull` on a fresh goroutine (the sendJob shape, app.go:343-345);
+`RunPull` on a fresh goroutine (the sendJob shape, app.go:343-345);
 overlapping refreshes no-op via the mutex. `crm.go` holds the shared
 caps/consts the jobs and tests use.
 
@@ -302,7 +302,7 @@ Task 13's httptest-driven integration test.
 
 **Files:** `src/lib/crm/workflow.go`
 
-`runAnalyze(bus *core.Bus, client Client, aiCfg config.AIProvider,
+`RunAnalyze(bus *core.Bus, client Client, aiCfg config.AIProvider,
 contact Contact, chat ChatFn)` - a cancellable job on the row (`Client` and
 `Contact` neutral, Task 4). The pull row's `CompanyID` is empty (search rows
 carry no association, Task 8), so refetch the contact first: `Contact(id)` to
@@ -323,7 +323,7 @@ a fake provider (httptest OpenAI-compatible endpoint via the provider's
 
 **Files:** `src/lib/crm/workflow.go`, `src/app/crm_engine.go`
 
-`runDraft(bus *core.Bus, client Client, aiCfg config.AIProvider,
+`RunDraft(bus *core.Bus, client Client, aiCfg config.AIProvider,
 contact Contact, briefingText string, mailGround MailGroundFn, chat ChatFn)`
 in `workflow.go` (`aiCfg` is the resolved `[ai]` entry, distinct from the CRM
 `provider` routing id):
@@ -360,12 +360,12 @@ get a unit test in Task 13 (`crm_engine_test.go`, fake chat).
 
 **Files:** `src/lib/crm/workflow.go`, `src/app/crm_engine.go`
 
-`runMark(bus *core.Bus, client Client, id, marker string)` in `workflow.go`
+`RunMark(bus *core.Bus, client Client, id, marker string)` in `workflow.go`
 calls `MarkFollowedUp`. From `crmWire`'s subscribers (Task 7): on
 `core.SendResult{OK:true, TabID}` where `TabID` is in the compose map, look up
 the entry and, when its `Provider` matches the wire's (the map entry stores
 `draft.Provider`; `crmWire` compares it against the client it built, i.e.
-`cfg.Crm.Provider` - never a hardcoded vendor), launch `runMark(ContactID,
+`cfg.Crm.Provider` - never a hardcoded vendor), launch `RunMark(ContactID,
 marker)`. On success drop the map entry / publish a queue update so the row
 leaves; on failure publish
 `core.CrmRowError{Provider: client.Provider(), ContactID: id, Err}` and keep

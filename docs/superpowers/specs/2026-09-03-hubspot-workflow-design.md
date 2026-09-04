@@ -160,12 +160,12 @@ core/stdlib - the lib layering rule: nothing from app/tui/notmuch/compose):
 - `briefing.go` - the non-mail context assembler: `briefing(contact Contact,
   company Company, rs []Result) (string, error)`. It accepts no mail input, so
   mail content cannot reach it by construction (section 8 item 3).
-- `workflow.go` + `crm.go` - the job core: `runPull`, `runAnalyze`,
-  `runDraft`, `runMark` publish core events over an injected `*core.Bus`
+- `workflow.go` + `crm.go` - the job core: `RunPull`, `RunAnalyze`,
+  `RunDraft`, `RunMark` publish core events over an injected `*core.Bus`
   (queue snapshot, briefing, draft, row error) and carry the shared types.
   Every job takes `client Client` and stamps rows/briefings/drafts with
   `client.Provider()` - the routing id comes from the client, never a literal.
-  `runDraft` takes the injected ChatFn and MailGroundFn; grounding is "an
+  `RunDraft` takes the injected ChatFn and MailGroundFn; grounding is "an
   inbound thread with the address exists AND its `[ai-data.<account>]` grant
   permits it, else empty (no mail context)".
 
@@ -190,8 +190,8 @@ are pinned in the plan and locked by the httptest tests.
 
 ## 4. Workflow core + app adapter
 
-The job core lives in the lib (`src/lib/crm/workflow.go`): `runPull`,
-`runAnalyze`, `runDraft`, `runMark` are launched on fresh goroutines from the
+The job core lives in the lib (`src/lib/crm/workflow.go`): `RunPull`,
+`RunAnalyze`, `RunDraft`, `RunMark` are launched on fresh goroutines from the
 adapter, publish to `*core.Bus`, cancellable via the existing Task machinery.
 Each takes its capabilities as injected args - the `crm.Client` interface, the
 resolved `config.AIProvider`, the ChatFn, the MailGroundFn - so none of them
@@ -210,12 +210,12 @@ value (`case "hubspot": hubspot.NewClient(ctx, key)` from
   its account's `[ai-data.<account>]` grant permits it (each account
   contributes through `BuildContext` independently; no grant, no
   contribution).
-- On a queue-ready event launches `runPull`; on `core.CrmDraft` opens the
+- On a queue-ready event launches `RunPull`; on `core.CrmDraft` opens the
   compose - prefills a `compose.State` (`To`, subject, body), publishes
   `compose.ToEvent` - and tracks `composeID -> {Provider, ContactID}` for the
   send hook (Provider from the draft; the send hook matches it against the
   client it built, i.e. `cfg.Crm.Provider`); on send-OK/dismiss launches
-  `runMark`; on row errors drives write-back. Supplies the queue surface into
+  `RunMark`; on row errors drives write-back. Supplies the queue surface into
   tui hooks (the SetAICommandSource/Handler shape); the `!lua || !crm` build
   carries a stub.
 

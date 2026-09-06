@@ -604,6 +604,57 @@ created_after = "2024-01-02"
 	}
 }
 
+// TestLoadCrmHubspotAccount pins the [crm.hubspot] account key: it names
+// the mail account whose context file and [ai-data] grant the draft leg
+// uses; a name that does not match a configured [accounts] entry is a
+// load error, not a silent empty grant.
+func TestLoadCrmHubspotAccount(t *testing.T) {
+	cfg, err := Load(write(t, `
+[accounts.gmail]
+from = "You <you@gmail.com>"
+
+[ai.deepseek]
+type = "openai"
+model = "deepseek-chat"
+
+[crm]
+provider = "hubspot"
+
+[crm.hubspot]
+ai = "deepseek"
+token_cmd = ["gpg", "-q", "-d", "/home/alpha/.hubspot/token.gpg"]
+account = "gmail"
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Crm.Hubspot.Account != "gmail" {
+		t.Fatalf("crm.hubspot.account = %q, want gmail", cfg.Crm.Hubspot.Account)
+	}
+}
+
+func TestLoadCrmHubspotUnknownAccountErrors(t *testing.T) {
+	_, err := Load(write(t, `
+[ai.deepseek]
+type = "openai"
+model = "deepseek-chat"
+
+[crm]
+provider = "hubspot"
+
+[crm.hubspot]
+ai = "deepseek"
+token_cmd = ["gpg", "-q", "-d", "/home/alpha/.hubspot/token.gpg"]
+account = "nonesuch"
+`))
+	if err == nil {
+		t.Fatal("Load = nil, want the unknown-account error")
+	}
+	if !strings.Contains(err.Error(), `"nonesuch"`) {
+		t.Errorf("error = %q, want it to name the account", err)
+	}
+}
+
 // TestLoadCrmHubspotUnknownAIErrors: ai naming a missing [ai] entry is a
 // load error naming it (empty ai is allowed - resolveAIProvider falls
 // back later).

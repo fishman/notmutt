@@ -58,15 +58,12 @@ func TestCrmQueueNewToBriefing(t *testing.T) {
 	}
 }
 
-// TestCrmQueueDraftRequiresBriefing pins the d guard: draft is refused with
-// no briefing on the selected row (handler untouched), allowed once the
-// briefing lands, and the row advances to drafted.
-func TestCrmQueueDraftRequiresBriefing(t *testing.T) {
+// TestCrmQueueDraftable pins the d guard: a row drafts only with a
+// briefing. The draft dispatch itself is the model's (the prompt picker);
+// action() no longer carries a draft case.
+func TestCrmQueueDraftable(t *testing.T) {
 	var gotAction string
-	var got core.CrmContact
-	SetCrmActionHandler(func(action string, c core.CrmContact) {
-		gotAction, got = action, c
-	})
+	SetCrmActionHandler(func(action string, c core.CrmContact) { gotAction = action })
 	t.Cleanup(func() { SetCrmActionHandler(func(string, core.CrmContact) {}) })
 
 	q := newCrmQueue()
@@ -75,35 +72,26 @@ func TestCrmQueueDraftRequiresBriefing(t *testing.T) {
 		crmContact("202", "atlas@example.com", "Atlas", "Beta"),
 	}})
 
-	// cursor on alpha with no briefing: draft refused, nothing dispatched
-	if q.action(crmActionDraft) {
-		t.Error("draft allowed on a row with no briefing")
+	// cursor on alpha with no briefing: not draftable, nothing dispatched
+	if q.draftable() {
+		t.Error("draftable on a row with no briefing")
 	}
 	if gotAction != "" {
-		t.Errorf("handler ran for a refused draft: %q", gotAction)
-	}
-	if r := q.cursor(); r.contact.Status != crmStatusNew {
-		t.Errorf("refused draft changed the status to %q", r.contact.Status)
+		t.Errorf("action() dispatched %q for a guard check", gotAction)
 	}
 
-	// a briefing for alpha makes draft allowed on alpha only
+	// a briefing for alpha makes alpha draftable only
 	q.onBriefing(core.CrmBriefing{Provider: "test-crm", ContactID: "201", Text: "Acme ships widgets."})
-	if !q.action(crmActionDraft) {
-		t.Fatal("draft refused on a row with a briefing")
-	}
-	if gotAction != crmActionDraft || got.ID != "201" {
-		t.Errorf("handler got (%q, id %q), want (draft, 201)", gotAction, got.ID)
-	}
-	if r := q.cursor(); r.contact.Status != crmStatusDrafted {
-		t.Errorf("status after draft = %q, want %q", r.contact.Status, crmStatusDrafted)
+	if !q.draftable() {
+		t.Fatal("not draftable on a row with a briefing")
 	}
 
 	// the guard is row-scoped: moving to atlas (no briefing) refuses again
 	if !q.move(1) {
 		t.Fatal("cursor move to the second row failed")
 	}
-	if q.action(crmActionDraft) {
-		t.Error("draft allowed on a row with no briefing of its own")
+	if q.draftable() {
+		t.Error("draftable on a row with no briefing of its own")
 	}
 }
 

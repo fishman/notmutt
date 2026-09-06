@@ -497,7 +497,28 @@ func (m Model) Update(msg any) (Model, Cmd) {
 				case msg.Typed() && msg.Text == "a":
 					m.crm.action(crmActionAnalyze)
 				case msg.Typed() && msg.Text == "d":
-					m.crm.action(crmActionDraft)
+					// the prompt picker replaces the fixed draft: the row
+					// needs a briefing, then the flagged prompts list
+					if !m.crm.draftable() {
+						break
+					}
+					cmds := crmAIPrompts()
+					if len(cmds) == 0 {
+						m.logEntry(i18n.T("no CRM prompts configured"), true)
+						break
+					}
+					names := make([]string, 0, len(cmds))
+					payload := make([]string, 0, len(cmds))
+					for _, c := range cmds {
+						name := c.Name
+						payload = append(payload, name)
+						if c.Desc != "" {
+							name += " - " + c.Desc
+						}
+						names = append(names, name)
+					}
+					m.crm.draftSel = m.crm.cursor().key()
+					m.dialogue = &listDialogue{f: newFuzzyPayload("crmcmd", i18n.T("CRM prompt:"), names, payload)}
 				case msg.Typed() && msg.Text == "x":
 					m.crm.action(crmActionDismiss)
 				default:
@@ -1645,7 +1666,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		}
 		if !m.crmPulled {
 			if m.bus != nil {
-				m.bus.Publish(core.RefreshRequested{})
+				m.bus.Publish(core.CrmOpened{})
 			}
 			m.crmPulled = true
 		}
@@ -3724,6 +3745,9 @@ type textDialogue struct {
 	// aicmdName is the selected AI command (field "aiextra"): the appended
 	// prompt text runs that command on the current thread
 	aicmdName string
+	// crmCmdName is the selected CRM prompt (field "crmextra"): the queue
+	// picker's e key.
+	crmCmdName string
 }
 
 // cancelDialogue resets the abort gate (q opened the confirm with the
@@ -3910,6 +3934,14 @@ func (d *listDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 			return &textDialogue{field: "aiextra", label: i18n.T("extra prompt: "), aicmdName: name}, nil
 		}
 	}
+	// the CRM picker's ctrl+e key: the same extra-text prompt, dispatched
+	// to the queue row on commit.
+	if d.f.kind == "crmcmd" && msg.String() == "ctrl+e" {
+		if name, ok := d.f.selectedPayload(); ok && name != "" {
+			m.cancelDialogue()
+			return &textDialogue{field: "crmextra", label: i18n.T("extra prompt: "), crmCmdName: name}, nil
+		}
+	}
 	if a := actionForKey(msg, m.bindings["fuzzy"]); a != "" {
 		switch a {
 		case "fuzzy-down":
@@ -4006,6 +4038,18 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 		if ok {
 			m.cancelDialogue()
 			onAICommand(name, m.aiThreadID(), "")
+		}
+		return nil, nil
+	case "crmcmd":
+		// the CRM prompt picker (the queue's d key): enter runs the chosen
+		// prompt on the draft-selected row with the default follow-up extra
+		name, ok := d.f.selectedPayload()
+		if ok {
+			if c := m.crm.rowByKey(m.crm.draftSel); c != nil {
+				c.contact.Status = crmStatusDrafted
+				m.cancelDialogue()
+				onCrmAICommand(name, c.contact, "")
+			}
 		}
 		return nil, nil
 	}
@@ -4276,6 +4320,15 @@ func (d *textDialogue) commit(m *Model) (dialogue, Cmd) {
 		// command)
 		m.cancelDialogue()
 		onAICommand(d.aicmdName, m.aiThreadID(), input)
+		return nil, nil
+	case "crmextra":
+		// the CRM picker's e key: run the chosen prompt with the extra text
+		// (empty input still runs - the adapter supplies the default extra)
+		if c := m.crm.rowByKey(m.crm.draftSel); c != nil {
+			c.contact.Status = crmStatusDrafted
+			m.cancelDialogue()
+			onCrmAICommand(d.crmCmdName, c.contact, input)
+		}
 		return nil, nil
 	default:
 		// the compose-header fields - the default arm keeps a single switch

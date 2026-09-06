@@ -67,6 +67,9 @@ type crmQueue struct {
 	rows  []*crmRow
 	byKey map[crmKey]*crmRow
 	cur   int
+	// draftSel is the key the d picker opened on (the enter/e handlers
+	// resolve the row through it, never a position).
+	draftSel crmKey
 }
 
 func newCrmQueue() *crmQueue {
@@ -185,13 +188,13 @@ func (q *crmQueue) onRowError(e core.CrmRowError) {
 	}
 }
 
-// action runs a row action on the selected row (a analyze, d draft, x
-// dismiss). The guard refuses what cannot run - analyze while a job is in
-// flight, draft with no briefing - and reports false without dispatching. A
-// guard-passing action dispatches through the handler hook with the full
-// row. The model records the outcomes it can observe (draft -> drafted,
-// dismiss -> dismissed); send-OK and write-back are the app's, observed only
-// as a later queue page that omits the row.
+// action runs a row action on the selected row (a analyze, x dismiss).
+// The guard refuses what cannot run (analyze while a job is in flight) and
+// reports false without dispatching. A guard-passing action dispatches
+// through the handler hook with the full row. The model records the
+// outcomes it can observe (dismiss -> dismissed); draft is the model's own
+// picker path (draftable + the prompt picker), and send-OK/write-back are
+// the app's, observed only as a later queue page that omits the row.
 func (q *crmQueue) action(name string) bool {
 	r := q.cursor()
 	if r == nil {
@@ -203,11 +206,6 @@ func (q *crmQueue) action(name string) bool {
 			return false
 		}
 		r.inFlight = true
-	case crmActionDraft:
-		if r.briefing == "" {
-			return false // the draft guard: no briefing, no draft
-		}
-		r.contact.Status = crmStatusDrafted
 	case crmActionDismiss:
 		r.contact.Status = crmStatusDismissed
 	default:
@@ -215,6 +213,20 @@ func (q *crmQueue) action(name string) bool {
 	}
 	onCrmAction(name, r.contact)
 	return true
+}
+
+// draftable is the d-key guard: a row drafts only with a briefing. The
+// model consults it before opening the prompt picker (the picker replaces
+// the action dispatch for draft - a draft is a prompt run now).
+func (q *crmQueue) draftable() bool {
+	r := q.cursor()
+	return r != nil && r.briefing != ""
+}
+
+// rowByKey resolves a held row by key (the d picker's selected row,
+// resolved at enter time, never a stored position).
+func (q *crmQueue) rowByKey(k crmKey) *crmRow {
+	return q.byKey[k]
 }
 
 // crmAvailable reports whether the queue surface has a wired pull source

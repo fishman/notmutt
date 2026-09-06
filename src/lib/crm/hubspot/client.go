@@ -50,6 +50,10 @@ type Client struct {
 	key  []byte
 	base string // apiBase, overridable in tests
 	hc   *http.Client
+	// token is the on-demand resolver a 401 calls for a fresh key (nil =
+	// static key, the test posture). One buffer owner: do() swaps it under
+	// the same rule as construction - the old buffer zeroes first.
+	token func(ctx context.Context) ([]byte, error)
 }
 
 var _ crm.Client = (*Client)(nil)
@@ -78,6 +82,22 @@ func NewClientURL(_ context.Context, key []byte, baseURL string) *Client {
 	}
 }
 
+// SetTokenResolver wires the 401 refresh path: a nil resolver keeps the
+// static key (tests). The resolver output becomes the stored key - the
+// caller must not reuse the buffer after.
+func (c *Client) SetTokenResolver(fn func(ctx context.Context) ([]byte, error)) {
+	c.token = fn
+}
+
+// Wipe zeroes the stored bearer key. Best effort: Go cannot guarantee
+// erasure (GC copies buffers), so wipe plus the caller's short client
+// lifetime is the posture.
+func (c *Client) Wipe() {
+	for i := range c.key {
+		c.key[i] = 0
+	}
+}
+
 // Provider reports the routing id stamped on every published
 // row/briefing/draft.
 func (c *Client) Provider() string { return "hubspot" }
@@ -88,6 +108,17 @@ func (c *Client) Provider() string { return "hubspot" }
 // to contacts created after it (HubSpot date filters take epoch-ms, so the
 // client converts).
 func (c *Client) ListUnprocessed(ctx context.Context, marker, createdAfter string) ([]crm.Contact, error) {
+	// a search filter on a property the portal lacks answers a generic 400
+	// that never names it, so pre-flight the properties endpoint and turn a
+	// miss into the one-time-setup error the config fix reads off.
+	if marker != "" {
+		if err := c.do(ctx, http.MethodGet, "/crm/v3/properties/contacts/"+marker, nil, nil); err != nil {
+			if errors.Is(err, ErrRetry) {
+				return nil, err
+			}
+			return nil, fmt.Errorf("hubspot: marker property %q is not usable in the portal (%v) - create it once (Settings > Data Management > Properties > Contacts, a single checkbox) or point [crm.hubspot] marker_property at an existing property", marker, err)
+		}
+	}
 	filters := []filter{{PropertyName: marker, Operator: "NOT_HAS_PROPERTY"}}
 	if createdAfter != "" {
 		t, err := time.Parse(time.RFC3339, createdAfter)
@@ -257,6 +288,13 @@ type apiError struct {
 // do performs one authenticated request: JSON body when set, JSON response
 // decoded into out when non-nil.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
+	return c.doOnce(ctx, method, path, body, out, true)
+}
+
+// doOnce performs one request; refresh permits one 401 retry with a
+// freshly resolved token before the error surfaces. The wire body
+// re-marshals per attempt.
+func (c *Client) doOnce(ctx context.Context, method, path string, body, out any, refresh bool) error {
 	var rd io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -276,6 +314,18 @@ func (c *Client) do(ctx context.Context, method, path string, body, out any) err
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		return err
+	}
+	if resp.StatusCode == http.StatusUnauthorized && refresh && c.token != nil {
+		resp.Body.Close()
+		fresh, err := c.token(ctx)
+		if err != nil {
+			return fmt.Errorf("hubspot: token refresh: %w", err)
+		}
+		for i := range c.key {
+			c.key[i] = 0
+		}
+		c.key = fresh
+		return c.doOnce(ctx, method, path, body, out, false)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

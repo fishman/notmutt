@@ -83,11 +83,18 @@ func TestProvider(t *testing.T) {
 func TestListUnprocessed(t *testing.T) {
 	wantBody := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"}]}],"properties":["email","firstname","lastname","jobtitle"],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100}`
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crm/v3/properties/contacts/notmutt_followed_up" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		io.WriteString(w, `{"results":[`+alphaContactJSON+`,`+atlasContactJSON+`]}`)
 	})
 	got, err := c.ListUnprocessed(context.Background(), "notmutt_followed_up", "")
 	if err != nil {
 		t.Fatalf("ListUnprocessed: %v", err)
+	}
+	if pre := nextCall(t, calls); pre.method != http.MethodGet || pre.target != "/crm/v3/properties/contacts/notmutt_followed_up" {
+		t.Errorf("pre-flight = %s %s, want GET /crm/v3/properties/contacts/notmutt_followed_up", pre.method, pre.target)
 	}
 	req := nextCall(t, calls)
 	if req.method != http.MethodPost {
@@ -134,6 +141,10 @@ func TestListUnprocessedPaging(t *testing.T) {
 	wantPage2 := `{"filterGroups":[{"filters":[{"propertyName":"notmutt_followed_up","operator":"NOT_HAS_PROPERTY"},{"propertyName":"createdate","operator":"GT","value":"1700000000000"}]}],"properties":["email","firstname","lastname","jobtitle"],"sorts":[{"propertyName":"createdate","direction":"DESCENDING"}],"limit":100,"after":"1"}`
 	var served bool
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crm/v3/properties/contacts/notmutt_followed_up" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if !served {
 			served = true
 			io.WriteString(w, `{"results":[`+alphaContactJSON+`],"paging":{"next":{"after":"1","link":"https://api.hubspot.com/crm/v3/objects/contacts/search?after=1"}}}`)
@@ -144,6 +155,9 @@ func TestListUnprocessedPaging(t *testing.T) {
 	got, err := c.ListUnprocessed(context.Background(), "notmutt_followed_up", createdAfter)
 	if err != nil {
 		t.Fatalf("ListUnprocessed: %v", err)
+	}
+	if pre := nextCall(t, calls); pre.target != "/crm/v3/properties/contacts/notmutt_followed_up" {
+		t.Errorf("pre-flight target = %s, want the properties check", pre.target)
 	}
 	p1 := nextCall(t, calls)
 	if p1.body != wantPage1 {
@@ -160,6 +174,111 @@ func TestListUnprocessedPaging(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "201" || got[1].ID != "202" {
 		t.Errorf("contacts = %+v, want [201 202] in order", got)
+	}
+}
+
+// TestListUnprocessedMarkerMissing: a marker property the portal does not
+// have fails the pre-flight naming the property - HubSpot's search API
+// answers an unknown filter property with a generic 400, so the client
+// checks the properties endpoint first and translates the miss into the
+// actionable one-time-setup error, never issuing the search.
+func TestListUnprocessedMarkerMissing(t *testing.T) {
+	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		io.WriteString(w, `{"status":"error","message":"Couldn't find a property with the given name"}`)
+	})
+	_, err := c.ListUnprocessed(context.Background(), "followed_up", "")
+	if err == nil {
+		t.Fatal("ListUnprocessed = nil, want the missing-property error")
+	}
+	if !strings.Contains(err.Error(), "followed_up") {
+		t.Errorf("error = %q, want it to name the property", err)
+	}
+	req := nextCall(t, calls)
+	if req.method != http.MethodGet || req.target != "/crm/v3/properties/contacts/followed_up" {
+		t.Errorf("pre-flight = %s %s, want GET /crm/v3/properties/contacts/followed_up", req.method, req.target)
+	}
+	select {
+	case c2 := <-calls:
+		t.Errorf("search fired after a missing-property pre-flight: %+v", c2)
+	default:
+	}
+}
+
+// TestWipe zeroes the stored key buffer (best-effort erasure; the caller
+// drops the client reference right after).
+func TestWipe(t *testing.T) {
+	key := []byte("sekret")
+	c := NewClient(context.Background(), key)
+	c.Wipe()
+	for _, b := range key {
+		if b != 0 {
+			t.Fatalf("key not zeroed after Wipe: %q", key)
+		}
+	}
+}
+
+// TestTokenRefresh retries a 401 once with a freshly resolved token: the
+// resolver runs, the old buffer zeroes, and the retried request succeeds.
+func TestTokenRefresh(t *testing.T) {
+	fresh := []byte("fresh-key")
+	resolves := 0
+	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crm/v3/properties/contacts/notmutt_followed_up" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer fresh-key" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		io.WriteString(w, `{"results":[`+alphaContactJSON+`]}`)
+	})
+	old := []byte("stale-key")
+	c.key = old
+	c.SetTokenResolver(func(ctx context.Context) ([]byte, error) {
+		resolves++
+		return fresh, nil
+	})
+	got, err := c.ListUnprocessed(context.Background(), "notmutt_followed_up", "")
+	if err != nil {
+		t.Fatalf("ListUnprocessed: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "201" {
+		t.Errorf("contacts = %+v, want [201]", got)
+	}
+	if resolves != 1 {
+		t.Errorf("resolver ran %d times, want 1", resolves)
+	}
+	for _, b := range old {
+		if b != 0 {
+			t.Errorf("old key buffer not zeroed on refresh: %q", old)
+		}
+	}
+	_ = calls
+}
+
+// TestTokenRefreshTwiceFails: a second 401 surfaces the error - one
+// resolver run, one retry, no loop.
+func TestTokenRefreshTwiceFails(t *testing.T) {
+	resolves := 0
+	c, _ := start(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/crm/v3/properties/contacts/notmutt_followed_up" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+	c.SetTokenResolver(func(ctx context.Context) ([]byte, error) {
+		resolves++
+		return []byte("still-stale"), nil
+	})
+	_, err := c.ListUnprocessed(context.Background(), "notmutt_followed_up", "")
+	if err == nil {
+		t.Fatal("ListUnprocessed = nil, want the 401 error")
+	}
+	if resolves != 1 {
+		t.Errorf("resolver ran %d times, want 1 (single retry)", resolves)
 	}
 }
 

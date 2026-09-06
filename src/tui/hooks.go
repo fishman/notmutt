@@ -299,7 +299,7 @@ func SetCrmPullSource(fn func() []CrmCommand) {
 	}
 }
 
-// onCrmAction runs a queue row action (a analyze, d draft, x dismiss): the
+// onCrmAction runs a queue row action (a analyze, x dismiss): the
 // handler receives the full row, so dispatch is provider-aware - the app
 // filters on the row's Provider before acting; a no-op default.
 var onCrmAction = func(action string, c core.CrmContact) {}
@@ -307,5 +307,27 @@ var onCrmAction = func(action string, c core.CrmContact) {}
 func SetCrmActionHandler(fn func(string, core.CrmContact)) {
 	if fn != nil {
 		onCrmAction = fn
+	}
+}
+
+// crmAIPrompts is the CRM prompt source seam (the queue's d key): the app
+// returns the CRM-flagged prompts for the configured account; nil = none -
+// d reports unavailable.
+var crmAIPrompts = func() []AICommand { return nil }
+
+func SetCrmAIPromptSource(fn func() []AICommand) {
+	if fn != nil {
+		crmAIPrompts = fn
+	}
+}
+
+// onCrmAICommand runs a chosen CRM prompt on a queue row (the picker's
+// enter): the app drafts the follow-up into a prefilled compose. extra is
+// the picker's e-key text (empty = the default follow-up extra).
+var onCrmAICommand = func(name string, c core.CrmContact, extra string) {}
+
+func SetCrmAICommandHandler(fn func(string, core.CrmContact, string)) {
+	if fn != nil {
+		onCrmAICommand = fn
 	}
 }

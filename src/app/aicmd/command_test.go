@@ -117,3 +117,35 @@ func TestLoadCommandsDuplicateName(t *testing.T) {
 		t.Fatal("expected duplicate-name error")
 	}
 }
+
+// TestLoadCommandCRMFflag pins the crm frontmatter key: true/false parse,
+// anything else is a load error, and the default stays false.
+func TestLoadCommandCRMFflag(t *testing.T) {
+	dir := t.TempDir()
+	path := write(t, dir, "p.md",
+		"---\n"+
+			"name: Follow-up\n"+
+			"description: Draft a follow-up from the CRM context\n"+
+			"action: compose\n"+
+			"crm: true\n"+
+			"account_context: true\n"+
+			"---\n"+
+			"Write a follow-up email from the contact context below.\n")
+	cmd, err := LoadCommand(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cmd.CRM {
+		t.Error("crm = false, want true")
+	}
+	write(t, dir, "p.md",
+		"---\n"+
+			"name: Follow-up\n"+
+			"description: Draft a follow-up\n"+
+			"crm: maybe\n"+
+			"---\n"+
+			"x\n")
+	if _, err := LoadCommand(path); err == nil {
+		t.Error("crm: maybe accepted, want a load error")
+	}
+}

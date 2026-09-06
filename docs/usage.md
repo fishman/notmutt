@@ -43,6 +43,7 @@ every key is described there and rebindable.
 | [ / ] | previous / next tab |
 | ? | help |
 | = | check for new mail now |
+| Q | open the CRM follow-up review queue (lua + crm build) |
 
 `ctrl+f` opens a prompt taking a raw notmuch query - the whole
 database, unlike `/` which filters the current rows. Enter opens the
@@ -446,6 +447,38 @@ never overwritten - re-runs are safe. Filenames and categories are
 sanitized as single path segments (separators become `_`, control
 runes dropped), so no name can traverse the tree. Files are 0600,
 directories 0700.
+
+### CRM follow-up workflow
+
+The HubSpot follow-up workflow (a `lua` + `crm` build) pulls the
+contacts not yet followed up into a review queue over the index (`Q`),
+briefs one from its CRM record plus research over the `[ai]` provider
+(`a`), and - on `d` - opens the AI prompt picker over the CRM-flagged
+prompts (built-ins: Follow-up, Reconnect). The chosen prompt drafts
+into a prefilled compose from the CRM context - nothing sends
+automatically. Send or dismiss writes a processed marker back to the
+portal, so the next pull skips it. The core is vendor-neutral behind a
+client interface; the one concrete vendor today is HubSpot. The token
+resolves per operation (on the queue's first open, on a 401 refresh)
+and wipes after - never at startup:
+
+```toml
+[crm]
+provider = "hubspot"        # "" = the feature stays dormant
+
+[crm.hubspot]
+ai = "deepseek"             # an [ai] entry; blank = the first configured
+account = "gmail"           # the mail account whose context/grant the draft uses; blank = default context
+token_cmd = ["gpg", "-q", "-d", "/home/you/.hubspot/token.gpg"]  # argv printing the portal token (F4)
+marker_property = "followed_up"  # blank = "notmutt_followed_up"
+created_after = "2026-01-01T00:00:00Z"  # RFC3339; blank = all unprocessed
+```
+
+One-time setup: create the property once in the HubSpot UI (Settings >
+Data Management > Properties > Contacts; a single checkbox named
+`notmutt_followed_up`), or set `marker_property` to an existing one.
+Then pull again. A pull with a marker the portal lacks fails naming
+the property and this fix, never a bare HubSpot error.
 
 ### S/MIME verification
 

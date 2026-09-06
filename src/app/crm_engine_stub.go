@@ -22,3 +22,10 @@ func crmRowAction(action string, c core.CrmContact) {}
 // crmWire without the lua && crm build: no-op.
 func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) {
 }
+
+// crmPromptList without the lua && crm build: no CRM prompts.
+func crmPromptList() []tui.AICommand { return nil }
+
+// runCrmPrompt without the lua && crm build: no-op.
+func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c core.CrmContact, extra string) {
+}

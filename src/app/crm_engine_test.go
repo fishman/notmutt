@@ -97,6 +97,10 @@ const crmCompanyJSON = `{"id":"901","properties":{"name":"Acme Corp","domain":"a
 // fixtures; the marker PATCH records the id, or fails for the ids in fail.
 func (s *crmHSState) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/crm/v3/properties/contacts/", func(w http.ResponseWriter, r *http.Request) {
+		// the marker pre-flight: the property exists in this fake portal
+		w.Write([]byte(`{}`))
+	})
 	mux.HandleFunc("/crm/v3/objects/contacts/search", func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		var results []string
@@ -157,7 +161,7 @@ type crmAIEvent struct {
 // returned strings are the briefing and draft the test asserts against.
 func crmAIServer() (srv *httptest.Server, briefing, draft string) {
 	briefing = "Alpha Able is CTO at Acme Corp, which makes example software."
-	draft = "Subject: Following up on Acme\n\nHi Alpha,\n\nIt was great meeting you.\n\nBest,\nAlex"
+	draft = "Hi Alpha,\n\nIt was great meeting you.\n\nBest,\nAlex"
 	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			Messages []struct {
@@ -176,7 +180,7 @@ func crmAIServer() (srv *httptest.Server, briefing, draft string) {
 		switch {
 		case strings.Contains(sys, "researcher"):
 			reply = "1. Acme sells example software. | https://acme.example | Acme makes example software."
-		case strings.Contains(sys, "concise follow-up"):
+		case strings.Contains(sys, "drafting a follow-up email"):
 			reply = draft
 		}
 		payload, _ := json.Marshal(crmAIEvent{Choices: []crmAIDelta{{Delta: crmAIContent{Content: reply}}}})
@@ -195,9 +199,8 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	bus := core.NewBus()
 	events := bus.Subscribe()
 
-	aiSrv, briefing, draft := crmAIServer()
+	aiSrv, briefing, _ := crmAIServer()
 	defer aiSrv.Close()
-	draftSubject := strings.TrimSpace(strings.TrimPrefix(strings.SplitN(draft, "\n", 2)[0], "Subject: "))
 	hs := newCRMHSState()
 	hsSrv := httptest.NewServer(hs.handler())
 	defer hsSrv.Close()
@@ -213,21 +216,51 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 			AI:             "test-ai",
 			TokenCmd:       []string{crmWriteKeyScript(t, "test-token")},
 			MarkerProperty: "notmutt_followed_up",
+			Account:        "acme",
 		},
 	}
 	root := t.TempDir()
+	// the prompt run loads the CRM-flagged prompts from <root>/ai - seed the
+	// built-in follow-up prompt the draft leg runs
+	if err := os.MkdirAll(filepath.Join(root, "ai", "prompts"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "ai", "prompts", "follow-up.md"), []byte(`---
+name: Follow-up
+description: Draft a follow-up email from the CRM contact and briefing
+action: compose
+crm: true
+account_context: true
+---
+You are drafting a follow-up email to the contact in the context below.`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	origNew := crmHubspotNew
-	crmHubspotNew = func(ctx context.Context, key []byte) crm.Client {
+	crmHubspotNew = func(ctx context.Context, key []byte) *hubspot.Client {
 		return hubspot.NewClientURL(ctx, key, hsSrv.URL)
 	}
 	defer func() { crmHubspotNew = origNew }()
 
-	crmWire(context.Background(), bus, crmFakeWorker{}, cfg, root)
+	// wipes counts per-operation client teardowns: the lazy contract is one
+	// fresh client (and token fetch) per op, wiped after, none before the
+	// first CrmOpened.
+	wipes := 0
+	origWipe := crmHubspotWipe
+	crmHubspotWipe = func(c *hubspot.Client) {
+		wipes++
+		origWipe(c)
+	}
+	defer func() { crmHubspotWipe = origWipe }()
 
-	// pull: the first RefreshRequested publishes one CrmQueue page whose rows
-	// carry the client's provider routing id.
-	bus.Publish(core.RefreshRequested{})
+	crmWire(context.Background(), bus, crmFakeWorker{}, cfg, root)
+	if wipes != 0 {
+		t.Fatalf("wipes before the first CrmOpened = %d, want 0 (no token at wire time)", wipes)
+	}
+
+	// pull: the first CrmOpened publishes one CrmQueue page whose rows carry
+	// the client's provider routing id.
+	bus.Publish(core.CrmOpened{})
 	q := crmWaitFor(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
@@ -256,14 +289,15 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 		t.Errorf("briefing = provider %q text %q, want hubspot / %q", b.Provider, b.Text, briefing)
 	}
 
-	// draft: the handler looks up the cached briefing and opens the compose.
-	// The wait on the events channel above proves the CrmBriefing reached the
-	// test, not that crmWire already ran its cache write - poll the cache so
-	// the dispatch depends on that write, not on goroutine wake order.
+	// draft: the prompt run looks up the cached briefing and opens the
+	// compose. The wait on the events channel above proves the CrmBriefing
+	// reached the test, not that crmWire already ran its cache write - poll
+	// the cache so the dispatch depends on that write, not on goroutine wake
+	// order.
 	if !crmEventually(t, func() bool { return crmBriefingText("hubspot", "201") != "" }) {
 		t.Fatal("draft leg: the wire never cached the briefing")
 	}
-	crmRowAction("draft", q.Contacts[0])
+	go runCrmPrompt(bus, cfg, root, "Follow-up", q.Contacts[0], "")
 	opened := crmWaitFor(t, events, func(e core.Event) bool {
 		_, ok := e.(core.ComposeOpened)
 		return ok
@@ -271,11 +305,15 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	if len(opened.To) != 1 || opened.To[0] != "alpha@example.com" {
 		t.Errorf("compose To = %v, want [alpha@example.com]", opened.To)
 	}
-	if opened.Subject != draftSubject {
-		t.Errorf("compose Subject = %q, want the draft subject %q", opened.Subject, draftSubject)
+	if opened.Subject != crm.DefaultDraftSubject {
+		t.Errorf("compose Subject = %q, want %q", opened.Subject, crm.DefaultDraftSubject)
 	}
 	if !strings.Contains(opened.Body, "Hi Alpha") {
-		t.Errorf("compose Body = %q, want the draft body", opened.Body)
+		t.Errorf("compose Body = %q, want the prompt reply body", opened.Body)
+	}
+	// the prompt run touches no HubSpot endpoint - no new client, no wipe
+	if wipes != 2 {
+		t.Errorf("wipes after the prompt draft = %d, want 2 (pull + analyze; the prompt run is local)", wipes)
 	}
 
 	// send-OK: the write-back marks the contact once, and the next pull page
@@ -284,7 +322,10 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	if !crmEventually(t, func() bool { return hs.patchCount("201") == 1 }) {
 		t.Fatalf("send-OK mark: expected one PATCH on 201, got %d", hs.patchCount("201"))
 	}
-	bus.Publish(core.RefreshRequested{})
+	if wipes != 3 {
+		t.Errorf("wipes after the send-OK mark = %d, want 3 (one per op)", wipes)
+	}
+	bus.Publish(core.CrmOpened{})
 	q2 := crmWaitFor(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
@@ -306,7 +347,10 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 	if hs.patchCount("202") != 1 {
 		t.Errorf("dismiss mark: expected one PATCH on 202, got %d", hs.patchCount("202"))
 	}
-	bus.Publish(core.RefreshRequested{})
+	if wipes != 5 {
+		t.Errorf("wipes after the dismiss mark = %d, want 5 (pull, analyze, send-mark, q2 pull, dismiss - one per op)", wipes)
+	}
+	bus.Publish(core.CrmOpened{})
 	q3 := crmWaitFor(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
@@ -330,7 +374,7 @@ func (w *crmCountWorker) Call(notmuch.Action) (notmuch.Reply, error) {
 // shaping a worker query; a plausible address still queries.
 func TestCrmMailGroundRejectsNonEmail(t *testing.T) {
 	w := &crmCountWorker{}
-	ground := crmMailGround(config.Default(), w)
+	ground := crmMailGround(config.Default(), w, "")
 	for _, bad := range []string{`alpha@example.com" OR from:*`, "alpha @example.com", "alpha<example.com", "al\npha@example.com"} {
 		if _, err := ground(context.Background(), bad); err != nil {
 			t.Fatalf("ground(%q) err = %v", bad, err)

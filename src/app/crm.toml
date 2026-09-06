@@ -1,0 +1,14 @@
+# CRM config: the vendor-neutral follow-up workflow over the index.
+# Deny by default - a blank [crm] provider keeps the Q queue closed.
+# Runs in a lua + crm build, driving an [ai] provider from ai.toml.
+# See docs/usage.md for the full reference.
+
+# [crm]                                    # the active engine; "" = dormant
+# provider = "hubspot"                     # the only engine today
+
+# [crm.hubspot]                            # per-vendor params; required once provider is set
+# ai = "deepseek"                          # an [ai] entry; blank = the first configured one
+# account = "gmail"                        # the mail account whose context/grant the draft uses
+# token_cmd = ["gpg", "-q", "-d", "/home/you/.hubspot/token.gpg"]
+# marker_property = "followed_up"          # follow-up marker; blank = "notmutt_followed_up"
+# created_after = "2026-01-01T00:00:00Z"   # pull only newer contacts; blank = all

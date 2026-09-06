@@ -33,6 +33,9 @@ type Command struct {
 	// SummaryContext appends the previous AI summary (the last view
 	// command's output) to the prompt context - the chaining opt-in.
 	SummaryContext bool
+	// CRM marks a queue-surface prompt (the d key picker): it drafts from
+	// the CRM context block, never a mail thread.
+	CRM bool
 	Body           string
 	// Account is the folder that owns this prompt: "" = a default prompt
 	// (prompts/), set = an account prompt (accounts/<account>/, where
@@ -124,6 +127,15 @@ func parseCommand(data []byte, path string) (*Command, error) {
 			default:
 				return nil, fmt.Errorf("%s:%d: summary_context must be true or false", path, i+1)
 			}
+		case "crm":
+			switch value {
+			case "true":
+				cmd.CRM = true
+			case "false":
+				cmd.CRM = false
+			default:
+				return nil, fmt.Errorf("%s:%d: crm must be true or false", path, i+1)
+			}
 		default:
 			return nil, fmt.Errorf("%s:%d: unknown key %q", path, i+1, key)
 		}
@@ -137,7 +149,10 @@ func parseCommand(data []byte, path string) (*Command, error) {
 	if cmd.Action != "view" && cmd.Action != "compose" {
 		return nil, fmt.Errorf("%s: action must be view or compose, got %q", path, cmd.Action)
 	}
-	if len(cmd.Data) == 0 {
+	// a CRM prompt drafts from the CRM context block, never mail - its run
+	// path does not call BuildContext, so the mail allowlist is exempt
+	// (any declared data still validates as known fields)
+	if len(cmd.Data) == 0 && !cmd.CRM {
 		return nil, fmt.Errorf("%s: missing data (the context allowlist)", path)
 	}
 	for _, f := range cmd.Data {

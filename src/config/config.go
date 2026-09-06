@@ -270,6 +270,9 @@ type HubspotConfig struct {
 	TokenCmd       []string `toml:"token_cmd"`       // argv printing the portal token
 	MarkerProperty string   `toml:"marker_property"` // blank = DefaultHubspotMarkerProperty
 	CreatedAfter   string   `toml:"created_after"`   // RFC3339; empty = all unprocessed
+	// Account is the mail account whose context file and [ai-data] grant
+	// the draft leg uses; empty = the thread-derived fallback.
+	Account string `toml:"account"`
 }
 
 // DefaultHubspotMarkerProperty is the contact property a HubSpot follow-up
@@ -1892,6 +1895,11 @@ func validate(cfg Config) error {
 		if ca := h.CreatedAfter; ca != "" {
 			if _, err := time.Parse(time.RFC3339, ca); err != nil {
 				return fmt.Errorf("crm.hubspot: created_after %q must be RFC3339 (got: %v)", ca, err)
+			}
+		}
+		if a := h.Account; a != "" {
+			if _, ok := cfg.Accounts[a]; !ok {
+				return fmt.Errorf("crm.hubspot: account %q does not name a configured [accounts] entry", a)
 			}
 		}
 	}

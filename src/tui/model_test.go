@@ -6835,3 +6835,35 @@ func TestTaskOverlay(t *testing.T) {
 		t.Fatalf("tasks after completion = %+v", m.tasks)
 	}
 }
+
+// TestCrmOpenPublishesCrmOpened pins the queue's first open: it publishes
+// CrmOpened (the pull trigger), not RefreshRequested - the mail refresh
+// must never side-pull CRM.
+func TestCrmOpenPublishesCrmOpened(t *testing.T) {
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	SetCrmPullSource(func() []CrmCommand { return []CrmCommand{{Name: "hubspot", Desc: "pull"}} })
+	t.Cleanup(func() { SetCrmPullSource(nil) })
+	m := model()
+	m.bus = bus
+	m = press(t, m, "Q")
+	var gotCrm bool
+loop:
+	for {
+		select {
+		case e := <-ch:
+			if _, ok := e.(core.CrmOpened); ok {
+				gotCrm = true
+				break loop
+			}
+			if _, ok := e.(core.RefreshRequested); ok {
+				t.Fatal("first Q-open published RefreshRequested, want CrmOpened")
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no CrmOpened published on first Q-open")
+		}
+	}
+	if !gotCrm {
+		t.Fatal("no CrmOpened published on first Q-open")
+	}
+}

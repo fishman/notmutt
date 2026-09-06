@@ -104,8 +104,8 @@ func TestSeedAICommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seeded commands must load: %v", err)
 	}
-	if len(cmds) != 2 {
-		t.Fatalf("seeded commands = %d, want 2", len(cmds))
+	if len(cmds) != 4 {
+		t.Fatalf("seeded commands = %d, want 4", len(cmds))
 	}
 	// the default style context must seed and survive a user edit
 	def := filepath.Join(dst, "context", "default.md")
@@ -178,5 +178,30 @@ func TestSeedFiles(t *testing.T) {
 			// a user's file must survive a re-run
 			assertSeedPreserves(t, path, func() { seedFile(dir, tc.name, tc.seed) })
 		})
+	}
+}
+
+// TestCrmSeedPromptsPinFlag pins the built-in CRM prompt seeds: both parse
+// strictly and carry the crm flag + compose action the queue picker
+// filters on.
+func TestCrmSeedPromptsPinFlag(t *testing.T) {
+	dir := t.TempDir()
+	seedAICommands(dir)
+	cmds, err := aicmd.LoadCommands(filepath.Join(dir, "ai"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]aicmd.Command{}
+	for _, c := range cmds {
+		got[c.Name] = c
+	}
+	for _, name := range []string{"Follow-up", "Reconnect"} {
+		c, ok := got[name]
+		if !ok {
+			t.Fatalf("seeded prompts lack %q", name)
+		}
+		if !c.CRM || c.Action != "compose" {
+			t.Errorf("%s: crm=%v action=%q, want true/compose", name, c.CRM, c.Action)
+		}
 	}
 }

@@ -43,6 +43,15 @@ Per-operation client factory. The adapter holds a factory, not a client:
   send write-back mark) builds a fresh client, runs, then wipes. The
   key's lifetime is one operation.
 
+Expired-token refresh. The token_cmd output carries no TTL metadata,
+so expiry is only observable as a 401. The client handles it there:
+`do()` gains a token-resolver seam (nil = the static key, the test
+posture). A 401 zeroes the old key buffer, runs the resolver (the
+token_cmd argv), swaps in the fresh key, and retries the request once;
+a second 401 surfaces as the error. Refresh-on-401 IS the expiry
+handling - any API access that meets an expired token pulls a new one
+on demand. The wipe covers whichever buffer is live at operation end.
+
 Honest limitation, documented in code: Go cannot guarantee zeroing (GC
 copies buffers; wipe is best-effort over the stored copy). The posture
 is shortest practical lifetime plus best-effort zeroing; the escalation
@@ -127,6 +136,10 @@ files, and chat plumbing, so the draft leg moves into the adapter.
 - Factory: token_cmd runs once per operation (counting fake), not at
   startup; wipe called after each op; key bytes zeroed (assert on the
   returned buffer).
+- Refresh: a 401 mid-operation re-runs token_cmd and retries the
+  request once (httptest: 401 then 200 - two token_cmd runs, retry
+  succeeds, live buffer zeroed at end); a second 401 surfaces the
+  error, no retry loop.
 - Trigger: first Q-open publishes `CrmOpened` and pulls; `=`
   (RefreshRequested) no longer pulls; no factory call before first
   open.

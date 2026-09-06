@@ -53,6 +53,9 @@ var aiSeedFS embed.FS
 //go:embed ai.toml
 var aiConfigSeed []byte
 
+//go:embed crm.toml
+var crmSeed []byte
+
 //go:embed config.toml
 var configSeed []byte
 
@@ -81,6 +84,7 @@ func Run() error {
 	}
 	seedFile(configDir(), "config.toml", configSeed)
 	seedFile(configDir(), "ai.toml", aiConfigSeed)
+	seedFile(configDir(), "crm.toml", crmSeed)
 	seedAICommands(configDir())
 	cfg, err := config.Load(configDir())
 	if err != nil {
@@ -297,6 +301,10 @@ func Run() error {
 	// route its a/d/x dispatches; the stub variants keep the surface closed.
 	tui.SetCrmPullSource(crmPullSource)
 	tui.SetCrmActionHandler(crmRowAction)
+	tui.SetCrmAIPromptSource(crmPromptList)
+	tui.SetCrmAICommandHandler(func(name string, c core.CrmContact, extra string) {
+		go runCrmPrompt(bus, cfg, root, name, c, extra)
+	})
 	crmWire(ctx, bus, worker, cfg, root)
 
 	// attach commands: config tables register first, then Lua plugin

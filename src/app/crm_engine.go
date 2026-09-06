@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -304,6 +305,122 @@ func crmMailGround(cfg config.Config, worker workerAPI, account string) crm.Mail
 // prefilled compose, register its tab id -> {Provider, ContactID} for the
 // send hook (crmWriteBackOnSend), and publish ComposeOpened for the TUI to
 // attach.
+// crmPromptList is the CRM prompt picker source (SetCrmAIPromptSource):
+// the CRM-flagged commands for the configured account - the account's own
+// flagged prompts (already first from LoadCommands) plus the flagged
+// defaults; "" account = flagged defaults only.
+func crmPromptList() []tui.AICommand {
+	cmds, err := aicmd.LoadCommands(filepath.Join(configDir(), "ai"))
+	if err != nil {
+		diag.Warn("aicmd", "err", err.Error())
+		return nil
+	}
+	a := crmAdapter
+	account := ""
+	if a != nil {
+		account = a.account
+	}
+	out := make([]tui.AICommand, 0, len(cmds))
+	for _, c := range cmds {
+		if !c.CRM {
+			continue
+		}
+		if c.Account != "" && c.Account != account {
+			continue
+		}
+		out = append(out, tui.AICommand{Name: c.Name, Desc: c.Description})
+	}
+	return out
+}
+
+// crmPromptBlock is a queue row's identity for the prompt context: foreign
+// CRM input, sanitized before it reaches a prompt (F1).
+func crmPromptBlock(c core.CrmContact) string {
+	name := strings.TrimSpace(c.First + " " + c.Last)
+	if name == "" {
+		name = c.Email
+	}
+	var parts []string
+	parts = append(parts, "Name: "+name, "Email: "+c.Email)
+	if c.Title != "" {
+		parts = append(parts, "Title: "+c.Title)
+	}
+	if c.Company != "" {
+		parts = append(parts, "Company: "+c.Company)
+	}
+	return core.SanitizeControls(strings.Join(parts, "\n"))
+}
+
+// runCrmPrompt runs a chosen CRM-flagged prompt on a queue row: the cached
+// briefing, the gated mail ground, and the account/default context note
+// assemble the prompt context; one chat call on the resolved [ai] entry
+// produces the body, which opens the prefilled compose through the same
+// path the old draft used (so send write-back is retained). extra is the
+// picker's e-key text; empty falls back to a default follow-up instruction.
+// No HubSpot call and no token - the row data is already local.
+func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c core.CrmContact, extra string) {
+	a := crmAdapter
+	if a == nil || c.Provider != a.provider {
+		return
+	}
+	fail := func(err error) {
+		bus.Publish(core.CrmRowError{Provider: c.Provider, ContactID: c.ID, Err: err})
+	}
+	text := crmBriefingText(c.Provider, c.ID)
+	if text == "" {
+		fail(errors.New("crm: prompt: no briefing"))
+		return
+	}
+	cmds, err := aicmd.LoadCommands(filepath.Join(root, "ai"))
+	if err != nil {
+		fail(err)
+		return
+	}
+	var cmd *aicmd.Command
+	for i := range cmds {
+		if cmds[i].Name == name && cmds[i].CRM {
+			cmd = &cmds[i]
+			break
+		}
+	}
+	if cmd == nil {
+		fail(fmt.Errorf("crm: prompt: %q is not a CRM prompt", name))
+		return
+	}
+	note := aicmd.LoadDefaultContext(root)
+	if a.account != "" {
+		note = aicmd.LoadAccountContext(root, a.account)
+	}
+	ground, err := a.ground(context.Background(), c.Email)
+	if err != nil {
+		fail(err)
+		return
+	}
+	system := cmd.Body + "\n\nContact context:\n" + crmPromptBlock(c) + "\nBriefing:\n" + text
+	if ground != "" {
+		system += "\nMail context:\n" + ground
+	}
+	if note != "" {
+		system += "\nStyle:\n" + note
+	}
+	user := strings.TrimSpace(extra)
+	if user == "" {
+		user = "Write a follow-up email to this contact."
+	}
+	out, err := ai.Chat(context.Background(), a.aiCfg, a.aiCfg.Model, system, user, func(string) {})
+	if err != nil {
+		fail(fmt.Errorf("crm: prompt: %w", err))
+		return
+	}
+	crmOpenDraftCompose(bus, cfg, root, core.CrmDraft{
+		Provider:  c.Provider,
+		ContactID: c.ID,
+		Email:     c.Email,
+		Subject:   crm.DefaultDraftSubject,
+		Body:      out,
+	})
+}
+
 func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.CrmDraft) {
 	if st := crmDraftCompose(cfg, root, d); st != nil {
 		st.ID = fmt.Sprintf("%d", time.Now().UnixNano())

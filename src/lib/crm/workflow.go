@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"notmutt/config"
@@ -125,13 +124,9 @@ func RunAnalyze(bus *core.Bus, client Client, aiCfg config.AIProvider, contact C
 }
 
 // draftSystem is the writer role prompt for the draft chat call: the reply
-// must open with a "Subject:" line so it splits into the draft's subject and
-// body.
-const draftSystem = `Write a concise follow-up email to a person I met and whose business card I scanned. Reply "Subject: <line>" on the first line, then the body.`
-
-// defaultDraftSubject is the subject a draft falls back to when the model
-// reply carries no parseable "Subject:" line.
-const defaultDraftSubject = "Following up"
+// DefaultDraftSubject is the compose subject the CRM prompt run prefills
+// (the contact and briefing supply the body; the user edits both).
+const DefaultDraftSubject = "Following up"
 
 // MailGroundFn supplies gated mail context for a follow-up draft: the adapter
 // returns "" unless an inbound thread from email exists and its account's
@@ -139,45 +134,6 @@ const defaultDraftSubject = "Following up"
 // legitimate no-context outcome, never an error; only the adapter reads mail,
 // through aicmd.BuildContext behind the grant.
 type MailGroundFn func(ctx context.Context, email string) (string, error)
-
-// RunDraft writes a follow-up draft for one contact: the model sees the
-// briefing plus any gated mail grounding and replies with a subject line and
-// body, which parse into a core.CrmDraft published with client.Provider() as
-// the routing id - never a vendor literal. Nothing is sent; the adapter opens
-// the compose on the published draft. chat is the adapter's ai.Chat on the
-// resolved [ai] entry; nil is a caller error. mailGround may be nil -
-// grounding is optional by design (its absence is a no-grant outcome, not a
-// failure). No mail content reaches chat except through the adapter's gated
-// MailGroundFn.
-func RunDraft(bus *core.Bus, client Client, aiCfg config.AIProvider, contact Contact, briefingText string, mailGround MailGroundFn, chat ChatFn) {
-	provider := client.Provider()
-	ctx := context.Background()
-	if chat == nil {
-		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: errors.New("crm: draft: nil chat fn")})
-		return
-	}
-	prompt := briefingText
-	if mailGround != nil {
-		ground, err := mailGround(ctx, contact.Email)
-		if err != nil {
-			bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: fmt.Errorf("crm: draft: grounding: %w", err)})
-			return
-		}
-		if ground != "" {
-			prompt += "\n\nRelevant mail context:\n" + ground
-		}
-	}
-	out, err := chat(ctx, aiCfg, aiCfg.Model, draftSystem, prompt, func(string) {})
-	if err != nil {
-		bus.Publish(core.CrmRowError{Provider: provider, ContactID: contact.ID, Err: fmt.Errorf("crm: draft: %w", err)})
-		return
-	}
-	subject, body := splitDraftReply(out)
-	if subject == "" {
-		subject = defaultDraftSubject
-	}
-	bus.Publish(core.CrmDraft{Provider: provider, ContactID: contact.ID, Email: contact.Email, Subject: subject, Body: body})
-}
 
 // RunMark records a follow-up on one contact by writing the marker property -
 // the write-back after a sent mail or a dismissal. Success publishes nothing:
@@ -196,25 +152,4 @@ func RunMark(bus *core.Bus, client Client, id, marker string) {
 	if err := client.MarkFollowedUp(context.Background(), id, marker); err != nil {
 		bus.Publish(core.CrmRowError{Provider: provider, ContactID: id, Err: fmt.Errorf("crm: mark: %w", err)})
 	}
-}
-
-// splitDraftReply splits the model reply at its "Subject:" line (leading
-// whitespace tolerated, case-insensitive): the rest of that line is the
-// subject, everything after it the body. CRLF input normalizes to LF first
-// so no stray carriage return survives into the body. A reply with no
-// "Subject:" line - or with an empty one - returns an empty subject and the
-// whole reply as the body, so RunDraft falls back to the default subject. A
-// late "Subject:" line after preamble text still splits at it, dropping the
-// preamble - that is not the same as the no-subject fallback, which keeps
-// the whole reply.
-func splitDraftReply(out string) (subject, body string) {
-	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
-	for i, line := range lines {
-		t := strings.TrimSpace(line)
-		if len(t) < len("Subject:") || !strings.EqualFold(t[:len("Subject:")], "Subject:") {
-			continue
-		}
-		return strings.TrimSpace(t[len("Subject:"):]), strings.TrimSpace(strings.Join(lines[i+1:], "\n"))
-	}
-	return "", strings.TrimSpace(out)
 }

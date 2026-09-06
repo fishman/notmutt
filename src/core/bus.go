@@ -179,6 +179,11 @@ type WorkerLockTimeout struct{ Kind string }
 // refresher runs the same poll body as its ticker.
 type RefreshRequested struct{}
 
+// CrmOpened is the CRM queue's first-open signal (the Q key): the app
+// adapter pulls on it - the pull happens when the user opens the queue,
+// never on startup or the mail refresh.
+type CrmOpened struct{}
+
 type CacheResult struct {
 	MsgID string
 	Atts  []Attachment

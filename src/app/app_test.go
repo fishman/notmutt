@@ -203,5 +203,10 @@ func TestCrmSeedPromptsPinFlag(t *testing.T) {
 		if !c.CRM || c.Action != "compose" {
 			t.Errorf("%s: crm=%v action=%q, want true/compose", name, c.CRM, c.Action)
 		}
+		// the sparse-context guard: the model must draft, never narrate
+		// gaps or ask the contact for details the CRM lacks
+		if !strings.Contains(c.Body, "Never mention the CRM") {
+			t.Errorf("%s: body lacks the sparse-context guard", name)
+		}
 	}
 }

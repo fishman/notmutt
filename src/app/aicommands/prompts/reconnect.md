@@ -10,6 +10,10 @@ below: their identity, company, and a briefing assembled from the CRM
 record and recent research. The relationship is cold - reopen it
 concretely (a specific hook from the briefing, never flattery).
 
+The context may be sparse. Never mention the CRM or the briefing, never
+ask the contact for details the context lacks, and never narrate gaps in
+the context - draft the email from whatever is present.
+
 Write a short, professional email in the user's voice - the style note,
 when present, is the voice to match. Write in short paragraphs separated
 by blank lines - the client wraps the text to the email line width

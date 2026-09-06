@@ -24,32 +24,40 @@ import (
 	"notmutt/tui"
 )
 
-// crmAdapterState is the crm wire's resolved state: the neutral client the
-// workflow drives, the [ai] entry its chat calls run on, the marker
-// property the write-back records, the bus jobs publish on, and the gated
-// mail-grounding closure RunDraft consumes. provider is the client's
+// crmAdapterState is the crm wire's resolved state: the per-operation
+// client factory (token on demand, wiped after each op), the [ai] entry
+// the chat calls run on, the marker property the write-back records, the
+// configured mail account ("" = thread-derived fallback), the bus jobs
+// publish on, and the gated mail-grounding closure. provider is the
 // routing id - the row filter the action handler applies.
 type crmAdapterState struct {
-	client   crm.Client
-	provider string
-	aiCfg    config.AIProvider
-	marker   string
-	bus      *core.Bus
-	ground   crm.MailGroundFn
+	provider  string
+	newClient func(ctx context.Context) (crm.Client, func(), error)
+	aiCfg     config.AIProvider
+	marker    string
+	account   string
+	bus       *core.Bus
+	ground    crm.MailGroundFn
 }
 
 // crmAdapter is the resolved wire state; nil while the CRM is dormant or
 // its setup failed. Written once in crmWire before the subscriber starts;
-// the workflow jobs read it, never rebuild the client. Session-local.
+// the workflow jobs build a fresh client per operation and wipe it after.
+// Session-local.
 var crmAdapter *crmAdapterState
 
-// crmHubspotNew is the hubspot client factory seam crmWire builds its
-// client through: the production value constructs against the live API,
+// crmHubspotNew is the hubspot client factory seam the per-op factory
+// builds through: the production value constructs against the live API,
 // and the integration test swaps it to point a real client at an httptest
 // server via hubspot.NewClientURL.
-var crmHubspotNew = func(ctx context.Context, key []byte) crm.Client {
+var crmHubspotNew = func(ctx context.Context, key []byte) *hubspot.Client {
 	return hubspot.NewClient(ctx, key)
 }
+
+// crmHubspotWipe is the wipe seam (crmHubspotNew's pair): the per-op
+// factory returns it as the cleanup func; the integration test overrides
+// it to observe wipe calls.
+var crmHubspotWipe = func(c *hubspot.Client) { c.Wipe() }
 
 // crmBriefMu guards crmBriefText, the adapter's briefing cache (the draft
 // seam's session map): each CrmBriefing the wire observes stores its text
@@ -101,7 +109,7 @@ var (
 // the surface currently offers no picker, so the list is availability-only.
 func crmPullSource() []tui.CrmCommand {
 	a := crmAdapter
-	if a == nil || a.client == nil {
+	if a == nil {
 		return nil
 	}
 	return []tui.CrmCommand{{Name: a.provider, Desc: "review the " + a.provider + " follow-up queue"}}
@@ -123,104 +131,121 @@ func crmWireContact(c core.CrmContact) crm.Contact {
 // surface's own guard let a draft through on an uncached briefing - skip.
 func crmRowAction(action string, c core.CrmContact) {
 	a := crmAdapter
-	if a == nil || a.client == nil || c.Provider != a.provider {
+	if a == nil || c.Provider != a.provider {
 		return
 	}
 	contact := crmWireContact(c)
 	switch action {
 	case "analyze":
-		go crm.RunAnalyze(a.bus, a.client, a.aiCfg, contact, ai.Chat)
-	case "draft":
-		text := crmBriefingText(c.Provider, c.ID)
-		if text == "" {
-			return
-		}
-		go crm.RunDraft(a.bus, a.client, a.aiCfg, contact, text, a.ground, ai.Chat)
+		go func() {
+			client, wipe, err := a.newClient(context.Background())
+			if err != nil {
+				a.bus.Publish(core.CrmRowError{Provider: a.provider, ContactID: contact.ID, Err: err})
+				return
+			}
+			defer wipe()
+			crm.RunAnalyze(a.bus, client, a.aiCfg, contact, ai.Chat)
+		}()
 	case "dismiss":
 		// Marking writes the follow-up property; double-marking is accepted -
 		// the write is idempotent, and a re-x after a slow mark re-writes it.
-		go crm.RunMark(a.bus, a.client, contact.ID, a.marker)
+		go func() {
+			client, wipe, err := a.newClient(context.Background())
+			if err != nil {
+				a.bus.Publish(core.CrmRowError{Provider: a.provider, ContactID: contact.ID, Err: err})
+				return
+			}
+			defer wipe()
+			crm.RunMark(a.bus, client, contact.ID, a.marker)
+		}()
 	}
 }
 
 // crmWire is the CRM follow-up workflow's app adapter: dormant unless
-// [crm] names a provider, then it builds that provider's neutral client
-// (the switch on cfg.Crm.Provider - the only vendor string on the app
-// surface), resolves the [ai] entry the workflow runs on, and reacts to
-// the refresh key (launch a pull) and to generated CrmDrafts (open the
-// prefilled compose). The job bodies live in lib/crm/workflow.go; a
-// SendResult for a CRM-origin compose writes the follow-up marker back
-// through the client.
+// [crm] names a provider, then it resolves the [ai] entry the workflow
+// runs on (the switch on cfg.Crm.Provider - the only vendor string on the
+// app surface) and holds a per-operation client factory. No token_cmd
+// runs here: the queue's first open (CrmOpened) launches a pull through
+// the factory, which fetches the token, runs, and wipes. The job bodies
+// live in lib/crm/workflow.go; a SendResult for a CRM-origin compose
+// marks the contact followed up through a fresh per-op client.
 func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) {
 	if cfg.Crm.Provider == "" {
 		return
 	}
 	hs := cfg.Crm.Hubspot
-	var client crm.Client
 	var aiCfg config.AIProvider
 	switch cfg.Crm.Provider {
 	case "hubspot":
-		// Resolve the [ai] entry before the token subprocess: the common
-		// misconfig - a valid token_cmd but no [ai] section - fails cheap
-		// instead of spawning the secret-printing subprocess and then bailing.
+		// Resolve the [ai] entry without touching the token subprocess: the
+		// common misconfig - a valid token_cmd but no [ai] section - fails
+		// cheap here. The token itself resolves per operation.
 		var err error
 		aiCfg, err = resolveAIProvider(cfg, hs.AI)
 		if err != nil {
 			diag.Warn("crm: disabled", "err", err.Error())
 			return
 		}
-		key, err := ai.FetchKey(ctx, hs.TokenCmd)
-		if err != nil {
-			diag.Warn("crm: disabled", "err", err.Error())
-			return
-		}
-		// The factory seam (crmHubspotNew) lets the integration test point a
-		// real client at an httptest server. NewClient retains the key for the
-		// client's lifetime, so the wire does not clear it (the
-		// ai-caller-clears rule yields here).
-		client = crmHubspotNew(ctx, key)
 	default:
 		return // a provider with no client case: config load already rejects it
 	}
-	crmAdapter = &crmAdapterState{
-		client:   client,
-		provider: client.Provider(),
-		aiCfg:    aiCfg,
-		marker:   hs.MarkerProperty,
-		bus:      bus,
-		ground:   crmMailGround(cfg, worker),
+	newClient := func(ctx context.Context) (crm.Client, func(), error) {
+		key, err := ai.FetchKey(ctx, hs.TokenCmd)
+		if err != nil {
+			return nil, nil, fmt.Errorf("crm: token: %w", err)
+		}
+		hc := crmHubspotNew(ctx, key)
+		hc.SetTokenResolver(func(ctx context.Context) ([]byte, error) {
+			return ai.FetchKey(ctx, hs.TokenCmd)
+		})
+		return hc, func() { crmHubspotWipe(hc) }, nil
 	}
-	// the pull trigger, the briefing cache, the compose-open reaction, and
-	// the send write-back: each manual refresh launches a pull on its own
-	// goroutine (RunPull's mutex absorbs overlap, so no gate here); a
-	// generated CrmBriefing caches the text the draft seam needs; a generated
-	// CrmDraft opens the prefilled compose; a SendResult for such a compose
-	// marks the contact followed up.
+	crmAdapter = &crmAdapterState{
+		provider:  "hubspot",
+		newClient: newClient,
+		aiCfg:     aiCfg,
+		marker:    hs.MarkerProperty,
+		account:   hs.Account,
+		bus:       bus,
+		ground:    crmMailGround(cfg, worker, hs.Account),
+	}
+	// the subscriber: the queue's first open (CrmOpened) launches a pull on
+	// its own goroutine with a per-op client (RunPull's mutex absorbs
+	// overlap); a generated CrmBriefing caches the text the prompt run
+	// needs; a SendResult for a CRM-origin compose marks the contact
+	// followed up. The mail refresh (RefreshRequested) never pulls CRM.
 	ch := bus.Subscribe()
 	go func() {
 		for e := range ch {
 			switch e := e.(type) {
-			case core.RefreshRequested:
-				go crm.RunPull(bus, client, hs.MarkerProperty, hs.CreatedAfter)
+			case core.CrmOpened:
+				go func() {
+					client, wipe, err := newClient(context.Background())
+					if err != nil {
+						bus.Publish(core.CrmRowError{Provider: "hubspot", Err: err})
+						return
+					}
+					defer wipe()
+					crm.RunPull(bus, client, hs.MarkerProperty, hs.CreatedAfter)
+				}()
 			case core.CrmBriefing:
 				crmCacheBriefing(e)
-			case core.CrmDraft:
-				crmOpenDraftCompose(bus, cfg, root, e)
 			case core.SendResult:
-				crmWriteBackOnSend(bus, client, hs.MarkerProperty, e)
+				crmWriteBackOnSend(bus, newClient, "hubspot", hs.MarkerProperty, e)
 			}
 		}
 	}()
 }
 
 // crmMailGround builds the adapter's gated mail-grounding closure for
-// RunDraft: a worker query from:"<email>" finds the newest inbound thread,
-// its owning account resolves from the thread tags, and - only when that
-// account's [ai-data] grant permits - aicmd.BuildContext runs over the thread
-// with a synthetic command whose Data is the grant. No thread or no grant
-// returns "" - mail content never reaches a prompt except through
-// BuildContext's Data allowlist.
-func crmMailGround(cfg config.Config, worker workerAPI) crm.MailGroundFn {
+// the prompt run: a worker query from:"<email>" finds the newest inbound
+// thread, the grant resolves from the configured [crm.hubspot] account
+// (empty = the thread's tag-derived account, the old fallback), and - only
+// when that account's [ai-data] grant permits - aicmd.BuildContext runs
+// over the thread with a synthetic command whose Data is the grant. No
+// thread or no grant returns "" - mail content never reaches a prompt
+// except through BuildContext's Data allowlist.
+func crmMailGround(cfg config.Config, worker workerAPI, account string) crm.MailGroundFn {
 	return func(ctx context.Context, email string) (string, error) {
 		if email == "" {
 			return "", nil
@@ -257,9 +282,11 @@ func crmMailGround(cfg config.Config, worker workerAPI) crm.MailGroundFn {
 		if err != nil || rpl.Err != nil {
 			return "", fmt.Errorf("thread %s: %w", found[0].ThreadID, errors.Join(err, rpl.Err))
 		}
-		account := ""
-		if m := newestOf(rpl.Msgs); m != nil {
-			account = resolveAccount(cfg, tagsOf(m), nil)
+		// the configured account wins; empty falls back to the thread's tags
+		if account == "" {
+			if m := newestOf(rpl.Msgs); m != nil {
+				account = resolveAccount(cfg, tagsOf(m), nil)
+			}
 		}
 		allowed, ok := cfg.AIDataGrant(account)
 		if !ok || len(allowed) == 0 {
@@ -290,12 +317,12 @@ func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.C
 // crmWriteBackOnSend reacts to a send result for a CRM-origin compose: an OK
 // result consumes the compose map entry (the row leaves on the next pull
 // page, which omits a contact whose marker landed) and, when the entry's
-// provider matches the wired client, launches RunMark on its own goroutine.
-// A failed send leaves both the compose and the entry alone - the dialogue
-// retries, and a retried OK still marks. The mark's own outcome is
+// provider matches the wired one, runs MarkFollowedUp through a per-op
+// client. A failed send leaves both the compose and the entry alone - the
+// dialogue retries, and a retried OK still marks. The mark's own outcome is
 // unobservable here (RunMark is void), so the entry drops at consumption
 // time; a failed mark keeps the row retryable via a fresh pull/action.
-func crmWriteBackOnSend(bus *core.Bus, client crm.Client, marker string, e core.SendResult) {
+func crmWriteBackOnSend(bus *core.Bus, newClient func(ctx context.Context) (crm.Client, func(), error), provider, marker string, e core.SendResult) {
 	if !e.OK {
 		return
 	}
@@ -305,10 +332,18 @@ func crmWriteBackOnSend(bus *core.Bus, client crm.Client, marker string, e core.
 		delete(crmComposeRefs, e.TabID)
 	}
 	crmComposeMu.Unlock()
-	if !ok || ref.Provider != client.Provider() {
+	if !ok || ref.Provider != provider {
 		return
 	}
-	go crm.RunMark(bus, client, ref.ContactID, marker)
+	go func() {
+		client, wipe, err := newClient(context.Background())
+		if err != nil {
+			bus.Publish(core.CrmRowError{Provider: provider, ContactID: ref.ContactID, Err: err})
+			return
+		}
+		defer wipe()
+		crm.RunMark(bus, client, ref.ContactID, marker)
+	}()
 }
 
 // crmDraftCompose builds a compose dialogue from a CRM follow-up draft: the

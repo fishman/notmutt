@@ -276,6 +276,12 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	if q.Contacts[0].ID != "201" || q.Contacts[1].ID != "202" {
 		t.Fatalf("page order = %q, %q; want 201, 202", q.Contacts[0].ID, q.Contacts[1].ID)
 	}
+	// the pull's op-level bar: the adapter wraps the job under the "crm"
+	// view key (the queue's singleton tab) with a terminal Done
+	crmWaitFor(t, events, func(e core.Event) bool {
+		p, ok := e.(core.Progress)
+		return ok && p.View == "crm" && p.Job == "crm-pull" && p.Kind == core.ProgressDone
+	})
 
 	// analyze: the action handler launches RunAnalyze, which refetches the
 	// contact and company, researches, and briefs - the CrmBriefing carries
@@ -315,6 +321,10 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	if wipes != 2 {
 		t.Errorf("wipes after the prompt draft = %d, want 2 (pull + analyze; the prompt run is local)", wipes)
 	}
+	crmWaitFor(t, events, func(e core.Event) bool {
+		p, ok := e.(core.Progress)
+		return ok && p.View == "crm" && p.Job == "crm-prompt" && p.Kind == core.ProgressDone
+	})
 
 	// send-OK: the write-back marks the contact once, and the next pull page
 	// omits it.

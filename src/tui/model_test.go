@@ -6836,6 +6836,35 @@ func TestTaskOverlay(t *testing.T) {
 	}
 }
 
+// TestCrmTabSingleton pins the Q tab: one crm tab ever - a second Q
+// switches to it instead of duplicating, the strip names it, and q
+// closes it back to the mail surface.
+func TestCrmTabSingleton(t *testing.T) {
+	bus := core.NewBus()
+	SetCrmPullSource(func() []CrmCommand { return []CrmCommand{{Name: "hubspot", Desc: "pull"}} })
+	t.Cleanup(func() { SetCrmPullSource(nil) })
+	m := model()
+	m.bus = bus
+	m = press(t, m, "Q")
+	if !m.crmOpen || m.tabCount() != 2 {
+		t.Fatalf("after Q: crmOpen=%v tabCount=%d, want true/2", m.crmOpen, m.tabCount())
+	}
+	if got := m.tabNames(); len(got) != 2 || got[1] != "crm" {
+		t.Fatalf("tab names = %v, want [inbox crm]", got)
+	}
+	m = press(t, m, "Q") // the second Q switches, never duplicates
+	if m.tabCount() != 2 {
+		t.Fatalf("second Q duplicated the crm tab: %d tabs", m.tabCount())
+	}
+	if !m.crmOpen {
+		t.Fatal("second Q must keep the crm surface active")
+	}
+	m = press(t, m, "q")
+	if m.crmOpen || m.tabCount() != 1 {
+		t.Fatalf("after q: crmOpen=%v tabCount=%d, want false/1", m.crmOpen, m.tabCount())
+	}
+}
+
 // TestCrmOpenPublishesCrmOpened pins the queue's first open: it publishes
 // CrmOpened (the pull trigger), not RefreshRequested - the mail refresh
 // must never side-pull CRM.

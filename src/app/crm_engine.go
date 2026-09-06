@@ -139,25 +139,31 @@ func crmRowAction(action string, c core.CrmContact) {
 	switch action {
 	case "analyze":
 		go func() {
+			a.bus.Publish(crmProgress("crm-analyze", core.ProgressUpdate, 0))
 			client, wipe, err := a.newClient(context.Background())
 			if err != nil {
+				a.bus.Publish(crmProgress("crm-analyze", core.ProgressFailed, 1))
 				a.bus.Publish(core.CrmRowError{Provider: a.provider, ContactID: contact.ID, Err: err})
 				return
 			}
 			defer wipe()
 			crm.RunAnalyze(a.bus, client, a.aiCfg, contact, ai.Chat)
+			a.bus.Publish(crmProgress("crm-analyze", core.ProgressDone, 1))
 		}()
 	case "dismiss":
 		// Marking writes the follow-up property; double-marking is accepted -
 		// the write is idempotent, and a re-x after a slow mark re-writes it.
 		go func() {
+			a.bus.Publish(crmProgress("crm-mark", core.ProgressUpdate, 0))
 			client, wipe, err := a.newClient(context.Background())
 			if err != nil {
+				a.bus.Publish(crmProgress("crm-mark", core.ProgressFailed, 1))
 				a.bus.Publish(core.CrmRowError{Provider: a.provider, ContactID: contact.ID, Err: err})
 				return
 			}
 			defer wipe()
 			crm.RunMark(a.bus, client, contact.ID, a.marker)
+			a.bus.Publish(crmProgress("crm-mark", core.ProgressDone, 1))
 		}()
 	}
 }
@@ -221,13 +227,16 @@ func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Co
 			switch e := e.(type) {
 			case core.CrmOpened:
 				go func() {
+					bus.Publish(crmProgress("crm-pull", core.ProgressUpdate, 0))
 					client, wipe, err := newClient(context.Background())
 					if err != nil {
+						bus.Publish(crmProgress("crm-pull", core.ProgressFailed, 1))
 						bus.Publish(core.CrmRowError{Provider: "hubspot", Err: err})
 						return
 					}
 					defer wipe()
 					crm.RunPull(bus, client, hs.MarkerProperty, hs.CreatedAfter)
+					bus.Publish(crmProgress("crm-pull", core.ProgressDone, 1))
 				}()
 			case core.CrmBriefing:
 				crmCacheBriefing(e)
@@ -333,6 +342,14 @@ func crmPromptList() []tui.AICommand {
 	return out
 }
 
+// crmProgress is one CRM op's bar event: op-level granularity - the lib
+// jobs pin exactly-one-Crm-event (their tests refuse extra events), so
+// the adapter reports the bar around each op under the "crm" view key,
+// which the TUI maps to the queue's singleton tab.
+func crmProgress(job string, kind core.ProgressKind, done int) core.Progress {
+	return core.Progress{Job: job, View: "crm", Kind: kind, Done: done, Total: 1}
+}
+
 // crmPromptBlock is a queue row's identity for the prompt context: foreign
 // CRM input, sanitized before it reaches a prompt (F1).
 func crmPromptBlock(c core.CrmContact) string {
@@ -364,8 +381,10 @@ func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c 
 		return
 	}
 	fail := func(err error) {
+		bus.Publish(crmProgress("crm-prompt", core.ProgressFailed, 1))
 		bus.Publish(core.CrmRowError{Provider: c.Provider, ContactID: c.ID, Err: err})
 	}
+	bus.Publish(crmProgress("crm-prompt", core.ProgressUpdate, 0))
 	text := crmBriefingText(c.Provider, c.ID)
 	if text == "" {
 		fail(errors.New("crm: prompt: no briefing"))
@@ -419,6 +438,7 @@ func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c 
 		Subject:   crm.DefaultDraftSubject,
 		Body:      out,
 	})
+	bus.Publish(crmProgress("crm-prompt", core.ProgressDone, 1))
 }
 
 func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.CrmDraft) {
@@ -453,13 +473,16 @@ func crmWriteBackOnSend(bus *core.Bus, newClient func(ctx context.Context) (crm.
 		return
 	}
 	go func() {
+		bus.Publish(crmProgress("crm-mark", core.ProgressUpdate, 0))
 		client, wipe, err := newClient(context.Background())
 		if err != nil {
+			bus.Publish(crmProgress("crm-mark", core.ProgressFailed, 1))
 			bus.Publish(core.CrmRowError{Provider: provider, ContactID: ref.ContactID, Err: err})
 			return
 		}
 		defer wipe()
 		crm.RunMark(bus, client, ref.ContactID, marker)
+		bus.Publish(crmProgress("crm-mark", core.ProgressDone, 1))
 	}()
 }
 

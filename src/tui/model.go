@@ -248,12 +248,19 @@ type Model struct {
 	taskLayer  *layer
 	tasks      map[string]core.TaskChanged
 	taskCursor int
-	// crm is the CRM follow-up queue overlay: crmOpen the flag, crm the
-	// queue model fed by CrmQueue/CrmBriefing events, crmPulled whether
-	// the first open has already triggered the pull (RefreshRequested).
+	// crm is the CRM follow-up queue surface: crmOpen the active flag,
+	// crm the queue model fed by CrmQueue/CrmBriefing events, crmPulled
+	// whether the first open has already triggered the pull (CrmOpened).
+	// The queue is a singleton tab (singletons, key "crm") - one instance
+	// ever, a second Q switches.
 	crmOpen   bool
 	crmPulled bool
 	crm       *crmQueue
+	// singletons is the singleton tab stack: one named tab per key, one
+	// instance ever (the crm queue today). Opening an existing key
+	// switches to it; closing removes the entry. The pattern is generic
+	// - a future singleton tab adds a key, not CRM-specific state.
+	singletons []singletonTab
 	// statusSpin is the status-line spinner's frame index (the loop's
 	// statusSpinTick advances it while the client is busy - the
 	// front-of-row working indicator).
@@ -521,8 +528,23 @@ func (m Model) Update(msg any) (Model, Cmd) {
 					m.dialogue = &listDialogue{f: newFuzzyPayload("crmcmd", i18n.T("CRM prompt:"), names, payload)}
 				case msg.Typed() && msg.Text == "x":
 					m.crm.action(crmActionDismiss)
+				case msg.Typed() && msg.Text == "Q":
+					// Q on the surface re-switches (the dispatch's
+					// crm-queue case never sees it - this branch owns
+					// the keys), landing on the same singleton tab
+					m.openSingleton("crm", "crm")
+				case msg.Typed() && msg.Text == "q":
+					// q closes the tab (the singleton's one instance); the
+					// next Q repulls fresh
+					m.closeSingleton("crm")
+					m.crmPulled = false
+					m.tabIdx = 0
+					m.attachTab()
 				default:
-					m.crmOpen = false
+					// any other key leaves the surface; the tab stays in
+					// the strip ([ ] returns to it)
+					m.tabIdx = 0
+					m.attachTab()
 				}
 			}
 			return m, nil
@@ -1228,6 +1250,15 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.previewCursorThread()
 		}
 	case "quit":
+		if k, ok := m.activeSingleton(); ok {
+			// q on a singleton tab closes the tab, not the app (the crm
+			// queue's q arrives through the surface branch, this covers
+			// the main dispatch path)
+			m.closeSingleton(k)
+			m.tabIdx = 0
+			m.attachTab()
+			return m, nil
+		}
 		if m.tabIdx > len(m.tabs) {
 			// q on a search tab closes the tab, not the app; staged ops
 			// die with it, the same discard-with-confirm shape as quit
@@ -1655,11 +1686,11 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			m.dialogue = &confirmDialogue{label: i18n.T("Abort composition?"), action: "abort", draft: true}
 		}
 	case "crm-queue":
-		// the Q key: the CRM follow-up queue overlay. The first open of the
-		// session triggers the pull through the same RefreshRequested event
-		// the = key sends (crmWire launches the pull on it); re-opening
-		// shows the held rows. A closed wire (no CRM configured) leaves the
-		// surface closed.
+		// the Q key: the CRM follow-up queue, a singleton tab. The first
+		// open of the session triggers the pull through CrmOpened
+		// (crmWire launches the pull on it); a second Q switches to the
+		// existing tab, never a second one. A closed wire (no CRM
+		// configured) leaves the surface closed.
 		if !crmAvailable() {
 			m.logEntry("no CRM configured", true)
 			break
@@ -1678,10 +1709,10 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 				m.crm.onQueue(e)
 			}
 		}
-		m.crmOpen = true
 		m.help = false
 		m.logOpen = false
 		m.taskOpen = false
+		m.openSingleton("crm", "crm")
 	case "help":
 		m.help = true
 		m.logOpen = false
@@ -2736,6 +2767,11 @@ func (m *Model) refreshProgress() {
 		return // bus-less models set the display in onProgress
 	}
 	view := m.activeView().ViewName()
+	if k, ok := m.activeSingleton(); ok {
+		// a singleton surface's jobs report under the singleton key
+		// (the crm adapter's View "crm"), never the mail view's name
+		view = k
+	}
 	owner := m.progOwner[view]
 	if owner == "" {
 		m.progressOn = false
@@ -3681,6 +3717,9 @@ func (m Model) statusData() statusData {
 			spin: m.busy(), spinFrame: m.statusSpin}
 	}
 	d := statusData{view: m.activeView().Name, visible: len(m.rows), on: m.progressOn}
+	if k, ok := m.activeSingleton(); ok {
+		d.view = k // the singleton's own pill (crm), not the view under it
+	}
 	if m.progressOn {
 		p := m.progress
 		d.prog = &p
@@ -4744,10 +4783,66 @@ func (m *Model) tabPrev() {
 	m.attachTab()
 }
 
+// singletonTab is one named singleton tab: one instance per key ever (the
+// crm queue today). The stack order is mail, composes, search tabs,
+// singletons in append order, summary last.
+type singletonTab struct {
+	key  string
+	name string
+}
+
+// openSingleton opens the key's singleton tab: an existing entry switches
+// (reported false), a fresh one appends and attaches (reported true -
+// the caller's first-open hook, e.g. the crm pull trigger).
+func (m *Model) openSingleton(key, name string) bool {
+	for i, s := range m.singletons {
+		if s.key == key {
+			m.tabIdx = m.singletonIdx(i)
+			m.attachTab()
+			return false
+		}
+	}
+	m.singletons = append(m.singletons, singletonTab{key: key, name: name})
+	m.tabIdx = m.singletonIdx(len(m.singletons) - 1)
+	m.attachTab()
+	return true
+}
+
+// closeSingleton removes the key's tab; a key with no entry is a no-op.
+func (m *Model) closeSingleton(key string) {
+	for i, s := range m.singletons {
+		if s.key == key {
+			m.singletons = append(m.singletons[:i], m.singletons[i+1:]...)
+			return
+		}
+	}
+}
+
+// singletonIdx is the i'th singleton entry's position in the tab stack.
+func (m *Model) singletonIdx(i int) int {
+	return 1 + len(m.tabs) + len(m.searchTabs) + i
+}
+
+// activeSingleton is the key of the singleton the stack sits on, or "".
+func (m *Model) activeSingleton() (key string, ok bool) {
+	i := m.tabIdx - len(m.tabs) - len(m.searchTabs) - 1
+	if i >= 0 && i < len(m.singletons) {
+		return m.singletons[i].key, true
+	}
+	return "", false
+}
+
+// singletonActive reports whether the stack sits on key's tab.
+func (m *Model) singletonActive(key string) bool {
+	k, ok := m.activeSingleton()
+	return ok && k == key
+}
+
 // tabCount is the combined stack size: the mail surface, every compose
-// tab, every search tab, and the summary when one is open.
+// tab, every search tab, every singleton tab, and the summary when one
+// is open.
 func (m *Model) tabCount() int {
-	n := 1 + len(m.tabs) + len(m.searchTabs)
+	n := 1 + len(m.tabs) + len(m.searchTabs) + len(m.singletons)
 	if m.summary != nil {
 		n++
 	}
@@ -4755,13 +4850,13 @@ func (m *Model) tabCount() int {
 }
 
 // summaryIdx is the summary tab's position in the stack, or -1 when no
-// summary is open. It sits LAST (after the search tabs), which keeps
+// summary is open. It sits LAST (after the singletons), which keeps
 // activeSearchIdx and openSearchTab's index math working unchanged.
 func (m *Model) summaryIdx() int {
 	if m.summary == nil {
 		return -1
 	}
-	return 1 + len(m.tabs) + len(m.searchTabs)
+	return 1 + len(m.tabs) + len(m.searchTabs) + len(m.singletons)
 }
 
 // summaryActive reports whether the stack sits on the summary tab.
@@ -4892,6 +4987,9 @@ func (m *Model) mountSurface(d *core.View) {
 
 func (m *Model) attachTab() {
 	m.dialogue = nil
+	// the crm surface flag follows its tab: cleared here, re-set by the
+	// singleton case below - every attach lands on the right surface.
+	m.crmOpen = false
 	// a tab switch off the summary leaves its pager installed: restore
 	// the displaced message pager BEFORE the surface routes on it, or
 	// the mode switch sees the stale summary pager (nil pager, pager
@@ -4902,6 +5000,11 @@ func (m *Model) attachTab() {
 		m.pagerHome = m.summary.mailHome
 	}
 	switch {
+	case m.singletonActive("crm"):
+		// the crm queue tab: the index mode under the queue render - the
+		// render and key branches key on crmOpen, not the tab index.
+		m.mode = "index"
+		m.crmOpen = true
 	case m.summaryActive():
 		// the summary tab: its own pager, installed for the pager mode.
 		// The displaced open is re-saved on every entry (kept fresh if

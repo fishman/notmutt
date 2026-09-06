@@ -266,6 +266,9 @@ func (m Model) tabNames() []string {
 	for _, v := range m.searchTabs {
 		names = append(names, capName(core.SanitizeControls(v.ViewName())))
 	}
+	for _, s := range m.singletons {
+		names = append(names, capName(core.SanitizeControls(s.name)))
+	}
 	if m.summary != nil {
 		names = append(names, capName(i18n.T("summary")))
 	}

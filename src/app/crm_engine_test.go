@@ -16,12 +16,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/lib/crm"
 	"notmutt/lib/crm/hubspot"
+	"notmutt/lib/testutil"
 	"notmutt/notmuch"
 )
 
@@ -219,13 +219,17 @@ func TestCrmHubspotWorkflow(t *testing.T) {
 			Account:        "acme",
 		},
 	}
-	root := t.TempDir()
-	// the prompt run loads the CRM-flagged prompts from <root>/ai - seed the
-	// built-in follow-up prompt the draft leg runs
-	if err := os.MkdirAll(filepath.Join(root, "ai", "prompts"), 0700); err != nil {
+	root := t.TempDir() // the compose root (the mail-root stand-in)
+	// the prompt run loads the CRM-flagged prompts from the CONFIG dir
+	// (NOTMUTT_CONFIG) - root above is the mail root; the draft leg pins
+	// that the two never get confused (the production bug: prompts
+	// resolved from the mail root).
+	cfgDir := t.TempDir()
+	t.Setenv("NOTMUTT_CONFIG", cfgDir)
+	if err := os.MkdirAll(filepath.Join(cfgDir, "ai", "prompts"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "ai", "prompts", "follow-up.md"), []byte(`---
+	if err := os.WriteFile(filepath.Join(cfgDir, "ai", "prompts", "follow-up.md"), []byte(`---
 name: Follow-up
 description: Draft a follow-up email from the CRM contact and briefing
 action: compose
@@ -261,7 +265,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	// pull: the first CrmOpened publishes one CrmQueue page whose rows carry
 	// the client's provider routing id.
 	bus.Publish(core.CrmOpened{})
-	q := crmWaitFor(t, events, func(e core.Event) bool {
+	q := testutil.WaitEvent(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
 	}).(core.CrmQueue)
@@ -278,7 +282,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	}
 	// the pull's op-level bar: the adapter wraps the job under the "crm"
 	// view key (the queue's singleton tab) with a terminal Done
-	crmWaitFor(t, events, func(e core.Event) bool {
+	testutil.WaitEvent(t, events, func(e core.Event) bool {
 		p, ok := e.(core.Progress)
 		return ok && p.View == "crm" && p.Job == "crm-pull" && p.Kind == core.ProgressDone
 	})
@@ -287,7 +291,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	// contact and company, researches, and briefs - the CrmBriefing carries
 	// the analyst reply.
 	crmRowAction("analyze", q.Contacts[0])
-	b := crmWaitFor(t, events, func(e core.Event) bool {
+	b := testutil.WaitEvent(t, events, func(e core.Event) bool {
 		be, ok := e.(core.CrmBriefing)
 		return ok && be.ContactID == "201"
 	}).(core.CrmBriefing)
@@ -300,11 +304,11 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	// reached the test, not that crmWire already ran its cache write - poll
 	// the cache so the dispatch depends on that write, not on goroutine wake
 	// order.
-	if !crmEventually(t, func() bool { return crmBriefingText("hubspot", "201") != "" }) {
+	if !testutil.Eventually(t, func() bool { return crmBriefingText("hubspot", "201") != "" }) {
 		t.Fatal("draft leg: the wire never cached the briefing")
 	}
 	go runCrmPrompt(bus, cfg, root, "Follow-up", q.Contacts[0], "")
-	opened := crmWaitFor(t, events, func(e core.Event) bool {
+	opened := testutil.WaitEvent(t, events, func(e core.Event) bool {
 		_, ok := e.(core.ComposeOpened)
 		return ok
 	}).(core.ComposeOpened)
@@ -321,7 +325,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	if wipes != 2 {
 		t.Errorf("wipes after the prompt draft = %d, want 2 (pull + analyze; the prompt run is local)", wipes)
 	}
-	crmWaitFor(t, events, func(e core.Event) bool {
+	testutil.WaitEvent(t, events, func(e core.Event) bool {
 		p, ok := e.(core.Progress)
 		return ok && p.View == "crm" && p.Job == "crm-prompt" && p.Kind == core.ProgressDone
 	})
@@ -329,14 +333,14 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	// send-OK: the write-back marks the contact once, and the next pull page
 	// omits it.
 	bus.Publish(core.SendResult{TabID: opened.TabID, OK: true})
-	if !crmEventually(t, func() bool { return hs.patchCount("201") == 1 }) {
+	if !testutil.Eventually(t, func() bool { return hs.patchCount("201") == 1 }) {
 		t.Fatalf("send-OK mark: expected one PATCH on 201, got %d", hs.patchCount("201"))
 	}
 	if wipes != 3 {
 		t.Errorf("wipes after the send-OK mark = %d, want 3 (one per op)", wipes)
 	}
 	bus.Publish(core.CrmOpened{})
-	q2 := crmWaitFor(t, events, func(e core.Event) bool {
+	q2 := testutil.WaitEvent(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
 	}).(core.CrmQueue)
@@ -350,7 +354,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 	hs.fail["202"] = true
 	hs.mu.Unlock()
 	crmRowAction("dismiss", q2.Contacts[0])
-	crmWaitFor(t, events, func(e core.Event) bool {
+	testutil.WaitEvent(t, events, func(e core.Event) bool {
 		re, ok := e.(core.CrmRowError)
 		return ok && re.ContactID == "202"
 	})
@@ -361,7 +365,7 @@ You are drafting a follow-up email to the contact in the context below.`), 0600)
 		t.Errorf("wipes after the dismiss mark = %d, want 5 (pull, analyze, send-mark, q2 pull, dismiss - one per op)", wipes)
 	}
 	bus.Publish(core.CrmOpened{})
-	q3 := crmWaitFor(t, events, func(e core.Event) bool {
+	q3 := testutil.WaitEvent(t, events, func(e core.Event) bool {
 		_, ok := e.(core.CrmQueue)
 		return ok
 	}).(core.CrmQueue)
@@ -399,36 +403,4 @@ func TestCrmMailGroundRejectsNonEmail(t *testing.T) {
 	if w.calls != 1 {
 		t.Fatalf("worker queried %d times for a valid address, want 1", w.calls)
 	}
-}
-
-// crmWaitFor scans the bus until e satisfies pred (ignoring unrelated
-// events) or the deadline passes.
-func crmWaitFor(t *testing.T, ch <-chan core.Event, pred func(core.Event) bool) core.Event {
-	t.Helper()
-	deadline := time.After(15 * time.Second)
-	for {
-		select {
-		case e := <-ch:
-			if pred(e) {
-				return e
-			}
-		case <-deadline:
-			t.Fatal("timed out waiting for the bus event")
-			return nil
-		}
-	}
-}
-
-// crmEventually polls cond until it holds (the mark runs on a workflow
-// goroutine, so no happens-before channel exists to wait on).
-func crmEventually(t *testing.T, cond func() bool) bool {
-	t.Helper()
-	deadline := time.Now().Add(15 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return true
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return false
 }

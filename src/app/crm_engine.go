@@ -390,7 +390,9 @@ func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c 
 		fail(errors.New("crm: prompt: no briefing"))
 		return
 	}
-	cmds, err := aicmd.LoadCommands(filepath.Join(root, "ai"))
+	// the prompt tree and context notes live in the CONFIG dir (root is
+	// the mail root here - the compose prefill's, never the prompt's)
+	cmds, err := aicmd.LoadCommands(filepath.Join(configDir(), "ai"))
 	if err != nil {
 		fail(err)
 		return
@@ -406,9 +408,9 @@ func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c 
 		fail(fmt.Errorf("crm: prompt: %q is not a CRM prompt", name))
 		return
 	}
-	note := aicmd.LoadDefaultContext(root)
+	note := aicmd.LoadDefaultContext(configDir())
 	if a.account != "" {
-		note = aicmd.LoadAccountContext(root, a.account)
+		note = aicmd.LoadAccountContext(configDir(), a.account)
 	}
 	ground, err := a.ground(context.Background(), c.Email)
 	if err != nil {

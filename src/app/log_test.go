@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"notmutt/lib/testutil"
 )
 
 // TestDiagLogRotates pins the size cap (F5): writes past the cap rotate
@@ -46,10 +48,10 @@ func TestDiagLogRotates(t *testing.T) {
 // 0600; the default handler discards, so the marker only lands after
 // openDiagLog.
 func TestDiagLogWrites0600(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	cache := testutil.CacheDir(t)
 	openDiagLog()
 	diag.Info("test marker")
-	path := filepath.Join(os.Getenv("XDG_CACHE_HOME"), "notmutt", "notmutt.log")
+	path := filepath.Join(cache, "notmutt", "notmutt.log")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

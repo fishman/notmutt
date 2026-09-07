@@ -73,8 +73,7 @@ func drain(ch <-chan core.Event) (done []core.FilterDone, jerr []core.JobError) 
 }
 
 func TestFilterJob(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	st := config.NewStore(cfg)
@@ -138,8 +137,7 @@ func TestFilterJob(t *testing.T) {
 // delta and moves (the manual trigger's effect); a quiet mailbox (no
 // bump) produces no classification pass.
 func TestRunFilterPipeline(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -190,8 +188,7 @@ func TestRunFilterPipeline(t *testing.T) {
 // alone, and a disabled filter degrades to a plain new that still
 // stamps.
 func TestRunPoll(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -258,8 +255,7 @@ func TestRunPoll(t *testing.T) {
 // --apply is the one-shot live override of the dry-run config, config
 // untouched, and stamps.
 func TestRunPollWindow(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -362,8 +358,7 @@ func TestParsePollSpec(t *testing.T) {
 // apply passes --apply. The notmutt binary is a stub mirroring the
 // poll's deterministic output, so both paths are exercised.
 func TestPollReproScript(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	cache := testutil.CacheDir(t)
 	stub := filepath.Join(cache, "notmutt-stub")
 	stubBody := "#!/bin/sh\n" +
 		"case \"$*\" in\n" +
@@ -473,8 +468,7 @@ func TestRunPollConfig(t *testing.T) {
 // (5, 10] anyway. Current code: ActNew reports (10, 10), cur == pre,
 // and the poll returns before classifying - RED.
 func TestPollReconcileOutOfBandMutation(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -512,8 +506,7 @@ func TestPollReconcileOutOfBandMutation(t *testing.T) {
 // full window but never advances L - the reviewer sees the pending set
 // until an applied run.
 func TestPollReconcileDryRunKeepsFloor(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default() // dry-run
@@ -544,8 +537,7 @@ func TestPollReconcileDryRunKeepsFloor(t *testing.T) {
 // (rev at 100k), nothing new. L baselines to the present revision, so
 // the window is empty and no L file is created - never a full backfill.
 func TestPollReconcileFirstRunNoBackfill(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -568,8 +560,7 @@ func TestPollReconcileFirstRunNoBackfill(t *testing.T) {
 // TestPollReconcileWindowedIgnoresFloor: a fixed-window replay
 // reclassifies its stored bracket and never reads or advances L.
 func TestPollReconcileWindowedIgnoresFloor(t *testing.T) {
-	cache := t.TempDir()
-	t.Setenv("XDG_CACHE_HOME", cache)
+	testutil.CacheDir(t)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()

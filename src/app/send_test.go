@@ -14,6 +14,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/lib/testutil"
 	"notmutt/mail"
 	"notmutt/notmuch"
 )
@@ -717,6 +718,7 @@ func TestSaveDraftFreshKeepsNoResume(t *testing.T) {
 // notmuch's [new] inbox tag and never gain the draft tag. The save must
 // classify the bracket its own new produced, not just index it.
 func TestSaveDraftClassifiesItsWrite(t *testing.T) {
+	testutil.CacheDir(t)
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	cfg.Filter.DryRun = false

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"notmutt/config"
+	"notmutt/lib/testutil"
 )
 
 // mkMaildirTree makes an account folder space with one source message.
@@ -55,7 +56,7 @@ func holdLock(t *testing.T) *os.File {
 // TestMoverLockBestEffortSkips: a contended poll mover (NewMover) skips
 // the batch with a report note, never errors, never copies.
 func TestMoverLockBestEffortSkips(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	root := mkMaildirTree(t)
 	hold := holdLock(t)
 	defer hold.Close()
@@ -79,7 +80,7 @@ func TestMoverLockBestEffortSkips(t *testing.T) {
 // TestMoverLockStrictTimesOut: a contended apply mover (NewMoverLive)
 // waits up to the timeout then errors - the apply entry stays staged.
 func TestMoverLockStrictTimesOut(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	orig := moverLockTimeout
 	moverLockTimeout = 50 * time.Millisecond
 	defer func() { moverLockTimeout = orig }()

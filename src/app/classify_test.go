@@ -6,10 +6,12 @@ package app
 import (
 	"os"
 	"testing"
+
+	"notmutt/lib/testutil"
 )
 
 func TestLastClassifyRoundTrip(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	if err := writeLastClassify(7); err != nil {
 		t.Fatal(err)
 	}
@@ -20,14 +22,14 @@ func TestLastClassifyRoundTrip(t *testing.T) {
 }
 
 func TestLastClassifyMissing(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	if _, ok := readLastClassify(); ok {
 		t.Fatal("a missing file must read as no-L")
 	}
 }
 
 func TestLastClassifyCorrupt(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	dir := lastClassifyPath()
 	if err := os.MkdirAll(dir[:len(dir)-len("last-classify")], 0o700); err != nil {
 		t.Fatal(err)
@@ -41,7 +43,7 @@ func TestLastClassifyCorrupt(t *testing.T) {
 }
 
 func TestLastClassifyNeverRegresses(t *testing.T) {
-	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	testutil.CacheDir(t)
 	if err := writeLastClassify(10); err != nil {
 		t.Fatal(err)
 	}

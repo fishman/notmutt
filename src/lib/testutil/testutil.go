@@ -9,6 +9,18 @@ import (
 	"testing"
 )
 
+// CacheDir is the hermetic-cache harness: a fresh t-scoped cache home
+// exported as XDG_CACHE_HOME, returned for path assertions. Every test
+// that can reach a cache path (mover lock, classify floor, diag log,
+// mime cache) calls it - production resolves the cache home through
+// xdg.CacheHome, which reads this variable.
+func CacheDir(t testing.TB) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", dir)
+	return dir
+}
+
 // DevMailbox resolves the dev-mailbox path (NOTMUCH_DB or $HOME/Mail)
 // and its notmuch config, skipping the test when either is missing.
 func DevMailbox(t testing.TB) string {

@@ -1286,9 +1286,13 @@ func TestModelCropScrollBurstHolds(t *testing.T) {
 		t.Fatalf("a lone re-crop must not enter the hold")
 	}
 
-	// a second re-crop within the debounce window is a burst: hold, clear
+	// a second re-crop within the debounce window is a burst: hold, clear.
+	// The window runs from the last live crop; the render above can exceed
+	// imgSettleDebounce under -race (a real-time FSM), so re-arm the gate
+	// after it instead of racing the clock.
 	m.pager.vp.offset = doc + 2
 	m.View()
+	m.cropLiveAt = time.Now()
 	if np, stale := paint(); np != nil || stale != nil {
 		t.Fatalf("a re-crop burst must emit nothing, got %d/%d", len(np), len(stale))
 	}

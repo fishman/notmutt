@@ -355,6 +355,25 @@ func Run() error {
 		}()
 	})
 
+	// resume-draft: the app parses the stored draft back into a dialogue
+	// (account detection, faithful body) and publishes ComposeOpened -
+	// the TUI attaches the tab. A non-draft row is a silent no-op.
+	tui.SetResumeHandler(func(msg *core.Message) {
+		go func() {
+			st, err := resumePrefill(cfg, view, worker, msg, root)
+			if err != nil {
+				diag.Warn("resume", "err", err.Error())
+				bus.Publish(core.JobError{Job: "resume", Err: err})
+				return
+			}
+			if st == nil {
+				return
+			}
+			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(st))
+		}()
+	})
+
 	// send: the app runs the send job on its own goroutine; SendResult
 	// closes the tab or keeps it failed
 	tui.SetSendHandler(func(st compose.State) {

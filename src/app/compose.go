@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -113,6 +114,62 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 		}
 	}
 	return st
+}
+
+// isDraft reports whether a message carries the draft folder tag (the
+// exclusive group member; account tags are not involved). Only drafts
+// resume - the gate is the account rule, not a keybinding check.
+func isDraft(msg *core.Message) bool {
+	if msg == nil {
+		return false
+	}
+	return slices.Contains(msg.Tags, "draft")
+}
+
+// resumePrefill builds the resumed-draft dialogue (the resume-draft
+// key, spec section 2): the cursor message must be a draft - anything
+// else is a no-op (nil, nil). The stored file parses back through
+// compose.Resume, whose attachments stream from the file at send
+// (DraftPart ordinals - nothing extracts anywhere). A path-less row (a
+// pager rehydration) resolves through a thread fetch, mirroring
+// replyPrefill. The account default signature is never injected - what
+// was saved is what opens.
+func resumePrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, root string) (*compose.State, error) {
+	if !isDraft(msg) {
+		return nil, nil
+	}
+	cand := msg
+	if len(cand.Paths) == 0 {
+		if cand.ThreadID == "" {
+			return nil, nil
+		}
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: cand.ThreadID})
+		if err != nil || rpl.Err != nil {
+			return nil, fmt.Errorf("thread %s: %v %v", cand.ThreadID, err, rpl.Err)
+		}
+		cand = nil
+		for i := range rpl.Msgs {
+			m := &rpl.Msgs[i]
+			if isDraft(m) && len(m.Paths) > 0 && (msg.ID == "" || m.ID == msg.ID) {
+				cand = m
+				break
+			}
+		}
+		if cand == nil {
+			return nil, nil
+		}
+	}
+	account, from, _, _ := accountFrom(cfg, cand.Tags, cursorTags(view))
+	d, err := mail.ParseDraft(cand.Paths[0])
+	if err != nil {
+		return nil, err
+	}
+	if d.BodyTruncated {
+		return nil, fmt.Errorf("%s: draft body exceeds the parse cap", cand.Paths[0])
+	}
+	st := compose.Resume(*cand, d, account, from)
+	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	return st, nil
 }
 
 // replyPrefill builds the reply dialogue: buildCompose on the cursor

@@ -4,6 +4,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 	"notmutt/notmuch"
 )
 
@@ -363,5 +365,106 @@ func TestReplyPrefillNoParseable(t *testing.T) {
 	st, err := replyPrefill(cfg, view, worker, row, "reply", "")
 	if st != nil || err == nil {
 		t.Fatalf("no parseable message must error: st=%v err=%v", st, err)
+	}
+}
+
+// buildDraft writes a real saved draft (the client's own Assemble
+// shape) with one file attachment and returns its path.
+func buildDraft(t *testing.T, attachContent []byte) string {
+	t.Helper()
+	dir := t.TempDir()
+	att := filepath.Join(dir, "data.txt")
+	if err := os.WriteFile(att, attachContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.To = []string{"alice@example.com"}
+	st.Bcc = []string{"hidden@example.net"}
+	st.Subject = "resume me"
+	st.Body = "line one\n\t tab"
+	if err := st.AddAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if err := st.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(dir, "draft.eml")
+	if err := os.WriteFile(draft, buf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return draft
+}
+
+// TestResumePrefill: a draft-tagged message with a path parses back
+// into a dialogue - envelope restored (Bcc included), body as authored,
+// the attachment mapped to the stored draft (DraftPart), ResumePath
+// set, fcc resolved, and the default signature NOT injected.
+func TestResumePrefill(t *testing.T) {
+	root := t.TempDir()
+	draft := buildDraft(t, []byte("attachment bytes"))
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{From: "bob@example.com", Folders: map[string]string{"sent": "Sent"}}
+	view := core.NewView("inbox", "tag:inbox")
+	msg := &core.Message{ID: "id:x", ThreadID: "thread:x", Tags: []string{"draft", "gmail"}, Paths: []string{draft}}
+
+	st, err := resumePrefill(cfg, view, nil, msg, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st == nil {
+		t.Fatal("a draft row must resume")
+	}
+	if st.Subject != "resume me" || len(st.To) != 1 || st.To[0] != "alice@example.com" {
+		t.Fatalf("envelope: %q %v", st.Subject, st.To)
+	}
+	if len(st.Bcc) != 1 || st.Bcc[0] != "hidden@example.net" {
+		t.Fatalf("Bcc must restore: %v", st.Bcc)
+	}
+	if st.Body != "line one\n\t tab" {
+		t.Fatalf("Body = %q (tab must survive)", st.Body)
+	}
+	if st.ResumePath != draft {
+		t.Fatalf("ResumePath = %q", st.ResumePath)
+	}
+	if len(st.Attachments) != 1 {
+		t.Fatalf("attachments = %+v", st.Attachments)
+	}
+	a := st.Attachments[0]
+	if a.Name != "data.txt" || a.Path != draft || a.DraftPart != 1 {
+		t.Fatalf("attachment = %+v, want the stored-draft stream (DraftPart 1)", a)
+	}
+	if a.Size == 0 || a.MimeType == "" {
+		t.Fatalf("attachment carries no size/type: %+v", a)
+	}
+	var got bytes.Buffer
+	if _, err := mail.WriteDraftAttachment(draft, 0, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != "attachment bytes" {
+		t.Fatalf("the draft stream = %q, want the attachment bytes", got.String())
+	}
+	if st.Signature != "" || st.SignatureBody != "" {
+		t.Fatalf("resume must not inject a default signature: %q %q", st.Signature, st.SignatureBody)
+	}
+	if want := filepath.Join(root, "gmail", "Sent"); st.Fcc != want {
+		t.Fatalf("Fcc = %q, want %q", st.Fcc, want)
+	}
+}
+
+// TestResumePrefillGate: a non-draft row is a silent no-op (nil, nil);
+// so is a nil message.
+func TestResumePrefillGate(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{}
+	view := core.NewView("inbox", "tag:inbox")
+
+	st, err := resumePrefill(cfg, view, nil, &core.Message{ID: "id:i", Tags: []string{"inbox"}, Paths: []string{"/x"}}, t.TempDir())
+	if err != nil || st != nil {
+		t.Fatalf("an inbox row must no-op: %v %+v", err, st)
+	}
+	st, err = resumePrefill(cfg, view, nil, nil, t.TempDir())
+	if err != nil || st != nil {
+		t.Fatalf("nil must no-op: %v %+v", err, st)
 	}
 }

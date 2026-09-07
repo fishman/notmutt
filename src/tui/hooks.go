@@ -119,6 +119,14 @@ func SetReplyHandler(fn func(*core.Message, string)) {
 	onReply = fn
 }
 
+// onResume is the resume-draft seam: the app parses the stored draft
+// back into a dialogue and publishes ComposeOpened; a no-op default.
+var onResume = func(msg *core.Message) {}
+
+func SetResumeHandler(fn func(*core.Message)) {
+	onResume = fn
+}
+
 // onSend is the send seam: the app runs the send job (transport, fcc, tags) and publishes SendResult.
 var onSend = func(st compose.State) {}
 

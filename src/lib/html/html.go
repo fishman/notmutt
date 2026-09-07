@@ -73,10 +73,11 @@ type Style struct {
 	MarginTopSet, MarginRightSet, MarginBottomSet, MarginLeftSet bool
 	PadLeft                                                      int // padding-left px (ul/ol gutter; UA-only)
 
-	// Image sizing (replaced elements): width/height/max-width, px or %.
-	// Non-inherited, zeroed per node like the margins above. Height is
+	// Sizing: width/height/max-width/min-width, px or %. Non-inherited,
+	// zeroed per node like the margins above. Width/max-width feed images
+	// (img.go); width/min-width also feed table boxes (tableRows). Height is
 	// px-only in effect - a percentage height is auto (see specImg).
-	Width, Height, MaxWidth CSSLen
+	Width, Height, MaxWidth, MinWidth CSSLen
 }
 
 // CSSLen is one length value for image sizing. Px is the number; when Pct
@@ -171,6 +172,15 @@ func parseSizeLen(v string) (CSSLen, bool) {
 		}
 	}
 	return CSSLen{}, false
+}
+
+// resolve folds a length against a base width: a percentage resolves against
+// base, px is absolute, and the zero value resolves to 0 (no constraint).
+func (l CSSLen) resolve(base int) int {
+	if l.Pct {
+		return base * l.Px / 100
+	}
+	return l.Px
 }
 
 // marginSides expands a margin value list to top/right/bottom/left.
@@ -323,6 +333,11 @@ func (s *Style) apply(decls map[string]string) {
 			s.MaxWidth = l
 		}
 	}
+	if v, ok := decls["min-width"]; ok {
+		if l, ok := parseSizeLen(v); ok {
+			s.MinWidth = l
+		}
+	}
 }
 
 // CSSRule is one <style> block rule with its selector parsed and the
@@ -422,7 +437,7 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s.MarginTop, s.MarginRight, s.MarginBottom, s.MarginLeft = 0, 0, 0, 0
 	s.MarginTopSet, s.MarginRightSet, s.MarginBottomSet, s.MarginLeftSet = false, false, false, false
 	s.PadLeft = 0 // geometry is not inherited
-	s.Width, s.Height, s.MaxWidth = CSSLen{}, CSSLen{}, CSSLen{}
+	s.Width, s.Height, s.MaxWidth, s.MinWidth = CSSLen{}, CSSLen{}, CSSLen{}, CSSLen{}
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {

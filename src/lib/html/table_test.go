@@ -429,3 +429,23 @@ func TestNestedInlineTableRendersOnOneLine(t *testing.T) {
 		t.Fatalf("rows = %q, want one line with the inline-table text intact", got)
 	}
 }
+
+func TestTableCSSWidthFillsContainer(t *testing.T) {
+	// Salesforce-style wrappers set width:100% / min-width:100% so a browser
+	// stretches an auto table across its container. The engine must honor that
+	// on table boxes: a short-content table whose cell centers must center
+	// across the full container, not its shrink-wrapped box. Pins the
+	// ucsfhealth footer-band regression. Content is 2px ("hi", mono(1)); at
+	// width 20 the natural table is 8px (4 content + 4 border-spacing), so a
+	// fill must take W to 20 and the centered content box to full width.
+	for _, wd := range []string{"width:100%", "min-width:100%"} {
+		rs := LayoutBlock(buildBody(`<table style="`+wd+`"><tr><td style="text-align:center">hi</td></tr></table>`), 20, mono(1), false)
+		r := rs[0]
+		if r.W != 20 {
+			t.Fatalf("%s: table W=%d, want 20 (fill the container, not shrink-wrap)", wd, r.W)
+		}
+		if c := r.Cells[0]; fragText(c) != "hi" || c.X != 9 {
+			t.Fatalf("%s: centered cell X%d %q, want X9 hi (content box grown to full width)", wd, c.X, fragText(c))
+		}
+	}
+}

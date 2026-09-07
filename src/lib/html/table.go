@@ -280,7 +280,7 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 // min and max proportionally to the (max-min) gap (CSS tables-3), all min
 // below colMin, all max above colMax. Rounding is pushed onto the last
 // column, so the widths always sum exactly to dist.
-func assignColumns(min, max []int, cols, avail int, norm bool) (U int, colX, colW []int) {
+func assignColumns(min, max []int, cols, avail int, norm bool, spec int) (U int, colX, colW []int) {
 	colMin, colMax := 0, 0
 	for j := 0; j < cols; j++ {
 		colMin += min[j]
@@ -294,6 +294,9 @@ func assignColumns(min, max []int, cols, avail int, norm bool) (U int, colX, col
 	default:
 		U = avail
 	}
+	if spec > U {
+		U = spec // CSS width/min-width floor: never shrink below the natural table
+	}
 	dist := U - tableSpacing*(cols+1)
 	if dist < 0 {
 		dist = 0
@@ -306,7 +309,25 @@ func assignColumns(min, max []int, cols, avail int, norm bool) (U int, colX, col
 				colW[j] = min[j] * dist / colMin
 			}
 		}
-	case dist >= colMax:
+	case dist > colMax:
+		// forced wide (CSS width/min-width raised U past max-content): grow each
+		// column from its max in proportion to max; an all-empty grid puts the
+		// width on the last column
+		if colMax == 0 {
+			for j := 0; j < cols; j++ {
+				colW[j] = 0
+			}
+			colW[cols-1] = dist
+		} else {
+			extra := dist - colMax
+			for j := 0; j < cols-1; j++ {
+				add := extra * max[j] / colMax
+				colW[j] = max[j] + add
+				extra -= add
+			}
+			colW[cols-1] = max[cols-1] + extra
+		}
+	case dist == colMax:
 		copy(colW, max)
 	default:
 		sum := 0
@@ -407,9 +428,9 @@ func measureColumns(rows []gridRow, cols int, m Metrics) (min, max []int) {
 
 // columnWidths measures a grid's columns and resolves their used widths at
 // the available width.
-func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics) (U int, colX, colW []int) {
+func columnWidths(rows []gridRow, cols, avail int, norm bool, m Metrics, spec int) (U int, colX, colW []int) {
 	min, max := measureColumns(rows, cols, m)
-	return assignColumns(min, max, cols, avail, norm)
+	return assignColumns(min, max, cols, avail, norm, spec)
 }
 
 // cellRows lays out a cell's content at its content width and returns the
@@ -443,7 +464,16 @@ func tableRows(t *Box, x, w int, s *seam, m Metrics, norm bool) []Row {
 	if len(rows) == 0 || cols == 0 {
 		return nil
 	}
-	U, colX, colW := columnWidths(rows, cols, w, norm, m)
+	spec := 0
+	if st := t.St; st != nil {
+		if v := st.Width.resolve(w); v > spec {
+			spec = v
+		}
+		if v := st.MinWidth.resolve(w); v > spec {
+			spec = v
+		}
+	}
+	U, colX, colW := columnWidths(rows, cols, w, norm, m, spec)
 	var out []Row
 	for _, gr := range rows {
 		type laid struct {

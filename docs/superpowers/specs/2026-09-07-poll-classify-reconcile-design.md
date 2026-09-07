@@ -50,9 +50,10 @@ replacement written in the same pass is inside it.
 
 The one new store is a small 0600 state file holding the L revision,
 sharing the poll stamp's cache directory (app.go:1474) so the CLI poll
-and every running client read and advance the same floor. Cross-process
-writers make overlap possible; classification is idempotent (folder
-rules converge), so a lost race costs a redundant re-run, never a miss.
+and every running client read and advance the same floor. Concurrent
+tag writes are safe (folder rules are idempotent; notmuch serializes DB
+writes), and a lost floor race costs a redundant re-run, never a miss.
+Concurrent MOVES are a different problem - see the mover lock below.
 
 ## The last-classified revision (L)
 
@@ -108,6 +109,50 @@ fixed bracket, and never touches L.
   test touches the real cache file; the CLI poll and the refresher's
   filter job use the real cache path.
 
+## Concurrency: the mover lock
+
+Concurrent classification is safe for tags (folder rules are idempotent,
+notmuch serializes DB writes), but NOT for the mover: Move is
+copy-then-delete over raw filesystem calls (mover.go:113-130) that no
+notmuch lock covers. Two clients both deciding a message leaves its
+folder can both copy it before either deletes it, leaving two physical
+copies of one message. The reconcile window makes this the common case
+(any revision movement wakes every client onto the same window), and it
+is reachable even in one client (the apply mover and the poll mover run
+on different goroutines).
+
+The mover takes a cross-process file lock (flock) for the duration of
+Move, on a lock file beside the poll stamp (`notmutt/mover.lock`). flock
+is chosen over a pidfile or a create/delete lockfile because the kernel
+releases the lock the instant the holder's fd closes - including on
+crash, SIGKILL, or panic - so a dead mover never leaves a stale lock,
+and a blocked waiter is woken automatically. The lock file is opened
+fresh per Move call: separate fds contend even inside one process, so
+one file serializes the apply mover against the poll mover too.
+
+Policy by caller intent:
+
+- Poll mover (best effort): `LOCK_EX|LOCK_NB`; contended -> skip the
+  batch with a diag. Safe because the reconcile re-runs and whoever
+  holds the lock is classifying the same account - eventual.
+- Apply mover (NewMoverLive, the `$` key): explicit user intent, never
+  silently skipped. Bounded wait - retry `LOCK_NB` on a ~100ms cadence
+  up to the lock_timeout cap (the UI tag-op rule: never hang behind a
+  lock), then error. Option 3's move-before-tag leaves the entry staged,
+  so a contended apply degrades to "staged, retry," never a half-state.
+
+Portability: `syscall.Flock` is in the Go standard library on Linux and
+macOS (syscall_linux.go / syscall_bsd.go) with identical semantics - one
+implementation, no build tags, no dependency. Windows, a non-goal for
+the notmuch client, would need a shim at this single seam.
+
+Crash-atomicity caveat, out of scope: the lock guards concurrency, not
+the move's own atomicity - a kill between the copy and the delete still
+leaves both files. They carry the same Message-ID, so the next notmuch
+new merges them into one message with two paths and the mover
+reconciles. Copy-to-temp-then-rename would narrow the torn window; a
+follow-up if it ever matters.
+
 ## Semantics
 
 - Location-wins is unchanged: the wider window re-runs the same folder
@@ -153,7 +198,10 @@ fixed bracket, and never touches L.
   Worst case is a redundant idempotent re-run of a small window; the
   backfill-size case only appears if the mailbox sat unpolled while L
   aged - and that is exactly the reconcile the poll exists to perform.
-- No changes to the filter engine, the mover, folder-rule derivation, or
-  the exclusive-group model. This is the poll's gate and one state file.
+- No changes to the filter engine, folder-rule derivation, or the
+  exclusive-group model. The mover gains only the flock guard; its
+  copy-then-delete logic is untouched.
 - indexWrite stays a narrow instant-classify; it does not become a
   reconciler, so a draft save never stalls on a stale-L window.
+- The mover's temp+rename crash-atomicity is a recorded follow-up, not
+  part of this change.

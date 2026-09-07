@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"notmutt/config"
+	"notmutt/lib/xdg"
 	"notmutt/notmuch"
 )
 
@@ -75,11 +76,10 @@ type MoveReport struct {
 // (the same cache dir the app's classify floor uses): one file serializes
 // every client's live mover, apply and poll alike.
 func moverLockPath() string {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "mover.lock"
+	if base := xdg.CacheHome(); base != "" {
+		return filepath.Join(base, "notmutt", "mover.lock")
 	}
-	return filepath.Join(base, "notmutt", "mover.lock")
+	return "mover.lock"
 }
 
 const moverLockTick = 100 * time.Millisecond

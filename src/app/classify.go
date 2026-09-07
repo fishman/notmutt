@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"notmutt/lib/xdg"
 )
 
 // lastClassifyPath is the reconciling poll's floor file (the
@@ -17,11 +19,10 @@ import (
 // the poll stamp's cache directory (pollStampPath) so the CLI poll and
 // every running client read and advance the same floor.
 func lastClassifyPath() string {
-	base, err := os.UserCacheDir()
-	if err != nil {
-		return "last-classify"
+	if base := xdg.CacheHome(); base != "" {
+		return filepath.Join(base, "notmutt", "last-classify")
 	}
-	return filepath.Join(base, "notmutt", "last-classify")
+	return "last-classify"
 }
 
 // readLastClassify loads the persisted L revision. A missing file is

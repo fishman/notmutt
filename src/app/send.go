@@ -82,9 +82,9 @@ func deliverSend(worker workerAPI, cfg config.Config, root string, st compose.St
 			note = "fcc failed: " + err.Error()
 		}
 	}
-	// the sent copy is in the maildir now: index it so the folder rule
-	// tags it sent (R2)
-	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	// the sent copy is in the maildir now: index and classify it so the
+	// folder rule tags it sent (R2)
+	indexWrite(worker, cfg, root)
 	if st.OriginalID != "" {
 		tag := "replied"
 		if st.Mode == compose.ModeForward {
@@ -124,6 +124,23 @@ func writeFcc(dir string, data []byte) error {
 	return os.WriteFile(name, data, 0600)
 }
 
+// indexWrite indexes a client-written copy (a draft save, a sent fcc)
+// and classifies the bracket that new produced. The poll would never
+// classify it: the copy is already indexed by this out-of-band new, so
+// a later poll's own new finds nothing and the folder rule never fires
+// - a fresh draft keeps notmuch's [new] inbox tag and never gains the
+// draft tag. A disabled filter degrades to the bare index; a failed run
+// warns and never fails the write (the copy is on disk either way).
+func indexWrite(worker workerAPI, cfg config.Config, root string) {
+	if !cfg.Filter.Enabled {
+		worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+		return
+	}
+	if _, _, _, err := pollDiff(worker, cfg, root, pollSpec{}, nil); err != nil {
+		diag.Warn("reindex", "err", err.Error())
+	}
+}
+
 // sentPath derives the account's sent folder: the notmuch mail root
 // plus the account's folder space plus the sent folder candidates,
 // resolved through the mover's own machinery (first existing wins,
@@ -158,7 +175,7 @@ func saveDraft(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Conf
 	if err := writeFcc(dir, buf.Bytes()); err != nil {
 		return err
 	}
-	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	indexWrite(worker, cfg, root)
 	// an abort-to-save on a resumed draft replaces it: the new draft is
 	// written and indexed, the previous one retires so exactly one stays
 	if st.ResumePath != "" {

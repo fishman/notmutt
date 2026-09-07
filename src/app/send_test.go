@@ -711,6 +711,43 @@ func TestSaveDraftFreshKeepsNoResume(t *testing.T) {
 	}
 }
 
+// TestSaveDraftClassifiesItsWrite (regression): the save indexes its
+// own copy with an out-of-band ActNew, so the poll that follows finds
+// nothing new and never runs the folder rule - a fresh draft would keep
+// notmuch's [new] inbox tag and never gain the draft tag. The save must
+// classify the bracket its own new produced, not just index it.
+func TestSaveDraftClassifiesItsWrite(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+
+	// the copy the save's ActNew discovers: sitting in the draft folder,
+	// carrying only notmuch's [new] inbox tag
+	w := &fjWorker{}
+	w.rev.Store(0)
+	w.bump.Store(5)
+	w.delta = []core.Message{{ID: "d1"}}
+	w.snaps = []core.Message{{ID: "d1", Tags: []string{"inbox"}, Paths: []string{"gmail/[Gmail]/Drafts/cur/1"}}}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab-d1"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "x"
+	st.Body = "draft body"
+
+	if err := saveDraft(bus, w, view, cfg, t.TempDir(), *st); err != nil {
+		t.Fatal(err)
+	}
+	for _, op := range w.ops {
+		if op.Tag == "draft" && op.Add {
+			return
+		}
+	}
+	t.Fatalf("the saved draft never gained the draft tag (ops=%+v): a poll cannot classify a copy its own save indexed out-of-band", w.ops)
+}
+
 // TestResumeSendWorkflow: save a draft (d), then send it from the
 // resumed path (ResumePath set): the transport sees the message, the
 // sent copy lands (no_fcc off), and the draft file is gone.

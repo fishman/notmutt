@@ -26,6 +26,7 @@ type fjWorker struct {
 	delta  []core.Message
 	snaps  []core.Message
 	tagged atomic.Int32
+	ops    []notmuch.TagOp // every ActTag op set, in order (single-goroutine tests)
 }
 
 func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -40,6 +41,7 @@ func (f *fjWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		return notmuch.Reply{Msgs: f.snaps}, nil
 	case notmuch.ActTag:
 		f.tagged.Add(1)
+		f.ops = append(f.ops, a.TagOps...)
 	case notmuch.ActNew:
 		pre := f.rev.Load()
 		if f.bump.Load() > 0 {

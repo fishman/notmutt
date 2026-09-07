@@ -85,6 +85,7 @@ opener = ["xdg-open"]
 "R" = { fun = "reply-all", desc = "Reply to all recipients", show = true, inherit = true }
 "f" = { fun = "forward", desc = "Forward the message", show = true, inherit = true }
 "m" = { fun = "compose", desc = "Write a new message", show = true, inherit = true }
+"e" = { fun = "resume-draft", desc = "Edit the saved draft", show = true, inherit = true }
 "t" = { fun = "toggle-read", show = true, inherit = true }
 "a" = { fun = "archive", show = true, inherit = true }
 "I" = { fun = "inbox", desc = "Move the message back to the inbox", show = true, inherit = true }

@@ -56,7 +56,7 @@ var Actions = map[string]map[string]bool{
 		"open": true, "open-headers": true, "preview": true, "quit": true, "undo": true, "apply": true, "refresh": true,
 		"filter": true, "search": true, "search-next": true, "search-tab": true, "categorize": true, "export-pdf": true,
 		"collapse-thread": true, "collapse-all": true, "toggle-flat": true,
-		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"reply": true, "reply-all": true, "forward": true, "compose": true, "resume-draft": true,
 		"tab-prev": true, "tab-next": true, "scheduled-list": true,
 		"ai-commands": true, "crm-queue": true,
 		"help": true, "log": true, "command": true, "tasks": true,
@@ -74,7 +74,7 @@ var Actions = map[string]map[string]bool{
 		"attachments": true, "save-attachment": true, "export-pdf": true,
 		"search-tab": true,
 		// the index mail actions the pager inherits (config inherit=true)
-		"reply": true, "reply-all": true, "forward": true, "compose": true,
+		"reply": true, "reply-all": true, "forward": true, "compose": true, "resume-draft": true,
 		"toggle-read": true, "archive": true, "inbox": true, "delete": true,
 		"undo": true, "spam": true, "pending": true,
 		"tab-prev": true, "tab-next": true, "ai-commands": true,
@@ -1523,6 +1523,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		m.openReply("forward")
 	case "compose":
 		m.openReply("compose")
+	case "resume-draft":
+		m.openResume()
 	case "tab-prev":
 		m.tabPrev()
 	case "tab-next":
@@ -4755,6 +4757,35 @@ func (m *Model) openReply(mode string) {
 		m.clearImageRects() // the compose frame covers the pager area
 	}
 	onReply(msg, mode)
+}
+
+// openResume hands the resume context to the app seam: the cursor row's
+// message in the index, the open message in the pager - the reply
+// resolution. The app gates on the draft tag; the TUI stays dumb.
+func (m *Model) openResume() {
+	var msg *core.Message
+	if m.mode == "index" {
+		if row, ok := m.activeView().CursorRow(); ok {
+			msg = row.Msg
+			if msg == nil && row.ThreadID != "" {
+				msg = &core.Message{ThreadID: row.ThreadID}
+			}
+		}
+	} else if m.mode == "pager" && m.pager != nil {
+		for _, r := range m.rows {
+			if r.Msg != nil && r.Msg.ID == m.pager.msgID {
+				msg = r.Msg
+				break
+			}
+		}
+		if msg == nil {
+			msg = &core.Message{ThreadID: m.pager.threadID, ID: m.pager.msgID}
+		}
+	}
+	if msg == nil {
+		return
+	}
+	onResume(msg)
 }
 
 // tabNext/tabPrev cycle the combined tab stack: the mail surface

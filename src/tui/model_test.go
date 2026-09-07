@@ -6896,3 +6896,55 @@ loop:
 		t.Fatal("no CrmOpened published on first Q-open")
 	}
 }
+
+// TestResumeDraftKeyDispatches: the resume-draft key (e, bound in the
+// index scheme) hands the cursor message to the resume seam - the app
+// decides draft-or-not, so any indexed row dispatches.
+func TestResumeDraftKeyDispatches(t *testing.T) {
+	var got *core.Message
+	old := onResume
+	onResume = func(msg *core.Message) { got = msg }
+	defer func() { onResume = old }()
+
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Author: "Ann", Subject: "a draft", Tags: []string{"draft"}},
+	})})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	press(t, m, "e")
+	if got == nil || got.ID != "a" {
+		t.Fatalf("e must dispatch resume-draft with the cursor message, got %+v", got)
+	}
+}
+
+// TestResumeDraftNoRow: an empty view (no cursor message) never calls
+// the seam - dispatch is a no-op, not a nil handoff.
+func TestResumeDraftNoRow(t *testing.T) {
+	called := false
+	old := onResume
+	onResume = func(msg *core.Message) { called = true }
+	defer func() { onResume = old }()
+
+	view := core.NewView("inbox", "tag:inbox")
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	press(t, m, "e")
+	if called {
+		t.Fatal("an empty view must not dispatch resume")
+	}
+}
+
+// TestResumeDraftBuiltinAndBound: resume-draft is a builtin mail action
+// in index and pager (the pager inherits the index mail keys), bound to
+// e in the default scheme.
+func TestResumeDraftBuiltinAndBound(t *testing.T) {
+	for _, ctx := range []string{"index", "pager"} {
+		if !Actions[ctx]["resume-draft"] {
+			t.Fatalf("Actions[%q] must carry resume-draft", ctx)
+		}
+	}
+	km := testBindings()
+	if km["index"]["e"] != "resume-draft" || km["pager"]["e"] != "resume-draft" {
+		t.Fatalf("the default scheme must bind e to resume-draft (index and pager), got index=%q pager=%q",
+			km["index"]["e"], km["pager"]["e"])
+	}
+}

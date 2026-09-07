@@ -218,6 +218,11 @@ func ParseDecls(s string) map[string]string {
 		if prop == "" || val == "" {
 			continue
 		}
+		// the !important suffix is cascade machinery, never part of the
+		// value: "block !important" must read as the display "block"
+		if j := strings.LastIndex(strings.ToLower(val), "!important"); j >= 0 {
+			val = strings.TrimSpace(val[:j])
+		}
 		decls[prop] = val
 	}
 	return decls
@@ -343,6 +348,28 @@ func ParseStyleSheet(text string) []CSSRule {
 			break
 		}
 		selText := strings.TrimSpace(text[:open])
+		if strings.HasPrefix(selText, "@") {
+			// at-rule (media query, import): skip its whole body - the
+			// first } closes an inner rule, not the at-rule, and a leaked
+			// device-query rule would restyle the mail unconditionally
+			depth := 1
+			for i := open + 1; i < len(text); i++ {
+				switch text[i] {
+				case '{':
+					depth++
+				case '}':
+					depth--
+				}
+				if depth == 0 {
+					text = text[i+1:]
+					break
+				}
+			}
+			if depth != 0 {
+				break // unbalanced at-rule: drop the rest (hostile input)
+			}
+			continue
+		}
 		body := text[open+1 : close]
 		text = text[close+1:]
 		if selText == "" {

@@ -46,6 +46,44 @@ func TestBackgroundShorthand(t *testing.T) {
 	}
 }
 
+// TestMediaQueryRulesDoNotApply pins the at-rule policy: a media query
+// is a device query, not a style, so its whole body drops - including
+// rules after the first inner rule (the flat brace scan used to leak
+// them as active, so a real marketing mail's 480px block demoted its
+// .responsive-td cells to inline and collapsed the whole render).
+func TestMediaQueryRulesDoNotApply(t *testing.T) {
+	cases := []string{
+		"@media only screen and (max-width: 480px) { .a { display: block; } }",
+		"@media only screen and (max-width: 480px) { .a { display: block; } .b { display: block; } }",
+		"@media (prefers-color-scheme: dark) { .a { color: #ffffff; } }\n.x { color: #ff0000; }",
+	}
+	for _, css := range cases {
+		rules := ParseStyleSheet(css)
+		for _, r := range rules {
+			if d := r.decls["display"]; d != "" {
+				t.Errorf("%q: media rule leaked: display=%q", css, d)
+			}
+		}
+	}
+	if got := ParseStyleSheet("@media x { .a { color: red; } } .b { color: red; }"); len(got) != 1 {
+		t.Fatalf("non-media rules must survive the at-rule skip, got %d rules", len(got))
+	}
+}
+
+// TestImportantSuffixStripped pins declaration parsing: the !important
+// suffix is cascade machinery, never part of the value - a display of
+// "block !important" would fail roleOf and demote a table to inline.
+func TestImportantSuffixStripped(t *testing.T) {
+	d := ParseDecls("color: red !important; display: inline-table !important")
+	if d["color"] != "red" || d["display"] != "inline-table" {
+		t.Fatalf("!important leaked into values: %v", d)
+	}
+	bs := buildBody(`<table style="display: inline-table !important"><tr><td>hello</td></tr></table>`)
+	if len(bs) == 0 || bs[0].Role != RoleTable || bs[0].Tbl != "table" {
+		t.Fatalf("an inline-table declaration must keep grid identity, got %+v", bs)
+	}
+}
+
 func FuzzCSSDeclarations(f *testing.F) {
 	f.Add("color: red; font-weight: bold")
 	f.Add("background-color: #fff; text-align: center")

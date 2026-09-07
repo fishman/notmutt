@@ -23,7 +23,7 @@ import (
 // Draft is a stored draft's compose-fields: address lists, subject, and
 // the body as sent (signature block included - SplitSignature detaches
 // it at resume). Atts enumerates the attachment parts in file order with
-// their part ordinal (DraftPart = ordinal + 1 at resume).
+// their part ordinal (DraftPart = ordinal + 1 at resume) and size.
 type Draft struct {
 	To, Cc, Bcc, ReplyTo []string
 	Subject              string
@@ -35,6 +35,7 @@ type Draft struct {
 type DraftAtt struct {
 	Ordinal        int
 	Name, MimeType string
+	Size           int64
 }
 
 // ParseDraft reads one stored draft back to compose fields. Bcc survives
@@ -98,7 +99,11 @@ func ParseDraft(path string) (*Draft, error) {
 				name = "attachment"
 			}
 			ct, _, _ := h.ContentType()
-			d.Atts = append(d.Atts, DraftAtt{Ordinal: ord, Name: name, MimeType: refineMimeType(ct, name)})
+			size, _ := io.Copy(io.Discard, io.LimitReader(p.Body, maxPartBytes+1))
+			if size > maxPartBytes {
+				size = maxPartBytes
+			}
+			d.Atts = append(d.Atts, DraftAtt{Ordinal: ord, Name: name, MimeType: refineMimeType(ct, name), Size: size})
 			ord++
 		}
 	}

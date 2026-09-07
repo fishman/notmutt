@@ -110,7 +110,7 @@ func TestParseDraftMultipart(t *testing.T) {
 		t.Fatalf("Atts = %v", d.Atts)
 	}
 	a := d.Atts[0]
-	if a.Name != "notes.txt" || a.Ordinal != 0 {
+	if a.Name != "notes.txt" || a.Ordinal != 0 || a.Size != int64(len("attachment bytes\n")) {
 		t.Fatalf("Att = %+v", a)
 	}
 }

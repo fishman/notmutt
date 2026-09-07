@@ -13,6 +13,8 @@ import (
 
 	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
+
+	notmail "notmutt/mail"
 )
 
 // DropBcc removes the Bcc header (mutt delivery shape): Bcc rides the
@@ -141,10 +143,6 @@ func (s *State) Assemble(w io.Writer) error {
 		return err
 	}
 	for _, a := range s.Attachments {
-		af, err := os.Open(a.Path)
-		if err != nil {
-			return err
-		}
 		ah := mail.AttachmentHeader{}
 		afacts := AttachmentFacts(a)
 		ah.Set("Content-Type", afacts.Type)
@@ -152,14 +150,25 @@ func (s *State) Assemble(w io.Writer) error {
 		ah.SetFilename(a.Name)
 		ab, err := mw.CreatePart(ah.Header)
 		if err != nil {
-			af.Close()
 			return err
 		}
-		if _, err := io.Copy(ab, af); err != nil {
+		var cerr error
+		if a.DraftPart > 0 {
+			// a resumed attachment: stream its (DraftPart-1)-th part out of
+			// the stored draft - retirement is success-only, so the file is
+			// still there even for a scheduled delivery
+			_, cerr = notmail.WriteDraftAttachment(a.Path, a.DraftPart-1, ab)
+		} else {
+			af, err := os.Open(a.Path)
+			if err != nil {
+				return err
+			}
+			_, cerr = io.Copy(ab, af)
 			af.Close()
-			return err
 		}
-		af.Close()
+		if cerr != nil {
+			return cerr
+		}
 		if err := ab.Close(); err != nil {
 			return err
 		}

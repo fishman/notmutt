@@ -47,9 +47,9 @@ draft this dialogue edits; empty for every fresh/reply/forward compose
   `draft` folder-group tag resumes - any other row no-ops (the
   crm-row-action guard pattern). The gate lives with the account rules,
   not the TUI.
-- `resumeDraft(cfg, view, worker, msg, root)` mirrors `replyPrefill`:
+- `resumePrefill(cfg, view, worker, msg, root)` mirrors `replyPrefill`:
   resolve the file (msg.Paths[0]; a path-less row - a pager link
-  rehydration - resolves via a flat id query), derive the account and
+  rehydration - resolves via a thread fetch), derive the account and
   From through `accountFrom`, then build the State from the stored draft
   (section 3). The account default signature is NOT injected on resume -
   the stored tail (section 3) is authoritative, and a draft saved
@@ -77,11 +77,17 @@ yields its plain text or an empty body rather than failing).
   re-appends the same tail, so the round trip is byte-faithful either
   way. No quote prefixing, no Re:/Fwd:, no account signature re-add -
   what was saved is what opens.
-- Attachments: each remaining MIME part extracts to a per-dialogue temp
-  dir (0700; MimeTypeOf + base name + size as a normal Attachment). The
-  dir path rides the compose event and is removed by the same
-  dialogue-close path that removes BodyPath. Send reads the extracted
-  paths exactly like any fresh compose.
+- Attachments: stay inline in the stored draft - nothing extracts to a
+  temp dir. `compose.State.Attachment` gains `DraftPart int` (0 = a plain
+  file Path, as every fresh compose attaches; >0 = Path is the stored
+  draft and the bytes are the draft's (DraftPart-1)-th attachment part).
+  `compose.Resume` maps each parsed `DraftAtt` to an Attachment on the
+  ResumePath with that ordinal, size and MIME type carried. Assembly
+  (`Assemble`) streams the part out of the still-present draft file for
+  a DraftPart attachment, exactly like a fresh compose reads a file -
+  the send path never re-writes attachment bytes to disk. Because draft
+  retirement is success-only (section 4), the file is always present at
+  assembly, even for a scheduled delivery.
 - Security resets to none: a resumed draft's crypto is re-decided at
   send; the compose does not guess.
 
@@ -105,12 +111,12 @@ the draft from the folder:
 ## 5. Update-in-place re-save
 
 An abort-to-save on a resumed draft (the same d key) must not duplicate.
-`saveDraft` writes the new file (writeFcc now returns the written path),
-retires the previous ResumePath (ActRemovePaths + os.Remove), and hands
-back the state with ResumePath advanced to the new file - the open
-dialogue keeps editing exactly one stored draft, and the next send
-retires that one. The draft-handler seam returns the updated state so
-the TUI stores it. A discard (no save) leaves the stored draft
+`saveDraft` writes the new file (the writeFcc maildir slot), retires the
+previous ResumePath (ActRemovePaths + os.Remove), and closes - the tab
+always closes after a save, so exactly one stored draft remains and the
+next resume opens that file fresh (ResumePath set from its own path).
+The draft-handler seam keeps its `error` signature: a failed save keeps
+the dialogue open. A discard (no save) leaves the stored draft
 byte-identical and untouched.
 
 ## 6. Tests
@@ -120,10 +126,13 @@ byte-identical and untouched.
   authored fields; the re-assembled text/plain body and envelope match
   the authored composition byte-for-byte (ignoring the fresh Date and
   Message-ID).
+- DraftPart assembly: a resumed attachment (DraftPart > 0) reassembles
+  from the stored draft's part - the sent message's attachment decodes
+  to the original bytes.
 - deliverSend retirement: a successful transport retires ResumePath
   (index link gone, file gone); a failing transport leaves the draft.
-- saveDraft in place: re-save retires the old draft, advances
-  ResumePath, and leaves one draft file.
+- saveDraft in place: re-save retires the old draft and leaves one draft
+  file.
 - TUI gating: resume-draft on a draft row publishes ComposeOpened; on a
   non-draft row it no-ops.
 - Workflow: resume a saved draft, send, and the draft message is gone

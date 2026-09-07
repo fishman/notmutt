@@ -27,6 +27,18 @@ import (
 // drops/marks truncated. 8 MiB covers any realistic part.
 const maxPartBytes = 8 << 20
 
+// openMail opens a mail reader tolerating unknown charsets AND transfer
+// encodings. mail.CreateReader tolerates charsets only and returns a nil
+// reader for an unknown encoding - its deferred Close then nil-derefs.
+// message.Read returns a usable entity for both, so NewReader is safe.
+func openMail(r io.Reader) (*mail.Reader, error) {
+	e, err := message.Read(r)
+	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+		return nil, err
+	}
+	return mail.NewReader(e), nil
+}
+
 // maxImgBytes bounds one image's buffered data (render-on-key);
 // imgBudget bounds the per-message total so many images never balloon RAM.
 const (
@@ -139,8 +151,8 @@ func ParseMessage(path string) (*Message, error) {
 		return nil, err
 	}
 	defer f.Close()
-	mr, err := mail.CreateReader(f)
-	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+	mr, err := openMail(f)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer mr.Close()
@@ -181,6 +193,9 @@ func ParseMessage(path string) (*Message, error) {
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break // a structural error: keep the parts read so far, mutt-style
+		}
+		if p == nil {
+			break // an unknown-encoding part returns no part: stop, keep the scan so far
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -255,8 +270,8 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 		return "", "", nil, err
 	}
 	defer f.Close()
-	mr, err := mail.CreateReader(f)
-	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+	mr, err := openMail(f)
+	if err != nil {
 		return "", "", nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer mr.Close()
@@ -268,6 +283,9 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break
+		}
+		if p == nil {
+			break // an unknown-encoding part returns no part: stop, keep the scan so far
 		}
 		// the entry walk matches the parse walk: the html part of an
 		// alternative pair lists as an attachment too, so the v

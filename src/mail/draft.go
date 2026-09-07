@@ -48,8 +48,8 @@ func ParseDraft(path string) (*Draft, error) {
 		return nil, err
 	}
 	defer f.Close()
-	mr, err := mail.CreateReader(f)
-	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+	mr, err := openMail(f)
+	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	defer mr.Close()
@@ -73,6 +73,9 @@ func ParseDraft(path string) (*Draft, error) {
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break
+		}
+		if p == nil {
+			break // an unknown-encoding part returns no part: stop, keep the scan so far
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -114,8 +117,8 @@ func WriteDraftAttachment(path string, ordinal int, w io.Writer) (int64, error) 
 		return 0, err
 	}
 	defer f.Close()
-	mr, err := mail.CreateReader(f)
-	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
+	mr, err := openMail(f)
+	if err != nil {
 		return 0, fmt.Errorf("%s: %w", path, err)
 	}
 	defer mr.Close()
@@ -127,6 +130,9 @@ func WriteDraftAttachment(path string, ordinal int, w io.Writer) (int64, error) 
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 			break
+		}
+		if p == nil {
+			break // an unknown-encoding part returns no part: stop, keep the scan so far
 		}
 		if _, ok := p.Header.(*mail.AttachmentHeader); !ok {
 			continue

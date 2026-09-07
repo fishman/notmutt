@@ -150,3 +150,28 @@ func TestParseDraftCRLF(t *testing.T) {
 		t.Fatalf("body must keep the signature marker after CRLF: %q", d.Body)
 	}
 }
+
+// TestUnknownEncodingNoPanic: a message whose top-level transfer encoding
+// is unknown must not crash the readers. mail.CreateReader returns a nil
+// reader for it (its guard tolerates charsets only), and the deferred
+// Close then nil-derefs - the regression the ParseDraft fuzzer found.
+// The readers tolerate the encoding (empty content), never panic.
+func TestUnknownEncodingNoPanic(t *testing.T) {
+	raw := []byte("Content-Transfer-Encoding: 0\nSubject: x\n\nbody\n")
+	p := filepath.Join(t.TempDir(), "m.eml")
+	if err := os.WriteFile(p, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseDraft(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseMessage(p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := WriteDraftAttachment(p, 0, &bytes.Buffer{}); err == nil {
+		t.Fatal("an unreadable draft must yield no attachment")
+	}
+	if _, _, _, err := ExtractAttachment(p, 0); err == nil {
+		t.Fatal("an unreadable message must yield no attachment")
+	}
+}

@@ -3,13 +3,18 @@
 
 package mail
 
-// Fuzz targets for the html renderer boundary (AGENTS.md: parser-
+// Fuzz targets for the parser/render boundaries (AGENTS.md: parser-
 // adjacent code passes SECURITY.md's fuzz targets). Properties:
-// panic-freedom and bounded output - content lines <= maxHTMLLines,
-// each block boundary adds at most one blank, plus the truncation
-// marker.
+// panic-freedom and bounded output.
 
-import "testing"
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/emersion/go-message/mail"
+)
 
 func FuzzRenderHTML(f *testing.F) {
 	f.Add("plain text")
@@ -22,6 +27,47 @@ func FuzzRenderHTML(f *testing.F) {
 		lines := RenderHTML(body, nil, 0)
 		if len(lines) > 2*maxHTMLLines+1 {
 			t.Fatalf("render exceeded the line budget: %d lines", len(lines))
+		}
+	})
+}
+
+// FuzzParseDraft fuzzes the draft parse boundary: ParseDraft must never
+// panic on arbitrary bytes, its body stays bounded by the part cap, and
+// every parsed ordinal stays in range of the attachment stream.
+func FuzzParseDraft(f *testing.F) {
+	f.Add([]byte("To: alice@example.com\nSubject: s\nContent-Type: text/plain; charset=utf-8\n\nthe body\n"))
+	f.Add([]byte("\x00\xff garbage \r\n-- \nno header at all"))
+	var buf bytes.Buffer
+	mw, _ := mail.CreateWriter(&buf, mail.Header{})
+	bp, _ := mw.CreateSingleInline(mail.InlineHeader{})
+	bp.Write([]byte("b"))
+	bp.Close()
+	ap := mail.AttachmentHeader{}
+	ap.SetFilename("a.txt")
+	att, _ := mw.CreateAttachment(ap)
+	att.Write([]byte("data"))
+	att.Close()
+	mw.Close()
+	f.Add(buf.Bytes())
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		p := filepath.Join(t.TempDir(), "draft")
+		if err := os.WriteFile(p, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		d, err := ParseDraft(p)
+		if err != nil {
+			return
+		}
+		if len(d.Body) > maxPartBytes {
+			t.Fatalf("body exceeded the cap: %d", len(d.Body))
+		}
+		if len(d.Body) == maxPartBytes && !d.BodyTruncated {
+			t.Fatal("cap-sized body must flag truncated")
+		}
+		for _, a := range d.Atts {
+			if a.Ordinal < 0 {
+				t.Fatalf("negative ordinal: %+v", a)
+			}
 		}
 	})
 }

@@ -14,6 +14,7 @@ import (
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
+	"notmutt/mail"
 	"notmutt/notmuch"
 )
 
@@ -707,5 +708,60 @@ func TestSaveDraftFreshKeepsNoResume(t *testing.T) {
 		if a.Kind == notmuch.ActRemovePaths {
 			t.Fatalf("a fresh save must not retire: %+v", w.actions)
 		}
+	}
+}
+
+// TestResumeSendWorkflow: save a draft (d), then send it from the
+// resumed path (ResumePath set): the transport sees the message, the
+// sent copy lands (no_fcc off), and the draft file is gone.
+func TestResumeSendWorkflow(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	// save (the d key path)
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab16"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "draft subject"
+	st.Body = "draft body"
+	if err := saveDraft(bus, w, view, cfg, dir, *st); err != nil {
+		t.Fatal(err)
+	}
+	draftDir := filepath.Join(draftPath(dir, "gmail", cfg.Accounts["gmail"]), "new")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("one saved draft expected: %v %v", entries, err)
+	}
+	draft := filepath.Join(draftDir, entries[0].Name())
+
+	// resume (the e key path) - the draft file parses back
+	d, err := mail.ParseDraft(draft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := compose.Resume(core.Message{ID: "id:d", Paths: []string{draft}}, d, "gmail", "bob@example.com")
+	res.ID = "tab17"
+	res.ResumePath = draft
+
+	// send: the draft retires, the sent copy stays
+	sendJob(bus, w, view, cfg, dir, *res)
+
+	if _, err := os.Stat(draft); !os.IsNotExist(err) {
+		t.Fatal("the resumed draft must be gone after a successful send")
+	}
+	entries, err = os.ReadDir(filepath.Join(sentPath(dir, "gmail", cfg.Accounts["gmail"]), "new"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("one sent copy expected: %v %v", entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "gmail", "Sent", "new", entries[0].Name()))
+	if err != nil || !strings.Contains(string(data), "draft subject") {
+		t.Fatalf("the sent copy must carry the message: %v", err)
 	}
 }

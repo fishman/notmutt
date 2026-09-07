@@ -272,3 +272,66 @@ func TestDropBccAssembled(t *testing.T) {
 		t.Fatalf("the wire copy must keep everything else:\n%s", wire)
 	}
 }
+
+// TestAssembleStreamsDraftPart: a resumed attachment (DraftPart > 0)
+// streams its bytes from the stored draft's attachment part, not a temp
+// file - assemble reads the exact draft part the resume mapped.
+func TestAssembleStreamsDraftPart(t *testing.T) {
+	// write the stored draft (the save path) with one attachment
+	att := filepath.Join(t.TempDir(), "doc.txt")
+	if err := os.WriteFile(att, []byte("draft attachment bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	save := NewCompose("gmail", "bob@example.com", "", "")
+	save.To = []string{"alice@example.com"}
+	save.Subject = "draft"
+	save.Body = "draft body"
+	if err := save.AddAttachment(att); err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(t.TempDir(), "draft.eml")
+	var dbuf bytes.Buffer
+	if err := save.Assemble(&dbuf); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(draft, dbuf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// the resumed state streams the part from the draft path
+	res := NewCompose("gmail", "bob@example.com", "", "")
+	res.To = []string{"alice@example.com"}
+	res.Subject = "draft"
+	res.Body = "draft body"
+	res.Attachments = []Attachment{{Name: "doc.txt", Path: draft, DraftPart: 1}}
+
+	var buf bytes.Buffer
+	if err := res.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+
+	mr, err := mail.CreateReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	var attached []byte
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := p.Header.(*mail.AttachmentHeader); ok {
+			if attached, err = io.ReadAll(p.Body); err != nil {
+				t.Fatal(err)
+			}
+			break
+		}
+	}
+	if string(attached) != "draft attachment bytes" {
+		t.Fatalf("the resumed draft part = %q", attached)
+	}
+}

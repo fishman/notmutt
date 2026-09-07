@@ -5,6 +5,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -95,10 +96,21 @@ func deliverSend(worker workerAPI, cfg config.Config, root string, st compose.St
 			TagOps: []notmuch.TagOp{{Tag: tag, Add: true}},
 		})
 	}
+	// a successful send retires the resumed draft (spec: edit-and-send
+	// removes it). Retirement is success-only; a retire failure notes the
+	// delivered send, never fails it (a retry would double-send).
+	if st.ResumePath != "" {
+		if err := retireDraftPath(worker, st.ResumePath); err != nil {
+			if note != "" {
+				note += "; "
+			}
+			note += "draft retire failed: " + err.Error()
+		}
+	}
 	return note, "", nil
 }
 
-// writeFcc lands the sent copy in the maildir new/ slot (maildir
+// writeFcc lands the sent/draft copy in the maildir new/ slot (maildir
 // convention: delivery lands in new, the sync tool flags into cur).
 // Unique name, 0600 (F5) - seconds since the epoch, pid, hostname, so
 // the client's files carry the same shape as the sync tool's own.
@@ -147,7 +159,36 @@ func saveDraft(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Conf
 		return err
 	}
 	worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	// an abort-to-save on a resumed draft replaces it: the new draft is
+	// written and indexed, the previous one retires so exactly one stays
+	if st.ResumePath != "" {
+		if err := retireDraftPath(worker, st.ResumePath); err != nil {
+			// the orphan logs, never fails the save - the dialogue is
+			// closing either way
+			diag.Warn("draft retire", "err", err.Error())
+		}
+	}
 	bus.Publish(core.ViewDiff{View: view.ViewName()})
+	return nil
+}
+
+// retireDraftPath drops a draft: the index link first (the mover's
+// primitive), then the file. A file already gone is fine. A backend
+// without path ops (the cli) no-ops the index silently - its `notmuch
+// new` reconciles the removal next poll.
+func retireDraftPath(worker workerAPI, p string) error {
+	if p == "" {
+		return nil
+	}
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRemovePaths, Paths: []string{p}})
+	if err != nil || rpl.Err != nil {
+		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+			return fmt.Errorf("remove %s: %v %v", p, err, rpl.Err)
+		}
+	}
+	if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	return nil
 }
 

@@ -483,3 +483,229 @@ func TestSendJobBccEnvelopeOnly(t *testing.T) {
 		t.Fatalf("the fcc copy must keep Bcc:\n%s", fcc)
 	}
 }
+
+// sendStub writes a send transport stub that succeeds and captures the
+// wire into captured.
+func sendStub(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte("#!/bin/sh\ncat > "+filepath.Join(dir, "captured")+"\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSendJobRetiresResumePath: a resumed draft (ResumePath set) is
+// retired after a successful transport - the index link drops
+// (ActRemovePaths with the exact path) and the file is gone. The fcc
+// copy still lands (no_fcc off).
+func TestSendJobRetiresResumePath(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	draft := filepath.Join(dir, "draft.eml")
+	if err := os.WriteFile(draft, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab10"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "x"
+	st.Body = "y"
+	st.ResumePath = draft
+
+	sendJob(bus, w, view, cfg, dir, *st)
+
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	if _, err := os.Stat(draft); !os.IsNotExist(err) {
+		t.Fatal("a delivered draft must be retired")
+	}
+	if len(w.actions) < 2 || w.actions[len(w.actions)-1].Kind != notmuch.ActRemovePaths {
+		t.Fatalf("the draft must be unindexed: %+v", w.actions)
+	}
+	if p := w.actions[len(w.actions)-1].Paths; len(p) != 1 || p[0] != draft {
+		t.Fatalf("RemovePaths must name the draft file: %+v", w.actions)
+	}
+	sentDir := filepath.Join(sentPath(dir, "gmail", cfg.Accounts["gmail"]), "new")
+	if entries, err := os.ReadDir(sentDir); err != nil || len(entries) != 1 {
+		t.Fatalf("the sent copy must still land in %s: %v %v", sentDir, entries, err)
+	}
+}
+
+// TestSendJobFailureKeepsResumePath: a failed transport never touches
+// the draft - retirement is success-only.
+func TestSendJobFailureKeepsResumePath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	draft := filepath.Join(dir, "draft.eml")
+	if err := os.WriteFile(draft, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab11"
+	st.To = []string{"alice@example.com"}
+	st.Body = "y"
+	st.ResumePath = draft
+
+	sendJob(bus, w, view, cfg, dir, *st)
+
+	if _, err := os.Stat(draft); err != nil {
+		t.Fatal("a failed send must keep the draft")
+	}
+	for _, a := range w.actions {
+		if a.Kind == notmuch.ActRemovePaths {
+			t.Fatalf("a failed send must not unindex: %+v", w.actions)
+		}
+	}
+}
+
+// TestSendJobEmptyResumePath: a fresh compose (no ResumePath) retires
+// nothing - only ActNew.
+func TestSendJobEmptyResumePath(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab12"
+	st.To = []string{"alice@example.com"}
+	st.Body = "y"
+
+	sendJob(bus, w, view, cfg, dir, *st)
+
+	for _, a := range w.actions {
+		if a.Kind == notmuch.ActRemovePaths {
+			t.Fatalf("a fresh send must not retire: %+v", w.actions)
+		}
+	}
+}
+
+// TestSendJobNoFccStillRetires: a no_fcc account (no client sent copy)
+// retires the draft exactly like any send.
+func TestSendJobNoFccStillRetires(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	draft := filepath.Join(dir, "draft.eml")
+	if err := os.WriteFile(draft, []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}, NoFcc: true}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab13"
+	st.To = []string{"alice@example.com"}
+	st.Body = "y"
+	st.ResumePath = draft
+
+	sendJob(bus, w, view, cfg, dir, *st)
+
+	if _, err := os.Stat(draft); !os.IsNotExist(err) {
+		t.Fatal("no_fcc must not stop the draft retirement")
+	}
+	if len(w.actions) == 0 || w.actions[len(w.actions)-1].Kind != notmuch.ActRemovePaths {
+		t.Fatalf("actions = %+v", w.actions)
+	}
+}
+
+// TestSaveDraftUpdateInPlace: an abort-to-save on a resumed draft (the
+// previous ResumePath set) writes the new draft AND retires the old -
+// one draft, never duplicates.
+func TestSaveDraftUpdateInPlace(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{Preset: "gmail"}
+
+	old := filepath.Join(dir, "old-draft.eml")
+	if err := os.WriteFile(old, []byte("old"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab14"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "x"
+	st.Body = "new body"
+	st.ResumePath = old
+
+	if err := saveDraft(bus, w, view, cfg, dir, *st); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("the previous draft must be retired on a re-save")
+	}
+	draftDir := filepath.Join(draftPath(dir, "gmail", cfg.Accounts["gmail"]), "new")
+	entries, err := os.ReadDir(draftDir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("exactly one draft must remain in %s: %v %v", draftDir, entries, err)
+	}
+	data, err := os.ReadFile(filepath.Join(draftDir, entries[0].Name()))
+	if err != nil || !strings.Contains(string(data), "new body") {
+		t.Fatalf("the new draft must carry the new body: %v", err)
+	}
+	if len(w.actions) < 2 || w.actions[len(w.actions)-1].Kind != notmuch.ActRemovePaths {
+		t.Fatalf("the old draft must be unindexed: %+v", w.actions)
+	}
+	if p := w.actions[len(w.actions)-1].Paths; len(p) != 1 || p[0] != old {
+		t.Fatalf("RemovePaths must name the old draft: %v", w.actions)
+	}
+}
+
+// TestSaveDraftFreshKeepsNoResume: a fresh abort-to-save retires
+// nothing.
+func TestSaveDraftFreshKeepsNoResume(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Default()
+	cfg.Accounts["gmail"] = config.Account{Preset: "gmail"}
+
+	bus := core.NewBus()
+	view := core.NewView("inbox", "tag:inbox")
+	w := &stubWorker{}
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab15"
+	st.To = []string{"alice@example.com"}
+	st.Body = "y"
+
+	if err := saveDraft(bus, w, view, cfg, dir, *st); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range w.actions {
+		if a.Kind == notmuch.ActRemovePaths {
+			t.Fatalf("a fresh save must not retire: %+v", w.actions)
+		}
+	}
+}

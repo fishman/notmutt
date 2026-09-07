@@ -353,6 +353,7 @@ func TestApplyGuardRefusesUnmovableFolderTags(t *testing.T) {
 // does - otherwise the next poll's location-wins resolution would eat
 // the applied tag while its file sits in another folder.
 func TestApplyMovesToFolderTag(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root := testutil.MaildirTree(t, map[string]string{"INBOX": "1"})
 	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
 	cfg := config.Default()
@@ -386,6 +387,7 @@ func TestApplyMovesToFolderTag(t *testing.T) {
 // entry. Regression: tag-first leaves archive applied with the file
 // still in INBOX.
 func TestApplyMoveFailureRefusesTag(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root := testutil.MaildirTree(t, map[string]string{"INBOX": "1"})
 	// a regular file where the archive folder must be created fails the
 	// mover's copy, before any DB write - the "file cannot follow" case

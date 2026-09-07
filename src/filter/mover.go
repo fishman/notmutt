@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 
 	"notmutt/config"
 	"notmutt/notmuch"
@@ -26,6 +28,10 @@ type Mover struct {
 	cfg    config.Config
 	root   string
 	dryRun bool
+	// lockStrict marks the apply mover (NewMoverLive): it waits for a
+	// contended flock up to the timeout and then errors. The poll mover
+	// (NewMover) is best-effort: contended, it skips the batch.
+	lockStrict bool
 	// Progress, when set, reports each processed entry (R15 batch boundary: the per-message loop).
 	Progress func(done, total int)
 }
@@ -39,9 +45,12 @@ func NewMover(w Worker, cfg config.Config, root string) *Mover {
 }
 
 // NewMoverLive is the apply path's mover: the staged apply is explicit
-// intent, the filter dry-run gates the poll, not the $ key.
+// intent, the filter dry-run gates the poll, not the $ key. It waits
+// for a contended flock instead of skipping (lockStrict).
 func NewMoverLive(w Worker, cfg config.Config, root string) *Mover {
-	return newMover(w, cfg, root, false)
+	m := newMover(w, cfg, root, false)
+	m.lockStrict = true
+	return m
 }
 
 // MoveEntry is one file's move outcome: To empty means the file stays
@@ -54,18 +63,98 @@ type MoveEntry struct {
 }
 
 // MoveReport is the run's outcome; dry-run writes nothing and the
-// entries ARE the review surface (what-would-move per file).
+// entries ARE the review surface (what-would-move per file). Skip, when
+// set, is a batch-level reason no files moved (the poll mover's
+// contended-flock skip).
 type MoveReport struct {
 	Moves []MoveEntry
+	Skip  string
+}
+
+// moverLockPath is the cross-process mover lock, beside the poll stamp
+// (the same cache dir the app's classify floor uses): one file serializes
+// every client's live mover, apply and poll alike.
+func moverLockPath() string {
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return "mover.lock"
+	}
+	return filepath.Join(base, "notmutt", "mover.lock")
+}
+
+const moverLockTick = 100 * time.Millisecond
+
+// moverLockTimeout caps the apply mover's wait for a contended flock -
+// the UI rule that a tag op never hangs behind a lock (notmuch's
+// lock_timeout / the app's lockBudget). Overridden in tests.
+var moverLockTimeout = 10 * time.Second
+
+// lockLive takes the cross-process flock for a live Move. flock is
+// chosen over a pidfile or create/delete lockfile because the kernel
+// releases it the instant the holder's fd closes - on crash, SIGKILL,
+// or panic - so a dead mover never leaves a stale lock and a blocked
+// waiter wakes automatically. The lock file is opened fresh per call:
+// separate fds contend even inside one process, so one file serializes
+// the apply mover against the poll mover too. A fresh fd opened on the
+// same file by this process is not reentrant, but a Move never nests
+// inside a Move. Dry runs write nothing and skip the lock entirely.
+func (m *Mover) lockLive(out *MoveReport) (unlock func(), err error) {
+	if m.dryRun {
+		return func() {}, nil
+	}
+	p := moverLockPath()
+	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return nil, fmt.Errorf("mover: lock dir: %w", err)
+	}
+	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("mover: lock: %w", err)
+	}
+	deadline := time.Now().Add(moverLockTimeout)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		switch {
+		case err == nil:
+			return func() { f.Close() }, nil
+		case errors.Is(err, syscall.EINTR):
+			continue
+		case !errors.Is(err, syscall.EWOULDBLOCK):
+			f.Close()
+			return nil, fmt.Errorf("mover: lock: %w", err)
+		}
+		if !m.lockStrict {
+			// best effort (the poll mover): contended -> skip the batch;
+			// the reconciling poll re-runs and whoever holds the lock is
+			// classifying the same account - eventual.
+			out.Skip = "mover lock held by another process"
+			f.Close()
+			return func() {}, nil
+		}
+		if time.Now().After(deadline) {
+			f.Close()
+			return nil, fmt.Errorf("mover: lock held by another process (waited %s)", moverLockTimeout)
+		}
+		time.Sleep(moverLockTick)
+	}
 }
 
 // Move moves each report entry's files into the folder of its move
 // tag. Copy-then-delete: every copy lands before any source goes, so
 // the database sees AddPaths before RemovePaths and the message keeps
 // its tags (re-add of a duplicate id is success - the mover's exact
-// add-first case).
+// add-first case). Live moves run under the cross-process flock
+// (lockLive); a contended poll mover skips the batch, a contended apply
+// mover waits up to the timeout and errors.
 func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 	out := &MoveReport{}
+	unlock, err := m.lockLive(out)
+	if err != nil {
+		return out, err
+	}
+	defer unlock()
+	if out.Skip != "" {
+		return out, nil
+	}
 	targets, managed := m.resolveAccounts(rep)
 	var toAdd, toRemove []string
 	for i, e := range rep.Entries {

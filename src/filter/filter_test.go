@@ -260,6 +260,7 @@ func TestEntryNotify(t *testing.T) {
 }
 
 func TestMover(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
 	// the gmail account shape: INBOX and Archives exist (the resolved
@@ -382,6 +383,7 @@ func TestStaleFolderTagResolvesToLocation(t *testing.T) {
 // UID tracking on the next sync ("duplicate UID 1234"). Detection is
 // the marker's presence, never a config option (afew rename=auto).
 func TestMoverStripsMbsyncUID(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
 	for _, d := range []string{"INBOX", "Archives"} {
@@ -428,6 +430,7 @@ func TestMoverStripsMbsyncUID(t *testing.T) {
 // TestMoverReadOnlyAccount: a readonly account (R2 - toptal) never
 // moves: no file ops, no path ops; other accounts still move.
 func TestMoverReadOnlyAccount(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
 	for _, d := range []string{"INBOX", "Archives"} {
@@ -486,6 +489,7 @@ func equalOps(a, b []core.TagOp) bool {
 // (the self-send shape) resolves to sent - the last member-add wins,
 // so the stale inbox tag drops and the message stays sent.
 func TestTwoCopyResolvesToSent(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"jelveh": {Preset: "gmail"}}
 	w := &fakeWorker{
@@ -516,6 +520,7 @@ func TestTwoCopyResolvesToSent(t *testing.T) {
 // the resolved target tree moves nothing - the mbsync-owned delivered
 // copy must never be touched (a move breaks its UID bookkeeping).
 func TestMoverSkipsMessageAlreadyHome(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	dir := t.TempDir()
 	root := filepath.Join(dir, "mail")
 	for _, d := range []string{"INBOX", "Sent"} {

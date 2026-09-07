@@ -111,6 +111,9 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	if err != nil {
 		return rep, nil, err
 	}
+	if mr.Skip != "" {
+		diag.Info("filter", "mover", "skipped", "reason", mr.Skip)
+	}
 	return rep, mr, nil
 }
 

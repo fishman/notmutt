@@ -11,9 +11,32 @@ built, spec decision records, and review residuals. Effort is S/M/L relative
 to the send-dialogue milestone. AGENTS.md is normative; a spec and plan are
 prerequisites before implementation per the project's workflow.
 
+## v1 release target
+
+The release cut: notmutt covers the author's day-to-day mail without the
+current escape hatches. Two gates define v1; everything else in the backlog
+ranks after them, and both gates still need a spec and a plan before code.
+
+1. Full gpg (PGP) crypto: decrypt, verify, sign, and encrypt via the system
+   gpg CLI with `--status-fd` parsing and gpg-agent + external pinentry
+   (Tier 1 item 1). Decrypt and signing are the named start; encryption and
+   verification ride the same provider. S/MIME sign/encrypt/decrypt is
+   explicitly NOT a v1 gate - it may land now or later.
+2. Better thread markers in the index: the tree that renders today (tree run,
+   collapse/expand, overflow windowing, the opened-message mark) stops being
+   enough on a long thread. v1 wants state to read at the thread and subtree
+   level - a message's read/answered/flagged/replied state visible on the
+   tree run, not only the top row's flag cell - and a collapsed thread to
+   carry that state honestly on the one line that stands for the
+   conversation.
+
 ## Tier 1: foundational, build next
 
 ### 1. Crypto providers: PGP via gpg, S/MIME in-process (R10) - effort M-L
+
+The PGP half (sign/encrypt/decrypt/verify via gpg) is the v1 crypto gate -
+see the v1 release target above; the S/MIME half is not on the v1 bar and
+may land now or later with the same provider interface.
 
 No sign/encrypt/decrypt on the send or read path yet. PGP via the system gpg
 CLI with `--status-fd` parsing (aerc's gpgbin pattern - the agent/passphrase

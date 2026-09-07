@@ -153,6 +153,7 @@ of rebuilding the list.
 | Config as data | TOML everything: themes with palette indirection, declarative per-context keybindings (the help overlay derives from them), tag styles, glyphs |
 | notmuch is the only truth | No own database - a revision-keyed bbolt cache mirrors query output and re-syncs from notmuch's lastmod |
 | Lua plugins | Build-tag-gated gopher-lua layer with a lib whitelist sandbox; plugins register body-rendering transforms |
+| CRM follow-up drafts | A `lua && crm`-gated workflow on the index `Q` key (both in `make build`'s default tags): pull contacts scanned into HubSpot, brief one from its CRM record plus web/news research over the configured `[ai]` provider, then draft a personalized follow-up into a prefilled compose. Nothing sends automatically - send or dismiss writes the processed marker back to HubSpot, the source of truth |
 
 ## Commits and AI assistance
 

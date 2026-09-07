@@ -394,19 +394,6 @@ func (a *acc) add(r core.Run) {
 	a.runs = append(a.runs, r)
 }
 
-// space appends the inter-word one-space run styled like the preceding
-// run (the walker's space-inherits-preceding), merging when equal.
-func (a *acc) space() {
-	var fg, bg string
-	var attrs core.LineAttrs
-	if n := len(a.runs); n > 0 {
-		last := a.runs[n-1]
-		fg, bg, attrs = last.Fg, last.Bg, last.Attrs
-	}
-	a.add(core.Run{Text: " ", Fg: fg, Bg: bg, Attrs: attrs})
-	a.col++
-}
-
 // emitTextRow emits one content row: hanging markers (D10), then its
 // spans with binding (D6), tab expansion + F1 sanitize, and images
 // (D9). A row that holds only isolated images emits one own-line per
@@ -521,8 +508,8 @@ func (q *stage2) emitHR(r html.Row) {
 func (q *stage2) emitRowContent(a *acc, r html.Row) {
 	q.layMarkers(a, r)
 	a.pad(int(math.Round(float64(r.X) / charW)))
-	pending := false
-	started := false // a text/image run already landed: a sep then spaces words
+	var pend *html.Style // the pending Sep's own leaf style; nil = no gap
+	started := false     // a text/image run already landed: a sep then spaces words
 	for _, sp := range r.Line.Atoms {
 		switch {
 		case sp.Img != nil:
@@ -532,13 +519,13 @@ func (q *stage2) emitRowContent(a *acc, r html.Row) {
 			img := q.boxImage(sp.Img)
 			if img == nil {
 				// unresolved src: the alt renders as plain text, not an image
-				q.emitTextPiece(a, &pending, &started, sanitize(imgAlt(sp.Img)), sp.Img.St)
+				q.emitTextPiece(a, &pend, &started, sanitize(imgAlt(sp.Img)), sp.Img.St)
 				continue
 			}
-			if pending && started {
-				a.space()
+			if pend != nil && started {
+				q.gap(a, pend)
 			}
-			pending = false
+			pend = nil
 			rn := q.runFor(sp.Img.St)
 			if rn.Fg == "" {
 				rn.Fg = q.defaultFG
@@ -552,7 +539,7 @@ func (q *stage2) emitRowContent(a *acc, r html.Row) {
 			a.col += html.TextWidth(rn.Text)
 			started = true
 		case sp.Sep:
-			pending = true
+			pend = sp.St
 		default:
 			text := sanitize(expandTabs(sp.Text))
 			if text == "" {
@@ -560,23 +547,39 @@ func (q *stage2) emitRowContent(a *acc, r html.Row) {
 				// input already dropped the zero-width atom in lib/html
 				// (inline.go). Clear the pending space so a control char
 				// never doubles the gap.
-				pending = false
+				pend = nil
 				continue
 			}
-			q.emitTextPiece(a, &pending, &started, text, sp.St)
+			q.emitTextPiece(a, &pend, &started, text, sp.St)
 		}
 	}
+}
+
+// gap emits the inter-word space pending from a Sep atom, styled from the
+// Sep's own source leaf (the walker styles a leading-space Sep with the
+// leaf it opens). Re-deriving it from the preceding run would bleed that
+// run's underline or color onto the whitespace: after <u>word</u> the gap
+// belongs to the plain text that follows, not to the underline. runFor
+// maps the leaf style through the same dark/theme adaptation as text.
+func (q *stage2) gap(a *acc, st *html.Style) {
+	rn := q.runFor(st)
+	if rn.Fg == "" {
+		rn.Fg = q.defaultFG
+	}
+	rn.Text = " "
+	a.add(rn)
+	a.col++
 }
 
 // emitTextPiece appends one text piece: a pending inter-word space
 // commits unless the piece binds left (D6) or opens the line (a dropped
 // pixel's trailing space collapses like CSS leading whitespace); then
 // the styled run lands.
-func (q *stage2) emitTextPiece(a *acc, pending, started *bool, text string, st *html.Style) {
-	if *pending && *started && !bindsLeft(text) {
-		a.space()
+func (q *stage2) emitTextPiece(a *acc, pend **html.Style, started *bool, text string, st *html.Style) {
+	if *pend != nil && *started && !bindsLeft(text) {
+		q.gap(a, *pend)
 	}
-	*pending = false
+	*pend = nil
 	rn := q.runFor(st)
 	if rn.Fg == "" {
 		rn.Fg = q.defaultFG

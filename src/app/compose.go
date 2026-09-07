@@ -64,23 +64,24 @@ func defaultSig(cfg config.Config, account string) (name, body string) {
 
 // accountFrom resolves the dialogue's sender identity: the account
 // (message tags, cursor tags, else the first configured - resolveAccount),
-// its from address, and the default signature. One derivation for every
-// dialogue builder (compose, reply/forward, mailto).
-func accountFrom(cfg config.Config, msgTags, cursorTags []string) (account, from, sigName, sigBody string) {
+// its from address, the default signature, and the fcc path. One
+// derivation for every dialogue builder (compose, reply/forward, resume,
+// mailto) - the fcc line never repeats.
+func accountFrom(cfg config.Config, root string, msgTags, cursorTags []string) (account, from, sigName, sigBody, fcc string) {
 	account = resolveAccount(cfg, msgTags, cursorTags)
 	from = cfg.Accounts[account].From
 	sigName, sigBody = defaultSig(cfg, account)
-	return account, from, sigName, sigBody
+	fcc = sentPath(root, account, cfg.Accounts[account])
+	return account, from, sigName, sigBody, fcc
 }
 
 // newCompose builds the compose-mode dialogue shell: the sender
-// identity (accountFrom) and the fcc path. Shared by the compose key
-// and the mailto link; reply/forward layer the parsed original on top
-// (buildCompose).
+// identity and fcc path. Shared by the compose key and the mailto link;
+// reply/forward layer the parsed original on top (buildCompose).
 func newCompose(cfg config.Config, root string, msgTags, cursorTags []string) *compose.State {
-	account, from, sigName, sigBody := accountFrom(cfg, msgTags, cursorTags)
+	account, from, sigName, sigBody, fcc := accountFrom(cfg, root, msgTags, cursorTags)
 	st := compose.NewCompose(account, from, sigName, sigBody)
-	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	st.Fcc = fcc
 	return st
 }
 
@@ -95,7 +96,7 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 	} else if msg != nil && len(msg.Paths) > 0 {
 		parsed, err := mail.ParseMessage(msg.Paths[0])
 		if err == nil {
-			account, from, sigName, sigBody := accountFrom(cfg, tagsOf(msg), cursorTags(view))
+			account, from, sigName, sigBody, fcc := accountFrom(cfg, root, tagsOf(msg), cursorTags(view))
 			switch mode {
 			case "reply":
 				st = compose.Reply(*msg, parsed, account, from, sigName, sigBody)
@@ -109,7 +110,7 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 				st = compose.Forward(*msg, parsed, account, from, sigName, sigBody)
 			}
 			if st != nil {
-				st.Fcc = sentPath(root, account, cfg.Accounts[account])
+				st.Fcc = fcc
 			}
 		}
 	}
@@ -143,13 +144,13 @@ func resumePrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, m
 		if cand.ThreadID == "" {
 			return nil, nil
 		}
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: cand.ThreadID})
-		if err != nil || rpl.Err != nil {
-			return nil, fmt.Errorf("thread %s: %v %v", cand.ThreadID, err, rpl.Err)
+		msgs, err := fetchThread(worker, cand.ThreadID)
+		if err != nil {
+			return nil, err
 		}
 		cand = nil
-		for i := range rpl.Msgs {
-			m := &rpl.Msgs[i]
+		for i := range msgs {
+			m := &msgs[i]
 			if isDraft(m) && len(m.Paths) > 0 && (msg.ID == "" || m.ID == msg.ID) {
 				cand = m
 				break
@@ -159,7 +160,7 @@ func resumePrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, m
 			return nil, nil
 		}
 	}
-	account, from, _, _ := accountFrom(cfg, cand.Tags, cursorTags(view))
+	account, from, _, _, fcc := accountFrom(cfg, root, cand.Tags, cursorTags(view))
 	d, err := mail.ParseDraft(cand.Paths[0])
 	if err != nil {
 		return nil, err
@@ -168,8 +169,19 @@ func resumePrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, m
 		return nil, fmt.Errorf("%s: draft body exceeds the parse cap", cand.Paths[0])
 	}
 	st := compose.Resume(*cand, d, account, from)
-	st.Fcc = sentPath(root, account, cfg.Accounts[account])
+	st.Fcc = fcc
 	return st, nil
+}
+
+// fetchThread loads a thread's messages through the worker (the
+// path-less-row fallback both prefills share: index/pager rows are
+// thread summaries, R1 - message paths arrive on open).
+func fetchThread(worker *notmuch.Worker, threadID string) ([]core.Message, error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+	if err != nil || rpl.Err != nil {
+		return nil, fmt.Errorf("thread %s: %v %v", threadID, err, rpl.Err)
+	}
+	return rpl.Msgs, nil
 }
 
 // replyPrefill builds the reply dialogue: buildCompose on the cursor
@@ -186,24 +198,24 @@ func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, ms
 	if msg == nil || msg.ThreadID == "" {
 		return nil, nil
 	}
-	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: msg.ThreadID})
-	if err != nil || rpl.Err != nil {
-		return nil, fmt.Errorf("thread %s: %v %v", msg.ThreadID, err, rpl.Err)
+	msgs, err := fetchThread(worker, msg.ThreadID)
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(rpl.Msgs, func(i, j int) bool { return rpl.Msgs[i].Timestamp > rpl.Msgs[j].Timestamp })
+	sort.Slice(msgs, func(i, j int) bool { return msgs[i].Timestamp > msgs[j].Timestamp })
 	// prefer the requested msgID, then the newest parseable
 	if msg.ID != "" {
-		for i := range rpl.Msgs {
-			if rpl.Msgs[i].ID == msg.ID {
-				if st := buildCompose(cfg, view, &rpl.Msgs[i], mode, root); st != nil {
+		for i := range msgs {
+			if msgs[i].ID == msg.ID {
+				if st := buildCompose(cfg, view, &msgs[i], mode, root); st != nil {
 					return st, nil
 				}
 				break
 			}
 		}
 	}
-	for i := range rpl.Msgs {
-		if st := buildCompose(cfg, view, &rpl.Msgs[i], mode, root); st != nil {
+	for i := range msgs {
+		if st := buildCompose(cfg, view, &msgs[i], mode, root); st != nil {
 			return st, nil
 		}
 	}

@@ -98,3 +98,48 @@ func TestMoverLockStrictTimesOut(t *testing.T) {
 		t.Fatal("a timed-out apply mover must not copy")
 	}
 }
+
+// TestCopyFileTempThenRename: copyFile publishes the destination via a
+// dot-prefixed temp in the destination directory and an atomic rename -
+// a concurrent notmuch new never indexes a half-published destination
+// (notmuch ignores dotfiles), and a leftover temp from a crashed copy
+// does not survive a successful redo.
+func TestCopyFileTempThenRename(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "s")
+	dst := filepath.Join(dir, "d")
+	if err := os.WriteFile(src, []byte("content"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// a leftover temp of a crashed earlier copy
+	if err := os.WriteFile(filepath.Join(dir, ".d.tmp"), []byte("junk"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dst)
+	if err != nil || string(got) != "content" {
+		t.Fatalf("dst = %q, %v, want content", got, err)
+	}
+	// an existing destination is replaced (a second move over the same name)
+	if err := os.WriteFile(dst, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(dst)
+	if err != nil || string(got) != "content" {
+		t.Fatalf("dst after replace = %q, %v, want content", got, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if len(e.Name()) > 0 && e.Name()[0] == '.' {
+			t.Fatalf("temp leaked: %s", e.Name())
+		}
+	}
+}

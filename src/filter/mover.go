@@ -371,7 +371,11 @@ func sameTree(srcMaildir, dstMaildir string) bool {
 // copyFile is shutil.copy2: content, mode, and mtime. The mtime is
 // kept because the untag-reversal delivery gate compares file times;
 // destination dirs are created so a first move never fails on a
-// missing folder.
+// missing folder. The copy lands in a dot-prefixed temp in the
+// destination directory and renames over the final name: a concurrent
+// notmuch new must never index a half-published destination (headers
+// copy first - a truncated file still parses a Message-ID), and rename
+// is atomic within a directory while notmuch ignores dotfiles.
 func copyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o700); err != nil {
 		return err
@@ -385,18 +389,29 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fi.Mode().Perm())
+	tmp := filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".tmp")
+	out, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, fi.Mode().Perm())
 	if err != nil {
 		return err
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		out.Close()
+		os.Remove(tmp)
 		return err
 	}
 	if err := out.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
-	return os.Chtimes(dst, fi.ModTime(), fi.ModTime())
+	if err := os.Chtimes(tmp, fi.ModTime(), fi.ModTime()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, dst); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 func isDir(p string) bool {

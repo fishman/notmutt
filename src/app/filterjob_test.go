@@ -73,6 +73,8 @@ func drain(ch <-chan core.Event) (done []core.FilterDone, jerr []core.JobError) 
 }
 
 func TestFilterJob(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
 	st := config.NewStore(cfg)
@@ -136,6 +138,8 @@ func TestFilterJob(t *testing.T) {
 // delta and moves (the manual trigger's effect); a quiet mailbox (no
 // bump) produces no classification pass.
 func TestRunFilterPipeline(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
 	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
 
 	cfg := config.Default()
@@ -459,5 +463,138 @@ func TestRunPollConfig(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("diff lacks %s (the rule/account/hard-tag from the config): %q", want, diff)
 		}
+	}
+}
+
+// TestPollReconcileOutOfBandMutation (the core regression): the filter
+// already applied through L=5; an out-of-band write (a tag op, a path
+// move, a sibling process's new) advanced the database to 10. This
+// poll's own ActNew finds nothing (bump 0), but the poll must classify
+// (5, 10] anyway. Current code: ActNew reports (10, 10), cur == pre,
+// and the poll returns before classifying - RED.
+func TestPollReconcileOutOfBandMutation(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}},
+			{ID: "m2", Tags: []string{"inbox", "spam"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	w.rev.Store(10) // already past L=5, and ActNew must find nothing new
+	if err := writeLastClassify(5); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, _, _, err := runFilterPipeline(w, cfg, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("out-of-band revision movement must still classify (L, cur]")
+	}
+	if w.tagged.Load() == 0 {
+		t.Fatal("no tag writes for the reconciled entries")
+	}
+	got, _ := os.ReadFile(lastClassifyPath())
+	if string(got) != "10\n" {
+		t.Fatalf("floor = %q, want 10 (the applied run must advance L to the current revision)", got)
+	}
+}
+
+// TestPollReconcileDryRunKeepsFloor: a dry-run reconcile classifies the
+// full window but never advances L - the reviewer sees the pending set
+// until an applied run.
+func TestPollReconcileDryRunKeepsFloor(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
+
+	cfg := config.Default() // dry-run
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}},
+		snaps: []core.Message{{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}}},
+	}
+	w.rev.Store(20)
+	if err := writeLastClassify(15); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, _, _, err := runFilterPipeline(w, cfg, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("a dry-run reconcile must still classify (L, cur]")
+	}
+	got, _ := os.ReadFile(lastClassifyPath())
+	if string(got) != "15\n" {
+		t.Fatalf("floor moved on a dry run: %q, want 15 (only applied runs advance L)", got)
+	}
+}
+
+// TestPollReconcileFirstRunNoBackfill: no L file, a far-behind mailbox
+// (rev at 100k), nothing new. L baselines to the present revision, so
+// the window is empty and no L file is created - never a full backfill.
+func TestPollReconcileFirstRunNoBackfill(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	w := &fjWorker{}
+	w.rev.Store(100000)
+
+	changed, _, _, err := runFilterPipeline(w, cfg, root, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("a first run on a quiet far-behind mailbox must not classify")
+	}
+	if _, err := os.Stat(lastClassifyPath()); err == nil {
+		t.Fatal("a quiet first run must not create the floor file")
+	}
+}
+
+// TestPollReconcileWindowedIgnoresFloor: a fixed-window replay
+// reclassifies its stored bracket and never reads or advances L.
+func TestPollReconcileWindowedIgnoresFloor(t *testing.T) {
+	cache := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", cache)
+	root := testutil.MaildirTree(t, map[string]string{"Archives": "1", "INBOX": "2"})
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	w := &fjWorker{
+		delta: []core.Message{{ID: "m1"}, {ID: "m2"}},
+		snaps: []core.Message{
+			{ID: "m1", Tags: []string{"inbox"}, Paths: []string{"gmail/Archives/cur/1"}},
+			{ID: "m2", Tags: []string{"inbox", "spam"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	w.rev.Store(5)
+	if err := writeLastClassify(99); err != nil {
+		t.Fatal(err)
+	}
+
+	line, _, err := runPoll(w, cfg, root, pollSpec{windowed: true, from: 0, to: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line != "poll: dry-run: 0..5: 2 entries, 0 moved, 1 skipped" {
+		t.Fatalf("summary = %q", line)
+	}
+	got, _ := os.ReadFile(lastClassifyPath())
+	if string(got) != "99\n" {
+		t.Fatalf("a windowed replay touched the floor: %q, want 99", got)
 	}
 }

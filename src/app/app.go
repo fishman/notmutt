@@ -1273,9 +1273,10 @@ func cachePath() string {
 // recapturing it), and apply overrides the dry-run config for this run
 // only, the config file untouched.
 type pollSpec struct {
-	apply    bool
-	from, to uint64
-	windowed bool
+	apply     bool
+	from, to  uint64
+	windowed  bool
+	reconcile bool // fresh runs classify (L, cur]; indexWrite's own-bracket classify leaves this false
 }
 
 // parsePollSpec reads the poll flags: --apply (one-shot live override
@@ -1370,6 +1371,9 @@ func runPoll(worker workerAPI, cfg config.Config, root string, spec pollSpec) (s
 	if spec.apply {
 		cfg.Filter.DryRun = false // one-shot: the config file stays untouched
 	}
+	if !spec.windowed {
+		spec.reconcile = true // the poll reconciles (L, cur], not just new mail
+	}
 	rep, mr, win, err := pollDiff(worker, cfg, root, spec, nil)
 	if err != nil {
 		return "", nil, fmt.Errorf("poll: %w", err)
@@ -1393,34 +1397,103 @@ func runPoll(worker workerAPI, cfg config.Config, root string, spec pollSpec) (s
 	return summary, pollDiffLines(rep, mr), nil
 }
 
-// pollDiff classifies the poll's window: a fresh capture (ActNew -
-// the backend's new wrapper returns the (pre, cur] bracket, the
-// revision moving proves new mail) or the fixed (from, to] bracket of
-// a replay spec. Returns the window as the summary reports it; a
-// fresh capture on a quiet mailbox returns an empty window and no
-// classification pass.
+// pollDiff classifies the poll's window. Three modes:
+//   - windowed: replay the fixed (from, to] bracket of a stored diff;
+//     the repro harness, no new run, no floor.
+//   - reconcile (fresh): index new mail, then classify (L, cur] on the
+//     database revision - the poll owns classification, whatever moved
+//     the revision since L gets the folder rules run on it.
+//   - bracket (fresh, indexWrite): classify only this run's own new
+//     discovery bracket, never touching L.
+//
+// Returns the window as the summary reports it; an empty window means
+// no classification pass.
 func pollDiff(worker workerAPI, cfg config.Config, root string, spec pollSpec, progress func(done, total int)) (*filter.Report, *filter.MoveReport, string, error) {
-	pre, cur := spec.from, spec.to
-	if !spec.windowed {
-		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew})
-		if err != nil || rpl.Err != nil {
-			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
-				return nil, nil, "", fmt.Errorf("new: %v %v", err, rpl.Err)
-			}
-			// a backend without a New path (ErrUnsupported): no bracket,
-			// no classification
-			return nil, nil, "", nil
-		}
-		pre, cur = rpl.Pre, rpl.Rev
-		if cur == pre {
-			return nil, nil, "", nil // nothing new; no classification pass
-		}
+	if spec.windowed {
+		return runClassify(worker, cfg, root, spec.from, spec.to, progress)
 	}
+	if spec.reconcile {
+		return pollReconcile(worker, cfg, root, progress)
+	}
+	pre, cur, ok, err := freshCapture(worker)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if !ok {
+		return nil, nil, "", nil
+	}
+	return runClassify(worker, cfg, root, pre, cur, progress)
+}
+
+// freshCapture runs notmuch new and returns the (pre, cur] lastmod
+// bracket its own indexing discovered. ok is false when nothing was
+// indexed or the backend has no New path (ErrUnsupported degrades to a
+// no-op poll, as today).
+func freshCapture(worker workerAPI) (pre, cur uint64, ok bool, err error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	if err != nil || rpl.Err != nil {
+		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+			return 0, 0, false, fmt.Errorf("new: %v %v", err, rpl.Err)
+		}
+		return 0, 0, false, nil
+	}
+	return rpl.Pre, rpl.Rev, rpl.Rev > rpl.Pre, nil
+}
+
+// runClassify runs the engine and the mover over the fixed (pre, cur]
+// bracket and renders the window label.
+func runClassify(worker workerAPI, cfg config.Config, root string, pre, cur uint64, progress func(done, total int)) (*filter.Report, *filter.MoveReport, string, error) {
 	rep, mr, err := classifyDelta(worker, cfg, root, pre, cur, progress)
 	if err != nil {
 		return rep, mr, "", err
 	}
 	return rep, mr, fmt.Sprintf("%d..%d", pre, cur), nil
+}
+
+// pollReconcile is the reconciling fresh poll: index new mail (its
+// files' lastmod must land inside the window), read the persisted L
+// floor (absent -> baseline to this new run's pre, so a first run
+// classifies only the fresh discovery and never backfills), and
+// classify (L, cur]. An applied run persists the post-run revision as
+// the new L - the classify's own tag/path writes advanced the revision
+// past cur, and persisting the higher value keeps those messages out of
+// the next poll's window. A dry run leaves L where it is so the
+// reviewer keeps seeing the full pending set. cur == L (a quiet
+// mailbox) classifies nothing, exactly as the old cur == pre gate.
+func pollReconcile(worker workerAPI, cfg config.Config, root string, progress func(done, total int)) (*filter.Report, *filter.MoveReport, string, error) {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActNew})
+	if err != nil || rpl.Err != nil {
+		if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+			return nil, nil, "", fmt.Errorf("new: %v %v", err, rpl.Err)
+		}
+		return nil, nil, "", nil // no New path: no bracket, no reconcile
+	}
+	L, have := readLastClassify()
+	if !have {
+		L = rpl.Pre
+	}
+	curRpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision})
+	if err != nil || curRpl.Err != nil {
+		return nil, nil, "", fmt.Errorf("revision: %v %v", err, curRpl.Err)
+	}
+	cur := curRpl.Rev
+	if cur <= L {
+		return nil, nil, "", nil // nothing mutated since L: the quiet poll
+	}
+	rep, mr, err := classifyDelta(worker, cfg, root, L, cur, progress)
+	if err != nil {
+		return rep, mr, "", err
+	}
+	if !rep.DryRun {
+		if final, err := worker.Call(notmuch.Action{Kind: notmuch.ActRevision}); err == nil && final.Err == nil {
+			if err := writeLastClassify(final.Rev); err != nil {
+				diag.Warn("last-classify", "err", err.Error())
+			}
+		} else {
+			diag.Warn("reconcile", "floor", "revision read failed")
+		}
+	}
+	return rep, mr, fmt.Sprintf("%d..%d", L, cur), nil
 }
 
 // pollDiffLines renders the reviewable diff: per entry, the resolved

@@ -89,7 +89,7 @@ func moveCounts(mr *filter.MoveReport) (moved, skipped int) {
 // window capture with the bus progress callback, reported as a change
 // boolean (the filter job's revision-stability gate).
 func runFilterPipeline(worker workerAPI, cfg config.Config, root string, progress func(done, total int)) (bool, *filter.Report, *filter.MoveReport, error) {
-	rep, mr, win, err := pollDiff(worker, cfg, root, pollSpec{}, progress)
+	rep, mr, win, err := pollDiff(worker, cfg, root, pollSpec{reconcile: true}, progress)
 	if err != nil || win == "" {
 		return false, rep, mr, err
 	}

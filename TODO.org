@@ -73,3 +73,418 @@ The plan mandated the rem branch (folded to the same 16px base, behaviorally
 == em) but the spec text names em only; the doc comment "other units are not
 values" is slightly broader than the code. Harmless over-acceptance; decide if
 strictness matters when more length units land. src/lib/html/html.go parseLen.
+* TODO table_test.go:97 stale error message names anon row-group
+TestCaptionStoredNotGrid's t.Fatalf says "want caption then anon row-group",
+but Task 1a conformed the builder - the second child is now the parser's
+implied tbody (a real row-group), not an anonymous one. Cosmetic; reword to
+"implied tbody row-group". src/lib/html/table_test.go:97.
+
+* TODO box.go demotion gate does not rewrite Display for parity
+The RoleTable->RoleBlock demotion gate (box.go:148-150) rewrites Role but
+leaves st.Display as the author's table keyword, unlike the blockification
+branch (box.go:175) which rewrites computed display alongside role. No current
+consumer reads Display of a demoted box (verified), so latent only. For
+parity, set st.Display = "block" at the demotion.
+
+* TODO a real table tag with author display:block leaves unconsumable RoleTable children
+<table style="display:block"> (or inline-block; inline-table is not in roleOf)
+demotes the box to RoleBlock, so its implied-tbody/tr/td children build as
+RoleTable row-group/row/cell boxes under a plain block container - no RoleTable
+wrapper. No flow case consumes that shape today (inert). The table layout task
+(Task 2, plan 2026-09-03-html-tables.md) should decide a rule, e.g. a real
+table-family tag always stays RoleTable with the block/inline keyword as its
+outer display, mirroring how splitRuns already treats RoleTable as block.
+
+* TODO test gaps at the consume side: row whitespace drop, colgroup leaf, display:table-cell em
+Task 1a pins table-level whitespace drop and the div display:table demotion,
+but not: (a) the real parse shape <tr><td>a</td> <td>b</td></tr> - the parser
+keeps a TEXT " " node under the row and tableKids must drop it (row-level
+whitespace drop is untested); (b) colgroup/col landing as a column-group slot
+leaf with children not descended (intended contract, unpinned); (c)
+TestAuthorDisplayTableOnDivRendersBlock's nested <em style="display:table-cell">
+demotion is only implicit - the test asserts the outer div. Cheap consume-side
+pins to add with Task 2. src/lib/html/table_test.go.
+* TODO assignColumns interpolation can over-shoot dist when rounding error outruns the last column
+The round-then-last-column-absorbs branch (table.go:192-200) computes
+colW[cols-1] = dist - sum; when rounding error on the first cols-1 columns
+exceeds the last column's fair share that goes negative, and the `if < 0 ->
+0` clamp then lets the colW total exceed dist by up to ~cols px - starving
+the last column below min-content and shoving colX past the table's
+trailing edge. Repro: cols=6, min=[3,3,3,3,3,1], max=[6,6,6,6,6,2], dist=19.
+Fix: floor-all plus largest-remainder (add the leftover 1px to the first
+`rem` columns). WATCH when Task 3 spans distribute across clamped columns -
+they reuse this summation. src/lib/html/table.go:192-200.
+
+* TODO spanOf is dead code with comments that overstate its behavior
+table.go:39-57 (and 32, 141): spanOf parses colspan/rowspan but nothing
+stores the result; gridCell.colspan is hardcoded 1 and never clamped from
+an attribute, yet the "clamped" comment (line 32) and buildGrid's doc
+describe clamping that does not exist. Inert-on-purpose is the Task 3
+boundary, but no test pins spanOf's parse, so Task 3 could inherit a bug
+silently. Add a tiny parse test now or trim the comments to "parsed for
+Task 3; inert today". src/lib/html/table.go.
+
+* TODO hoist `type laid struct` out of the grid-row loop
+table.go:253-258 declares type laid inside the grid-row emission loop;
+legal but unidiomatic. Declare it once at function scope next to gridCell.
+
+* TODO Row.Line doc comment is stale: also unused on Cells rows
+block.go:15 says "unused when HR or marker-only", but Line is also unused
+on a Cells grid row (the new Cells field documents exclusivity). Add "or a
+Cells row" to the comment. src/lib/html/block.go:15.
+
+* TODO table layout coverage gaps: normalize squeeze, padded-block X, multi-line cells
+Unpinned: the normalize-mode path (assignColumns dist <= colMin squeeze below
+min-content with char-break); a table nested inside a padded block (fragment X
+offset through x); a multi-grid-row table with unequal per-cell line counts
+(row-boundary ambiguity in the flat Cells stream); first-line Gap/seam
+consumption after a sibling paragraph. src/lib/html/table_test.go.
+* TODO ordered structure over claimed columns if populated-row skip ever stalls
+Task 3a made empty rows O(1), but a populated row whose cells must step over
+many columns claimed by still-live rowspans scans those claims once per such
+row (for cur < cols && busy[cur] > ri). Byte-budget worst case at 1 MB is
+sub-second, not a freeze, so it is documented in the plan (Task 3a residual)
+as non-blocking. If a real hostile probe ever shows a >1s class, upgrade
+busy from a per-column map to an ordered structure over claimed columns
+(first-free lookup). src/lib/html/table.go buildGrid.
+* TODO busy[cur] = ri + rs can wrap negative on a maxint64 rowspan
+A rowspan attribute near maxint64 (Atoi saturates; spanOf stores it raw)
+placed at ri >= 1 makes ri + rs wrap negative, so busy[cur] > ri reads false
+and a later row can overlap the claim. Rendering-only cosmetic, absurd input,
+no panic/memory/perf. Cheap hardening: cap rs before the write or compute a
+saturating expiry. src/lib/html/table.go:180 buildGrid.
+
+* TODO memoized table extents are Metrics-dependent; valid for one layout pass, not concurrent
+tblMin/tblMax are measured with m.Width, so re-laying the same box tree under a
+different meter (zoom/font change) silently serves extents computed under the old
+meter, and there is no reset hook (fields unexported). No consumer reuses a tree
+today; record the contract on tableExtents' doc comment: valid for one layout
+pass under one Metrics, and a tree is not safe for concurrent LayoutBlock (the
+memo writes during a measure). src/lib/html/box.go:43, src/lib/html/table.go tableExtents.
+* TODO (declined) regression-pin the nested-table measure memo with a deep-chain DoS test
+Proposed by review: a 20k-deep single-cell-table chain that times out if the memo
+is deleted. Declined with reason: x/net/html rejects nesting past an open-element
+stack of 512 (a nested single-cell table holds ~4 open elements per level, so a
+real parse caps near ~127 nested tables), so the O(depth^2) shape is not
+content-reachable; a deeper chain needs hand-assembled DOM the locked conformance
+rule forbids tests from building; and at parser-capped depth the memo's saving is
+sub-millisecond, so no deterministic assertion distinguishes it. The parser cap,
+not the memo, is the DoS bound on this hostile shape. Recorded at the plan Task 4
+Step 6 note (2026-09-04). src/lib/html/table.go tableExtents.
+* TODO table coverage: multi-row nested table beside a shorter sibling cell (strip interleave)
+The two Task 4 tests pin block-in-cell text, depth-2 nesting, absolute-X
+indentation, and width math, but not the fragment ordering the grid-row strip
+emission depends on: a cell whose nested table spans 2+ grid rows beside a
+shorter sibling cell - strip k must carry each cell's k-th line, and later strips
+only the longer cell. One multi-row-nested-table-beside-text-cell assertion would
+lock it. src/lib/html/table_test.go (Task 4 tests ~328-365).
+* TODO parseSizeLen zero asymmetry: 0% is accepted, 0px is not
+The px branch (html.go:163) requires n > 0; the pct branch (:168) allows n >= 0,
+so width:0% yields CSSLen{Px:0,Pct:true} while width:0px/auto leave the field
+zero - the doc comment claims "0 ... not a value". Once Task 2's usedImg consumes
+this, width:0% resolves to a zero-width image while width:0px stays intrinsic:
+two spellings of zero diverge. Degenerate in mail. Decide: reject 0% too
+(n > 0 in the pct branch) or correct the comment; pin the divergence in a
+specImg test if left open. src/lib/html/html.go:163-168.
+* TODO TestImageSizingLengthsDoNotInherit only falsifies Width, not Height/MaxWidth
+img_test.go:24 sets only width:200px on the parent, so Height's non-inheritance is
+untested (parent Height is already the zero CSSLen - a leak would be invisible)
+and MaxWidth is masked by the child's own max-width:100px (a leaked parent value
+would be overwritten to the same {Px:100}). Fix: set height/max-width on the
+parent and assert a descendant with no own declarations stays all-zero. From the
+Plan 5 Task 1 code-quality review. src/lib/html/img_test.go.
+* TODO (plan 5 close-out) imgExtentW under-seats a height-derived image in table measure
+The px max-width facet is closed: f25aa73 caps imgExtentW at a px max-width
+(!mwPct), so an auto-width image over-seats no more (intrinsic-over-cap and
+css-width-over-cap both seat at max-width now; pinned by
+TestImgExtentCapsAtPXMaxWidth, plus a %-max-width-uncapped boundary guard). The
+residual facet stays open: a height-only image (height:120 on ratio 2:1 renders
+240 wide but still seats its 60px intrinsic) under-seats the column, same class
+as the width-dependent %-max-width case - measure at infinite width cannot see a
+height-transferred or % width without the layout pass. Reconcile imgExtentW with
+usedImg's transferred size when a table-squeeze probe demands it. From the Plan 5
+Task 2 code-quality review (Important). src/lib/html/img.go imgExtentW,
+TestImgExtentCapsAtPXMaxWidth.
+* TODO pct image width truncates while ratio axes round
+usedImg resolves a % width as px*avail/100 (integer truncation) but scales the
+other axis with math.Round (probes J/K). At a fractional product (width:25% at
+avail 10 -> 2.5) truncation and round diverge. Integer percents are the only
+parseable form and integer-avail probes are exact, so unreachable in current
+tests; decide round-for-consistency or pin truncation with a probe. From the
+Plan 5 Task 2 code-quality review. src/lib/html/img.go:114.
+* TODO runExtents image branch has no direct test until Task 4 seating
+table.go:80-84 overrides image atoms with imgExtentW, but no table fixture holds
+an <img>, so the measure-side override is inert and untested today. Task 4's
+TestTableCellSeatsAnImageColumn will exercise it; add a runExtents-level pin then
+or fold an image atom into a current table fixture.
+* TODO ResolveImages doc nits: walk is O(boxes), decode is O(#imgs); once-per-parse
+img.go ResolveImages says "O(#imgs)" but the walk visits every box (decode is
+O(#imgs)). It also only overwrites intrinsic on a successful load, so a second
+call whose loader returns ok=false leaves a stale intrinsic from the first call -
+note it is once-per-parse.
+* TODO ResolveImages write guard's w>0&&h>0 clause is not independently pinned
+The Task 3 load-bearing fix proved the `ok` clause (broken.png 40x20/ok=false
+would visibly land if dropped) but not `&& w > 0 && h > 0`: every positive
+fixture returns ok=true with positive dims and broken.png is stopped by ok alone,
+so deleting the positivity clause leaves the suite green (mutation-verified). To
+pin it, add one fixture returning ok=true with a zero dimension (e.g.
+"zero.png" -> 0,20,true) asserting 0x0. Optional hardening; the ok-guard bar is
+met. src/lib/html/img.go:174, img_test.go TestResolveImagesFillsIntrinsics.
+* TODO empty-src ResolveImages fixture asserts end-state, not the src!="" skip
+img_test.go:196-198 checks iw==0, but dropping the `src != ""` guard goes
+unnoticed because load("") hits the loader default (0,0,false) and writes nothing
+under the ok guard. Intended adjacency check; the src-skip guard stays unpinned
+unless the loader gives "" a nonzero-ok result. src/lib/html/img_test.go.
+* TODO width:auto on an image does not clear the width attribute hint
+specImg treats CSS width:auto/0 as "no value", so the width attribute then
+fills that axis: <img width="120" style="width:auto"> sizes 120px. CSS
+auto over an attr should mean auto (intrinsic); the zero CSSLen cannot
+distinguish "property absent" from "property auto". Rare (declared-size
+mail never writes width:auto); would need a declared-but-auto flag.
+src/lib/html/img.go specImg.
+* TODO a pct-width image in a table seats its intrinsic as min and max content
+runExtents cannot split one image's min (0: a % can shrink) from its max
+(intrinsic), so a % image contributes its intrinsic to both. A lone
+width:100% image therefore never lets its table shrink below intrinsic
+under a narrow container. Fine for mail banners; revisit if table squeeze
+probes demand it. src/lib/html/img.go imgExtentW.
+* TODO no line-break before an over-wide image after a legal break point
+LayoutInline emits an image unconditionally, so a 400px image after "words "
+on a 300px line overflows whole instead of wrapping to the next line (text
+does break there). An image sharing a line with text is already a recorded
+divergence; add the break if inline-image mail ever matters. src/lib/html/inline.go.
+* TODO no test pins an image's min-content contribution inside a squeezed cell
+Task 4 seats a 600px image in an 800px table; the normalize-mode squeeze
+(dist <= colMin char-break path) with an image in the cell is unpinned.
+src/lib/html/img_test.go TestTableCellSeatsAnImageColumn.
+* TODO LineBox.Atoms field keeps the retired private-type name on the public surface
+From the plan-6 Task 1 code-quality review (Minor, accepted as-is): the export
+renamed atom -> Span but left the LineBox field as `Atoms []Span` (inline.go:156)
+with "laid-out atoms in order" prose at 154. `mail`'s stage-2 engine will read
+line.Atoms across plan-6 Tasks 2-5. Renaming to Spans would be a pure
+compile-time sweep only while no external consumer exists; the plan doc uses
+`.Atoms` throughout, so the field is kept. If the vocabulary ever grates, do
+the rename before the next html stage-2 surface change, never after consumers land.
+* TODO Style.Label is not in StyleOf's non-inherited reset list
+From the plan-6 Task 1 code-quality review (Minor): html.go:67 declares Label
+with "not inherited content", but StyleOf (html.go:390-398) copies the parent
+wholesale and never clears it, so a Label-bearing style reused as a StyleOf
+parent would leak the flag into descendants. Safe today only because mail sets
+it on post-Build leaf style copies (plan D13) that never flow through StyleOf.
+Enforce by adding s.Label = false beside s.WSSet = false, or soften the comment
+to "leaf-only, post-Build synthesized flag". src/lib/html/html.go Style/Label.
+* TODO imgRes struct doc omits the declared-px fields
+From the plan-6 Task 1 code-quality review (Minor): img.go:12-15 documents
+intrinsic and used px only; dispW/dispH have precise field comments but the
+type-level doc should carry a one-clause mention that a laid-out image also
+records its declared display px (the stage-2 DispW/DispH target). src/lib/html/img.go.
+* TODO internal "atom" vocabulary drift after the Span export
+From the plan-6 Task 1 code-quality review (Minor): atomizeText (inline.go:81),
+renderAtoms (inline_test.go:21), and comments at inline.go:76/132 still say
+"atom" while the type is Span. Conceptually still "atomize into laid-out
+pieces", so harmless; a reader grepping "atom" lands on dead vocabulary.
+Renaming the two helpers is optional and cheap. src/lib/html/inline.go.
+* TODO (plan 6 close-out) Style.Label is a renderer-synthesized flag
+From plan 6 appendix (D13): a future Lua/RPC consumer must not treat the Label
+bit as authored content - it is set only on synthesized F-key link-marker boxes
+that mail injects before layout; StyleOf never sets it. record near src/lib/html/html.go Style.
+* TODO (plan 6 close-out) list-marker glyph transforms are a mail-side data map
+From plan 6 appendix (D10): the disc/circle/square/decimal glyph text and the
+decimal "N." rendering live in a mail-owned map in html_stage2.go; a config
+override (R11 config-data shape) is future work, not built in plan 6.
+src/mail/html_stage2.go markerGlyphs.
+* TODO stage-2 dark branches have zero coverage until the Task-6 parity run
+From the plan-6 Task 2 code-quality review (Minor): pageColors and the stage-2
+runFor (html_stage2.go) carry the riskiest ported logic - light-declared bg
+reflection onto themeBG, AdaptFG inversion, the luma gate - but every TestStage2
+pin calls renderStage2HTML(..., false, false, ""), so only the light path runs.
+A transcription error in the dark path would go unnoticed until the Task-6
+parity harness (the locked html_dark_test.go then runs against stage-2). Add one
+dark smoke pin (a light-bg mail rendered dark=true asserts the adapted bg on its
+lines) before more code grows on the engine. src/mail/html_stage2_test.go.
+* TODO run-merge equality compares whole core.Run including Text - style merges never fire
+From the plan-6 Task 2 code-quality review (Minor): html_stage2.go merges
+adjacent runs by == on the full core.Run, so two same-style atoms with different
+text never coalesce (identical-text neighbors only - effectively never). Faithful
+to the walker's runWords and visually harmless (the pager paints runs over
+Line.Text). When Task 5 wires the Style.Label bit through run building, decide
+explicitly whether the merge should compare style-only (Fg/Bg/Attrs/Label/Image)
+so same-style pieces coalesce while label runs stay separate. src/mail/html_stage2.go.
+* TODO html_stage2.go header cross-reference names only "the stage-2 plan 6"
+From the plan-6 Task 2 code-quality review (Minor): the file header comment
+"and the stage-2 plan 6" is cryptic unless you know the html-plan numbering.
+Naming the file (2026-09-04-html-stage2-wiring.md) makes the cross-reference
+self-describing. Cosmetic; fold into the Task-6 tidy. src/mail/html_stage2.go.
+* TODO control-empty pin guards F1 output, not the emptied-span branch
+From the plan-6 Task 3 spec review (Minor, accepted as-is): TestStage2EmptySpanAfterControlDoesNotDoubleSpace
+passes on the Task-2 baseline - <p>lead \x01 tail</p> never presents stage-2 with an
+emptyable atom (x/net/html strips raw C0 and char refs; LayoutInline drops any
+zero-width non-sep atom at inline.go:254-257). The output (single space, no control)
+is correct with or without the emptied-span branch at html_stage2.go:285-289, which
+survives only as the preserve-mode (pre-wrap) pure-control corner. A
+white-space:pre-wrap pure-control fixture would make the branch discriminating if
+that coverage is ever wanted. src/mail/html_stage2_test.go.
+* TODO stage-2 decimal marker, empty-li, and hr paths are unpinned
+From the plan-6 Task 3 code-quality review (nice-to-have): glyphText's decimal "N.",
+emitMarkerRow (textless li), and emitHR have no pin; Task-3 pins cover binding, pre
+tabs, control-empty, images, and the ul gutter only. Add smoke pins (ol item shows
+"1.", <li/> alone shows its disc, <hr> yields a rule-glyph line) - those three paths
+are where Task-4/5 regressions hide. src/mail/html_stage2_test.go.
+* TODO (Task-6 cutover) settle inline-image alt-width vs decoded-width reservation
+From the plan-6 Task 3 code-quality review (residual): an inline image's run reserves
+the alt placeholder's cells in Line.Text (ImagePos.X = placeholder text column), but
+the decoded glyph the pager paints can be wider (bleed over neighbors) or narrower
+(trailing blanks). The walker masks it (never emits inline image rows); the images-on
+decode view at the Task-6 cutover decides whether ImagePos should reserve decoded
+cells, alt cells, or a capped glyph cell, and whether X stays the placeholder column.
+src/mail/html_stage2.go, src/tui/img.go.
+* TODO (Task 6 cutover) all-empty strips emit a line and consume the D5 gap
+From the plan-6 Task 4 code-quality review (Important, deferred; merge approved):
+a grid row whose fragments all drop to nothing (lone 1x1 tracking pixels, or
+all-hr cells) still flows through the row-level preamble and emits an empty
+defaultBG line. Measured against the walker: <p>a</p><table><tr><td><img
+width=1 height=1></td></tr></table><p>b</p> = walker 3 lines (a, blank, b),
+stage-2 5 lines (a + 3 blanks + b); a lone-pixel table = walker 0 lines,
+stage-2 1 blank line. skipFor cannot see through a strip row (r.Line.Atoms is
+empty on a Cells row), so the empty strip also stops margin collapse (a real
+content edge to stage-1) and adds a gap before and after its own line.
+Tracking/spacer-pixel tables are endemic in HTML mail, so this will surface at
+the Task-6 parity cutover. Fix options: (b) drop a content-free fragment line
+at the stage-1 tableRows layer before maxLines; or (c) teach the row-level skip
+to recognize a strip whose fragments are all lone-1x1-image or HR rows, dropped
+before the preamble consumes the gap. Add a parity fixture for a tracking-pixel
+table. src/mail/html_stage2.go emitRows/emitStrip.
+* TODO stage-2 multi-column pin assertion and comment disagree on abutment
+From the plan-6 Task 4 code-quality review (Minor): html_stage2_test.go
+TestStage2MultiColumnStripPlacesCells comments "second cell's text starts
+strictly after the first's text end" but `j <= i+1` only rejects overlap: a
+regression to "aabb" (cells abutting, zero separator) has j == 2 and passes.
+Abutment is the recorded D12 divergence, so a hard j >= i+2 would over-pin;
+reconcile by requiring a separator column (j >= i+len("aa")+1) or rewording the
+comment to "starts at or after the first cell's text end (abutment tolerated,
+D12)". src/mail/html_stage2_test.go.
+* TODO hr fragments inside a strip are silently swallowed
+From the plan-6 Task 4 code-quality review (Minor) + spec-review note: appendRow
+routes every non-Cells fragment through emitRowContent, which ignores HR, so
+<td><hr></td> renders as nothing (cellRows routes block children through
+LayoutBlock, which can yield an HR:true fragment). Not a parity regression (the
+walker also emits 0 lines for a lone hr table), but the branch is unhandled and
+undocumented - at minimum note in appendRow's comment that non-table,
+non-inline fragments (HR) drop on strips, or emit nothing explicitly so a future
+reader sees it is deliberate. src/mail/html_stage2.go appendRow.
+* TODO bg on a strip paints glyph columns, not the cell box interior
+From the plan-6 Task 4 code-quality review (Minor, accepted): a bg'd cell's pad
+space runs between text and the next cell carry no bg, so blank interior columns
+of a bg'd cell render default. This is the accepted no-region-machinery design
+(text runs carry the td style; blank space is line-default). Worth one line in
+emitStrip's comment so nobody later "fixes" it by painting whole-cell regions.
+src/mail/html_stage2.go emitStrip.
+
+* TODO (Task-5 close-out) preserveWS comment overstates: WSPreLine collapses whitespace
+From the plan-6 Task 5 code-quality re-review (Minor; merge approved): the comment on
+preserveWS (html_stage2.go:177-180) says "keeps source whitespace verbatim (the pre
+family)", but WSPreLine's wsBehavior is collapse+newlineBreak, so it collapses - only
+WSPre/WSPreWrap keep whitespace verbatim. WSPreLine is gated too, but for policy
+uniformity (no bare-URL linkification anywhere in the pre family, walker parity), not
+because it preserves verbatim. Reword to state the real rationale or drop the "verbatim"
+claim. Cosmetic; fold into the Task-6 tidy. src/mail/html_stage2.go preserveWS.
+* TODO (Task-5 close-out, record as a divergence) bare URLs inside pre-family text are never labeled
+From the plan-6 Task 5 fix round: a bare URL at a source-line start in preserve text
+(WSPre/WSPreWrap) corrupted line structure - the split's before-piece trailing LF is
+trimmed by atomizeText's per-piece non-collapse TrimSuffix (inline.go:86), gluing the
+label+token to the previous line. Fixed by gating the bare-URL split off the pre family
+(preserveWS excludes WSPre/WSPreWrap/WSPreLine), matching the walker (never linkifies in
+pre); real <a href> labels still work inside pre. Pinned by TestStage2PreTextBareUrlNotLabeled
+(labeled == unlabeled pre output, links empty). Record as an appendix/divergence row in
+docs/html-rendering-analysis.md at Task 6: collapse-text bare URLs label; pre-family bare
+URLs do not. src/mail/html_stage2.go injectInto/preserveWS.
+* TODO (Task-5 close-out, parity context) pre newlines at element boundaries drop on both label paths
+From the plan-6 Task 5 code-quality re-review (context, not a delta regression): a pre
+text node ending in "\n" before an element (<pre>top\n<a>..) loses the break on labeled
+AND unlabeled stage-2 paths alike (atomizeText TrimSuffix trims per text leaf; the LF
+sits at a leaf boundary, not inside one leaf). lib/html boundary behavior, out of scope
+for the label work. The walker collapses pre newlines entirely, so the Task-6 parity diff
+sits inside the already-recorded pre-degenerate divergence; note it when the per-fixture
+diff table is written. src/lib/html/inline.go atomizeText.
+* TODO (Task-5 close-out) no pin guards a label-glue regression on the collapse path
+From the plan-6 Task 5 code-quality re-review (Minor, coverage): the fix-round pins cover
+the whole-card anchor, the pre gate, and label-run separation, but nothing pins that a
+space BEFORE a label survives collapse - a regression rendering "see[2]https://.." instead
+of "see [2]https://.." would pass green. Add one collapse-path assertion (text before a
+labeled bare URL keeps its inter-word space) if label coverage is ever tightened.
+src/mail/html_stage2_test.go.
+* TODO (plan-6 final whole-plan review, Minor) stale header comment in html_stage2_test.go
+From the final whole-plan review (20ee36a^..HEAD): the file-header comment says "the
+locked html_*_test.go suite is the walker's contract until the Task-6 cutover" - the
+cutover is done and the walker is deleted, so that suite is now the stage-2 engine's
+contract. Comment-only, cosmetic. src/mail/html_stage2_test.go:6-9.
+* TODO (plan-6 final whole-plan review, Minor) asymmetric F1 gate on link capture
+Anchor hrefs pass sanitize() before entering q.links (html_stage2.go:102-103), but
+bare-URL tokens from splitTextURLs are appended raw at html_stage2.go:144 (sourced from
+unsanitized text-box content). Display is unaffected (labels render [N]; the URL opens
+via argv, no shell interpolation), but the two link sources should apply the same gate.
+Fix: wrap ls[0] in sanitize(...) at html_stage2.go:144. F1-consistency.
+* TODO (plan-6 final whole-plan review, Minor) allImages gate misses image-only list items
+allImages gates on len(r.Markers) == 0 (html_stage2.go:423), so <li><img ...></li> takes
+the text-row path and renders as an [image] placeholder beside the hanging marker rather
+than the own-line rendered image the old walker produced (divergence J/D promises
+own-line for isolated images). Reachable, low stakes, and NOT recorded in divergences A-J.
+Either fix the gate or add a row to the divergence table in docs/html-rendering-analysis.md
+so it is a recorded acceptance.
+* TODO kitty: stale placements may survive the EL clear (a=d delete path unverified)
+clearRects erases with per-row EL, which drops sixel graphics; the black-band
+fix (markRowsCleared -> pushFrame re-sweep) then reconciles the erase
+background. On the kitty protocol EL erases only TEXT - a placement's pixels
+stay over the new frame, so a scrolled-away image could linger as a frozen
+corner of the previous image (not a black band, hence unreported). Verify on a
+kitty terminal that a cleared rect actually vacates its pixels; if not, issue
+the kitty delete for the stale placement(s) alongside the EL. Sixel is
+unaffected either way. src/tui/img.go clearRects (per-row EL) and kittyEncode
+(a=T placement).
+
+* TODO (plan 2026-09-03-hubspot-workflow.md, Task 7 review, Minor) empty [crm.hubspot] token_cmd sails through the wire
+FetchKey's empty-argv returns (nil, nil) - the shared no-auth convention - so a
+[crm.hubspot] table with provider set but no token_cmd builds a keyless client
+and every refresh pull fails at the API boundary, publishing CrmRowError to no
+subscriber. A broken (non-empty) token_cmd disables the wire (diag.Warn); an
+empty one does not - an asymmetry worth closing. Fix at config load
+(src/config/config.go): reject provider-enabled [crm.hubspot] with empty
+token_cmd (load error naming the fix), or a len(hs.TokenCmd)==0 guard in the
+hubspot case of crmWire (src/app/crm_engine.go) if the wire should own it.
+
+* TODO (plan 2026-09-03-hubspot-workflow.md, Task 10 review, Minor/optional) account-from-thread derivation duplicated
+The newestOf + resolveAccount(cfg, tagsOf(m), nil) block now appears verbatim in
+src/app/crm_engine.go (~151-154, crmMailGround) and src/app/ai_engine.go (~80-83).
+Full extraction is awkward because the grant postures diverge (ai_engine errors on
+no-grant; crmMailGround degrades to ""), but the 3-line account derivation could be
+one helper in the app package. Optional; the mirror is short and both sites are in
+the same package.
+
+* TODO (plan 2026-09-03-hubspot-workflow.md, Task 11 review, Minor) shared crmComposeRefs map assumes one wired provider
+crmWriteBackOnSend (src/app/crm_engine.go) deletes the compose-map entry before
+the provider guard, so under a hypothetical dual-provider wire the first
+subscriber to see a SendResult would consume the entry even if its provider
+guard then skips the mark, starving the other wire. Moot under the current
+single-provider scope (documented in pullMu and CrmContact), but a future
+multi-provider task must make crmComposeRefs per-wire rather than a shared
+global.
+
+* TODO (plan 2026-09-03-hubspot-workflow.md, Task 12 review, Minor) onBriefing re-advances a past-queue row
+crmQueue.onBriefing (src/tui/crm.go) sets a held row's status to "briefing"
+unconditionally. A late CrmBriefing landing after the user already drafted
+(d -> "drafted") or dismissed (x -> "dismissed") that row regresses the status
+to "briefing". Cosmetic only (the row is past-queue and drops on the next page
+omitting it), but the guard is ~2 lines: skip the attach when
+crmPastQueue(r.contact.Status) is true. Not folded into Task 13 to keep its
+crm.go scope to the open path; the tui/crm_test.go pinned tests are LOCKED.
+
+* TODO (plan 2026-09-03-hubspot-workflow.md, final review, Minor) briefing text stored twice: the row copy and the adapter cache
+The queue row keeps its briefing (src/tui/crm.go crmRow.briefing via onBriefing)
+and the adapter caches the same text for the draft seam (src/app/crm_engine.go
+crmBriefText via crmCacheBriefing). Both react to the same CrmBriefing event,
+so a d press right after a briefing lands can pass the surface's row-level
+guard yet hit an empty adapter cache (crmRowAction "draft" silently returns):
+a no-op draft on a briefed row. The window is narrow, documented, and
+recoverable (x then re-analyze, or the next refresh) - TestCrmHubspotWorkflow
+polls the cache before the draft leg. A fix would route the draft seam through
+one store (the row's briefing) or share the cache with the row.

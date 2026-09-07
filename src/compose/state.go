@@ -57,6 +57,12 @@ type Attachment struct {
 	Name, Path string
 	Size       int64
 	MimeType   string
+	// DraftPart selects the byte source: 0 = Path is the plain file to
+	// attach (every fresh compose); > 0 = Path is the stored draft and
+	// the bytes are its (DraftPart-1)-th attachment part, streamed at
+	// assembly (a resumed draft - attachments stay in the file until a
+	// successful send retires it, so a scheduled resume can stream them).
+	DraftPart int
 }
 
 // Security is the dialogue's crypto flag set (R10): none, sign,
@@ -114,9 +120,13 @@ type State struct {
 	MessageID     string // original message-id (In-Reply-To)
 	References    []string
 	OriginalID    string // original notmuch id (reply/forward tagging)
-	Phase         Phase
-	Output        string // send job captured output (failed)
-	BodyPath      string // editor buffer file backing the body (mutt's msgbody): TUI-owned, created at open, reused by e, removed on close
+	// ResumePath is the stored draft file this dialogue edits (the
+	// resume-draft key): a successful send retires it, an abort-to-save
+	// replaces it. Empty for every fresh compose (reply/forward/AI/CRM).
+	ResumePath string
+	Phase      Phase
+	Output     string // send job captured output (failed)
+	BodyPath   string // editor buffer file backing the body (mutt's msgbody): TUI-owned, created at open, reused by e, removed on close
 }
 
 // NewCompose opens a blank compose dialogue.

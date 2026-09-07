@@ -326,3 +326,37 @@ An img with no loadable src and no CSS width has no intrinsic, so it emits a
 zero-width row; weasyprint paints the alt text and a broken-image box. Alt
 text is a stage-2 render choice (the walker today drops it too). Pointers:
 src/lib/html/img.go ResolveImages/imgExtentW, plan 5 decisions.
+
+* OPEN html pre: a text node ending in "\n" before an element loses the break
+<pre>top\n<a href="x">link</a></pre> renders "toplink" (unlabeled) and
+"top[1]link" (labeled): the LF sits at a leaf boundary, and atomizeText's
+per-leaf TrimSuffix trims it, gluing the two pre lines. lib/html boundary
+behavior (src/lib/html/inline.go atomizeText), not a mail-side label bug -
+it drops on the labeled AND unlabeled stage-2 paths alike. The walker also
+collapsed pre newlines, so this is inside the already-recorded pre-degenerate
+divergence. Not fixed at the Task-6 cutover.
+
+* OPEN html stage-2: the semianalysis layout is a spec-accepted divergence, not a renderer bug
+Task-6 cutover found two LOCKED tests pinning walker behavior the stage-1 spec
+deleted on purpose. docs/superpowers/specs/2026-09-03-html-layout-engine-design.md
+"Stage 1: tables" says nested tables stop flattening into the cell line and lay
+out as real block tables, "the READ IN APP flatten comment and
+collectCell/walkRow machinery are deleted. Accepted as a deliberate consequence
+of parity." The locked tests pin that machinery:
+
+- src/mail/semianalysis_test.go TestRenderSemianalysisLayout: expects the narrow
+  render to wrap at the requested width, the 4 action buttons on one line (exactly
+  4 "[image]"), and READ IN APP right-aligned (lead > 50) on its own line. The
+  stage-2 engine lays the buttons and READ IN APP in one table strip (one line),
+  renders each inline image as a 7-cell "[image]" placeholder (wider than the 18px
+  used width), and does not right-align block-level nested tables in a
+  text-align:right cell.
+- src/tui/img_test.go TestModelRenderSemianalysisImages: expects a line carrying
+  exactly 4 inline images; the stage-2 strip carries 5 (4 buttons + the READ IN APP
+  icon).
+
+Fixing would mean re-implementing the deleted walker machinery (nested-table
+flatten, one-shot right-cell split, colCap wrapping) in stage 2, which contradicts
+the spec. The locked tests need a human decision (update them to the CSS-true
+output, or reconsider the spec's accepted divergence). Not edited under the locked
+regression-test rule.

@@ -215,6 +215,7 @@ type ComposeOpened struct {
 	MessageID    string
 	References   []string
 	OriginalID   string
+	ResumePath   string
 }
 
 // ComposeAttachment is the bus contract's attachment shape (core stays
@@ -223,6 +224,7 @@ type ComposeAttachment struct {
 	Name, Path string
 	Size       int64
 	MimeType   string
+	DraftPart  int // 0 = plain file; > 0 = part (DraftPart-1) of the draft at Path
 }
 
 // SendResult reports the send job's outcome to the dialogue (R4): OK

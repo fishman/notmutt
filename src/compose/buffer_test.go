@@ -49,3 +49,48 @@ func TestParseBufferCRLF(t *testing.T) {
 		t.Fatalf("CRLF round trip: %q %q %q", body, sigName, sigBody)
 	}
 }
+
+// TestSplitSignature: the tail detaches at the first line that is
+// exactly "-- " (the SigBlock marker). The split is structural - no
+// saved signature name to match - and re-assembly through BodyWithSig
+// reproduces the original bytes whether or not the split is right.
+func TestSplitSignature(t *testing.T) {
+	orig := "line one\nline two\n\n-- \nsigned tail"
+	body, sig := SplitSignature(orig)
+	if body != "line one\nline two" {
+		t.Fatalf("body = %q", body)
+	}
+	if sig != "signed tail" {
+		t.Fatalf("sig = %q", sig)
+	}
+	if got := BodyWithSig(body, sig); got != orig {
+		t.Fatalf("round trip = %q, want %q", got, orig)
+	}
+}
+
+// TestSplitSignatureNone: no "-- " marker - the whole text is body.
+func TestSplitSignatureNone(t *testing.T) {
+	body, sig := SplitSignature("just a body\nno signature\n")
+	if body != "just a body\nno signature\n" || sig != "" {
+		t.Fatalf("body=%q sig=%q", body, sig)
+	}
+}
+
+// TestSplitSignatureBodyContainsMarker: a body that quotes a "-- " line
+// mis-splits but is byte-faithful on re-assembly - nothing is lost.
+func TestSplitSignatureBodyContainsMarker(t *testing.T) {
+	orig := "the reply said\n\n-- \nme too\n\n-- \nreal sig"
+	body, sig := SplitSignature(orig)
+	if got := BodyWithSig(body, sig); got != orig {
+		t.Fatalf("round trip = %q, want %q", got, orig)
+	}
+}
+
+// TestSplitSignatureSignatureOnly: a body that was only a signature
+// (the SigBlock prefix, no text above) still splits cleanly.
+func TestSplitSignatureSignatureOnly(t *testing.T) {
+	body, sig := SplitSignature("\n\n-- \nsig")
+	if body != "" || sig != "sig" {
+		t.Fatalf("body=%q sig=%q", body, sig)
+	}
+}

@@ -35,6 +35,22 @@ func SplitAddrs(s string) []string {
 	return out
 }
 
+// SplitSignature separates a body's trailing signature block at the
+// first line that is exactly "-- " - the structural rule (BodyWithSig
+// emits one SigBlock, so the first marker line opens it; the pager and
+// the mail parse flag signatures the same way). Re-assembly through
+// BodyWithSig reproduces the original bytes whether or not the split is
+// semantically right, so a body that merely quotes a "-- " line
+// round-trips untouched.
+func SplitSignature(text string) (body, sig string) {
+	const marker = "\n-- \n"
+	i := strings.Index(text, marker)
+	if i < 0 {
+		return text, ""
+	}
+	return strings.TrimRight(text[:i], "\n"), text[i+len(marker):]
+}
+
 // ParseBuffer parses the editor buffer back (spec section 7): the
 // buffer holds ONLY the mail content - body plus attached signature
 // tail (mutt's msgbody); headers never live here, the dialogue fields

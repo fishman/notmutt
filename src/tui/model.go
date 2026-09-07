@@ -4721,37 +4721,41 @@ func (m *Model) aiThreadID() string {
 	return ""
 }
 
-// openReply hands the reply context to the app seam: the cursor row's
-// message in the index, the open thread's first message in the
-// pager, nil for a blank compose.
-func (m *Model) openReply(mode string) {
-	var msg *core.Message
+// openMessage resolves the message the open-family keys act on: the
+// cursor row's message in the index, the pager's message otherwise. A
+// ghost row (multi-root thread) and a link/jump pager open carry no
+// message - the thread id is handed on so the app's thread-fetch
+// fallback rehydrates the original; nil means no row at all.
+func (m *Model) openMessage() *core.Message {
 	if m.mode == "index" {
 		if row, ok := m.activeView().CursorRow(); ok {
-			msg = row.Msg
-			// ghost rows (multi-root threads) carry the thread id only -
-			// the app's thread-fetch fallback rehydrates the original
-			if msg == nil && row.ThreadID != "" {
-				msg = &core.Message{ThreadID: row.ThreadID}
+			if row.Msg != nil {
+				return row.Msg
+			}
+			if row.ThreadID != "" {
+				return &core.Message{ThreadID: row.ThreadID}
 			}
 		}
-	} else if m.mode == "pager" && m.pager != nil {
-		// reply to the pager's message, not the first row of its thread
+		return nil
+	}
+	if m.mode == "pager" && m.pager != nil {
+		// the pager's message, not the first row of its thread
 		for _, r := range m.rows {
 			if r.Msg != nil && r.Msg.ID == m.pager.msgID {
-				msg = r.Msg
-				break
+				return r.Msg
 			}
 		}
-		if msg == nil {
-			// opened via link/jump: the app's thread fetch rehydrates it
-			msg = &core.Message{ThreadID: m.pager.threadID, ID: m.pager.msgID}
-		}
+		return &core.Message{ThreadID: m.pager.threadID, ID: m.pager.msgID}
 	}
-	if mode == "reply" || mode == "reply-all" || mode == "forward" {
-		if msg == nil {
-			return
-		}
+	return nil
+}
+
+// openReply hands the reply context to the app seam: the resolved
+// message, nil for a blank compose (the one mode that needs no row).
+func (m *Model) openReply(mode string) {
+	msg := m.openMessage()
+	if (mode == "reply" || mode == "reply-all" || mode == "forward") && msg == nil {
+		return
 	}
 	if m.mode == "pager" {
 		m.clearImageRects() // the compose frame covers the pager area
@@ -4759,31 +4763,15 @@ func (m *Model) openReply(mode string) {
 	onReply(msg, mode)
 }
 
-// openResume hands the resume context to the app seam: the cursor row's
-// message in the index, the open message in the pager - the reply
-// resolution. The app gates on the draft tag; the TUI stays dumb.
+// openResume hands the resume context to the app seam: the resolved
+// message. The app gates on the draft tag; the TUI stays dumb.
 func (m *Model) openResume() {
-	var msg *core.Message
-	if m.mode == "index" {
-		if row, ok := m.activeView().CursorRow(); ok {
-			msg = row.Msg
-			if msg == nil && row.ThreadID != "" {
-				msg = &core.Message{ThreadID: row.ThreadID}
-			}
-		}
-	} else if m.mode == "pager" && m.pager != nil {
-		for _, r := range m.rows {
-			if r.Msg != nil && r.Msg.ID == m.pager.msgID {
-				msg = r.Msg
-				break
-			}
-		}
-		if msg == nil {
-			msg = &core.Message{ThreadID: m.pager.threadID, ID: m.pager.msgID}
-		}
-	}
+	msg := m.openMessage()
 	if msg == nil {
 		return
+	}
+	if m.mode == "pager" {
+		m.clearImageRects()
 	}
 	onResume(msg)
 }

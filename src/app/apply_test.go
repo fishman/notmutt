@@ -377,3 +377,43 @@ func TestApplyMovesToFolderTag(t *testing.T) {
 		t.Fatal("source still exists after the apply move")
 	}
 }
+
+// TestApplyMoveFailureRefusesTag: the physical move runs BEFORE the
+// folder tag lands. A file that cannot follow must refuse the tag -
+// the apply comment once promised "the next poll reverts" a failed
+// move's tag, which is false on cgo: the apply's own ActTag advances
+// the revision out of band, so no later poll ever reclassifies the
+// entry. Regression: tag-first leaves archive applied with the file
+// still in INBOX.
+func TestApplyMoveFailureRefusesTag(t *testing.T) {
+	root := testutil.MaildirTree(t, map[string]string{"INBOX": "1"})
+	// a regular file where the archive folder must be created fails the
+	// mover's copy, before any DB write - the "file cannot follow" case
+	if err := os.WriteFile(filepath.Join(root, "gmail", "Archives"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"},
+		Paths: []string{filepath.Join(root, "gmail", "INBOX", "cur", "1")}}})
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
+	})})
+	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
+
+	if err := applyStaged(view, applyGroups, fw, cfg, root); err == nil {
+		t.Fatal("apply must surface the failed move")
+	}
+	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
+		t.Fatalf("a failed move must never land its tag (no poll reverts an apply's own revision bump on cgo), got %+v", calls)
+	}
+	if !view.IsStaged("m1") {
+		t.Fatal("entry must stay staged for retry/undo")
+	}
+	if hasTag(view.Tags("m1"), "archive") {
+		t.Fatal("baseline must not claim archive when the file never moved")
+	}
+}

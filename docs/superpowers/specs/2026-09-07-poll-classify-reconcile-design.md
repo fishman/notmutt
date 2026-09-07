@@ -146,12 +146,19 @@ macOS (syscall_linux.go / syscall_bsd.go) with identical semantics - one
 implementation, no build tags, no dependency. Windows, a non-goal for
 the notmuch client, would need a shim at this single seam.
 
-Crash-atomicity caveat, out of scope: the lock guards concurrency, not
-the move's own atomicity - a kill between the copy and the delete still
-leaves both files. They carry the same Message-ID, so the next notmuch
-new merges them into one message with two paths and the mover
-reconciles. Copy-to-temp-then-rename would narrow the torn window; a
-follow-up if it ever matters.
+Copy-to-temp-then-rename is in scope. The flock serializes movers against
+movers but not against a concurrent notmuch new in another client, which
+scans the destination mid-copy: copyFile truncates then streams, so the
+destination exists partial while written, and headers copy first - a
+truncated file usually still parses a Message-ID and indexes as a
+real-but-truncated message. copyFile therefore writes a dot-prefixed
+temp in the destination directory and renames over the final name:
+rename is atomic within a directory (no half-published destination), and
+notmuch ignores dotfiles (maildir convention), so a mid-copy temp is
+never indexed. The remaining crash window - a kill between the copy and
+the delete leaves both files - stays as is: same Message-ID, the next
+notmuch new merges them into one message with two paths and the mover
+reconciles.
 
 ## Semantics
 
@@ -199,9 +206,10 @@ follow-up if it ever matters.
   backfill-size case only appears if the mailbox sat unpolled while L
   aged - and that is exactly the reconcile the poll exists to perform.
 - No changes to the filter engine, folder-rule derivation, or the
-  exclusive-group model. The mover gains only the flock guard; its
-  copy-then-delete logic is untouched.
+  exclusive-group model. The mover gains the flock guard and the
+  temp-then-rename copy; its copy-then-delete shape is untouched.
 - indexWrite stays a narrow instant-classify; it does not become a
   reconciler, so a draft save never stalls on a stale-L window.
-- The mover's temp+rename crash-atomicity is a recorded follow-up, not
-  part of this change.
+- The remaining torn-move window (crash between copy and delete, both
+  files present, same Message-ID) is bounded by notmuch's merge and is
+  left as is.

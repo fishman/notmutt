@@ -35,8 +35,8 @@ type Command struct {
 	SummaryContext bool
 	// CRM marks a queue-surface prompt (the d key picker): it drafts from
 	// the CRM context block, never a mail thread.
-	CRM bool
-	Body           string
+	CRM  bool
+	Body string
 	// Account is the folder that owns this prompt: "" = a default prompt
 	// (prompts/), set = an account prompt (accounts/<account>/, where
 	// default.md is the account context, never a prompt).

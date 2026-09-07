@@ -260,6 +260,7 @@ func TestApplyKeepsMatchingRow(t *testing.T) {
 // thread leaves the query, the thread keeps its remaining messages; the
 // snapshot paths must be resolvable (moveEntries refuses pathless fakes).
 func TestApplyEvictsMessageKeepsThread(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	root := t.TempDir()
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	fw.setMsgs([]core.Message{{ID: "m2", ThreadID: "t1", Tags: []string{"inbox", "unread"},

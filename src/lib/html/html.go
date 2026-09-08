@@ -78,6 +78,10 @@ type Style struct {
 	// (img.go); width/min-width also feed table boxes (tableRows). Height is
 	// px-only in effect - a percentage height is auto (see specImg).
 	Width, Height, MaxWidth, MinWidth CSSLen
+
+	// Float is the computed float side (left|right|"", none). Non-inherited,
+	// zeroed per node; only RoleTable "table" boxes float at layout (flow).
+	Float string
 }
 
 // CSSLen is one length value for image sizing. Px is the number; when Pct
@@ -338,6 +342,14 @@ func (s *Style) apply(decls map[string]string) {
 			s.MinWidth = l
 		}
 	}
+	if v, ok := decls["float"]; ok {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "left", "right":
+			s.Float = strings.ToLower(strings.TrimSpace(v))
+		default:
+			s.Float = "" // none, inherit-into-none, center: never a float here
+		}
+	}
 }
 
 // CSSRule is one <style> block rule with its selector parsed and the
@@ -438,6 +450,7 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	s.MarginTopSet, s.MarginRightSet, s.MarginBottomSet, s.MarginLeftSet = false, false, false, false
 	s.PadLeft = 0 // geometry is not inherited
 	s.Width, s.Height, s.MaxWidth, s.MinWidth = CSSLen{}, CSSLen{}, CSSLen{}, CSSLen{}
+	s.Float = "" // float is not inherited (CSS float never inherits)
 	uaDefaults(n.Data, &s)
 	for _, r := range rules {
 		if r.sel.Match(n) {
@@ -451,8 +464,10 @@ func StyleOf(n *html.Node, parent *Style, rules []CSSRule) *Style {
 	if v := Attr(n, "bgcolor"); v != "" {
 		s.apply(ParseDecls("background-color:" + v))
 	}
-	// legacy align (Outlook-era tables): same effect as text-align
-	if v := Attr(n, "align"); v != "" {
+	// legacy align (Outlook-era td/th/p): fold to text-align. A table's own
+	// align=center|left|right places the TABLE box (margin/float), never its
+	// text - folding it would inherit centering into every cell.
+	if v := Attr(n, "align"); v != "" && n.Data != "table" {
 		s.apply(ParseDecls("text-align:" + v))
 	}
 	return &s

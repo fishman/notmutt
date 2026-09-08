@@ -449,3 +449,34 @@ func TestTableCSSWidthFillsContainer(t *testing.T) {
 		}
 	}
 }
+
+// TestTableAlignCenterDoesNotCenterRows: a table's own align=center centers
+// the table BOX (HTML presentational hint -> margin auto), never its text.
+// Folding it to text-align inherited centering into every cell, so a short
+// row of a nested single-column table drifted toward the middle instead of
+// sharing the long row's flush-left column (LinkedIn job-alert card rows).
+func TestTableAlignCenterDoesNotCenterRows(t *testing.T) {
+	body := `<table align="center"><tr><td><table>` +
+		`<tr><td>the long title text fills the column</td></tr>` +
+		`<tr><td>meta</td></tr>` +
+		`</table></td></tr></table>`
+	rs := LayoutBlock(buildBody(body), 50, mono(1), false)
+	var xs []int
+	var walk func(rs []Row)
+	walk = func(rs []Row) {
+		for _, r := range rs {
+			if len(r.Cells) > 0 {
+				walk(r.Cells)
+				continue
+			}
+			xs = append(xs, r.X)
+		}
+	}
+	walk(rs)
+	if len(xs) != 2 {
+		t.Fatalf("leaf rows = %d (%v), want 2 (title + meta)", len(xs), xs)
+	}
+	if xs[0] != xs[1] {
+		t.Fatalf("title x=%d and meta x=%d must share the flush-left column", xs[0], xs[1])
+	}
+}

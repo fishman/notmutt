@@ -601,7 +601,7 @@ func TestModelStandaloneImageAlignsLeft(t *testing.T) {
 	narrow := testPNG(t, 200, 100)
 	img := func(b []byte) string { return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b) }
 	body := "<p>before</p>" +
-		"<table><tr><td><img src=\"" + img(chart) + "\" width=\"300\"></td></tr></table>" +
+		"<table><tr><td><img src=\"" + img(chart) + "\" width=\"550\"></td></tr></table>" +
 		"<table><tr><td><img src=\"" + img(narrow) + "\"></td></tr></table>" +
 		"<p>see <img src=\"" + img(chart) + "\" width=\"300\"> inline after</p>"
 	SetOpenHandler(func(req OpenReq) {
@@ -637,8 +637,8 @@ func TestModelStandaloneImageAlignsLeft(t *testing.T) {
 	for img := range next {
 		byCols[img.Cols] = img
 	}
-	// the standalone chart fills the window's text column (natural 2000px
-	// scaled to the 80-cell budget), not its authored 300px/30 cols
+	// the reading-column-authored standalone chart fills the window's text
+	// column (natural 2000px scaled to the 80-cell budget) over its disp
 	if img := byCols[80]; img == nil {
 		t.Fatalf("the standalone chart must fill the column to 80 cols, got cols %v", colsOf(next))
 	}
@@ -686,9 +686,10 @@ func labelImgLine(label string, img *core.Image) core.Line {
 // TestModelLabelLinkImageFillsAligned pins the easyjump render parity: a
 // link-wrapped isolated image under F carries its [N] label on the same
 // row as the image (the mail render's labelLinks shape), and that chrome
-// must not flip the standalone verdict - the image fills like its
-// unlabeled counterpart instead of holding the authored disp width. It
-// seats at its row's flow offset (after the label), never a hard center.
+// must not flip the standalone verdict - a reading-column-authored figure
+// (DispW >= imgFillMinW) fills like its unlabeled counterpart instead of
+// holding the authored disp width. It seats at its row's flow offset (after
+// the label), never a hard center.
 func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -700,7 +701,7 @@ func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
 	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
 	m.width, m.height = 80, 100
-	chart := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: 300}
+	chart := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: wideAuthW}
 	narrow := &core.Image{Data: testPNG(t, 200, 100), Alt: "[image]"}
 	content := []core.Line{
 		{Text: "before", Kind: core.LineBody},
@@ -737,8 +738,8 @@ func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 	clearRects(imageWriter, stale)
 	m.paintImages(next)
 
-	// the link-wrapped chart fills the window's text column like the
-	// unlabeled standalone render, not its authored 300px/30 cols
+	// the link-wrapped wide-authored chart fills the window's text column
+	// like the unlabeled standalone render, not its authored cols
 	has := func(cols int) *core.Image {
 		for img := range next {
 			if img.Cols == cols {
@@ -1702,4 +1703,82 @@ func TestSixelEncodeTransparent(t *testing.T) {
 	if back.Bounds().Dx() != 40 || back.Bounds().Dy() != 20 {
 		t.Fatalf("round-trip dims %dx%d, want 40x20", back.Bounds().Dx(), back.Bounds().Dy())
 	}
+}
+
+// narrowAuthW is an authored display width below imgFillMinW - a footer
+// logo's or badge's measure, not a reading-column figure.
+const narrowAuthW = 300
+
+// wideAuthW is an authored display width at reading-column measure (a
+// chart in a ~600px mail column); standalone images at or above imgFillMinW
+// qualify for the column fill.
+const wideAuthW = 550
+
+// TestModelStandaloneFillNeedsWideAuthor pins the width-hint gate: a
+// standalone image fills the column only when its authored disp width marks
+// a reading-column figure (>= imgFillMinW). A big-natural asset the author
+// sized small (a footer logo, a badge) must decode at its authored width
+// instead of swallowing the window - the pager honors the mail's intent.
+func TestModelStandaloneFillNeedsWideAuthor(t *testing.T) {
+	cfg := config.Default()
+	cfg.Pager.ImageProtocol = "kitty"
+	st := config.NewStore(cfg)
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
+	})})
+	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m.imgProto = "kitty"
+	m.width, m.height = 80, 100
+	logo := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: 300}
+	logoLine := core.Line{Text: logo.Alt,
+		Runs: []core.Run{{Text: logo.Alt, Image: logo}},
+		Imgs: []core.ImagePos{{Image: logo, X: 0}}, Kind: core.LineBody}
+	content := []core.Line{
+		{Text: "before", Kind: core.LineBody},
+		{Text: "", Kind: core.LineBody},
+		logoLine,
+		{Text: "", Kind: core.LineBody},
+		{Text: "after", Kind: core.LineBody},
+	}
+	SetOpenHandler(func(req OpenReq) {
+		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
+			ThreadID:   req.ThreadID,
+			RenderMode: core.RenderHTML,
+			Mime:       "text/html",
+			Images:     true,
+			Lines:      content,
+		}})
+		m = next
+	})
+	press(t, m, "enter")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+	_ = m.View()
+
+	var buf bytes.Buffer
+	old := imageWriter
+	imageWriter = &buf
+	defer func() { imageWriter = old }()
+	next, stale := m.paintRects()
+	clearRects(imageWriter, stale)
+	m.paintImages(next)
+
+	if img := hasCols(next, m.width); img != nil {
+		t.Fatalf("a %dpx-authored standalone logo must not fill the window, decoded to %d cols", narrowAuthW, img.Cols)
+	}
+	if hasCols(next, narrowAuthW/imgCellW) == nil {
+		t.Fatalf("the logo must decode at its authored width (%d cols), got %v", narrowAuthW/imgCellW, colsOf(next))
+	}
+}
+
+// hasCols finds the painted block whose image decodes to cols.
+func hasCols(next map[*core.Image]imgPaint, cols int) *core.Image {
+	for img := range next {
+		if img.Cols == cols {
+			return img
+		}
+	}
+	return nil
 }

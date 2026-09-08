@@ -108,6 +108,12 @@ var tmuxSixel = func() bool {
 // a wide terminal; a small asset is never blown up to fill.
 const imgFillScaleCap = 2.0
 
+// imgFillMinW: a standalone image fills the column only when the mail
+// authored it at reading-column width (mail columns run ~500-700px). An asset
+// the author sized smaller - a footer logo, a badge, a sponsor mark - keeps
+// its authored disp width instead of swallowing the window.
+const imgFillMinW = 450
+
 // decodeImage decodes and scales the raw bytes to the cell grid: at
 // most widthCells (capped at imgMaxCols) wide and heightRows tall,
 // aspect preserved, snapped UP to exact cell multiples so the pixel
@@ -320,12 +326,16 @@ func (m *Model) prepareImages() {
 		}
 		// a standalone image fills the text column (decodeImage's window
 		// budget - a near-column figure tops up a wide terminal, a chart
-		// sized for a 600px browser column must not stay half the width of a
+		// authored for a reading column must not stay half the width of a
 		// 120-cell terminal) instead of the email's authored disp width.
-		// Inline-with-text images keep their authored disp (the mail's
-		// intent).
+		// Only images the author sized at reading-column width qualify: an
+		// asset authored smaller (a footer logo, a badge) keeps its disp.
+		// Inline-with-text images keep their authored disp regardless.
 		dw, dh := img.DispW, img.DispH
 		fill := m.pager.standaloneLine(b.line, img)
+		if fill && img.DispW < imgFillMinW {
+			fill = false
+		}
 		if fill {
 			dw, dh = 0, 0
 		}

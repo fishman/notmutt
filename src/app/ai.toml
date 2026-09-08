@@ -13,6 +13,19 @@
 # data = ["*"]                    # wildcard field: every field
 
 # [mcp]                           # the stdio server's data boundary
-# accounts = []                   # folder space + account tag per entry
-# tags = []                       # soft tags whose mail is reachable
-# allow = ["attachments"]         # gated tools; thread_info/search/count always serve
+# accounts = ["gmail"]            # folder space AND the account tag
+# tags = ["inbox"]                # soft tags whose mail is reachable
+#                                  # deny-by-default: empty lists serve nothing
+
+# [mcp.attachments]               # attachment list metadata (name/mime/size)
+# enabled = true
+
+# [mcp.bodies]                    # cleaned body text (no headers) - the same
+# enabled = true                  #   cleaner the [ai-data] "bodies" field grants
+# max_messages = 10               # per-thread pull cap (default 10)
+
+# [mcp.tagging]                   # write soft tags on in-scope mail (no moves)
+# enabled = true
+
+# [mcp.apply]                     # non-destructive folder verbs (archive, ...)
+# enabled = true                  #   via the folder-move apply; delete denied

@@ -440,17 +440,50 @@ type Attachments struct {
 // empty, expanded against the home dir at use.
 const DefaultAttachFolder = "~/Downloads/Attachments"
 
-// MCP is the [mcp] section: the whitelist of extra tools the stdio
-// server may expose beyond the metadata-only defaults (thread_info,
-// search, count). Accounts and Tags are the server's data boundary -
-// the folder spaces it may see and the soft tags whose mail is
-// reachable; both deny-by-default (empty list serves nothing). Only
-// the mcp+lua build reads it; an unknown method name is a startup
-// error there, so a typo fails loudly.
+// MCP is the [mcp] section: the capability grants the stdio server
+// exposes beyond the metadata-only defaults (thread_info, search,
+// count). Accounts and Tags are the server's data boundary - the
+// folder spaces it may see and the soft tags whose mail is reachable;
+// both deny-by-default (empty list serves nothing). Each capability is
+// its own table under [mcp], enabled explicitly: Attachments lists
+// attachment metadata, Bodies extracts cleaned body text (capped per
+// thread), Tagging writes soft tags, Apply drives non-destructive
+// folder verbs through the folder-move apply (archive/pending/...).
+// The destructive deleted-home tag is code-denied, never a config
+// choice. Only the mcp+lua build reads it; unknown keys are a load
+// error, so a typo fails loudly.
 type MCP struct {
-	Allow    []string `toml:"allow"`
-	Accounts []string `toml:"accounts"`
-	Tags     []string `toml:"tags"`
+	Accounts    []string  `toml:"accounts"`
+	Tags        []string  `toml:"tags"`
+	Attachments MCPCap    `toml:"attachments"`
+	Bodies      MCPBodies `toml:"bodies"`
+	Tagging     MCPCap    `toml:"tagging"`
+	Apply       MCPCap    `toml:"apply"`
+}
+
+// MCPCap is one [mcp] capability grant: a single Enabled gate.
+// Deny by default - a capability is off until enabled.
+type MCPCap struct {
+	Enabled bool `toml:"enabled"`
+}
+
+// MCPBodies is the [mcp.bodies] grant: cleaned body text, no headers.
+// MaxMessages caps how many messages of a thread a pull attaches (a
+// 100-message thread serves at most N); the per-body char cap is
+// shared with the AI command builder. MaxMessages <= 0 means the
+// default.
+type MCPBodies struct {
+	Enabled     bool `toml:"enabled"`
+	MaxMessages int  `toml:"max_messages"`
+}
+
+// PullCap resolves the [mcp.bodies] pull cap: the configured value,
+// else the default.
+func (b MCPBodies) PullCap() int {
+	if b.MaxMessages > 0 {
+		return b.MaxMessages
+	}
+	return 10
 }
 
 // HeaderRule is one content-based soft-tag rule: a query and the tags it
@@ -1383,9 +1416,7 @@ func Default() Config {
 			Folder: DefaultAttachFolder,
 			Layout: "YYYY-MM",
 		},
-		MCP: MCP{
-			Allow: []string{},
-		},
+		MCP: MCP{},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 		HTML:    HTMLSection{DarkMode: "auto"},

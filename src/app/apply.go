@@ -48,46 +48,10 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI, cfg 
 			view.ClearStaged(identity, gen)
 			continue
 		}
-		// the folder guard: a group ADD resolves and executes its
-		// physical move BEFORE the tag lands - a tag whose file cannot
-		// follow becomes the tag-without-folder state the next poll's
-		// location-wins resolution eats. The error names the config fix;
-		// the entry stays staged for retry/undo. Moving first keeps the
-		// DB honest at every instant: a file already in its target
-		// folder carries the tag the folder rule would give it anyway,
-		// so even a classify racing the gap agrees.
-		var move []filter.Entry
-		if folderTags := groupAdds(resolved, groups); len(folderTags) > 0 {
-			var err error
-			if move, err = moveEntries(worker, cfg, root, identity, folderTags); err != nil {
-				if applyErr == nil {
-					applyErr = fmt.Errorf("apply %s: %v", identity, err)
-				}
-				continue
-			}
-		}
-		if len(move) > 0 {
-			mr, err := filter.NewMoverLive(worker, cfg, root).Move(&filter.Report{Entries: move})
-			if err != nil {
-				// the file could not follow: the tag never lands. Tagging
-				// first would need a poll to revert it - and the apply's
-				// own ActTag advanced the revision out of band, so no poll
-				// ever reclassifies the entry on cgo.
-				if applyErr == nil {
-					applyErr = fmt.Errorf("apply %s: %v", identity, err)
-				}
-				continue
-			}
-			reportMoveDiag("apply", mr, 0)
-		}
-		rpl, err := worker.Call(notmuch.Action{
-			Kind:   notmuch.ActTag,
-			Query:  idQuery(identity),
-			TagOps: resolved,
-		})
-		if err != nil || rpl.Err != nil {
+		if err := execApply(worker, cfg, root, groups, identity, resolved); err != nil {
+			// the entry stays staged for retry/undo; the first failure surfaces
 			if applyErr == nil {
-				applyErr = fmt.Errorf("apply %s: %v %v", identity, err, rpl.Err)
+				applyErr = fmt.Errorf("apply %s: %v", identity, err)
 			}
 			continue
 		}
@@ -108,6 +72,44 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI, cfg 
 		}
 	}
 	return applyErr
+}
+
+// execApply executes a resolved op set on one identity (a message id or
+// a t:thread) - the view-less apply arm shared by the UI staged flush
+// (applyStaged) and the MCP ops path. The folder guard runs first: a
+// group ADD resolves and executes its physical move BEFORE the tag
+// lands - a tag whose file cannot follow becomes the tag-without-folder
+// state the next poll's location-wins resolution eats. The error names
+// the config fix. Moving first keeps the DB honest at every instant: a
+// file already in its target folder carries the tag the folder rule
+// would give it anyway, so even a classify racing the gap agrees.
+// Where a folder move fails, the tag never lands - tagging first would
+// need a poll to revert it, and the apply's own ActTag advances the
+// revision out of band, so no poll ever reclassifies the entry on cgo.
+func execApply(worker workerAPI, cfg config.Config, root string, groups []core.TagGroup, identity string, resolved []core.TagOp) error {
+	var move []filter.Entry
+	if folderTags := groupAdds(resolved, groups); len(folderTags) > 0 {
+		var err error
+		if move, err = moveEntries(worker, cfg, root, identity, folderTags); err != nil {
+			return err
+		}
+	}
+	if len(move) > 0 {
+		mr, err := filter.NewMoverLive(worker, cfg, root).Move(&filter.Report{Entries: move})
+		if err != nil {
+			return err
+		}
+		reportMoveDiag("apply", mr, 0)
+	}
+	rpl, err := worker.Call(notmuch.Action{
+		Kind:   notmuch.ActTag,
+		Query:  idQuery(identity),
+		TagOps: resolved,
+	})
+	if err != nil || rpl.Err != nil {
+		return fmt.Errorf("%v %v", err, rpl.Err)
+	}
+	return nil
 }
 
 // keptBy asks notmuch whether the identity still matches the view

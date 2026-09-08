@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -415,4 +416,243 @@ func TestMCPServerStdio(t *testing.T) {
 	if !strings.Contains(string(b), `"quarterly report"`) {
 		t.Errorf("search round trip missing the expected row: %s", b)
 	}
+}
+
+// The capability tests below are LOCKED like TestMCPScopeEnforcement:
+// they pin the [mcp] capability surface (attachments/bodies/tagging/
+// apply), the class gate on the tag tool (soft vs folder verb vs the
+// code-denied deleted-home), and the bodies projection. AGENTS.md
+// forbids loosening or removing them without explicit user approval.
+
+// capGrant is the [mcp] capability switches of one served surface.
+type capGrant struct {
+	att, bodies, tagging, apply bool
+}
+
+// capCfg builds a [mcp]-capability config: the gmail account space, the
+// inbox soft-tag scope, and the folder tag group set explicitly so
+// folder verbs (archive, deleted, ...) classify as such.
+func capCfg(g capGrant) config.Config {
+	return config.Config{
+		Accounts: map[string]config.Account{"gmail": {}},
+		MCP: config.MCP{
+			Accounts:    []string{"gmail"},
+			Tags:        []string{"inbox"},
+			Attachments: config.MCPCap{Enabled: g.att},
+			Bodies:      config.MCPBodies{Enabled: g.bodies},
+			Tagging:     config.MCPCap{Enabled: g.tagging},
+			Apply:       config.MCPCap{Enabled: g.apply},
+		},
+		TagGroups: map[string]core.TagGroup{"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}},
+	}
+}
+
+func toolNames(tools []server.ServerTool) []string {
+	names := make([]string, 0, len(tools))
+	for _, st := range tools {
+		names = append(names, st.Tool.Name)
+	}
+	return names
+}
+
+// errText extracts a tool result's error text (the content the handler
+// built via NewToolResultError; direct handler calls set no Text field).
+func errText(res *mcp.CallToolResult) string {
+	if res == nil || len(res.Content) == 0 {
+		return ""
+	}
+	if t, ok := res.Content[0].(mcp.TextContent); ok {
+		return t.Text
+	}
+	return ""
+}
+
+// TestMCPCapabilitySurface (LOCKED): the served surface is the metadata
+// three plus exactly the granted capabilities - attachments, bodies,
+// and tag (the tag tool appears when tagging OR apply grants a write
+// class). A capability that is off is absent from tools/list, never a
+// stubbed call.
+func TestMCPCapabilitySurface(t *testing.T) {
+	scopeOf := func(g capGrant) *mcpScope {
+		c := capCfg(g)
+		s, err := resolveMCPScope(&c)
+		if err != nil {
+			t.Fatalf("resolveMCPScope: %v", err)
+		}
+		return s
+	}
+	names := func(g capGrant) []string {
+		return toolNames(mcpCfgTools(&fakeWorker{}, "", capCfg(g), scopeOf(g)))
+	}
+	if got := names(capGrant{}); !slices.Equal(got, []string{"thread_info", "search", "count"}) {
+		t.Errorf("no capability: %v", got)
+	}
+	if got := names(capGrant{att: true}); !slices.Contains(got, "attachments") || len(got) != 4 {
+		t.Errorf("attachments capability: %v", got)
+	}
+	if got := names(capGrant{bodies: true}); !slices.Contains(got, "thread_bodies") || len(got) != 4 {
+		t.Errorf("bodies capability: %v", got)
+	}
+	if got := names(capGrant{tagging: true}); !slices.Contains(got, "tag") || len(got) != 4 {
+		t.Errorf("tagging capability: %v", got)
+	}
+	// apply alone serves the tag tool (the folder-verb write class)
+	if got := names(capGrant{apply: true}); !slices.Contains(got, "tag") || len(got) != 4 {
+		t.Errorf("apply capability: %v", got)
+	}
+}
+
+// TestMCPBodiesBoundary (LOCKED): thread_bodies reads the cleaned body
+// text of the thread's in-scope messages only - an out-of-scope row is
+// dropped before any open, its text never crosses; the row pull is
+// capped at [mcp.bodies] max_messages (newest first); the deny-all
+// scope serves nothing.
+func TestMCPBodiesBoundary(t *testing.T) {
+	root := t.TempDir()
+	write := func(subdir, name, subject string, ts time.Time) {
+		dir := filepath.Join(root, subdir)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		fixtureMail(t, dir, name, subject, "sender@example.com", "", ts)
+	}
+	// thread gt: gm1+gm4 in scope (gmail+inbox under gmail/), gm2 and
+	// gm3 out (sent/work tag - no allowed soft tag, even in the gmail
+	// folder space); each row has a real file so a leak would carry its
+	// subject
+	write("gmail/Inbox/cur", "1", "inbox newest report", time.Date(2026, 8, 20, 11, 0, 0, 0, time.Local))
+	write("gmail/Inbox/cur", "4", "older inbox note", time.Date(2026, 8, 20, 9, 0, 0, 0, time.Local))
+	write("gmail/Sent/cur", "2", "sent secret", time.Date(2026, 8, 20, 10, 0, 0, 0, time.Local))
+	write("gmail/Inbox/cur", "3", "work note", time.Date(2026, 8, 20, 8, 0, 0, 0, time.Local))
+	fw := &fakeWorker{}
+	fw.setThreadMsgs(map[string][]core.Message{
+		"gt": {
+			{ID: "gm1", ThreadID: "gt", Timestamp: 1755404000, Subject: "inbox newest report", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}},
+			{ID: "gm4", ThreadID: "gt", Timestamp: 1755399000, Subject: "older inbox note", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/4"}},
+			{ID: "gm2", ThreadID: "gt", Timestamp: 1755400000, Subject: "sent secret", Tags: []string{"gmail", "sent"}, Paths: []string{"gmail/Sent/cur/2"}},
+			{ID: "gm3", ThreadID: "gt", Timestamp: 1755403600, Subject: "work note", Tags: []string{"gmail", "work"}, Paths: []string{"gmail/Inbox/cur/3"}},
+		},
+	})
+	// capCfg zeroes bodies; enable with the default (10) pull
+	cfg := capCfg(capGrant{bodies: true})
+	scope, _ := resolveMCPScope(&cfg)
+	tools := mcpCfgTools(fw, root, cfg, scope)
+	res := callTool(t, tools, "thread_bodies", map[string]any{"thread_id": "gt"})
+	b, _ := json.Marshal(res.StructuredContent)
+	s := string(b)
+	for _, want := range []string{`"count":2`, `"inbox newest report"`, `"older inbox note"`, "body text"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("thread_bodies missing %s: %s", want, s)
+		}
+	}
+	for _, leak := range []string{"sent secret", "work note"} {
+		if strings.Contains(s, leak) {
+			t.Errorf("thread_bodies leaked an out-of-scope body (%s): %s", leak, s)
+		}
+	}
+
+	// the pull cap: max_messages 1 serves the newest in-scope row only
+	cfg.MCP.Bodies.MaxMessages = 1
+	tools = mcpCfgTools(fw, root, cfg, scope)
+	res = callTool(t, tools, "thread_bodies", map[string]any{"thread_id": "gt"})
+	b, _ = json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), `"count":1`) || strings.Contains(string(b), "older inbox note") {
+		t.Errorf("max_messages cap not honored (newest only): %s", b)
+	}
+
+	// deny-all scope: no row, no text, but the tool is still gated on
+	// the capability - the deny is a data fact, not a tool absence
+	deny, _ := resolveMCPScope(&config.Config{})
+	denyTools := mcpCfgTools(fw, root, cfg, deny)
+	res = callTool(t, denyTools, "thread_bodies", map[string]any{"thread_id": "gt"})
+	if b, _ := json.Marshal(res.StructuredContent); strings.Contains(string(b), "inbox newest report") {
+		t.Errorf("deny-all thread_bodies leaked a row: %s", b)
+	}
+}
+
+// TestMCPTagCapabilityGate (LOCKED): the tag tool's class gate runs
+// before any message is touched - a soft tag needs [mcp.tagging], a
+// folder verb needs [mcp.apply] and then routes through the shared
+// apply path (execApply), and the deleted-home tag can never be added
+// regardless of the grant. An unresolvable folder move refuses the
+// whole call: nothing is tagged when the move cannot land.
+func TestMCPTagCapabilityGate(t *testing.T) {
+	ftw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	scopeMsg := core.Message{ID: "gm1", ThreadID: "gt", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}}
+	outMsg := core.Message{ID: "om1", ThreadID: "ot", Tags: []string{"outlook", "inbox"}, Paths: []string{"outlook/Inbox/cur/4"}}
+	run := func(cfg config.Config) []server.ServerTool {
+		scope, err := resolveMCPScope(&cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mcpCfgTools(ftw, "", cfg, scope)
+	}
+	// expectCalls tracks the calls that may have legitimately landed so
+	// far: each refusal below must not grow the count beyond it
+	expectCalls := 0
+	noWrites := func(label string) {
+		t.Helper()
+		if n := len(ftw.tagCallsSnapshot()); n != expectCalls {
+			t.Fatalf("%s wrote %d tags (count went %d -> %d), want no growth", label, n-expectCalls, expectCalls, n)
+		}
+	}
+
+	// soft tag with tagging on: in-scope message tagged through the
+	// apply path (a plain ActTag, id-addressed)
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools := run(capCfg(capGrant{tagging: true}))
+	res := callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"work"}})
+	if res.IsError {
+		t.Fatalf("soft tag refused: %v", res)
+	}
+	calls := ftw.tagCallsSnapshot()
+	if len(calls) != 1 || !strings.Contains(calls[0].query, `id:"gm1"`) || len(calls[0].tagOps) != 1 || !calls[0].tagOps[0].Add || calls[0].tagOps[0].Tag != "work" {
+		t.Errorf("soft tag did not land as one id-addressed ActTag: %+v", calls)
+	}
+	expectCalls = len(calls) // this one landed; the refusals below must add none
+
+	// class gates: soft without tagging, folder verb without apply,
+	// deleted-home regardless of apply
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{apply: true})) // tagging off
+	res = callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"work"}})
+	if !res.IsError {
+		t.Errorf("soft tag without [mcp.tagging] must be refused: %v", res)
+	}
+	noWrites("soft-without-tagging")
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{tagging: true})) // apply off
+	res = callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"archive"}})
+	if !res.IsError {
+		t.Errorf("folder verb without [mcp.apply] must be refused: %v", res)
+	}
+	noWrites("folder-without-apply")
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{apply: true}))
+	res = callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"deleted"}})
+	if !res.IsError || !strings.Contains(errText(res), "deleted-home") {
+		t.Errorf("the deleted-home tag must be code-denied even with apply on: %v", res)
+	}
+	noWrites("deleted-home")
+
+	// folder verb with apply on routes through the apply path: the move
+	// cannot resolve (no candidates in the bare gmail account), so the
+	// call fails and nothing is tagged - the write never bypasses the
+	// move
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{tagging: true, apply: true}))
+	res = callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"archive"}})
+	if !res.IsError || !strings.Contains(errText(res), "no move candidates") {
+		t.Errorf("an unresolvable folder move must refuse through the apply path: %v", res)
+	}
+	noWrites("unresolvable-folder-move")
+
+	// out-of-scope id: refused before any write
+	ftw.setMsgs([]core.Message{outMsg})
+	tools = run(capCfg(capGrant{tagging: true, apply: true}))
+	res = callTool(t, tools, "tag", map[string]any{"id": "om1", "add": []string{"work"}})
+	if !res.IsError || !strings.Contains(errText(res), "not in the allowed mcp scope") {
+		t.Errorf("out-of-scope message must be refused: %v", res)
+	}
+	noWrites("out-of-scope")
 }

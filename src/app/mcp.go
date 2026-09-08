@@ -4,23 +4,27 @@
 //go:build mcp && lua
 
 // The MCP server (Model Context Protocol, stdio): the `notmutt mcp`
-// subcommand serves the Lua action layer to LLM clients. The tools are
-// a fixed registry of Lua chunks run in a fresh sandboxed VM; the MCP
-// ctx table exposes ONLY read bindings (thread_info, search, count) -
-// no tag ops, attach, ai_chat, picker, prompt, or mail_lines (the
-// "not all of them" restriction). The projection in this file is the
-// privacy boundary: metadata only (subject, author, timestamp, tags,
-// thread id, message count, references) - mail content, paths, and raw
-// headers never cross it.
+// subcommand serves the Lua action layer to LLM clients. The metadata
+// tools are a fixed registry of Lua chunks run in a fresh sandboxed VM;
+// the MCP ctx table exposes ONLY read bindings (thread_info, search,
+// count) - no tag ops, attach, ai_chat, picker, prompt, or mail_lines
+// (the "not all of them" restriction). Content-adjacent and write tools
+// are capability-gated ([mcp.attachments], [mcp.bodies],
+// [mcp.tagging], [mcp.apply]) and implemented as Go handlers over the
+// same scope checks - the projection in this file is the privacy
+// boundary: metadata only unless a capability explicitly grants more,
+// mail paths and raw headers never cross it.
 //
 // The data boundary is the [mcp] scope (resolveMCPScope): accounts
 // names the folder spaces the server may see (folder prefix AND the
 // account tag), tags the soft tags whose mail is reachable. Deny by
 // default - empty lists serve nothing; every query is intersected
 // with the scope (search/count), every id-addressed read is checked
-// per message (thread_info rows, attachments). The scope enforcement
-// test is TestMCPScopeEnforcement - never loosened without explicit
-// approval (AGENTS.md).
+// per message (thread_info rows, attachments, bodies). Tag writes and
+// the folder apply are capability-gated and scope-checked per message;
+// the destructive deleted-home tag is code-denied, never a config
+// grant. The scope enforcement test is TestMCPScopeEnforcement - never
+// loosened without explicit approval (AGENTS.md).
 package app
 
 import (
@@ -28,6 +32,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -35,6 +40,7 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 	lua "github.com/yuin/gopher-lua"
 
+	"notmutt/app/aicmd"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/mail"
@@ -176,12 +182,6 @@ func mcpTools(worker workerAPI, root string, allow map[string]bool, scope *mcpSc
 	return tools
 }
 
-func newMCPServer(worker workerAPI, root string, allow map[string]bool, scope *mcpScope) *server.MCPServer {
-	s := server.NewMCPServer("notmutt", "0.1.0", server.WithToolCapabilities(false))
-	s.AddTools(mcpTools(worker, root, allow, scope)...)
-	return s
-}
-
 // mcpToolHandler is the uniform per-tool handler: validate the args,
 // run the chunk in a fresh sandboxed VM, wrap the result. A script
 // error is a tool-failure result the client sees, not a transport
@@ -278,6 +278,195 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root strin
 	return out, err
 }
 
+// mcpDeletedHome is the deleted-home folder tag. An ADD of it is
+// code-denied for MCP regardless of [mcp.apply]: deletion is the one
+// destructive move an agent never performs, and a config edit must not
+// enable it. "deleted" is the canonical home in this client (the mover
+// sends it to the Trash folders); a renamed home tag is out of the
+// deny's scope.
+const mcpDeletedHome = "deleted"
+
+// mcpBodiesTool is the thread_bodies capability tool ([mcp.bodies]):
+// the cleaned body text (aicmd's shared cleaner) of the thread's
+// in-scope messages, newest first, per-message aicmd.BodyCap and at
+// most cfg.MCP.Bodies.PullCap() rows. The in-scope gate runs before
+// any file open - an out-of-scope message is dropped, never read. No
+// headers cross: body text only, id/subject tie each row to the
+// metadata thread_info already serves.
+func mcpBodiesTool(worker workerAPI, root string, cfg config.Config, scope *mcpScope) server.ServerTool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("The cleaned body text of a thread's messages (quoted/signature/html parts dropped), newest first, capped. No headers, no attachments. Gated: served only when [mcp.bodies] is enabled; an out-of-scope message is never read."),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("thread_id", mcp.Required(), mcp.Description("The thread id (without the thread: prefix)")),
+	}
+	return server.ServerTool{
+		Tool: mcp.NewTool("thread_bodies", opts...),
+		Handler: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			tid := req.GetString("thread_id", "")
+			if tid == "" {
+				return mcp.NewToolResultError("thread_id is required"), nil
+			}
+			rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: tid})
+			if err != nil || rpl.Err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("thread_bodies: %v %v", err, rpl.Err)), nil
+			}
+			var rows []core.Message
+			for _, m := range rpl.Msgs {
+				if scope.inScope(m) {
+					rows = append(rows, m)
+				}
+			}
+			// newest first: the pull serves the tail the agent is answering
+			sort.Slice(rows, func(i, j int) bool { return rows[i].Timestamp > rows[j].Timestamp })
+			capN := cfg.MCP.Bodies.PullCap()
+			if len(rows) > capN {
+				rows = rows[:capN]
+			}
+			msgs := make([]map[string]any, 0, len(rows))
+			for _, m := range rows {
+				// the cleaner reads m.Paths[0]; snapshot paths are
+				// root-relative, so absolutize before the file open
+				p := m.Paths[0]
+				mm := m
+				mm.Paths = []string{absMailPath(root, p)}
+				msgs = append(msgs, map[string]any{
+					"id":      m.ID,
+					"subject": m.Subject,
+					"body":    aicmd.BodyText(mm, aicmd.BodyCap),
+				})
+			}
+			out := map[string]any{"count": len(msgs), "messages": msgs}
+			text, _ := json.MarshalIndent(out, "", "  ")
+			return mcp.NewToolResultStructured(out, string(text)), nil
+		},
+	}
+}
+
+// mcpTagTool is the tag capability tool ([mcp.tagging] for soft tags,
+// [mcp.apply] for folder verbs): add/remove tags on the messages of one
+// thread (or one message), in-scope members only. Every op routes
+// through the shared apply path (execApply) - soft ops land as plain
+// ActTag, a folder verb (a tag that is a folder-group member, e.g.
+// archive or pending) resolves and executes its physical move first.
+// The deleted-home tag can never be added. Capabilities are checked
+// per class before anything is touched: a soft-tag op needs tagging, a
+// folder verb needs apply, +deleted is code-denied - an unpermitted op
+// refuses the whole call.
+func mcpTagTool(worker workerAPI, root string, cfg config.Config, scope *mcpScope) server.ServerTool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("Add or remove tags on one thread's in-scope messages (or one message). Soft tags need [mcp.tagging]; folder verbs (archive, pending, inbox, ...) need [mcp.apply] and move the mail. The deleted-home tag is code-denied. Only in-scope messages are touched."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("thread_id", mcp.Description("The thread id (without the thread: prefix); exactly one of thread_id or id")),
+		mcp.WithString("id", mcp.Description("A message id (the id field of thread_info/search results); exactly one of thread_id or id")),
+		mcp.WithArray("add", mcp.WithStringItems(), mcp.Description("Tags to add")),
+		mcp.WithArray("remove", mcp.WithStringItems(), mcp.Description("Tags to remove")),
+	}
+	return server.ServerTool{
+		Tool: mcp.NewTool("tag", opts...),
+		Handler: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			threadID := req.GetString("thread_id", "")
+			msgID := req.GetString("id", "")
+			if (threadID == "") == (msgID == "") {
+				return mcp.NewToolResultError("exactly one of thread_id or id is required"), nil
+			}
+			var ops []core.TagOp
+			for _, t := range req.GetStringSlice("add", nil) {
+				ops = append(ops, core.TagOp{Tag: t, Add: true})
+			}
+			for _, t := range req.GetStringSlice("remove", nil) {
+				ops = append(ops, core.TagOp{Tag: t})
+			}
+			if len(ops) == 0 {
+				return mcp.NewToolResultError("at least one add or remove is required"), nil
+			}
+			for _, op := range ops {
+				if op.Tag == "" || strings.ContainsAny(op.Tag, " \t()\"") {
+					return mcp.NewToolResultError(fmt.Sprintf("invalid tag %q", op.Tag)), nil
+				}
+			}
+			groups := cfg.TagGroupList()
+			// capability gate per class, before any message is touched
+			for _, op := range ops {
+				folder := folderTag(op.Tag, groups)
+				if op.Add && op.Tag == mcpDeletedHome {
+					return mcp.NewToolResultError("tag: the deleted-home tag is code-denied for mcp"), nil
+				}
+				if folder {
+					if !cfg.MCP.Apply.Enabled {
+						return mcp.NewToolResultError(fmt.Sprintf("tag: %q is a folder verb; enable [mcp.apply] to move mail", op.Tag)), nil
+					}
+					continue
+				}
+				if !cfg.MCP.Tagging.Enabled {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: %q is a soft tag; enable [mcp.tagging] to write it", op.Tag)), nil
+				}
+			}
+			// resolve the target's in-scope messages
+			var targets []core.Message
+			if msgID != "" {
+				rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{msgID}})
+				if err != nil || rpl.Err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: %v %v", err, rpl.Err)), nil
+				}
+				if len(rpl.Msgs) == 0 {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: no such message %q", msgID)), nil
+				}
+				if !scope.inScope(rpl.Msgs[0]) {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: message %q is not in the allowed mcp scope", msgID)), nil
+				}
+				targets = rpl.Msgs
+			} else {
+				rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+				if err != nil || rpl.Err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: %v %v", err, rpl.Err)), nil
+				}
+				for _, m := range rpl.Msgs {
+					if scope.inScope(m) {
+						targets = append(targets, m)
+					}
+				}
+				if len(targets) == 0 {
+					return mcp.NewToolResultError(fmt.Sprintf("tag: no message of thread %q is in the allowed mcp scope", threadID)), nil
+				}
+			}
+			// apply per in-scope message id (never a t:thread ActTag, which
+			// would sweep out-of-scope members)
+			var applied []string
+			for _, m := range targets {
+				if !scope.inScope(m) {
+					continue
+				}
+				_, resolved := core.ResolveOps(m.Tags, ops, groups)
+				if len(resolved) == 0 {
+					continue // net no-op: tags already at the target state
+				}
+				if err := execApply(worker, cfg, root, groups, m.ID, resolved); err != nil {
+					return mcp.NewToolResultError(fmt.Sprintf("tag %s: %v", m.ID, err)), nil
+				}
+				applied = append(applied, m.ID)
+			}
+			out := map[string]any{"applied": applied}
+			text, _ := json.MarshalIndent(out, "", "  ")
+			return mcp.NewToolResultStructured(out, string(text)), nil
+		},
+	}
+}
+
+// folderTag reports whether tag is a folder-group member: any exclusive
+// group's member is a folder tag (R2) - touching one is a folder verb,
+// the class that moves mail. The hard-tag list comes from the config's
+// tag groups, never a copy kept by the mcp server.
+func folderTag(tag string, groups []core.TagGroup) bool {
+	for _, g := range groups {
+		if groupMember(g, tag) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveMCPAllow maps the config's [mcp] allow names to the served
 // set; an unknown name is an error - a typo fails loudly instead of
 // silently serving fewer tools.
@@ -341,19 +530,42 @@ func resolveMCPScope(cfg *config.Config) (*mcpScope, error) {
 	return scope, nil
 }
 
-// serveMCP runs the MCP stdio server: the [mcp] allow list decides
-// which gated tools are served, the scope which mail the server may
-// see, the read-only worker opens the DB, and ServeStdio owns
+// mcpCfgTools builds the served tool surface from the [mcp] capability
+// tables (the serveMCP path): the metadata three always, attachments
+// when [mcp.attachments], thread_bodies when [mcp.bodies], and the tag
+// tool when [mcp.tagging] or [mcp.apply] grants a write class. The
+// capability tools are Go handlers (scope-checked per message, the
+// deleted-home deny code-level) appended over mcpTools' chunk registry.
+func mcpCfgTools(worker workerAPI, root string, cfg config.Config, scope *mcpScope) []server.ServerTool {
+	allow := map[string]bool{}
+	if cfg.MCP.Attachments.Enabled {
+		allow["attachments"] = true
+	}
+	tools := mcpTools(worker, root, allow, scope)
+	if cfg.MCP.Bodies.Enabled {
+		tools = append(tools, mcpBodiesTool(worker, root, cfg, scope))
+	}
+	if cfg.MCP.Tagging.Enabled || cfg.MCP.Apply.Enabled {
+		tools = append(tools, mcpTagTool(worker, root, cfg, scope))
+	}
+	return tools
+}
+
+func newMCPCfgServer(worker workerAPI, root string, cfg config.Config, scope *mcpScope) *server.MCPServer {
+	s := server.NewMCPServer("notmutt", "0.1.0", server.WithToolCapabilities(false))
+	s.AddTools(mcpCfgTools(worker, root, cfg, scope)...)
+	return s
+}
+
+// serveMCP runs the MCP stdio server: the [mcp] capability tables
+// decide which gated tools are served, the scope which mail the server
+// may see, the read-only worker opens the DB, and ServeStdio owns
 // stdin/stdout until the client closes the pipe. Nothing else may
 // write stdout.
 func serveMCP() error {
 	cfg, err := config.Load(configDir())
 	if err != nil {
 		return fmt.Errorf("config: %w", err)
-	}
-	allow, err := resolveMCPAllow(cfg.MCP.Allow)
-	if err != nil {
-		return err
 	}
 	scope, err := resolveMCPScope(&cfg)
 	if err != nil {
@@ -371,7 +583,7 @@ func serveMCP() error {
 	if rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActOpen, Query: ""}); err != nil || rpl.Err != nil {
 		return fmt.Errorf("notmuch open: %v %v", err, rpl.Err)
 	}
-	if err := server.ServeStdio(newMCPServer(worker, root, allow, scope)); err != nil {
+	if err := server.ServeStdio(newMCPCfgServer(worker, root, cfg, scope)); err != nil {
 		return fmt.Errorf("mcp: %w", err)
 	}
 	return nil

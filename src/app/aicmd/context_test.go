@@ -140,13 +140,13 @@ func TestBuildContextHTMLOnly(t *testing.T) {
 }
 
 // TestBuildContextCaps proves the body caps hold: one long body truncates
-// at perBodyCap, and many bodies together stay under totalBodyCap.
+// at BodyCap, and many bodies together stay under totalBodyCap.
 func TestBuildContextCaps(t *testing.T) {
-	long := strings.Repeat("x", perBodyCap+1000)
+	long := strings.Repeat("x", BodyCap+1000)
 	ctx := mustContext(t, bodyCmd("bodies"), oneMsg(t, long), nil, nil, "", "")
 	// count only inside Body: sections - the metadata carries "x" in the
 	// example.com addresses and must not disturb the body-cap accounting
-	if n := bodyRunX(ctx); n > perBodyCap {
+	if n := bodyRunX(ctx); n > BodyCap {
 		t.Errorf("body exceeded per-message cap: %d", n)
 	}
 	// several long bodies stay within the total budget

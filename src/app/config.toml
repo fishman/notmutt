@@ -18,3 +18,26 @@ interval = 10
 
 [pager]
 # default-views = { "linkedin.com" = "html", "substack.com" = "html" }
+
+# The mcp stdio server (notmutt mcp, built with TAGS="lua mcp") serves
+# metadata for mail in scope: [mcp] accounts + tags name the data
+# boundary (both deny-by-default - empty lists serve nothing). Beyond
+# the metadata three (thread_info/search/count), each capability below
+# is off until enabled. The deleted-home tag is never reachable.
+# [mcp]
+# accounts = ["gmail"]      # folder space AND the account tag
+# tags = ["inbox"]          # a message must carry one of these
+
+# [mcp.attachments]         # attachment list metadata (name/mime/size)
+# enabled = true
+
+# [mcp.bodies]              # cleaned body text, no headers
+# enabled = true
+# max_messages = 10         # per-thread pull cap (default 10)
+
+# [mcp.tagging]             # write soft tags on in-scope mail (no moves)
+# enabled = true
+
+# [mcp.apply]               # non-destructive folder verbs (archive, ...)
+# enabled = true            #   via the folder-move apply; delete denied
+

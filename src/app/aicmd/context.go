@@ -18,8 +18,13 @@ import (
 )
 
 const (
-	perBodyCap   = 4000  // one message's body text, chars
-	totalBodyCap = 20000 // all bodies together, chars - the prompt stays bounded
+	// BodyCap is one message's body text, chars; the MCP bodies tool and
+	// the command builder share the same per-message ceiling.
+	BodyCap = 4000
+	// totalBodyCap is the all-bodies ceiling (chars) the command
+	// builder applies across a thread - the prompt stays bounded. The
+	// MCP bodies tool bounds by message count instead ([mcp.bodies]).
+	totalBodyCap = 20000
 )
 
 // BuildContext assembles the prompt context for a command: a labeled
@@ -79,10 +84,10 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []str
 				break
 			}
 			limit := remaining
-			if limit > perBodyCap {
-				limit = perBodyCap
+			if limit > BodyCap {
+				limit = BodyCap
 			}
-			body := bodyText(m, limit)
+			body := BodyText(m, limit)
 			remaining -= len(body)
 			fmt.Fprintf(&b, "%d. From: %s\nSubject: %s\nDate: %s\nBody:\n%s\n\n",
 				i+1, senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), body)
@@ -91,7 +96,7 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []str
 	if allows("last_body") {
 		m := sorted[len(sorted)-1]
 		fmt.Fprintf(&b, "Latest message:\nFrom: %s\nSubject: %s\nDate: %s\nBody:\n%s\n",
-			senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), bodyText(m, perBodyCap))
+			senderOf(m), core.SanitizeControls(m.Subject), dateOf(m), BodyText(m, BodyCap))
 	}
 	if styleNote != "" {
 		b.WriteString("\nStyle:\n" + styleNote + "\n")
@@ -108,7 +113,7 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []str
 // 0), signature lines, and html parts dropped; text/plain lines joined,
 // capped at limit chars. A missing or unparseable file yields "" - the
 // metadata sections still carry the message.
-func bodyText(m core.Message, limit int) string {
+func BodyText(m core.Message, limit int) string {
 	if len(m.Paths) == 0 {
 		return ""
 	}

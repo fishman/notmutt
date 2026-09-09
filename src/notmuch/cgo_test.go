@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -312,4 +313,71 @@ func TestCGOWorkerReadsFresh(t *testing.T) {
 	if n := count(); n != 2 {
 		t.Fatalf("read served a stale snapshot: count %d, want 2", n)
 	}
+}
+
+// TestCGOFlagSyncOnMarkRead pins the guarantee the archive path leans
+// on: removing unread must write the maildir S flag to the file
+// (mirroring `notmuch tag` with synchronize_flags=true). A read
+// message's file is copied verbatim by the mover; if it stayed S-less,
+// the next `notmuch new` re-derives unread from the moved file - the
+// mark-then-archive regression. The S the file gains here is what
+// survives that pass.
+func TestCGOFlagSyncOnMarkRead(t *testing.T) {
+	e := testutil.Setup(t)
+	cur := filepath.Join(e.Maildir, "INBOX", "cur")
+	if err := os.MkdirAll(cur, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fixture := []byte("From: alpha <alpha@example.com>\n" +
+		"To: beta@example.com\n" +
+		"Subject: mark read then archive\n" +
+		"Date: Sat, 16 Aug 2026 12:00:00 +0000\n" +
+		"Message-ID: <markread-archive@test.invalid>\n\n" +
+		"synthetic fixture body\n")
+	src := filepath.Join(cur, "msg.eml")
+	if err := os.WriteFile(src, fixture, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.NotmuchNew(t)
+	b := newTestBackend(t, e)
+	const id = "markread-archive@test.invalid"
+	query := "(id:" + id + ") and tag:unread"
+	if n, err := b.Count(context.Background(), query); err != nil || n != 1 {
+		t.Fatalf("S-less fixture must index unread: %d %v", n, err)
+	}
+	if err := b.Tag(context.Background(), "id:"+id, []TagOp{{Tag: "unread", Add: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := b.Count(context.Background(), query); err != nil || n != 0 {
+		t.Fatalf("tag must remove unread from the db: %d %v", n, err)
+	}
+	// the fix: the now-read message's file carries S (the CLI's flag sync)
+	entries, err := os.ReadDir(cur)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || !strings.HasSuffix(entries[0].Name(), ":2,S") {
+		t.Fatalf("read message file must gain :2,S, got %v", dirNames(entries))
+	}
+	// archive: the mover copies the file verbatim - simulate the move and
+	// the sync-tool pass it feeds; the S flag must stop unread's rebirth
+	arc := filepath.Join(e.Maildir, "Archive", "cur")
+	if err := os.MkdirAll(arc, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(cur, entries[0].Name()), filepath.Join(arc, entries[0].Name())); err != nil {
+		t.Fatal(err)
+	}
+	testutil.NotmuchNew(t)
+	if n, err := b.Count(context.Background(), query); err != nil || n != 0 {
+		t.Fatalf("notmuch new re-added unread to the archived read message: %d %v", n, err)
+	}
+}
+
+func dirNames(entries []os.DirEntry) []string {
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names
 }

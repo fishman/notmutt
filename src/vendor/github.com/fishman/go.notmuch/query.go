@@ -9,7 +9,10 @@ package notmuch
 // #include <notmuch.h>
 import "C"
 
-import "unsafe"
+import (
+	"context"
+	"unsafe"
+)
 
 // Query represents a notmuch query.
 type Query cStruct
@@ -162,4 +165,65 @@ func (q *Query) AddTagExclude(tag string) error {
 	ctag := C.CString(tag)
 	defer C.free(unsafe.Pointer(ctag))
 	return statusErr(C.notmuch_query_add_tag_exclude(q.toC(), ctag))
+}
+
+// maildirFlagTags are the tags the maildir flag scheme encodes (see
+// Message.TagsToMaildirFlags): draft D, flagged F, passed P, replied R,
+// and unread, the inverse of the seen flag S. Only a change to one of
+// these can leave a message's file flags disagreeing with its tags.
+var maildirFlagTags = map[string]bool{
+	"unread": true, "draft": true, "flagged": true, "passed": true, "replied": true,
+}
+
+// TagMessages applies the tag additions and removals to every message
+// the query matches - the operation the `notmuch tag` command performs.
+// When an op touches a maildir flag tag, each affected message's files
+// are renamed to encode the resulting flags (Message.TagsToMaildirFlags);
+// skipping that leaves the file flags stale, and a later `notmuch new`
+// can re-derive a tag the database dropped (for example re-add unread
+// to a message moved after being read). ctx cancels the walk between
+// messages; tag changes already applied are not rolled back.
+func (q *Query) TagMessages(ctx context.Context, add, remove []string) error {
+	if !q.live() {
+		return ErrClosedDatabase
+	}
+	ms, err := q.Messages()
+	if err != nil {
+		return err
+	}
+	defer ms.Close()
+	sync := false
+	for _, tag := range add {
+		if maildirFlagTags[tag] {
+			sync = true
+			break
+		}
+	}
+	for _, tag := range remove {
+		if maildirFlagTags[tag] {
+			sync = true
+			break
+		}
+	}
+	for m := range ms.All() {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		for _, tag := range add {
+			if err := m.AddTag(tag); err != nil {
+				return err
+			}
+		}
+		for _, tag := range remove {
+			if err := m.RemoveTag(tag); err != nil {
+				return err
+			}
+		}
+		if sync {
+			if err := m.TagsToMaildirFlags(); err != nil {
+				return err
+			}
+		}
+	}
+	return ms.Err()
 }

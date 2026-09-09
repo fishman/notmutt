@@ -303,30 +303,27 @@ func (b *CGOBackend) withWriteLock(ctx context.Context, what string, fn func(*nm
 	return opErr
 }
 
+// Tag applies the ops to every message the query matches, in the
+// binding's batch op (Query.TagMessages): the `notmuch tag` operation,
+// which renames flag-bearing files to match the final tags - a read
+// message's file gains the seen flag, so the mover's verbatim copy
+// cannot be re-derived as unread by a later `notmuch new`.
 func (b *CGOBackend) Tag(ctx context.Context, query string, ops []TagOp) error {
+	var add, remove []string
+	for _, op := range ops {
+		if op.Add {
+			add = append(add, op.Tag)
+		} else {
+			remove = append(remove, op.Tag)
+		}
+	}
 	return b.withWriteLock(ctx, "tag", func(db *nm.DB) error {
 		q := db.NewQuery(query)
 		defer q.Close()
-		msgs, err := q.Messages()
-		if err != nil {
-			return fmt.Errorf("notmuch tag: %w", err)
-		}
-		defer msgs.Close()
-		for m := range msgs.All() {
+		if err := q.TagMessages(ctx, add, remove); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			for _, op := range ops {
-				if op.Add {
-					if err := m.AddTag(op.Tag); err != nil {
-						return fmt.Errorf("notmuch tag: %w", err)
-					}
-				} else if err := m.RemoveTag(op.Tag); err != nil {
-					return fmt.Errorf("notmuch tag: %w", err)
-				}
-			}
-		}
-		if err := msgs.Err(); err != nil {
 			return fmt.Errorf("notmuch tag: %w", err)
 		}
 		return nil

@@ -35,6 +35,8 @@ github.com/fishman/go.notmuch v0.40.4 h1:vR5hSOKsvw7+UxksxMb7BEZNcUtuHu46WePZet3
 github.com/fishman/go.notmuch v0.40.4/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
 github.com/fishman/go.notmuch v0.40.5 h1:CqQjoMoirJlvo1asHeGL34mMB3zM1up7GQvb63ulAfo=
 github.com/fishman/go.notmuch v0.40.5/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
+github.com/fishman/go.notmuch v0.40.6 h1:rSjT5M8udYtTccjZf2pNtnUoWj7kqJaRMhfSEKPfcv0=
+github.com/fishman/go.notmuch v0.40.6/go.mod h1:AKg575C53q19SkRGHdc/zKhimx3i0UX7q7XnFLtlAvI=
 github.com/fishman/zaman v0.1.2 h1:WjeSaOO6BJzvy2RA9Rj1tO6V0eSB13cWg5ojDCanqzc=
 github.com/fishman/zaman v0.1.2/go.mod h1:2ibvZ3r0iHfoE+Xi2GVbcGHMS1b3BCmxEphDba2Lr/0=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=

@@ -50,10 +50,7 @@ out instead of hanging behind a background index/send.
 
 No own DB. State, flags, threads, search from libnotmuch. Virtual views
 = tag queries; folder state derived, never authoritative. ONE derived
-store: index cache (R13) - bbolt mirror of the overview query,
-revision-keyed, invalidated by lastmod, rebuilt from query output only.
-Stale read re-syncs (startup O(changed); full walk only on cache miss
-or revision mismatch).
+store: the index cache (R13), rebuilt from query output only.
 
 cgo = the runtime backend (record 3); CLI behind `-tags cli` (the F10
 escape hatch). The two backends are build-exclusive (`!cli` / `cli`) for
@@ -98,10 +95,9 @@ real-mailbox runs always dry.
 ### R3. Async read/update with incremental thread views
 
 All reads/updates async; UI never blocks. Query layer must support
-thread-type queries (NM_QUERY_TYPE_THREADS): view holds thread objects;
-refresh must INSERT new messages into existing visible threads, no full
-rebuild. Diff-and-insert, not rebuild. notmutt must do better than
-neomutt: async thread loading + diff-and-insert refresh.
+thread-type queries (NM_QUERY_TYPE_THREADS): the view holds thread
+objects and refresh INSERTs new messages into them - no full rebuild,
+the diff-and-insert edge over neomutt.
 
 ### R4. Async send + dialogue state machine
 
@@ -155,9 +151,8 @@ Supply-chain policy (hard):
   (tests proving the edge cases).
 
 CI standard (mirror `references/neomutt-docs/docs/actions.md`): build + test on
-every commit, sanitizers (ASAN/UBSAN), static analysis, fuzzing on the
-mail-parsing boundary - the parser is the trust boundary and must be
-fuzzed.
+every commit, sanitizers (ASAN/UBSAN), static analysis, and fuzzing - the
+mail-parsing boundary is the trust boundary.
 
 ### R8. Config TOML; Lua bindings later
 
@@ -200,15 +195,12 @@ runs in-process and the client owns its trust policy.
 PGP via `gpg` CLI (aerc gpgbin pattern: `--status-fd`, parsed status): the
 agent/passphrase machinery is the reason for the subprocess - that backend
 is for PGP only. S/MIME is internal-only: `go.mozilla.org/pkcs7` + stdlib
-`crypto/x509`, in-process, roots from `[crypto] ca-file` when set (strict
-pinning); an empty ca-file with `[crypto] use-system-pool = true` (default)
-trusts the system CA pool - the mainstream out-of-the-box posture, the
-emailProtection EKU gate still enforced. `use-system-pool = false` fails
-closed: no system pool, no verification. No gpgsm backend - a gpg
-subprocess would reintroduce the CLI/argv path and a second trust model
-with no benefit on the verify path (no secret, no agent). The CMS parse and
-the cert policy are the S/MIME trust boundary (R7 fuzz targets cover the
-parse; the policy below is normative).
+`crypto/x509`, in-process; trust roots, EKU, and revocation policy below.
+`use-system-pool = false` fails closed (no system pool, no verification).
+No gpgsm backend - a gpg subprocess would reintroduce the CLI/argv path and
+a second trust model with no benefit on the verify path (no secret, no
+agent). The CMS parse and the cert policy are the S/MIME trust boundary (R7
+fuzz targets cover the parse; the policy below is normative).
 
 S/MIME verification policy (in-process, owned here, never openssl defaults):
 - Trust roots: an empty `[crypto] ca-file` trusts the system CA pool - the
@@ -429,8 +421,9 @@ notmutt, never cite authority.
   A change to one must start with that approval, not end with a test
   edit. Add new tests beside them; leave the pinned ones alone.
 - Style: clear, concise, direct; ASCII only (no unicode dashes/quotes)
-  in all output and code. No unnecessary comments; only non-obvious
-  constraints get a comment.
+  in all output and code.
+- Comments brief, always: non-obvious constraints only, one or two
+  clauses - longer than the code it explains is a defect.
 
 Security (SECURITY.md normative for trust boundaries; hard rules):
 - argv exec only. Never interpolate mail content, filenames, or queries

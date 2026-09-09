@@ -59,6 +59,36 @@ returns (`ActTag` in the apply flow). A tag does not tell notmuch where
 a file lives - the path update in step 2 is what does that. The two are
 independent and never combined into one step.
 
+## Flag ops rename files too
+
+notmuch maildir sync (cgo `TagMessages` -> `TagsToMaildirFlags`) writes a
+flag tag into the file name: marking a message read renames `cur/1` to
+`cur/1:2,S`, unreading back. Not a folder move, but the same path change.
+The C call updates the DB in one step (drop the old name, add the new), so
+the index never lists a gone file - the mover's guarantee, extended to
+in-place renames.
+
+## The client must re-point its rows
+
+A view row keeps the path it was built with; `SetTags`/`reconcileMsg` never
+rewrite it, so a rename or move leaves the row naming a deleted file until
+the refresh re-fetches the thread. A reopen can outrun that, and the open
+path reads the view row first (rows-first, no worker round trip for a
+view-resident thread), so `ParseMessage` can open a renamed-away file until
+a restart.
+
+Each rename-capable tag op out-of-band of a refresh re-points its rows on
+success:
+
+- the **apply flush** (src/app/apply.go) - snapshot the applied id
+  (`ActSnapshots`) and `SetPaths` the fresh path into every view holding it;
+- the **open read-mark** (src/app/app.go) - a full open that marks an unread
+  message read renames its file, so the same refresh runs after the mark.
+
+Both share `refreshPaths`/`currentPaths` (src/app/apply.go). Thread
+identities skip the seam: a hydrated thread self-heals on the next fetch.
+Pinned by `TestApplyRefreshSeamRepointsPaths` (src/app/apply_test.go).
+
 ## The cli backend
 
 The cli build has no path operations (`ErrUnsupported`): it copies,
@@ -73,4 +103,5 @@ consistent with the index, or a committed index that no longer names
 the deleted source. It never leaves the index naming a file that is
 gone. Pinned by `TestMoverKeepsSourceOnDbError`
 (src/filter/filter_test.go): a failed add step must return with the
-source file intact.
+source file intact. The same holds for flag renames, and the seams
+above re-point client rows so no open reads a renamed-away path.

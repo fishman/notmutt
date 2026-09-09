@@ -628,6 +628,7 @@ type StyleTable struct {
 	Tabbar    TabbarStyleTable
 	Compose   ComposeStyleTable
 	Index     IndexStyleTable
+	Queue     QueueStyleTable
 	Pager     PagerStyleTable
 }
 
@@ -644,6 +645,12 @@ type TabbarStyleTable struct {
 type ComposeStyleTable struct {
 	Label   Style
 	Divider Style
+}
+
+// QueueStyleTable: the CRM review-queue surface's style surface; header is
+// the column-title row above the list.
+type QueueStyleTable struct {
+	Header Style
 }
 
 type IndexStyleTable struct {
@@ -809,6 +816,22 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 			}
 			for k := range cm {
 				return StyleTable{}, fmt.Errorf("compose.%s: unknown key", k)
+			}
+		case "queue":
+			qm, ok := val.(map[string]any)
+			if !ok {
+				return StyleTable{}, fmt.Errorf("queue: expected a table")
+			}
+			if h, ok := qm["header"]; ok {
+				s, err := rawStyle(h)
+				if err != nil {
+					return StyleTable{}, err
+				}
+				t.Queue.Header = s
+				delete(qm, "header")
+			}
+			for k := range qm {
+				return StyleTable{}, fmt.Errorf("queue.%s: unknown key", k)
 			}
 		case "index":
 			im, ok := val.(map[string]any)
@@ -1006,6 +1029,7 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 	out["tabbar.active"] = apply("tabbar.active", table.Tabbar.Active)
 	out["compose.label"] = apply("compose.label", table.Compose.Label)
 	out["compose.divider"] = apply("compose.divider", table.Compose.Divider)
+	out["queue.header"] = apply("queue.header", table.Queue.Header)
 	for id, s := range map[string]Style{
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
@@ -1482,6 +1506,8 @@ func defaultTheme() Theme {
 					Label:   Style{Fg: "base0D"},               // settings labels: onedark author blue
 					Divider: Style{Fg: "base05", Bg: "base03"}, // section bar: text on the gray
 				},
+				// the queue's column-title row: normal surface, bold caps
+				Queue: QueueStyleTable{Header: Style{Attrs: []string{"bold"}}},
 				Index: IndexStyleTable{
 					Number: Style{Fg: "base03"}, Date: Style{Fg: "base0A"},
 					Author: Style{Fg: "base0D"}, Subject: Style{Fg: "base05"},

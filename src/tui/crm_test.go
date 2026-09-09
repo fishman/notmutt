@@ -5,8 +5,11 @@ package tui
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/mattn/go-runewidth"
 
 	"notmutt/core"
 )
@@ -250,5 +253,66 @@ func TestCrmQueuePageOrderPinsNewestFirst(t *testing.T) {
 	}
 	if r := q.cursor(); r == nil || r.key() != a.key() {
 		t.Errorf("cursor did not follow the selection by key through the reorder, got %+v", r)
+	}
+}
+
+// TestCrmQueueTableRender pins the queue's table shape: a column-title row
+// (styled separately, no column glyph - a blank gutter as wide as the data
+// sep) sits above the data rows, each row led by the reserved marker cell -
+// the indicator cursor glyph on the selection, blank elsewhere (the
+// index/attachment highlight standard) - and the data columns land under their
+// titles.
+func TestCrmQueueTableRender(t *testing.T) {
+	q := newCrmQueue()
+	q.onQueue(core.CrmQueue{Contacts: []core.CrmContact{crmContact("201", "alpha@example.com", "Alpha", "Able")}})
+	st := DefaultStyles()
+
+	lines := q.render(80, 10, st, "│", ">")
+	if len(lines) != 10 {
+		t.Fatalf("render = %d lines, want 10", len(lines))
+	}
+	title := stripANSI(lines[0])
+	if !strings.HasPrefix(title, "  NAME") { // the blank marker cell + gap
+		t.Fatalf("row 0 = %q, want the NAME column header row after the marker cell", title)
+	}
+	if strings.Contains(title, "│") {
+		t.Errorf("title row draws the column glyph: %q", title)
+	}
+	if !strings.Contains(lines[0], "\x1b[1;") { // the queue.header bold opens the SGR sequence (raw line, not stripped)
+		t.Errorf("title row does not carry the queue.header style: %q", lines[0])
+	}
+	row := stripANSI(lines[1])
+	if !strings.Contains(row, " │ ") || strings.Contains(row, "A│") {
+		t.Errorf("data row lacks a padded separator: %q", row)
+	}
+	if !strings.HasPrefix(row, "> Alpha Able") {
+		t.Errorf("selected row = %q, want the cursor marker before the contact", row)
+	}
+	at := func(s, sub string) int {
+		i := strings.Index(s, sub)
+		if i < 0 {
+			return -1
+		}
+		return runewidth.StringWidth(s[:i])
+	}
+	if at(title, "DATE") != 61 || at(row, "2026-09-01") != 61 {
+		t.Errorf("date column off its 61 edge: title %q row %q", title, row)
+	}
+	if at(title, "STATUS") != 74 || at(row, "new") != 74 {
+		t.Errorf("status tail off its 74 edge: title %q row %q", title, row)
+	}
+}
+
+// TestCrmQueueEmptyRender pins that an empty queue shows the placeholder (led
+// by its blank marker cell) with no column header above it.
+func TestCrmQueueEmptyRender(t *testing.T) {
+	st := DefaultStyles()
+	lines := newCrmQueue().render(80, 5, st, "│", ">")
+	first := stripANSI(lines[0])
+	if !strings.HasPrefix(first, "  (queue empty)") {
+		t.Fatalf("empty queue = %q, want the placeholder after the marker cell", first)
+	}
+	if strings.Contains(first, "NAME") || strings.Contains(first, "STATUS") {
+		t.Errorf("empty queue shows a header over the placeholder: %q", first)
 	}
 }

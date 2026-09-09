@@ -1543,6 +1543,35 @@ func TestThemeComposeLabel(t *testing.T) {
 	}
 }
 
+// TestThemeQueueHeader pins the queue.header id: a [theme.dark.queue] header
+// style resolves through the palette; its empty fg/bg inherit normal (apply),
+// while the bold attrs survive. The tui renders the CRM queue's column-title
+// row with it.
+func TestThemeQueueHeader(t *testing.T) {
+	cfg, err := Load(writeThemeFile(t, "[theme.dark]\n[theme.dark.queue]\nheader = { attrs = [\"bold\"] }"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, _ := cfg.Theme.Resolved(cfg.Palette, "dark")
+	h, ok := res["queue.header"]
+	if !ok {
+		t.Fatal("queue.header id not resolved")
+	}
+	if h.Fg != "#abb2bf" || h.Bg != "#21252b" {
+		t.Errorf("queue.header = %+v, want normal's base05/base00 inherited", h)
+	}
+	if len(h.Attrs) != 1 || h.Attrs[0] != "bold" {
+		t.Errorf("queue.header attrs = %v, want [bold]", h.Attrs)
+	}
+}
+
+func TestThemeQueueUnknownKey(t *testing.T) {
+	_, err := Load(writeThemeFile(t, "[theme.dark]\n[theme.dark.queue]\nnonesuch = { fg = \"base0D\" }"))
+	if err == nil || !strings.Contains(err.Error(), "queue.nonesuch") {
+		t.Fatalf("unknown queue key must be a load error, got %v", err)
+	}
+}
+
 func TestThemeComposeUnknownKey(t *testing.T) {
 	_, err := Load(writeThemeFile(t, "[theme.dark]\n[theme.dark.compose]\nnonesuch = { fg = \"base0D\" }"))
 	if err == nil || !strings.Contains(err.Error(), "compose.nonesuch") {

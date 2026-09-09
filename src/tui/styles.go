@@ -29,6 +29,7 @@ type Styles struct {
 	TabActive      lipgloss.Style // tab strip active-tab pill
 	ComposeLabel   lipgloss.Style // compose settings label (the two-column form + the dialogue box)
 	ComposeDivider lipgloss.Style // compose section bar (--- Attachments / --- Preview)
+	QueueHeader    lipgloss.Style // the CRM queue's column-title row
 	Index          IndexStyles
 	Pager          PagerStyles
 	sgr            sgrSet // precomputed hot-path fragments (index rows, pager lines)
@@ -217,6 +218,8 @@ func DefaultStyles() Styles {
 		// fills with it (colorWhitespace), so the column seam never leaks the terminal default
 		ComposeLabel:   lipgloss.NewStyle().Foreground(c("#61afef")).Background(c("#21252b")),
 		ComposeDivider: lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#5c6370")),
+		// the queue's column-title row: the normal surface, bold caps
+		QueueHeader: lipgloss.NewStyle().Foreground(c("#abb2bf")).Background(c("#21252b")).Bold(true),
 		Index: IndexStyles{
 			Number:    lipgloss.NewStyle().Foreground(c("#5c6370")),
 			Date:      lipgloss.NewStyle().Foreground(c("#e5c07b")),
@@ -283,6 +286,7 @@ func ResolveStyles(theme config.Theme, palette config.Palette) Styles {
 		TabActive:      to("tabbar.active", normal),
 		ComposeLabel:   to("compose.label", normal),
 		ComposeDivider: to("compose.divider", normal),
+		QueueHeader:    to("queue.header", normal),
 		Index: IndexStyles{
 			Number: to("index.number", normal), Date: to("index.date", normal),
 			Author: to("index.author", normal), Subject: to("index.subject", normal),

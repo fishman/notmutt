@@ -469,9 +469,9 @@ func errText(res *mcp.CallToolResult) string {
 
 // TestMCPCapabilitySurface (LOCKED): the served surface is the metadata
 // three plus exactly the granted capabilities - attachments, bodies,
-// and tag (the tag tool appears when tagging OR apply grants a write
-// class). A capability that is off is absent from tools/list, never a
-// stubbed call.
+// tag (when tagging OR apply grants a write class), mark_read (when
+// tagging), and the apply folder-verb tool (when apply). A capability
+// that is off is absent from tools/list, never a stubbed call.
 func TestMCPCapabilitySurface(t *testing.T) {
 	scopeOf := func(g capGrant) *mcpScope {
 		c := capCfg(g)
@@ -493,11 +493,11 @@ func TestMCPCapabilitySurface(t *testing.T) {
 	if got := names(capGrant{bodies: true}); !slices.Contains(got, "thread_bodies") || len(got) != 4 {
 		t.Errorf("bodies capability: %v", got)
 	}
-	if got := names(capGrant{tagging: true}); !slices.Contains(got, "tag") || len(got) != 4 {
+	if got := names(capGrant{tagging: true}); !slices.Contains(got, "tag") || !slices.Contains(got, "mark_read") || len(got) != 5 {
 		t.Errorf("tagging capability: %v", got)
 	}
-	// apply alone serves the tag tool (the folder-verb write class)
-	if got := names(capGrant{apply: true}); !slices.Contains(got, "tag") || len(got) != 4 {
+	// apply alone serves tag (the general write tool) and the apply action
+	if got := names(capGrant{apply: true}); !slices.Contains(got, "tag") || !slices.Contains(got, "apply") || len(got) != 5 {
 		t.Errorf("apply capability: %v", got)
 	}
 }
@@ -655,6 +655,113 @@ func TestMCPTagCapabilityGate(t *testing.T) {
 		t.Errorf("out-of-scope message must be refused: %v", res)
 	}
 	noWrites("out-of-scope")
+}
+
+// TestMCPMarkRead pins the mark_read action ([mcp.tagging]): it drops
+// the unread soft tag on the in-scope message through the shared apply
+// path; an already-read message is a net no-op (no write); an
+// out-of-scope message is refused.
+func TestMCPMarkRead(t *testing.T) {
+	ftw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	inScope := core.Message{ID: "gm1", ThreadID: "gt", Tags: []string{"gmail", "inbox", "unread"}, Paths: []string{"gmail/Inbox/cur/1"}}
+	read := core.Message{ID: "gm2", ThreadID: "gt", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/2"}}
+	out := core.Message{ID: "om1", ThreadID: "ot", Tags: []string{"outlook", "inbox", "unread"}, Paths: []string{"outlook/Inbox/cur/1"}}
+	run := func(cfg config.Config) []server.ServerTool {
+		scope, err := resolveMCPScope(&cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mcpCfgTools(ftw, "", cfg, scope)
+	}
+	before := func() int { return len(ftw.tagCallsSnapshot()) }
+
+	// tagging on: one id-addressed -unread ActTag lands
+	ftw.setMsgs([]core.Message{inScope})
+	tools := run(capCfg(capGrant{tagging: true}))
+	res := callTool(t, tools, "mark_read", map[string]any{"id": "gm1"})
+	if res.IsError {
+		t.Fatalf("mark_read refused: %v", res)
+	}
+	calls := ftw.tagCallsSnapshot()
+	if len(calls) != 1 || !strings.Contains(calls[0].query, `id:"gm1"`) || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Add || calls[0].tagOps[0].Tag != "unread" {
+		t.Errorf("mark_read did not land as one id-addressed -unread ActTag: %+v", calls)
+	}
+
+	// already read: net no-op, no write
+	n := before()
+	ftw.setMsgs([]core.Message{read})
+	tools = run(capCfg(capGrant{tagging: true}))
+	res = callTool(t, tools, "mark_read", map[string]any{"id": "gm2"})
+	if res.IsError {
+		t.Fatalf("already-read mark_read refused: %v", res)
+	}
+	if got := before(); got != n {
+		t.Errorf("already-read mark_read wrote %d tags (was %d)", got-n, n)
+	}
+
+	// out-of-scope id refused before any write
+	n = before()
+	ftw.setMsgs([]core.Message{out})
+	tools = run(capCfg(capGrant{tagging: true}))
+	res = callTool(t, tools, "mark_read", map[string]any{"id": "om1"})
+	if !res.IsError || !strings.Contains(errText(res), "not in the allowed mcp scope") {
+		t.Errorf("out-of-scope mark_read must be refused: %v", res)
+	}
+	if got := before(); got != n {
+		t.Errorf("out-of-scope mark_read wrote %d tags (was %d)", got-n, n)
+	}
+}
+
+// TestMCPApplyFolderVerb pins the apply action ([mcp.apply]): it takes
+// one folder verb (a member of the exclusive folder group), never a soft
+// tag; the deleted-home tag is code-denied; a folder verb routes through
+// the shared apply path so an unresolvable move refuses the whole call.
+func TestMCPApplyFolderVerb(t *testing.T) {
+	ftw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	scopeMsg := core.Message{ID: "gm1", ThreadID: "gt", Tags: []string{"gmail", "inbox", "unread"}, Paths: []string{"gmail/Inbox/cur/1"}}
+	run := func(cfg config.Config) []server.ServerTool {
+		scope, err := resolveMCPScope(&cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mcpCfgTools(ftw, "", cfg, scope)
+	}
+	n := func() int { return len(ftw.tagCallsSnapshot()) }
+
+	// a soft tag is not a folder verb
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools := run(capCfg(capGrant{apply: true}))
+	res := callTool(t, tools, "apply", map[string]any{"id": "gm1", "action": "work"})
+	if !res.IsError || !strings.Contains(errText(res), "not a folder verb") {
+		t.Errorf("soft action through apply must be refused: %v", res)
+	}
+	if got := n(); got != 0 {
+		t.Errorf("soft action wrote %d tags", got)
+	}
+
+	// deleted-home is code-denied even with apply on
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{apply: true}))
+	res = callTool(t, tools, "apply", map[string]any{"id": "gm1", "action": "deleted"})
+	if !res.IsError || !strings.Contains(errText(res), "code-denied") {
+		t.Errorf("deleted action must be code-denied: %v", res)
+	}
+	if got := n(); got != 0 {
+		t.Errorf("deleted action wrote %d tags", got)
+	}
+
+	// a folder verb routes through the apply path: the bare gmail account
+	// has no move candidates, so the move resolves before the tag and the
+	// whole call refuses - nothing tagged, unread never touched
+	ftw.setMsgs([]core.Message{scopeMsg})
+	tools = run(capCfg(capGrant{apply: true}))
+	res = callTool(t, tools, "apply", map[string]any{"id": "gm1", "action": "archive"})
+	if !res.IsError || !strings.Contains(errText(res), "no move candidates") {
+		t.Errorf("unresolvable folder move must refuse the call: %v", res)
+	}
+	if got := n(); got != 0 {
+		t.Errorf("unresolvable apply wrote %d tags", got)
+	}
 }
 
 // TestMCPInScopeAbsolutePaths (regression, 2026-09-09): notmuch reports

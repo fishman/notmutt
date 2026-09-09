@@ -404,49 +404,139 @@ func mcpTagTool(worker workerAPI, root string, cfg config.Config, scope *mcpScop
 					return mcp.NewToolResultError(fmt.Sprintf("tag: %q is a soft tag; enable [mcp.tagging] to write it", op.Tag)), nil
 				}
 			}
-			// resolve the target's in-scope messages
-			var targets []core.Message
-			if msgID != "" {
-				rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{msgID}})
-				if err != nil || rpl.Err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("tag: %v %v", err, rpl.Err)), nil
-				}
-				if len(rpl.Msgs) == 0 {
-					return mcp.NewToolResultError(fmt.Sprintf("tag: no such message %q", msgID)), nil
-				}
-				if !scope.inScope(rpl.Msgs[0]) {
-					return mcp.NewToolResultError(fmt.Sprintf("tag: message %q is not in the allowed mcp scope", msgID)), nil
-				}
-				targets = rpl.Msgs
-			} else {
-				rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
-				if err != nil || rpl.Err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("tag: %v %v", err, rpl.Err)), nil
-				}
-				for _, m := range rpl.Msgs {
-					if scope.inScope(m) {
-						targets = append(targets, m)
-					}
-				}
-				if len(targets) == 0 {
-					return mcp.NewToolResultError(fmt.Sprintf("tag: no message of thread %q is in the allowed mcp scope", threadID)), nil
-				}
+			// resolve and apply per in-scope message id (never a t:thread
+			// ActTag, which would sweep out-of-scope members)
+			applied, err := mcpApply(worker, root, cfg, scope, groups, threadID, msgID, ops, "tag")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
-			// apply per in-scope message id (never a t:thread ActTag, which
-			// would sweep out-of-scope members)
-			var applied []string
-			for _, m := range targets {
-				if !scope.inScope(m) {
-					continue
-				}
-				_, resolved := core.ResolveOps(m.Tags, ops, groups)
-				if len(resolved) == 0 {
-					continue // net no-op: tags already at the target state
-				}
-				if err := execApply(worker, cfg, root, groups, m.ID, resolved); err != nil {
-					return mcp.NewToolResultError(fmt.Sprintf("tag %s: %v", m.ID, err)), nil
-				}
-				applied = append(applied, m.ID)
+			out := map[string]any{"applied": applied}
+			text, _ := json.MarshalIndent(out, "", "  ")
+			return mcp.NewToolResultStructured(out, string(text)), nil
+		},
+	}
+}
+
+// mcpApply resolves the op target - one message id or the thread's
+// in-scope messages - and applies ops per in-scope message id through
+// the shared apply path (execApply). Per-message, never a t:thread
+// ActTag: an out-of-scope thread member is never swept. Returns the
+// applied message ids; verb names the error text.
+func mcpApply(worker workerAPI, root string, cfg config.Config, scope *mcpScope, groups []core.TagGroup, threadID, msgID string, ops []core.TagOp, verb string) ([]string, error) {
+	var targets []core.Message
+	if msgID != "" {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{msgID}})
+		if err != nil || rpl.Err != nil {
+			return nil, fmt.Errorf("%s: %v %v", verb, err, rpl.Err)
+		}
+		if len(rpl.Msgs) == 0 {
+			return nil, fmt.Errorf("%s: no such message %q", verb, msgID)
+		}
+		if !scope.inScope(rpl.Msgs[0]) {
+			return nil, fmt.Errorf("%s: message %q is not in the allowed mcp scope", verb, msgID)
+		}
+		targets = rpl.Msgs
+	} else {
+		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActThread, ThreadID: threadID})
+		if err != nil || rpl.Err != nil {
+			return nil, fmt.Errorf("%s: %v %v", verb, err, rpl.Err)
+		}
+		for _, m := range rpl.Msgs {
+			if scope.inScope(m) {
+				targets = append(targets, m)
+			}
+		}
+		if len(targets) == 0 {
+			return nil, fmt.Errorf("%s: no message of thread %q is in the allowed mcp scope", verb, threadID)
+		}
+	}
+	var applied []string
+	for _, m := range targets {
+		if !scope.inScope(m) {
+			continue
+		}
+		_, resolved := core.ResolveOps(m.Tags, ops, groups)
+		if len(resolved) == 0 {
+			continue // net no-op: tags already at the target state
+		}
+		if err := execApply(worker, cfg, root, groups, m.ID, resolved); err != nil {
+			return nil, fmt.Errorf("%s %s: %v", verb, m.ID, err)
+		}
+		applied = append(applied, m.ID)
+	}
+	return applied, nil
+}
+
+// mcpMarkReadTool is the mark_read action ([mcp.tagging]): removes the
+// unread soft tag on one thread's in-scope messages (or one message) so
+// a later folder apply archives without carrying the unread flag.
+func mcpMarkReadTool(worker workerAPI, root string, cfg config.Config, scope *mcpScope) server.ServerTool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("Mark one thread's in-scope messages (or one message) as read: removes the unread tag. A soft-tag write, needs [mcp.tagging]; out-of-scope messages are never touched. Archive separately (add the archive folder tag) once read."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("thread_id", mcp.Description("The thread id (without the thread: prefix); exactly one of thread_id or id")),
+		mcp.WithString("id", mcp.Description("A message id (the id field of thread_info/search results); exactly one of thread_id or id")),
+	}
+	return server.ServerTool{
+		Tool: mcp.NewTool("mark_read", opts...),
+		Handler: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			threadID := req.GetString("thread_id", "")
+			msgID := req.GetString("id", "")
+			if (threadID == "") == (msgID == "") {
+				return mcp.NewToolResultError("exactly one of thread_id or id is required"), nil
+			}
+			if !cfg.MCP.Tagging.Enabled {
+				return mcp.NewToolResultError("mark_read is a soft-tag write; enable [mcp.tagging]"), nil
+			}
+			applied, err := mcpApply(worker, root, cfg, scope, cfg.TagGroupList(), threadID, msgID, []core.TagOp{{Tag: "unread"}}, "mark_read")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			out := map[string]any{"applied": applied}
+			text, _ := json.MarshalIndent(out, "", "  ")
+			return mcp.NewToolResultStructured(out, string(text)), nil
+		},
+	}
+}
+
+// mcpApplyTool is the apply action ([mcp.apply]): performs one folder
+// verb - a member of an exclusive folder tag group (archive, pending,
+// inbox, ...) - on one thread's in-scope messages or one message. The
+// physical move resolves before the tag lands; group exclusivity drops
+// the previous home tag; soft tags (unread included) ride through; the
+// deleted-home tag is code-denied.
+func mcpApplyTool(worker workerAPI, root string, cfg config.Config, scope *mcpScope) server.ServerTool {
+	opts := []mcp.ToolOption{
+		mcp.WithDescription("Move one thread's in-scope messages (or one message) to a folder home by applying a folder verb - a member of an exclusive folder tag group (archive, pending, inbox, ...). Needs [mcp.apply]; the physical move resolves before the tag lands and the previous home tag is dropped; soft tags (unread included) ride through; the deleted-home tag is code-denied. Mark read separately via mark_read."),
+		mcp.WithReadOnlyHintAnnotation(false),
+		mcp.WithDestructiveHintAnnotation(false),
+		mcp.WithString("thread_id", mcp.Description("The thread id (without the thread: prefix); exactly one of thread_id or id")),
+		mcp.WithString("id", mcp.Description("A message id (the id field of thread_info/search results); exactly one of thread_id or id")),
+		mcp.WithString("action", mcp.Required(), mcp.Description("The folder tag to move to (a member of the exclusive folder group)")),
+	}
+	return server.ServerTool{
+		Tool: mcp.NewTool("apply", opts...),
+		Handler: func(_ context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			action := req.GetString("action", "")
+			threadID := req.GetString("thread_id", "")
+			msgID := req.GetString("id", "")
+			if (threadID == "") == (msgID == "") {
+				return mcp.NewToolResultError("exactly one of thread_id or id is required"), nil
+			}
+			if !cfg.MCP.Apply.Enabled {
+				return mcp.NewToolResultError("apply needs [mcp.apply]; it is not enabled"), nil
+			}
+			groups := cfg.TagGroupList()
+			if action == mcpDeletedHome {
+				return mcp.NewToolResultError("apply: the deleted-home tag is code-denied for mcp"), nil
+			}
+			if action == "" || strings.ContainsAny(action, " \t()\"") || !folderTag(action, groups) {
+				return mcp.NewToolResultError(fmt.Sprintf("apply: %q is not a folder verb (a member of the exclusive folder tags)", action)), nil
+			}
+			applied, err := mcpApply(worker, root, cfg, scope, groups, threadID, msgID, []core.TagOp{{Tag: action, Add: true}}, "apply")
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
 			}
 			out := map[string]any{"applied": applied}
 			text, _ := json.MarshalIndent(out, "", "  ")
@@ -533,9 +623,10 @@ func resolveMCPScope(cfg *config.Config) (*mcpScope, error) {
 
 // mcpCfgTools builds the served tool surface from the [mcp] capability
 // tables (the serveMCP path): the metadata three always, attachments
-// when [mcp.attachments], thread_bodies when [mcp.bodies], and the tag
-// tool when [mcp.tagging] or [mcp.apply] grants a write class. The
-// capability tools are Go handlers (scope-checked per message, the
+// when [mcp.attachments], thread_bodies when [mcp.bodies], the tag tool
+// when [mcp.tagging] or [mcp.apply] grants a write class, mark_read
+// when [mcp.tagging], and the apply folder-verb tool when [mcp.apply].
+// The capability tools are Go handlers (scope-checked per message, the
 // deleted-home deny code-level) appended over mcpTools' chunk registry.
 func mcpCfgTools(worker workerAPI, root string, cfg config.Config, scope *mcpScope) []server.ServerTool {
 	allow := map[string]bool{}
@@ -548,6 +639,12 @@ func mcpCfgTools(worker workerAPI, root string, cfg config.Config, scope *mcpSco
 	}
 	if cfg.MCP.Tagging.Enabled || cfg.MCP.Apply.Enabled {
 		tools = append(tools, mcpTagTool(worker, root, cfg, scope))
+	}
+	if cfg.MCP.Tagging.Enabled {
+		tools = append(tools, mcpMarkReadTool(worker, root, cfg, scope))
+	}
+	if cfg.MCP.Apply.Enabled {
+		tools = append(tools, mcpApplyTool(worker, root, cfg, scope))
 	}
 	return tools
 }

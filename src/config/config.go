@@ -1416,7 +1416,7 @@ func Default() Config {
 			Folder: DefaultAttachFolder,
 			Layout: "YYYY-MM",
 		},
-		MCP: MCP{},
+		MCP:     MCP{},
 		Palette: defaultPalette(),
 		Theme:   defaultTheme(),
 		HTML:    HTMLSection{DarkMode: "auto"},

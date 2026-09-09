@@ -35,12 +35,8 @@ jobs:
       - name: Install libnotmuch
         run: .github/install-libnotmuch.sh
 
-      - name: Format
-        run: make format
-
-      - name: Vet
-        working-directory: src
-        run: go vet ./...
+      - name: Check (format gate, vet, test)
+        run: make check
 
       - name: Build
         working-directory: src

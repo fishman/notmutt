@@ -13,20 +13,15 @@ import (
 	"notmutt/core"
 )
 
-// maxBriefLen caps the assembled briefing in runes. Contact and company
-// fields are small, but the company description and research results are
-// unbounded foreign text, so the joined prompt truncates to stay bounded
-// before it reaches the model.
+// maxBriefLen caps the assembled briefing in runes. The company description
+// and research results are unbounded foreign text, so the joined prompt
+// truncates to stay bounded before it reaches the model.
 const maxBriefLen = 8000
 
 // briefing assembles the analysis prompt from CRM + research: a labeled
 // block for the contact, one for the company, then one line per researched
 // fact. It takes no mail input by construction - mail grounding is a
-// separate gated call (Task 10). A blank contact or company field renders
-// as "unknown". Every incoming field is UTF-8-validated and F1-sanitized
-// (core.SanitizeText) before joining; a field that is not valid UTF-8
-// cannot be rendered faithfully and errors. The joined output is capped at
-// maxBriefLen runes: an overflow truncates the tail, never mid-rune.
+// separate gated call (Task 10).
 func briefing(contact Contact, company Company, rs []Result) (string, error) {
 	sec, err := contactSection(contact)
 	if err != nil {

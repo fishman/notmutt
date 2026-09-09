@@ -265,9 +265,7 @@ func (s *mcpScope) inScope(m core.Message) bool {
 	}
 	// notmuch reports absolute filenames (go.notmuch documents
 	// Filenames as absolute); the folder pin matches the engine's
-	// root-relative form, so strip the root first - the account tag
-	// already pins identity, this is the second pin against a moved
-	// message.
+	// root-relative form, so strip the root before matching.
 	paths := m.Paths
 	if s.root != "" {
 		paths = make([]string, len(m.Paths))

@@ -30,11 +30,9 @@ func draftFile(t *testing.T, body string) string {
 	return p
 }
 
-// TestResumeBuilder: Resume restores the envelope (Bcc included), the
-// body with the signature tail detached, the ResumePath, and no thread
-// identity - a resumed draft is a standalone compose (Mode compose, no
-// OriginalID/MessageID so no replied tag fires and Assemble issues a
-// fresh Message-ID).
+// TestResumeBuilder: a saved draft resumes into a standalone compose -
+// envelope (Bcc included) and body restored, signature tail detached,
+// ResumePath set, and no thread identity.
 func TestResumeBuilder(t *testing.T) {
 	p := draftFile(t, "line one\n\n-- \nsig text")
 	d, err := mail.ParseDraft(p)

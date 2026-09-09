@@ -149,9 +149,8 @@ func parseCommand(data []byte, path string) (*Command, error) {
 	if cmd.Action != "view" && cmd.Action != "compose" {
 		return nil, fmt.Errorf("%s: action must be view or compose, got %q", path, cmd.Action)
 	}
-	// a CRM prompt drafts from the CRM context block, never mail - its run
-	// path does not call BuildContext, so the mail allowlist is exempt
-	// (any declared data still validates as known fields)
+	// a CRM prompt's run path does not call BuildContext, so the mail
+	// allowlist is exempt - any declared data still validates as known fields
 	if len(cmd.Data) == 0 && !cmd.CRM {
 		return nil, fmt.Errorf("%s: missing data (the context allowlist)", path)
 	}

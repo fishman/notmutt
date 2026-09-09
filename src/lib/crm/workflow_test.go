@@ -281,9 +281,9 @@ func analyzeProvider() config.AIProvider {
 }
 
 // TestRunAnalyzePublishesBriefing pins the happy path: the contact is
-// refetched to learn CompanyID, the company is fetched once, research and the
-// briefing pass both run over chat, and one CrmBriefing carries the chat text
-// with the client's Provider and the row's ContactID.
+// refetched to learn CompanyID, the company is fetched once, both chat passes
+// run, and one CrmBriefing carries the chat text with the Provider and
+// ContactID.
 func TestRunAnalyzePublishesBriefing(t *testing.T) {
 	bus := core.NewBus()
 	ch := bus.Subscribe()

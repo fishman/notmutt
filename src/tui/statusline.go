@@ -77,10 +77,10 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 			right = append(right, msgSegment(d.msg, budget, d.msgErr, st))
 		}
 	}
-	// The legend takes the leftover slot, pre-fitted to the leftover
-	// width, truncated wcwidth-aware (R11 slot reservation); the drop
-	// loop stays as the backstop when a future segment overruns. The
-	// footprint is content + two inner gaps + the bar gap before it.
+	// The legend takes the leftover slot, pre-fitted to its leftover
+	// width; the drop loop stays as the backstop when a future segment
+	// overruns. The footprint is content + two inner gaps + the bar gap
+	// before it.
 	if d.legend != "" {
 		fixed := groupWidth(left)
 		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)

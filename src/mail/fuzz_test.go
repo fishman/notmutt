@@ -31,9 +31,8 @@ func FuzzRenderHTML(f *testing.F) {
 	})
 }
 
-// FuzzParseDraft fuzzes the draft parse boundary: ParseDraft must never
-// panic on arbitrary bytes, its body stays bounded by the part cap, and
-// every parsed ordinal stays in range of the attachment stream.
+// FuzzParseDraft: ParseDraft must never panic on arbitrary bytes; the
+// body stays bounded by the part cap and every ordinal stays in range.
 func FuzzParseDraft(f *testing.F) {
 	f.Add([]byte("To: alice@example.com\nSubject: s\nContent-Type: text/plain; charset=utf-8\n\nthe body\n"))
 	f.Add([]byte("\x00\xff garbage \r\n-- \nno header at all"))

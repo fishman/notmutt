@@ -62,8 +62,7 @@ func TestCrmQueueNewToBriefing(t *testing.T) {
 }
 
 // TestCrmQueueDraftable pins the d guard: a row drafts only with a
-// briefing. The draft dispatch itself is the model's (the prompt picker);
-// action() no longer carries a draft case.
+// briefing (the prompt picker owns the dispatch, not action()).
 func TestCrmQueueDraftable(t *testing.T) {
 	var gotAction string
 	SetCrmActionHandler(func(action string, c core.CrmContact) { gotAction = action })
@@ -221,11 +220,11 @@ func TestCrmHooksInertDefault(t *testing.T) {
 	}
 }
 
-// TestCrmQueuePageOrderPinsNewestFirst pins the R3 reconcile rule: each queue
-// page is the authoritative newest-first unprocessed set, so a mid-session
-// contact at the page head lands at index 0 (not the tail), a reorder keeps
-// each held row's briefing by key, and the selection follows the cursor's key
-// through the reorder.
+// TestCrmQueuePageOrderPinsNewestFirst pins the R3 reconcile rule: each
+// queue page is the authoritative newest-first unprocessed set, so a contact
+// at the page head lands at index 0 (not the tail), a reorder keeps each held
+// row's briefing by key, and the selection follows the cursor's key through
+// the reorder.
 func TestCrmQueuePageOrderPinsNewestFirst(t *testing.T) {
 	alpha := crmContact("201", "alpha@example.com", "Alpha", "Able")
 	atlas := crmContact("202", "atlas@example.com", "Atlas", "Beta")
@@ -256,12 +255,11 @@ func TestCrmQueuePageOrderPinsNewestFirst(t *testing.T) {
 	}
 }
 
-// TestCrmQueueTableRender pins the queue's table shape: a column-title row
-// (styled separately, no column glyph - a blank gutter as wide as the data
-// sep) sits above the data rows, each row led by the reserved marker cell -
-// the indicator cursor glyph on the selection, blank elsewhere (the
-// index/attachment highlight standard) - and the data columns land under their
-// titles.
+// TestCrmQueueTableRender pins the queue's table shape: a styled
+// column-title row (no column glyph - a blank gutter as wide as the data
+// sep) above the data rows, each row led by the reserved marker cell - the
+// indicator cursor glyph on the selection, blank elsewhere - with the data
+// columns landing under their titles.
 func TestCrmQueueTableRender(t *testing.T) {
 	q := newCrmQueue()
 	q.onQueue(core.CrmQueue{Contacts: []core.CrmContact{crmContact("201", "alpha@example.com", "Alpha", "Able")}})

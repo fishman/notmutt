@@ -151,11 +151,9 @@ func TestParseDraftCRLF(t *testing.T) {
 	}
 }
 
-// TestUnknownEncodingNoPanic: a message whose top-level transfer encoding
-// is unknown must not crash the readers. mail.CreateReader returns a nil
-// reader for it (its guard tolerates charsets only), and the deferred
-// Close then nil-derefs - the regression the ParseDraft fuzzer found.
-// The readers tolerate the encoding (empty content), never panic.
+// TestUnknownEncodingNoPanic: an unknown top-level transfer encoding must
+// not crash the readers - mail.CreateReader returns a nil reader whose
+// deferred Close nil-derefs (the regression the ParseDraft fuzzer found).
 func TestUnknownEncodingNoPanic(t *testing.T) {
 	raw := []byte("Content-Transfer-Encoding: 0\nSubject: x\n\nbody\n")
 	p := filepath.Join(t.TempDir(), "m.eml")

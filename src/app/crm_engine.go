@@ -174,8 +174,7 @@ func crmRowAction(action string, c core.CrmContact) {
 // app surface) and holds a per-operation client factory. No token_cmd
 // runs here: the queue's first open (CrmOpened) launches a pull through
 // the factory, which fetches the token, runs, and wipes. The job bodies
-// live in lib/crm/workflow.go; a SendResult for a CRM-origin compose
-// marks the contact followed up through a fresh per-op client.
+// live in lib/crm/workflow.go.
 func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Config, root string) {
 	if cfg.Crm.Provider == "" {
 		return
@@ -247,14 +246,14 @@ func crmWire(ctx context.Context, bus *core.Bus, worker workerAPI, cfg config.Co
 	}()
 }
 
-// crmMailGround builds the adapter's gated mail-grounding closure for
-// the prompt run: a worker query from:"<email>" finds the newest inbound
-// thread, the grant resolves from the configured [crm.hubspot] account
-// (empty = the thread's tag-derived account, the old fallback), and - only
-// when that account's [ai-data] grant permits - aicmd.BuildContext runs
-// over the thread with a synthetic command whose Data is the grant. No
-// thread or no grant returns "" - mail content never reaches a prompt
-// except through BuildContext's Data allowlist.
+// crmMailGround builds the adapter's gated mail-grounding closure for the
+// prompt run: a from:"<email>" query finds the newest inbound thread; the
+// grant resolves from the configured [crm.hubspot] account (empty = the
+// thread's tag-derived account, the old fallback) and, only when that
+// account's [ai-data] grant permits, aicmd.BuildContext runs over the
+// thread with a synthetic command whose Data is the grant. No thread or
+// no grant returns "" - mail content reaches a prompt only through
+// BuildContext's Data allowlist.
 func crmMailGround(cfg config.Config, worker workerAPI, account string) crm.MailGroundFn {
 	return func(ctx context.Context, email string) (string, error) {
 		if email == "" {
@@ -263,9 +262,9 @@ func crmMailGround(cfg config.Config, worker workerAPI, account string) crm.Mail
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
-		// a CRM-controlled value must look like an address before it shapes
-		// a query: reject anything outside the email charset (letters, digits,
-		// . + _ - @) as the no-grounding state, never a query fragment
+		// a CRM-controlled value must look like an address before it shapes a
+		// query: reject anything outside the email charset as the no-grounding
+		// state, never a query fragment
 		for i := 0; i < len(email); i++ {
 			c := email[i]
 			if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
@@ -310,10 +309,6 @@ func crmMailGround(cfg config.Config, worker workerAPI, account string) crm.Mail
 	}
 }
 
-// crmOpenDraftCompose reacts to a generated follow-up draft: build the
-// prefilled compose, register its tab id -> {Provider, ContactID} for the
-// send hook (crmWriteBackOnSend), and publish ComposeOpened for the TUI to
-// attach.
 // crmPromptList is the CRM prompt picker source (SetCrmAIPromptSource):
 // the CRM-flagged commands for the configured account - the account's own
 // flagged prompts (already first from LoadCommands) plus the flagged
@@ -372,9 +367,9 @@ func crmPromptBlock(c core.CrmContact) string {
 // briefing, the gated mail ground, and the account/default context note
 // assemble the prompt context; one chat call on the resolved [ai] entry
 // produces the body, which opens the prefilled compose through the same
-// path the old draft used (so send write-back is retained). extra is the
-// picker's e-key text; empty falls back to a default follow-up instruction.
-// No HubSpot call and no token - the row data is already local.
+// path the old draft used (send write-back retained). extra is the picker's
+// e-key text; empty falls back to a default follow-up instruction. No
+// HubSpot call and no token - the row data is already local.
 func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c core.CrmContact, extra string) {
 	a := crmAdapter
 	if a == nil || c.Provider != a.provider {
@@ -443,6 +438,10 @@ func runCrmPrompt(bus *core.Bus, cfg config.Config, root string, name string, c 
 	bus.Publish(crmProgress("crm-prompt", core.ProgressDone, 1))
 }
 
+// crmOpenDraftCompose reacts to a generated follow-up draft: build the
+// prefilled compose, register its tab id -> {Provider, ContactID} for the
+// send hook (crmWriteBackOnSend), and publish ComposeOpened for the TUI to
+// attach.
 func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.CrmDraft) {
 	if st := crmDraftCompose(cfg, root, d); st != nil {
 		st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
@@ -459,8 +458,8 @@ func crmOpenDraftCompose(bus *core.Bus, cfg config.Config, root string, d core.C
 // provider matches the wired one, runs MarkFollowedUp through a per-op
 // client. A failed send leaves both the compose and the entry alone - the
 // dialogue retries, and a retried OK still marks. The mark's own outcome is
-// unobservable here (RunMark is void), so the entry drops at consumption
-// time; a failed mark keeps the row retryable via a fresh pull/action.
+// unobservable (RunMark is void), so the entry drops at consumption; a
+// failed mark keeps the row retryable via a fresh pull/action.
 func crmWriteBackOnSend(bus *core.Bus, newClient func(ctx context.Context) (crm.Client, func(), error), provider, marker string, e core.SendResult) {
 	if !e.OK {
 		return

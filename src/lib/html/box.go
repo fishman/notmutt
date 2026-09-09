@@ -106,8 +106,7 @@ func bodyCascade(doc *xhtml.Node, rules []CSSRule) (*xhtml.Node, *Style) {
 }
 
 // BodyStyle returns the body's computed style under the cascade, or nil for
-// a document without a body. Stage 2 reads the page background and the
-// contrast default from it.
+// a document without a body (stage 2's page background/contrast root).
 func BodyStyle(doc *xhtml.Node, rules []CSSRule) *Style {
 	_, st := bodyCascade(doc, rules)
 	return st
@@ -208,10 +207,9 @@ func buildElement(n *xhtml.Node, parent *Style, rules []CSSRule, listDepth int) 
 // fillFlowChildren gathers an element's in-flow children into b: text
 // leaves share the parent's style pointer; child elements build
 // recursively; a list item under its list gets its marker. Mixed
-// block/inline content is split into anonymous runs (blockification), so
-// a block or cell box holds uniformly block-level or uniformly
-// inline-level children. Geometry (uaMargins) was layered on st before
-// the children built, so text leaves inherit it by pointer sharing.
+// block/inline content is split into anonymous runs (blockification).
+// Geometry (uaMargins) was layered on st before the children built, so
+// text leaves inherit it by pointer sharing.
 func fillFlowChildren(b *Box, n *xhtml.Node, st *Style, rules []CSSRule, listDepth int) {
 	nextDepth := listDepth
 	if b.Tag == "ul" || b.Tag == "ol" {
@@ -311,13 +309,11 @@ func hasBlockChild(cs []*Box) bool {
 	return false
 }
 
-// splitRuns wraps consecutive inline-level children of a block
-// container into anonymous run blocks around its block children: text
-// before a block does not bleed into it, and the container's children
-// come out uniformly block-level. Anonymous runs inherit the
-// container's style and white-space class. Whitespace-only runs from
-// pretty-printed markup are layout-drop; block flow must not give them
-// height.
+// splitRuns wraps consecutive inline-level children of a block container
+// into anonymous run blocks around its block children: text before a
+// block does not bleed into it. Anonymous runs inherit the container's
+// style and white-space class. Whitespace-only runs from pretty-printed
+// markup are layout-drop; block flow must not give them height.
 func splitRuns(cs []*Box, st *Style) []*Box {
 	var out []*Box
 	var run []*Box

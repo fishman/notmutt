@@ -36,9 +36,8 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 
 // sendJob runs the send (spec section 8): assemble once, then the
 // delivery core (deliverSend) and the dialogue's SendResult. Transport
-// first: what was not delivered is not stored; the fcc note (a
-// delivered message never fails on a fcc error - a retry would
-// double-send) rides the result.
+// first: what was not delivered is not stored; the fcc note rides the
+// result.
 func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) {
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {

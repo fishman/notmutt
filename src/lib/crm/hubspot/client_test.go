@@ -177,11 +177,10 @@ func TestListUnprocessedPaging(t *testing.T) {
 	}
 }
 
-// TestListUnprocessedMarkerMissing: a marker property the portal does not
-// have fails the pre-flight naming the property - HubSpot's search API
-// answers an unknown filter property with a generic 400, so the client
-// checks the properties endpoint first and translates the miss into the
-// actionable one-time-setup error, never issuing the search.
+// TestListUnprocessedMarkerMissing pins the missing-marker pre-flight:
+// HubSpot answers an unknown filter property with a generic 400, so the
+// client checks the properties endpoint first and turns the miss into the
+// one-time-setup error naming the property, never firing the search.
 func TestListUnprocessedMarkerMissing(t *testing.T) {
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -419,11 +418,10 @@ func TestErrorMapping(t *testing.T) {
 	}
 }
 
-// TestDecodeBound pins the bounded success decode: a response body larger
-// than maxResponseBytes must fail to decode rather than be slurped whole.
-// The payload is valid JSON complete with a pad string, so without the
-// cap the decode would succeed; the truncating LimitReader cuts the JSON
-// and Decode errors instead.
+// TestDecodeBound pins the bounded success decode: a response larger than
+// maxResponseBytes must fail rather than be slurped whole. The payload is
+// valid JSON padded past the cap, so the truncating LimitReader cuts it and
+// Decode errors.
 func TestDecodeBound(t *testing.T) {
 	pad := strings.Repeat("A", maxResponseBytes) // pushes the closing braces past the cap
 	c, calls := start(t, func(w http.ResponseWriter, r *http.Request) {

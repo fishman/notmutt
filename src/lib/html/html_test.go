@@ -4,8 +4,7 @@
 package html
 
 // Fuzz targets for the CSS boundary (AGENTS.md: parser-adjacent code
-// must pass SECURITY.md's fuzz targets). Under test: panic-freedom
-// and determinism on hostile stylesheet text.
+// must pass SECURITY.md's fuzz targets).
 
 import (
 	"testing"
@@ -13,9 +12,8 @@ import (
 	"golang.org/x/net/html"
 )
 
-// TestDisplayNotInherited pins the CSS rule: display is not inherited,
-// so a block element's content computes the tag default (""), not the
-// parent's display.
+// TestDisplayNotInherited pins the CSS rule: display is not inherited, so
+// a block's content computes the tag default, not the parent's display.
 func TestDisplayNotInherited(t *testing.T) {
 	parent := &Style{Display: "block"}
 	for _, tag := range []string{"img", "span", "a"} {
@@ -97,7 +95,7 @@ func FuzzCSSDeclarations(f *testing.F) {
 }
 
 // TestRuneWidth pins the rune-level cell width: ASCII 1, wide 2, C0
-// control 0 - the measure cellMeter steps per rune with.
+// control 0.
 func TestRuneWidth(t *testing.T) {
 	if RuneWidth('a') != 1 || RuneWidth('界') != 2 || RuneWidth(0x01) != 0 {
 		t.Fatalf("RuneWidth wide/control mismatch")

@@ -57,13 +57,9 @@ func (r *crmRow) key() crmKey {
 }
 
 // crmQueue is the queue surface model: the held rows in display order, the
-// selection, and the detail derived from the selected row. CrmQueue pages
-// reconcile the whole list to the page order (R3 diff-and-insert: each page
-// is the authoritative newest-first unprocessed set): rows reorder to the
-// page, existing rows keep their briefing/status by key, and rows absent from
-// a page that the workflow advanced past (write-back landed) drop. Refresh
-// never clobbers a briefing or an in-flight status (the reconcile-then-replay
-// spirit of R14); the selection survives a reorder by key.
+// selection, and the detail derived from the selected row. CrmQueue page
+// reconciliation is onQueue (R3 diff-and-insert, the reconcile-then-replay
+// spirit of R14).
 type crmQueue struct {
 	rows  []*crmRow
 	byKey map[crmKey]*crmRow
@@ -216,9 +212,8 @@ func (q *crmQueue) action(name string) bool {
 	return true
 }
 
-// draftable is the d-key guard: a row drafts only with a briefing. The
-// model consults it before opening the prompt picker (the picker replaces
-// the action dispatch for draft - a draft is a prompt run now).
+// draftable is the d-key guard: a row drafts only with a briefing (the
+// model consults it before opening the prompt picker).
 func (q *crmQueue) draftable() bool {
 	r := q.cursor()
 	return r != nil && r.briefing != ""

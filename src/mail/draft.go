@@ -3,9 +3,9 @@
 
 // Draft parse/serialize: the resume-draft seam reads a stored draft back
 // to compose fields. A draft is whatever Assemble wrote (body part +
-// attachment parts), so ParseDraft understands the mail shapes compose
-// emits. Bodies stay byte-faithful (a tab is a tab) - compose re-detaches
-// the signature tail via SplitSignature, never re-expands here.
+// attachment parts), so ParseDraft understands the shapes compose emits.
+// Bodies stay byte-faithful (a tab is a tab) - SplitSignature re-detaches
+// the signature tail at resume, never re-expanded here.
 package mail
 
 import (
@@ -76,7 +76,7 @@ func ParseDraft(path string) (*Draft, error) {
 			break
 		}
 		if p == nil {
-			break // an unknown-encoding part returns no part: stop, keep the scan so far
+			break // an unknown-encoding part returns no part: keep the scan so far
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -137,7 +137,7 @@ func WriteDraftAttachment(path string, ordinal int, w io.Writer) (int64, error) 
 			break
 		}
 		if p == nil {
-			break // an unknown-encoding part returns no part: stop, keep the scan so far
+			break // an unknown-encoding part returns no part: keep the scan so far
 		}
 		if _, ok := p.Header.(*mail.AttachmentHeader); !ok {
 			continue

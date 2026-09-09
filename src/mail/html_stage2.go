@@ -28,13 +28,11 @@ import (
 )
 
 const (
-	// charW is the px width of one terminal cell: the horizontal px<->cell
-	// scale. It is forced by the locked TestImageDeclaredSizes (50% of the
-	// 80-cell layout = 400px).
+	// charW is one terminal cell in px (the px<->cell scale), forced by the
+	// locked TestImageDeclaredSizes (50% of the 80-cell layout = 400px).
 	charW = 10
-	// lineH is the px height of one pager row; blank quantization divides
-	// collapsed margin gaps by it. The base em is 16px, so a 1em gap is one
-	// blank row.
+	// lineH is one pager row in px; blank quantization divides collapsed
+	// margin gaps by it (base em 16px, so a 1em gap is one blank row).
 	lineH = 16
 )
 
@@ -55,11 +53,10 @@ func renderStage2HTML(body string, atts []Attachment, width int, labelLinks, dar
 }
 
 // renderStage2Full is the sized facade entry: images=true resolves every
-// img's intrinsic px before layout (html.ResolveImages, called here for the
-// first time on the mail path - the plan-6 facade decision extended now that
-// images-on needs real geometry); remote http(s) srcs size from imgSizes
-// (the TUI measured them - bytes never enter the worker), embedded from
-// their attachment/data bytes.
+// img's intrinsic px before layout (html.ResolveImages - the plan-6 facade
+// decision extended now that images-on needs real geometry); remote http(s)
+// srcs size from the TUI-measured imgSizes (bytes never enter the worker),
+// embedded from their attachment/data bytes.
 func renderStage2Full(body string, atts []Attachment, width int, labelLinks, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, []string) {
 	doc, err := xhtml.Parse(strings.NewReader(body))
 	if err != nil {
@@ -81,9 +78,6 @@ func renderStage2(doc *xhtml.Node, atts []Attachment, widthPx int, labelLinks, d
 	bg, fg := pageColors(bs, dark, themeBG)
 	q := &stage2{atts: atts, defaultBG: bg, defaultFG: fg, dark: dark,
 		themeBG: themeBG, linesLeft: maxHTMLLines}
-	// The F-key render injects a numbered [N] marker box before every link
-	// (anchor href and bare URL) so labels flow into line building like any
-	// word; labelLinks=false never injects, so no label reaches the pager.
 	if labelLinks {
 		boxes = q.injectLinkLabels(boxes)
 	}
@@ -151,11 +145,10 @@ func (q *stage2) injectInto(bs []*html.Box) []*html.Box {
 }
 
 // splitTextURLs splits one text box at its first bare-URL token into
-// [before][label][token][after], recursing into after for further URLs. The
-// pieces keep the original text (spaces included) so collapse still yields
-// single inter-word spaces and the token itself still renders behind its
-// label. All pieces share the source style pointer; only the label's copy
-// carries Label.
+// [before][label][token][after], recursing into after for further URLs.
+// Pieces keep the original text (spaces included) so collapse yields single
+// inter-word spaces and the token renders behind its label. All pieces share
+// the source style pointer; only the label's copy carries Label.
 func (q *stage2) splitTextURLs(b *html.Box) []*html.Box {
 	pos := 0
 	for _, f := range strings.Fields(b.Text) {
@@ -280,7 +273,7 @@ func (q *stage2) emitRows(rows []html.Row) {
 			continue
 		}
 		if !q.firstRow {
-			q.firstRow = true // first content row drops its gap (D5)
+			q.firstRow = true
 		} else if r.Gap > 0 {
 			q.blankLines(r.Gap)
 		}

@@ -277,7 +277,6 @@ func TestDropBccAssembled(t *testing.T) {
 // streams its bytes from the stored draft's attachment part, not a temp
 // file - assemble reads the exact draft part the resume mapped.
 func TestAssembleStreamsDraftPart(t *testing.T) {
-	// write the stored draft (the save path) with one attachment
 	att := filepath.Join(t.TempDir(), "doc.txt")
 	if err := os.WriteFile(att, []byte("draft attachment bytes"), 0600); err != nil {
 		t.Fatal(err)
@@ -298,7 +297,6 @@ func TestAssembleStreamsDraftPart(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// the resumed state streams the part from the draft path
 	res := NewCompose("gmail", "bob@example.com", "", "")
 	res.To = []string{"alice@example.com"}
 	res.Subject = "draft"

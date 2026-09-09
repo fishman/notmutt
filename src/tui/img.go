@@ -324,13 +324,9 @@ func (m *Model) prepareImages() {
 		if _, ok := m.imgCache[img]; ok {
 			continue
 		}
-		// a standalone image fills the text column (decodeImage's window
-		// budget - a near-column figure tops up a wide terminal, a chart
-		// authored for a reading column must not stay half the width of a
-		// 120-cell terminal) instead of the email's authored disp width.
-		// Only images the author sized at reading-column width qualify: an
-		// asset authored smaller (a footer logo, a badge) keeps its disp.
-		// Inline-with-text images keep their authored disp regardless.
+		// A standalone fill drops the authored disp so decodeImage's fill
+		// path tops the figure toward the text column; an asset authored
+		// under imgFillMinW keeps its disp. Inline images keep theirs too.
 		dw, dh := img.DispW, img.DispH
 		fill := m.pager.standaloneLine(b.line, img)
 		if fill && img.DispW < imgFillMinW {

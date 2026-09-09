@@ -10,8 +10,7 @@ import (
 
 // TestEventRoundTripResumeID pins the resume identity on the dialogue's
 // bus round trip: ResumePath and an attachment's DraftPart survive
-// ToEvent -> FromEvent, because the TUI rebuilds the send State from the
-// event.
+// ToEvent -> FromEvent.
 func TestEventRoundTripResumeID(t *testing.T) {
 	st := &State{
 		ID: "tab9", Mode: ModeCompose, Account: "gmail", From: "bob@example.com",

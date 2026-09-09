@@ -49,12 +49,12 @@ const (
 // RenderThread renders the thread's pager lines: per message a header
 // block (subject/from/date, or the full raw set under the h toggle),
 // body, attachment lines. A per-message failure becomes an error line
-// so the rest of the thread stays readable - mutt-style; errors only
-// on an empty input. mode selects the part view; the returned mime
-// labels what actually rendered. The subject is the notmuch value
-// (RFC 2047 decoded at index time, so pager and index agree). width
-// caps the html wrap at htmlWrapWidth; links holds the F key's label
-// targets, non-empty only under labelLinks (labels are mode-scoped).
+// so the rest of the thread stays readable (mutt-style); errors surface
+// only on an empty input. mode selects the part view; the returned mime
+// labels what rendered. Subject is the notmuch value (RFC 2047 decoded
+// at index time, so pager and index agree). width caps html at
+// htmlWrapWidth; links holds the F key's label targets, non-empty only
+// under labelLinks (labels are mode-scoped).
 func RenderThread(msgs []core.Message, mode core.RenderMode, headers bool, width int, labelLinks bool, dark bool, themeBG string, images bool, imgSizes map[string]core.ImgSize) ([]core.Line, string, []string, error) {
 	if len(msgs) == 0 {
 		return nil, "", nil, fmt.Errorf("no messages in thread")
@@ -141,10 +141,10 @@ type Attachment struct {
 // ParseMessage opens one mail file and reads its structure: text/plain
 // inline parts become body parts (quoted depth + signature split),
 // text/html parts stay raw (the render selects the view), attachment
-// parts list with sizes (images buffer bytes for the render-on-key
-// path). Unknown charsets/encodings are tolerated, not fatal: the part
+// parts list with sizes (image bytes buffered for the render-on-key
+// path). Unknown charsets/encodings are tolerated, not fatal - the part
 // renders raw, undecoded. A structural part error ends the scan,
-// keeping the parts read so far - mutt-style.
+// keeping the parts read so far (mutt-style).
 func ParseMessage(path string) (*Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -158,8 +158,7 @@ func ParseMessage(path string) (*Message, error) {
 	defer mr.Close()
 	hdr := mr.Header
 	m := &Message{}
-	// the full raw block for the h key: Fields() walks the parsed
-	// fields in file order; values arrive unfolded
+	// the h key's full raw block: Fields() walks in file order, values unfolded
 	iter := hdr.Fields()
 	for iter.Next() {
 		m.Headers = append(m.Headers, iter.Key()+": "+iter.Value())
@@ -192,10 +191,10 @@ func ParseMessage(path string) (*Message, error) {
 			break
 		}
 		if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
-			break // a structural error: keep the parts read so far, mutt-style
+			break // structural error: keep the parts read so far
 		}
 		if p == nil {
-			break // an unknown-encoding part returns no part: stop, keep the scan so far
+			break // an unknown-encoding part returns no part: keep the scan so far
 		}
 		switch h := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -285,11 +284,8 @@ func ExtractAttachment(path string, ordinal int) (name, typ string, data []byte,
 			break
 		}
 		if p == nil {
-			break // an unknown-encoding part returns no part: stop, keep the scan so far
+			break // an unknown-encoding part returns no part: keep the scan so far
 		}
-		// the entry walk matches the parse walk: the html part of an
-		// alternative pair lists as an attachment too, so the v
-		// dialog's ordinals index the same stream
 		switch h := p.Header.(type) {
 		case *mail.AttachmentHeader:
 			name, _ = h.Filename()
@@ -412,10 +408,10 @@ func renderMessage(m *Message, subject string, mode core.RenderMode, headers boo
 		add(fmt.Sprintf("%-8s %s", "Subject:", subject), core.LineSubject, 0)
 	}
 	hasPlain, hasHTML := partFlags(m)
-	// The view selection: the html view renders the html part, the
-	// plain view the plain parts, the source view the html part's raw
-	// text. An html-only message renders in all three - plain as
-	// unstyled text (runs stripped, images kept), html styled, source raw.
+	// View selection: html view renders the html part, plain the plain
+	// parts, source the html part's raw text. An html-only message renders
+	// in all three - in plain view as unstyled text (runs stripped, images
+	// kept).
 	for _, p := range m.Parts {
 		switch {
 		case p.HTML && mode == core.RenderHTML:

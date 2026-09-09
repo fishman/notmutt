@@ -74,9 +74,9 @@ type Style struct {
 	PadLeft                                                      int // padding-left px (ul/ol gutter; UA-only)
 
 	// Sizing: width/height/max-width/min-width, px or %. Non-inherited,
-	// zeroed per node like the margins above. Width/max-width feed images
-	// (img.go); width/min-width also feed table boxes (tableRows). Height is
-	// px-only in effect - a percentage height is auto (see specImg).
+	// zeroed per node. Width/max-width feed images (img.go); width/min-width
+	// also feed table boxes (tableRows). Height is px-only in effect - a
+	// percentage height is auto (see specImg).
 	Width, Height, MaxWidth, MinWidth CSSLen
 
 	// Float is the computed float side (left|right|"", none). Non-inherited,
@@ -162,7 +162,7 @@ func parseLen(v string) (int, bool) {
 // parseSizeLen folds one image-sizing length: px passes through, a
 // percentage keeps Pct true (it resolves against the containing width at
 // layout). auto, 0, em, and other units are not values (rejected, so the
-// property stays unset, which means auto).
+// property stays unset = auto).
 func parseSizeLen(v string) (CSSLen, bool) {
 	v = strings.ToLower(strings.TrimSpace(v))
 	if strings.HasSuffix(v, "px") {

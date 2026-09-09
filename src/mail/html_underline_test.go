@@ -3,12 +3,10 @@
 
 package mail
 
-// Underline-boundary regression (never mail content): CSS text-decoration
-// (and UA link underlines) must stop at the underlined word's edge. The
-// walker styles each inter-word Sep with its own source leaf - a space
-// between `<u>word</u>` and following plain text belongs to the plain
-// leaf - but the stage-2 renderer re-derived the gap from the preceding
-// run, so the space merged into the underlined run ("word ").
+// Underline-boundary regression (never mail content): CSS underlines (and
+// UA link underlines) must stop at the underlined word's edge - the space
+// after <u>word</u> belongs to the following plain leaf, never merged into
+// the underlined run ("word ").
 
 import (
 	"strings"
@@ -38,7 +36,6 @@ func TestUnderlineStopsBeforeSpace(t *testing.T) {
 }
 
 func TestUnderlineHoldsAcrossInternalSpace(t *testing.T) {
-	// one element, one underline: the space inside <u> stays underlined
 	lines := RenderHTML(`<p><u>foo bar</u></p>`, nil, 0)
 	if len(lines) == 0 {
 		t.Fatal("no lines")

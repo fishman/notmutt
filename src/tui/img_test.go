@@ -266,10 +266,9 @@ func TestDecodeImage(t *testing.T) {
 }
 
 // TestDecodeImageFillUpscale pins the standalone fill's upscale window: a
-// figure whose natural width sits below the column (600px in an 80-cell
-// window) stretches to fill when the caller asks for a fill, stays at
-// natural px otherwise; a small asset (20 cols natural) is never blown up
-// even on a fill request (the imgFillScaleCap guard).
+// near-column figure (600px in an 80-cell window) stretches to fill on a
+// fill request but stays at natural px without one; a small asset (20 cols
+// natural) is never blown up even on a fill (the imgFillScaleCap guard).
 func TestDecodeImageFillUpscale(t *testing.T) {
 	img, cols, rows, err := decodeImage(testPNG(t, 600, 300), 80, 100, 0, 0, false)
 	if err != nil {
@@ -577,15 +576,14 @@ func TestKittyClearImageRectsFreeAll(t *testing.T) {
 }
 
 // TestModelStandaloneImageAlignsLeft pins the images-on sizing and
-// seating for an image that owns its line (the semianalysis chart
+// seating of an image that owns its line (the semianalysis chart
 // regression): a chart inside a table cell renders inline on an
 // otherwise empty row, so it fills the text column (natural px, capped
-// at the window) and seats at its block's lead (the cell has no
-// text-align, so flush left) instead of holding the authored disp width
-// or centering - a 550px chart authored for a ~600px browser column
-// must not stay half the width of a 120-cell terminal. An image that
-// shares its row with text keeps its authored disp size and flow
-// offset.
+// at the window) and seats flush left at its block's lead - not at the
+// authored disp width or centered, so a 550px chart authored for a
+// ~600px column never stays half the width of a 120-cell terminal. An
+// image sharing its row with text keeps its authored disp size and
+// flow offset.
 func TestModelStandaloneImageAlignsLeft(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -684,12 +682,11 @@ func labelImgLine(label string, img *core.Image) core.Line {
 }
 
 // TestModelLabelLinkImageFillsAligned pins the easyjump render parity: a
-// link-wrapped isolated image under F carries its [N] label on the same
-// row as the image (the mail render's labelLinks shape), and that chrome
-// must not flip the standalone verdict - a reading-column-authored figure
-// (DispW >= imgFillMinW) fills like its unlabeled counterpart instead of
-// holding the authored disp width. It seats at its row's flow offset (after
-// the label), never a hard center.
+// link-wrapped isolated image under F carries its [N] label on the image's
+// row (the mail render's labelLinks shape), and that chrome must not flip
+// the standalone verdict - a reading-column figure (DispW >= imgFillMinW)
+// fills like its unlabeled counterpart, seating at its row's flow offset
+// (after the label), never a hard center.
 func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"
@@ -1717,8 +1714,8 @@ const wideAuthW = 550
 // TestModelStandaloneFillNeedsWideAuthor pins the width-hint gate: a
 // standalone image fills the column only when its authored disp width marks
 // a reading-column figure (>= imgFillMinW). A big-natural asset the author
-// sized small (a footer logo, a badge) must decode at its authored width
-// instead of swallowing the window - the pager honors the mail's intent.
+// sized small (a footer logo, a badge) decodes at its authored width
+// instead of swallowing the window.
 func TestModelStandaloneFillNeedsWideAuthor(t *testing.T) {
 	cfg := config.Default()
 	cfg.Pager.ImageProtocol = "kitty"

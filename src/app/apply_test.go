@@ -156,10 +156,9 @@ func TestApplyContinuesPastFailure(t *testing.T) {
 	}
 }
 
-// TestApplyThreadIdentity: a thread identity (t:<id>) resolves to
-// thread:<id> - the whole thread, notmuch's natural unit. The baseline
-// write goes to the thread (SetThreadTags), so the render flips without
-// a refresh.
+// TestApplyThreadIdentity: a thread identity (t:<id>) applies to the
+// whole thread via thread:<id>; the baseline writes to the thread
+// (SetThreadTags), so the render flips without a refresh.
 func TestApplyThreadIdentity(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	view := core.NewView("inbox", "tag:inbox")

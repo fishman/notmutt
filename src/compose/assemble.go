@@ -57,10 +57,10 @@ func DropBcc(data []byte) []byte {
 
 // Assemble writes the message bytes: headers (From/To/Cc/Subject/Date/
 // Message-ID, In-Reply-To/References for replies), one text/plain body
-// part (signature attached), one part per attachment. Pure bytes - the
-// send job writes the same buffer to transport and fcc. Nothing here
-// sanitizes (sanitize is render-only, F1); References is written
-// verbatim - the prefill carries the full chain (spec section 6).
+// part (signature attached), one part per attachment. The send job
+// writes the same buffer to transport and fcc. Nothing here sanitizes
+// (render-only, F1); References is written verbatim - the prefill
+// carries the full chain (spec section 6).
 //
 // Wire shape per neomutt (send/send.c, send/multipart.c, send/header.c):
 // a bare body is ONE text/plain part, no multipart or Content-Disposition;

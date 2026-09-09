@@ -13,8 +13,7 @@ import (
 )
 
 // TestBriefingFull pins a complete briefing: every contact, company, and
-// research field renders, and the total stays under the cap. The signature
-// takes no mail input, so no mail field can even be passed.
+// research field renders, and the total stays under the cap.
 func TestBriefingFull(t *testing.T) {
 	contact := Contact{
 		FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement",
@@ -97,10 +96,9 @@ func TestBriefingResearchBlanksUnknown(t *testing.T) {
 	}
 }
 
-// TestBriefingBoundedTruncates pins the deterministic cap: a synthetic
-// oversized input (a long multi-byte description plus full research) yields
-// a briefing at or under the cap with valid UTF-8 - no mid-rune cut - and
-// keeps its leading contact block.
+// TestBriefingBoundedTruncates pins the deterministic cap: an oversized
+// multi-byte input stays at or under the cap in valid UTF-8 - no mid-rune
+// cut - and keeps its leading contact block.
 func TestBriefingBoundedTruncates(t *testing.T) {
 	contact := Contact{FirstName: "Alpha", LastName: "Atlas", JobTitle: "Head of Procurement"}
 	company := Company{
@@ -130,9 +128,8 @@ func TestBriefingBoundedTruncates(t *testing.T) {
 	}
 }
 
-// TestBriefingInvalidUTF8 pins the error path: a field carrying malformed
-// UTF-8 cannot be rendered faithfully and refuses the briefing instead of
-// substituting replacement runes into the prompt.
+// TestBriefingInvalidUTF8 pins the error path: a malformed-UTF-8 field
+// refuses the briefing instead of substituting replacement runes.
 func TestBriefingInvalidUTF8(t *testing.T) {
 	contact := Contact{FirstName: "Alpha", LastName: "\xff", JobTitle: "CTO"}
 	if _, err := briefing(contact, Company{}, nil); err == nil {

@@ -46,8 +46,7 @@ func NewMover(w Worker, cfg config.Config, root string) *Mover {
 }
 
 // NewMoverLive is the apply path's mover: the staged apply is explicit
-// intent, the filter dry-run gates the poll, not the $ key. It waits
-// for a contended flock instead of skipping (lockStrict).
+// intent, the filter dry-run gates the poll, not the $ key.
 func NewMoverLive(w Worker, cfg config.Config, root string) *Mover {
 	m := newMover(w, cfg, root, false)
 	m.lockStrict = true
@@ -57,7 +56,7 @@ func NewMoverLive(w Worker, cfg config.Config, root string) *Mover {
 // MoveEntry is one file's move outcome: To empty means the file stays
 // and Skip names why.
 type MoveEntry struct {
-	ID   string // the message id
+	ID   string
 	From string
 	To   string
 	Skip string
@@ -93,11 +92,10 @@ var moverLockTimeout = 10 * time.Second
 // chosen over a pidfile or create/delete lockfile because the kernel
 // releases it the instant the holder's fd closes - on crash, SIGKILL,
 // or panic - so a dead mover never leaves a stale lock and a blocked
-// waiter wakes automatically. The lock file is opened fresh per call:
-// separate fds contend even inside one process, so one file serializes
-// the apply mover against the poll mover too. A fresh fd opened on the
-// same file by this process is not reentrant, but a Move never nests
-// inside a Move. Dry runs write nothing and skip the lock entirely.
+// waiter wakes automatically. The lock file is opened fresh per call,
+// so separate fds contend even inside one process; a fresh fd is not
+// reentrant, but a Move never nests inside a Move. Dry runs skip the
+// lock entirely.
 func (m *Mover) lockLive(out *MoveReport) (unlock func(), err error) {
 	if m.dryRun {
 		return func() {}, nil

@@ -396,10 +396,10 @@ func buildDraft(t *testing.T, attachContent []byte) string {
 	return draft
 }
 
-// TestResumePrefill: a draft-tagged message with a path parses back
-// into a dialogue - envelope restored (Bcc included), body as authored,
-// the attachment mapped to the stored draft (DraftPart), ResumePath
-// set, fcc resolved, and the default signature NOT injected.
+// TestResumePrefill: a draft-tagged message with a path parses back into
+// a dialogue - envelope restored (Bcc included), body as authored, the
+// attachment streamed from the stored draft (DraftPart), ResumePath set,
+// fcc resolved, no default signature injected.
 func TestResumePrefill(t *testing.T) {
 	root := t.TempDir()
 	draft := buildDraft(t, []byte("attachment bytes"))

@@ -143,8 +143,8 @@ func (s *State) SetSignature(name, body string) {
 	s.Signature, s.SignatureBody = name, body
 }
 
-// AddAttachment stats path and appends it (name = base, size = stat).
-// Directories and missing paths error - the prompt stays open.
+// AddAttachment stats a path and appends it; directories and missing
+// paths error - the prompt stays open.
 func (s *State) AddAttachment(path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {

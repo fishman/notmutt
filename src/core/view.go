@@ -50,21 +50,17 @@ type View struct {
 	// (thread ids span folders - a wave for one view must never land
 	// in another's rows).
 	gen uint64
-	// the tree window budget ([index.thread]): winRows rows per thread;
-	// zero = no window.
+	// the tree window budget ([index.thread]); zero = no window.
 	winRows int
-	// msgDesc flips the flatten's per-thread row order (SetMsgDesc, the
-	// [index.thread] sort config): desc reads the thread newest-first.
+	// msgDesc flips the flatten's per-thread row order (SetMsgDesc).
 	msgDesc bool
 	// me is the identity set for the thread-tail marks (SetMe, the
 	// account from fields): the sent-tag or address "me" detection in
 	// ClassifyRows. Zero = sent-tag identity only.
 	me []string
 	// threaded is the view's thread mode (the [view] threads config):
-	// threaded views (inbox, archive) render trees and hide deleted
-	// leaves; flat views (unread, deleted, search) are plain
-	// chronological lists - one row per message, no tree. NewView
-	// defaults to threaded.
+	// threaded views render trees and hide deleted leaves; flat views
+	// are plain message lists. NewView defaults to threaded.
 	threaded bool
 }
 
@@ -99,9 +95,8 @@ func NewView(name, query string) *View {
 	return &View{Name: name, Query: query, staged: map[string][]TagOp{}, threaded: true}
 }
 
-// SetThreaded sets the view's thread mode ([view] threads config):
-// threaded views render trees and hide deleted leaves; flat views are
-// plain message lists.
+// SetThreaded sets the view's thread mode ([view] threads config);
+// NewView defaults to threaded.
 func (v *View) SetThreaded(on bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -514,7 +509,7 @@ func (v *View) MergeThreads(threads []*Thread) {
 		mops := DiffSorted(cur.msgs, in.msgs, MsgLess, func(m *Message) string { return m.ID })
 		cur.msgs = Apply(cur.msgs, mops)
 		// Matched keys keep old elements, so reconcile snapshot fields
-		// onto them (reconcile-then-replay, the T11/T12 ordering).
+		// onto them.
 		for i, j := 0, 0; i < len(cur.msgs) && j < len(in.msgs); {
 			c, f := cur.msgs[i], in.msgs[j]
 			if c.ID == f.ID {

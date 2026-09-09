@@ -39,7 +39,7 @@ func mustBase() Config {
 
 // bindingContexts is the dispatch surface (the tui switches on these
 // names): any other context is dead data, rejected at load (strict,
-// R8). Context names are code surfaces; the rest is translatable data.
+// R8).
 var bindingContexts = map[string]bool{
 	"index": true, "pager": true, "compose": true, "fuzzy": true,
 }
@@ -48,8 +48,7 @@ var bindingContexts = map[string]bool{
 // two-element array ["action", "description"], or a table
 // { fun, desc, show }. Descriptions travel with the binding - the
 // help vocabulary derives from these entries (R8). Visibility is
-// opt-in: only show = true entries appear in the keyhint row (the
-// help dialog lists every binding).
+// opt-in: only show = true entries appear in the keyhint row.
 type Binding struct {
 	Fun  string
 	Desc string
@@ -109,7 +108,7 @@ type Config struct {
 	UI         UI              `toml:"ui"`
 	Views      map[string]View `toml:"view"`
 	ActiveView string          `toml:"-"`
-	// Index is the [index] section: the index surface budgets (R11).
+	// Index holds the [index] surface budgets (R11).
 	Index IndexSection `toml:"index"`
 	// DerivedGKeys tracks the per-account goto keys deriveAccountViews
 	// added (key -> tag): removed first on the next run so re-numbering
@@ -119,8 +118,8 @@ type Config struct {
 	Setup        Setup                        `toml:"setup"`
 	Lua          Lua                          `toml:"lua"`
 	Bindings     map[string]map[string]string `toml:"-"`
-	// Shown is the per-context key set the keyhint row shows (help
-	// shows every binding): derived from the entries' show flag
+	// Shown is the per-context key set the keyhint row shows, derived
+	// from the entries' show flag
 	Shown          map[string]map[string]bool `toml:"-"`
 	TagActions     map[string]string          `toml:"tag-actions"`
 	Accounts       map[string]Account         `toml:"accounts"`
@@ -461,8 +460,7 @@ type MCP struct {
 	Apply       MCPCap    `toml:"apply"`
 }
 
-// MCPCap is one [mcp] capability grant: a single Enabled gate.
-// Deny by default - a capability is off until enabled.
+// MCPCap is one [mcp] capability grant: a single Enabled gate, deny by default.
 type MCPCap struct {
 	Enabled bool `toml:"enabled"`
 }
@@ -744,9 +742,8 @@ func rawStyle(v any) (Style, error) {
 	return s, nil
 }
 
-// rawStyleTable decodes a full style table as an overlay over base
-// (Load merges file values over defaults, R8): a file naming one style
-// keeps the variant's other styles - every style key merges
+// rawStyleTable decodes a style table as an overlay over base: naming
+// one style keeps the variant's other styles - every style key merges
 // individually - and unknown keys are load errors.
 func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 	raw, ok := v.(map[string]any)
@@ -931,7 +928,7 @@ func rawStyleTable(v any, base StyleTable) (StyleTable, error) {
 						return StyleTable{}, fmt.Errorf("pager.header-colors: expected a list")
 					}
 					// a named list replaces the variant's colors; an
-					// unnamed pager table keeps them (overlay rule)
+					// unnamed pager table keeps them
 					t.Pager.HeaderColors = nil
 					for i, item := range items {
 						s, err := rawStyle(item)

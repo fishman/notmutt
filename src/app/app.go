@@ -194,15 +194,14 @@ func Run() error {
 	// open: the message set resolves rows-first from the views (the full
 	// walk already loaded headers and paths - the open must not queue
 	// behind the walk that owns the worker); the worker fetch (ActThread)
-	// is the fallback for a thread in no view. The open job renders the
-	// files and runs the render transforms; the TUI attaches the lines on
-	// ThreadLoaded (R13 two-step - content loads on open only). The one
-	// seam carries every variant: the open key (preview=false marks read),
-	// the p preview, and the re-opens (the v/html-plain toggle, ctrl+u
-	// source, F link labels, h headers, attachment-back), distinguished by
-	// Mode. RenderAuto = a fresh open: resolve per sender domain
-	// ([pager] default-views - the domain is message data, only the fetch
-	// has it) and verify S/MIME (R10). An explicit mode = a re-open of an
+	// is the fallback for a thread in no view; openThread renders and the
+	// TUI attaches on ThreadLoaded (R13 two-step). The one seam carries
+	// every variant: the open key (preview=false marks read), the p
+	// preview, and the re-opens (the v/html-plain toggle, ctrl+u source,
+	// F link labels, h headers, attachment-back), distinguished by Mode.
+	// RenderAuto = a fresh open: resolve per sender domain ([pager]
+	// default-views - the domain is message data, only the fetch has it)
+	// and verify S/MIME (R10). An explicit mode = a re-open of an
 	// already-open message: no read-mark, no domain map, no S/MIME
 	// re-verify (the verdict already rendered).
 	tui.SetOpenHandler(func(req tui.OpenReq) {
@@ -589,15 +588,14 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 }
 
 // openThread renders the opened message and publishes ThreadLoaded
-// with the render lines (R13 two-step: content loads on open only; the
-// render + transforms run here on the async job, never on the TUI's
-// event path). The message set resolves rows-first from the registered
-// views: the full walk already loaded headers and paths, and the walk
-// owns the worker for seconds, so an open must not queue behind it. The
-// worker fetch is the fallback when the thread is in no view. The
-// render narrows to the message (msgID); a bare open renders the
-// thread's first. A full open (preview=false) marks the opened message
-// read with an ActTag -unread (R1 - read is a tag; the refresh cycle
+// (R13 two-step: content loads on open only; the render + transforms
+// run on this async job, never the TUI's event path). The message set
+// resolves rows-first from the registered views - the full walk already
+// loaded headers and paths and owns the worker for seconds, so an open
+// must not queue behind it - with the worker fetch the fallback for a
+// thread in no view. The render narrows to msgID, a bare open to the
+// thread's first. A full open (preview=false) marks the message read
+// with an ActTag -unread (R1 - read is a tag; the refresh cycle
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
 func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, req tui.OpenReq, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {

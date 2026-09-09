@@ -5,10 +5,9 @@ package mail
 
 // Floated-table column regression on a real Stripo drop mail (fixture
 // content is never asserted - only the layout the user reported): sibling
-// tables that float (es-left/es-right, align + inline float CSS) must lay
-// side by side - the header's store logo and "VIEW IN BROWSER" share one
-// line above the hero, and the footer's three icon+caption columns render
-// as three columns on one strip, not stacked.
+// tables floated by es-left/es-right (align + inline float CSS) must lay
+// side by side, not stack - the header logo shares a line with "VIEW IN
+// BROWSER" and the footer's three icon+caption columns land on one strip.
 
 import (
 	"os"

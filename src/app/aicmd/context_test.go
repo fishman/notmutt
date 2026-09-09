@@ -30,15 +30,13 @@ func bodyCmd(data ...string) *Command {
 	return &Command{Name: "x", Description: "d", Action: "view", Data: data}
 }
 
-// oneMsg builds a one-message thread from a plain-text body - the common
-// single-message fixture for the BuildContext tests.
+// oneMsg builds a one-message thread from a plain-text body.
 func oneMsg(t *testing.T, body string) []core.Message {
 	t.Helper()
 	return []core.Message{msg(fixture(t, textBody+body), "alpha@example.com", 100)}
 }
 
-// mustContext runs BuildContext and fails on error - the caller asserts on
-// the returned text.
+// mustContext runs BuildContext and fails on error.
 func mustContext(t *testing.T, cmd *Command, msgs []core.Message, own, allowed []string, style, account string) string {
 	t.Helper()
 	ctx, err := BuildContext(cmd, msgs, own, allowed, style, account)
@@ -89,7 +87,7 @@ func TestBuildContextFields(t *testing.T) {
 			t.Errorf("own address leaked into participants: %s", line)
 		}
 	}
-	testutil.WantNot(t, ctx, "quoted a", "sig line") // quoted + signature lines stripped
+	testutil.WantNot(t, ctx, "quoted a", "sig line")
 	// thread order: oldest first, newest message body last
 	if !(strings.Index(ctx, "line one") < strings.Index(ctx, "beta body") &&
 		strings.Index(ctx, "beta body") < strings.Index(ctx, "alpha newest")) {
@@ -166,7 +164,6 @@ func TestBuildContextCaps(t *testing.T) {
 	if n := bodyRunX(ctx); n > BodyCap {
 		t.Errorf("body exceeded per-message cap: %d", n)
 	}
-	// several long bodies stay within the total budget
 	var many []core.Message
 	for i := int64(0); i < 8; i++ {
 		many = append(many, msg(fixture(t, textBody+long), "alpha@example.com", i))

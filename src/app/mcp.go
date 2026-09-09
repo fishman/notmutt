@@ -219,12 +219,10 @@ func mcpRunChunk(chunk string, args map[string]any, worker workerAPI, root strin
 	defer cancel()
 	defer vm.Close()
 	ctx := metadataCtxTable(vm, worker, scope, nil)
-	// the attachments binding is the MCP-only surface extension,
-	// registered here and never in metadataCtxTable: a network-enabled
-	// plugin VM (which shares that table) must not see it. It lists
-	// one message's attachments by id - name/mime/size, never bytes.
-	// The in-scope check gates the file read: a message outside the
-	// allowed folder space and tags is refused, not parsed.
+	// the attachments binding is the MCP-only surface extension: it
+	// lists one message's attachments by id - name/mime/size, never
+	// bytes, and the in-scope check gates the file read (a message
+	// outside the allowed folder space and tags is refused, not parsed).
 	ctx.RawSetString("attachments", vm.NewFunction(func(L *lua.LState) int {
 		id := L.CheckString(1)
 		rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{id}})

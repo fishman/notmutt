@@ -24,10 +24,9 @@ import (
 // (Task 14) sets it from the config path; the tests set it directly.
 var sigDir string
 
-// resolveAccount is the detection chain (spec section 6): the message's
-// account tag, the view cursor's, else the first configured account
-// (sorted - deterministic). Same machinery as the status bar
-// (core.AccountTag).
+// resolveAccount is the detection chain (spec section 6): message tag,
+// cursor tag, else the first configured account (sorted - deterministic).
+// Same machinery as the status bar (core.AccountTag).
 func resolveAccount(cfg config.Config, msgTags, cursorTags []string) string {
 	set := cfg.AccountTags()
 	if t := core.AccountTag(msgTags, set); t != "" {
@@ -48,8 +47,8 @@ func resolveAccount(cfg config.Config, msgTags, cursorTags []string) string {
 }
 
 // defaultSig loads the account's default signature file (the configured
-// name in the account's signatures dir); a missing file or unset name
-// resolves to no signature.
+// name in its signatures dir); a missing file or unset name resolves to
+// no signature.
 func defaultSig(cfg config.Config, account string) (name, body string) {
 	file := cfg.Accounts[account].DefaultSignature
 	if file == "" {
@@ -127,14 +126,13 @@ func isDraft(msg *core.Message) bool {
 	return slices.Contains(msg.Tags, "draft")
 }
 
-// resumePrefill builds the resumed-draft dialogue (the resume-draft
-// key, spec section 2): the cursor message must be a draft - anything
-// else is a no-op (nil, nil). The stored file parses back through
-// compose.Resume, whose attachments stream from the file at send
-// (DraftPart ordinals - nothing extracts anywhere). A path-less row (a
-// pager rehydration) resolves through a thread fetch, mirroring
-// replyPrefill. The account default signature is never injected - what
-// was saved is what opens.
+// resumePrefill builds the resumed-draft dialogue (the resume-draft key,
+// spec section 2): the cursor message must be a draft - anything else is
+// a no-op (nil, nil). compose.Resume parses the stored file; its
+// attachments stream from the file at send (DraftPart ordinals - nothing
+// extracts anywhere). A path-less row (pager rehydration) resolves through
+// a thread fetch, mirroring replyPrefill. The default signature is never
+// injected - what was saved is what opens.
 func resumePrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, root string) (*compose.State, error) {
 	if !isDraft(msg) {
 		return nil, nil
@@ -185,12 +183,10 @@ func fetchThread(worker *notmuch.Worker, threadID string) ([]core.Message, error
 }
 
 // replyPrefill builds the reply dialogue: buildCompose on the cursor
-// message, falling back to a thread fetch when the row carries no
-// paths (index rows are thread summaries - paths load on open, R1).
-// Newest message is the reply original; messages are tried in recency
-// order so a broken newest falls through to the next parseable one. A
-// non-nil error means nothing could be built - a reply must never
-// fail silently.
+// message, falling back to a thread fetch when the row carries no paths
+// (newest message is the original; tried in recency order so a broken
+// newest falls through to the next parseable one). A non-nil error means
+// nothing could be built - a reply must never fail silently.
 func replyPrefill(cfg config.Config, view *core.View, worker *notmuch.Worker, msg *core.Message, mode, root string) (*compose.State, error) {
 	if st := buildCompose(cfg, view, msg, mode, root); st != nil {
 		return st, nil

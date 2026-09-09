@@ -80,7 +80,6 @@ func TestSeedTemplates(t *testing.T) {
 	if names := testutil.ReadDirNames(t, dst); len(names) != 5 {
 		t.Fatalf("seed must copy the 5 shipped templates, got %d", len(names))
 	}
-	// a customized file must survive a re-run
 	assertSeedPreserves(t, filepath.Join(dst, "gmail.lua"), func() { seedTemplates(dir) })
 }
 
@@ -115,7 +114,6 @@ func TestSeedAICommands(t *testing.T) {
 		t.Fatalf("default context must carry the brief style: %q", body)
 	}
 	assertSeedPreserves(t, def, func() { seedAICommands(dir) })
-	// a user edit must survive a re-run
 	assertSeedPreserves(t, filepath.Join(dst, "prompts", "next-steps.md"), func() { seedAICommands(dir) })
 	// permissions: dirs 0700, files 0600
 	testutil.WantMode(t, filepath.Join(dst, "accounts"), 0700)
@@ -175,7 +173,6 @@ func TestSeedFiles(t *testing.T) {
 				t.Fatalf("seeded %s must load: %v", tc.name, err)
 			}
 			tc.check(t, cfg)
-			// a user's file must survive a re-run
 			assertSeedPreserves(t, path, func() { seedFile(dir, tc.name, tc.seed) })
 		})
 	}

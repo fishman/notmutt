@@ -117,10 +117,10 @@ func classifyDelta(worker workerAPI, cfg config.Config, root string, pre, cur ui
 	return rep, mr, nil
 }
 
-// notifyEntries is the notification scope: only entries that carry
-// every [notify] tags entry (the classifier's Notify flag) fire - by
-// default unread inbox mail, so a poll that only reclassified deleted,
-// sent, or archive mail stays quiet. Empty tags notifies on every entry.
+// notifyEntries is the notification scope: only entries carrying every
+// [notify] tags entry fire (the classifier's Notify flag) - by default
+// unread inbox mail, so a poll that only reclassified deleted, sent, or
+// archive mail stays quiet. Empty tags notify on every entry.
 func notifyEntries(cfg config.Config, rep *filter.Report) []filter.Entry {
 	if len(cfg.Notify.Tags) == 0 {
 		return rep.Entries

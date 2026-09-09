@@ -7,7 +7,7 @@ package mail
 // real content. Before the CSS parser fix, a media-query block leaked
 // its .responsive-td rules (display:block !important) so every cell
 // demoted to inline and the whole 84-table body collapsed to a single
-// line - the display:none preheader, of all things. Assertions are
+// line - the display:none preheader. Assertions are
 // presence signatures only, never mail content.
 
 import (

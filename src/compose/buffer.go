@@ -35,13 +35,12 @@ func SplitAddrs(s string) []string {
 	return out
 }
 
-// SplitSignature separates a body's trailing signature block at the
-// first line that is exactly "-- " - the structural rule (BodyWithSig
-// emits one SigBlock, so the first marker line opens it; the pager and
-// the mail parse flag signatures the same way). Re-assembly through
-// BodyWithSig reproduces the original bytes whether or not the split is
-// semantically right, so a body that merely quotes a "-- " line
-// round-trips untouched.
+// SplitSignature detaches the trailing signature at the first line that
+// is exactly "-- " - the marker BodyWithSig emits, which the pager and
+// the mail parse also treat as the signature rule. Re-assembly through
+// BodyWithSig is byte-faithful even when the split is semantically
+// wrong, so a body that merely quotes a "-- " line round-trips
+// untouched.
 func SplitSignature(text string) (body, sig string) {
 	const marker = "\n-- \n"
 	i := strings.Index(text, marker)

@@ -7,8 +7,6 @@ import (
 	"notmutt/lib/testutil"
 )
 
-// write is the aicmd package's file writer: testutil.WriteFile on a
-// joined path.
 func write(t *testing.T, dir, name, content string) string {
 	t.Helper()
 	return testutil.WriteFile(t, filepath.Join(dir, name), content)

@@ -6,9 +6,7 @@
 // Package crm holds the CRM follow-up workflow's vendor-neutral core: the
 // Client interface the workflow drives plus the Contact/Company domain
 // types. No wire code lives here - vendor implementations sit in sibling
-// subpackages (lib/crm/hubspot) and satisfy Client; Provider() is the
-// routing id stamped on every published row/briefing/draft ("hubspot"
-// today).
+// subpackages (lib/crm/hubspot) and satisfy Client.
 package crm
 
 import (

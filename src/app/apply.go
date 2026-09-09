@@ -49,7 +49,6 @@ func applyStaged(view *core.View, views map[string]*core.View, groups []core.Tag
 			continue
 		}
 		if err := execApply(worker, cfg, root, groups, identity, resolved); err != nil {
-			// the entry stays staged for retry/undo; the first failure surfaces
 			if applyErr == nil {
 				applyErr = fmt.Errorf("apply %s: %v", identity, err)
 			}

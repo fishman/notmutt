@@ -126,17 +126,34 @@ func TestBuildContextAttachmentLeak(t *testing.T) {
 	testutil.WantNot(t, ctx, "secret.pdf", "application/pdf")
 }
 
-// TestBuildContextHTMLOnly proves an html-only message yields no body
-// text - the model gets the metadata, never raw markup.
+// TestBuildContextHTMLOnly proves an html-only body reaches the model as
+// rendered text, never raw markup: the prose "raw markup" appears while
+// the source tags stay out.
 func TestBuildContextHTMLOnly(t *testing.T) {
 	html := "From: Alpha <alpha@example.com>\nTo: beta@example.com\n" +
 		"Subject: x\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
 		"MIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\n" +
 		"<p>raw <b>markup</b></p>\n"
 	ctx := mustContext(t, bodyCmd("bodies"), []core.Message{msg(fixture(t, html), "alpha@example.com", 100)}, nil, nil, "", "")
-	if strings.Contains(ctx, "markup") {
-		t.Errorf("html body leaked:\n%s", ctx)
+	if !strings.Contains(ctx, "raw markup") {
+		t.Errorf("html prose missing:\n%s", ctx)
 	}
+	testutil.WantNot(t, ctx, "<p>", "<b>", "</p>")
+}
+
+// TestBuildContextHTMLTable proves an html-only table body renders to
+// readable text (the stage-2 engine draws tables) - both cells appear,
+// no table markup leaks.
+func TestBuildContextHTMLTable(t *testing.T) {
+	html := "From: Alpha <alpha@example.com>\nTo: beta@example.com\n" +
+		"Subject: x\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
+		"MIME-Version: 1.0\nContent-Type: text/html; charset=utf-8\n\n" +
+		"<table><tr><td>alpha</td><td>beta</td></tr></table>\n"
+	ctx := mustContext(t, bodyCmd("bodies"), []core.Message{msg(fixture(t, html), "alpha@example.com", 100)}, nil, nil, "", "")
+	if !strings.Contains(ctx, "alpha") || !strings.Contains(ctx, "beta") {
+		t.Errorf("table cells missing:\n%s", ctx)
+	}
+	testutil.WantNot(t, ctx, "<table", "<td>", "<tr>")
 }
 
 // TestBuildContextCaps proves the body caps hold: one long body truncates

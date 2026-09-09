@@ -295,7 +295,7 @@ const mcpDeletedHome = "deleted"
 // metadata thread_info already serves.
 func mcpBodiesTool(worker workerAPI, root string, cfg config.Config, scope *mcpScope) server.ServerTool {
 	opts := []mcp.ToolOption{
-		mcp.WithDescription("The cleaned body text of a thread's messages (quoted/signature/html parts dropped), newest first, capped. No headers, no attachments. Gated: served only when [mcp.bodies] is enabled; an out-of-scope message is never read."),
+		mcp.WithDescription("The readable text of a thread's messages (quoted/signature/html markup dropped, an html-only body rendered to text and tables), newest first, capped. No headers, no attachments. Gated: served only when [mcp.bodies] is enabled; an out-of-scope message is never read."),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithDestructiveHintAnnotation(false),
 		mcp.WithString("thread_id", mcp.Required(), mcp.Description("The thread id (without the thread: prefix)")),

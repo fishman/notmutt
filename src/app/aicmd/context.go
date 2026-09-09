@@ -25,11 +25,16 @@ const (
 	// builder applies across a thread - the prompt stays bounded. The
 	// MCP bodies tool bounds by message count instead ([mcp.bodies]).
 	totalBodyCap = 20000
+	// bodyHTMLWidth is the render width (cells) for an html-only body fed
+	// to a model: no terminal width exists here, 100 reads comfortably
+	// and keeps email tables on the page.
+	bodyHTMLWidth = 100
 )
 
 // BuildContext assembles the prompt context for a command: a labeled
 // section for exactly the declared data fields, nothing more. Bodies are
-// cleaned (quoted lines, signatures, and html dropped; capped), sender
+// cleaned (quoted lines, signatures dropped; an html-only body renders
+// to text; capped), sender
 // metadata is bare addresses only, attachments never appear. This is the
 // only path mail content takes toward an LLM - the Data allowlist is
 // enforced here, structurally. allowed is the account's [ai-data] grant:
@@ -110,9 +115,11 @@ func BuildContext(cmd *Command, msgs []core.Message, own []string, allowed []str
 }
 
 // bodyText returns a message's cleaned plain text: quoted lines (Quoted >
-// 0), signature lines, and html parts dropped; text/plain lines joined,
-// capped at limit chars. A missing or unparseable file yields "" - the
-// metadata sections still carry the message.
+// 0) and signature lines dropped, text/plain lines joined, capped at
+// limit chars. An html-only body (no plain alternative) is rendered to
+// readable text instead - the stage-2 engine draws prose and tables, so
+// the feed never sees raw markup. A missing or unparseable file yields
+// "" - the metadata sections still carry the message.
 func BodyText(m core.Message, limit int) string {
 	if len(m.Paths) == 0 {
 		return ""
@@ -122,8 +129,15 @@ func BodyText(m core.Message, limit int) string {
 		return ""
 	}
 	var b strings.Builder
+	html := ""
 	for _, p := range parsed.Parts {
-		if p.HTML || p.Quoted > 0 || p.Signature {
+		if p.HTML {
+			if html == "" {
+				html = p.Body
+			}
+			continue
+		}
+		if p.Quoted > 0 || p.Signature {
 			continue
 		}
 		left := limit - b.Len()
@@ -137,7 +151,32 @@ func BodyText(m core.Message, limit int) string {
 		b.WriteString(line)
 		b.WriteByte('\n')
 	}
+	if b.Len() == 0 && html != "" {
+		writeHTMLText(&b, html, limit)
+	}
 	return core.SanitizeControls(strings.TrimRight(b.String(), "\n"))
+}
+
+// writeHTMLText renders an html body to its readable text (the stage-2
+// engine, tables included) and appends it capped at limit chars. Rows
+// with no visible text and trailing spaces drop - the text, not the
+// layout. Nil lines (an unparseable doc) append nothing.
+func writeHTMLText(b *strings.Builder, body string, limit int) {
+	for _, ln := range mail.RenderHTML(body, nil, bodyHTMLWidth) {
+		if b.Len() >= limit {
+			return
+		}
+		line := strings.TrimRight(ln.Text, " ")
+		if line == "" {
+			continue
+		}
+		left := limit - b.Len()
+		if len(line) > left {
+			line = line[:left]
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
 }
 
 // senderOf is the message's bare sender address (the notmuch author); a

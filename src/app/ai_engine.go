@@ -33,6 +33,9 @@ func aiCommandList(account string) []tui.AICommand {
 	}
 	out := make([]tui.AICommand, 0, len(cmds))
 	for _, c := range cmds {
+		if c.CRM {
+			continue // the queue surface (crmPromptList) owns CRM prompts
+		}
 		if c.Account != "" && c.Account != account {
 			continue
 		}

@@ -100,3 +100,28 @@ func TestChunkBatcherNoLoss(t *testing.T) {
 		t.Fatalf("burst must be delivered losslessly and in order")
 	}
 }
+
+// TestAICommandListExcludesCRM pins the index AI picker source to non-CRM
+// prompts: a crm: true command drafts from the queue surface
+// (runCrmPrompt), never a mail thread, so it must not surface here.
+func TestAICommandListExcludesCRM(t *testing.T) {
+	dir := t.TempDir()
+	prompts := filepath.Join(dir, "ai", "prompts")
+	if err := os.MkdirAll(prompts, 0700); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, front string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(prompts, name), []byte(front+"\n---\nbody.\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("summarize.md", "---\nname: summarize\ndescription: Summarize thread\naction: view\ndata: [count]")
+	write("followup.md", "---\nname: followup\ndescription: CRM follow-up\naction: compose\ncrm: true")
+	t.Setenv("NOTMUTT_CONFIG", dir)
+	for _, c := range aiCommandList("") {
+		if c.Name == "followup" {
+			t.Fatal("crm prompt surfaced in the index AI command list")
+		}
+	}
+}

@@ -132,6 +132,23 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		r.Msgs = msgs
 	case notmuch.ActSnapshots:
 		msgs, _ := f.msgs.Load().([]core.Message)
+		// a snapshot requests specific ids (the mover's, the refresh seam's):
+		// mirror notmuch and return only those, each with its current paths.
+		// An empty request returns the loaded set unchanged.
+		if len(a.Paths) > 0 {
+			want := make(map[string]bool, len(a.Paths))
+			for _, id := range a.Paths {
+				want[id] = true
+			}
+			out := make([]core.Message, 0, len(msgs))
+			for _, m := range msgs {
+				if want[m.ID] {
+					out = append(out, m)
+				}
+			}
+			r.Msgs = out
+			break
+		}
 		r.Msgs = msgs
 	}
 	return r, nil

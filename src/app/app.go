@@ -182,7 +182,7 @@ func Run() error {
 
 	tui.SetApplyHandler(func(v *core.View) {
 		go func() {
-			if err := applyStaged(v, groups, worker, cfg, root); err != nil {
+			if err := applyStaged(v, views, groups, worker, cfg, root); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
 			}
 			// the view changed either way (applied drops and baselines); a
@@ -670,11 +670,22 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 			// the read mark is a direct notmuch op (R3): reflect it in
 			// every view that holds the message, or the flag stays stale
 			// until the next refresh
+			renamed := false
 			for name, v := range views {
 				if tags := v.Tags(msgID); tags != nil {
-					v.SetTags(msgID, withoutTag(tags, "unread"))
+					rem := withoutTag(tags, "unread")
+					renamed = renamed || len(rem) != len(tags)
+					v.SetTags(msgID, rem)
 					bus.Publish(core.ViewDiff{View: name})
 				}
+			}
+			// an unread mark-read renamed the message's file to encode the
+			// S flag (maildir flag sync): the rows that cached the pre-rename
+			// path would open a deleted file on the next render (mode toggle,
+			// attachment, export). Refresh the path from the DB now, so the
+			// re-open reads the current file. Same seam as the apply flush.
+			if renamed {
+				refreshPaths(worker, views, msgID)
 			}
 		}
 	}

@@ -26,7 +26,7 @@ import (
 // applied tag whose file still sits elsewhere). A folder-tag ADD must
 // resolve its move BEFORE the tag lands: an unresolvable move is a
 // config error, not a half-applied state.
-func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI, cfg config.Config, root string) error {
+func applyStaged(view *core.View, views map[string]*core.View, groups []core.TagGroup, worker workerAPI, cfg config.Config, root string) error {
 	snapshot, gen := view.StagedOps()
 	if len(snapshot) == 0 {
 		return nil
@@ -54,6 +54,15 @@ func applyStaged(view *core.View, groups []core.TagGroup, worker workerAPI, cfg 
 				applyErr = fmt.Errorf("apply %s: %v", identity, err)
 			}
 			continue
+		}
+		// The tag op may have renamed the message's file (a maildir flag
+		// tag) or moved it (a folder move): a row that cached the pre-op
+		// path would open a deleted file on the next render. Refresh the
+		// path from the DB now (R1) - the refresh cycle would, but a
+		// reopen can outrun it. Thread identities defer like their tag
+		// baseline (SetThreadTags: a hydrated thread self-heals).
+		if !strings.HasPrefix(identity, "t:") {
+			refreshPaths(worker, views, identity)
 		}
 		// Tags was snapshotted at apply start; the setter overwrites
 		// whatever a concurrent merge reconciled in between. The next
@@ -236,4 +245,31 @@ func moveEntries(worker workerAPI, cfg config.Config, root string, identity stri
 		entries = append(entries, filter.Entry{ID: m.ID, Account: acc, Folder: folder, Paths: m.Paths})
 	}
 	return entries, nil
+}
+
+// refreshPaths repoints every live view's row for msgID at its current file
+// paths (R1 - the DB is the source of truth). A tag op that renamed the
+// message's file (maildir flag sync) or moved it (a folder move) deletes the
+// pre-op path from disk; a row that cached it would open a deleted file on
+// the next render. Call at the tag seams where the op is out-of-band of a
+// refresh: the apply flush and the open read-mark. Views that do not hold the
+// message no-op (findMsgLocked misses).
+func refreshPaths(worker workerAPI, views map[string]*core.View, msgID string) {
+	paths := currentPaths(worker, msgID)
+	if len(paths) == 0 {
+		return
+	}
+	for _, v := range views {
+		v.SetPaths(msgID, paths)
+	}
+}
+
+// currentPaths asks notmuch for the message's present file paths: one
+// limit-free snapshot by id, the same query the mover resolves against.
+func currentPaths(worker workerAPI, msgID string) []string {
+	rpl, err := worker.Call(notmuch.Action{Kind: notmuch.ActSnapshots, Paths: []string{msgID}})
+	if err != nil || rpl.Err != nil || len(rpl.Msgs) == 0 {
+		return nil
+	}
+	return rpl.Msgs[0].Paths
 }

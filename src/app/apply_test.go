@@ -30,7 +30,7 @@ func TestApplyStaged(t *testing.T) {
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.Stage("m2", core.TagOp{Tag: "deleted", Add: true})
 
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	calls := fw.tagCallsSnapshot()
@@ -70,7 +70,7 @@ func TestApplyNetNoOpClearsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"archive"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true}) // net no-op
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -90,7 +90,7 @@ func TestApplyFailureKeepsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
 		t.Fatal("apply must surface the worker error")
 	}
 	if !view.IsStaged("m1") {
@@ -110,7 +110,7 @@ func TestApplyReplyErrKeepsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
 		t.Fatal("apply must surface the worker reply error")
 	}
 	if !view.IsStaged("m1") {
@@ -133,7 +133,7 @@ func TestApplyContinuesPastFailure(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.Stage("m2", core.TagOp{Tag: "deleted", Add: true})
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
 		t.Fatal("apply must surface the failed entry's error")
 	}
 	if !view.IsStaged("m1") {
@@ -168,7 +168,7 @@ func TestApplyThreadIdentity(t *testing.T) {
 		{ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	calls := fw.tagCallsSnapshot()
@@ -199,7 +199,7 @@ func TestApplyStaleThreadClears(t *testing.T) {
 	})})
 	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
 	view.MergeThreads(nil) // the thread left the view
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -219,7 +219,7 @@ func TestApplyStaleMessageSkipped(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.MergeThreads(nil) // the message left the view
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -242,7 +242,7 @@ func TestApplyKeepsMatchingRow(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox", "unread"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "unread", Add: false})
-	if err := applyStaged(view, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
 	if len(view.Rows()) != 1 {
@@ -274,7 +274,7 @@ func TestApplyEvictsMessageKeepsThread(t *testing.T) {
 		{ID: "m2", ThreadID: "t1", Tags: []string{"inbox", "unread"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, applyGroups, fw, cfg, root); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err != nil {
 		t.Fatal(err)
 	}
 	rows := view.Rows()
@@ -336,7 +336,7 @@ func TestApplyGuardRefusesUnmovableFolderTags(t *testing.T) {
 				{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 			})})
 			view.Stage("m1", core.TagOp{Tag: "deleted", Add: true})
-			err := applyStaged(view, applyGroups, fw, cfg, root)
+			err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("guard error = %v, want substring %q", err, c.want)
 			}
@@ -369,7 +369,7 @@ func TestApplyMovesToFolderTag(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 
-	if err := applyStaged(view, applyGroups, fw, cfg, root); err != nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "gmail", "Archives", "cur", "1")); err != nil {
@@ -407,7 +407,7 @@ func TestApplyMoveFailureRefusesTag(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 
-	if err := applyStaged(view, applyGroups, fw, cfg, root); err == nil {
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err == nil {
 		t.Fatal("apply must surface the failed move")
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -419,4 +419,43 @@ func TestApplyMoveFailureRefusesTag(t *testing.T) {
 	if hasTag(view.Tags("m1"), "archive") {
 		t.Fatal("baseline must not claim archive when the file never moved")
 	}
+}
+
+// TestApplyRefreshSeamRepointsPaths: an apply whose tag op renamed the
+// message's file (a maildir flag tag - the S flag sync renames the file)
+// must repoint the live row's Paths at the current file. A row that cached
+// the pre-rename path would open a deleted file on the next render (mode
+// toggle) until the refresh cycle caught up. The seam snapshots the id
+// after the successful ActTag and repoints every view holding it.
+func TestApplyRefreshSeamRepointsPaths(t *testing.T) {
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	// the DB's post-apply state: m1 carries the new, flag-encoded file
+	fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"},
+		Paths: []string{"/mail/cur/1:2,S"}}})
+	view := core.NewView("inbox", "tag:inbox")
+	view.SetGroups(applyGroups)
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox", "unread"}, Paths: []string{"/mail/cur/1"}},
+	})})
+	view.Stage("m1", core.TagOp{Tag: "unread", Add: false}) // mark read: renames 1 -> 1:2,S
+
+	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if got := pathOf(view, "m1"); !slices.Equal(got, []string{"/mail/cur/1:2,S"}) {
+		t.Fatalf("row path after apply = %v, want the post-rename file %v", got, []string{"/mail/cur/1:2,S"})
+	}
+}
+
+// pathOf reads a held message's current paths through the view's thread
+// pointers (the seam writes the live row; Rows flattens into the row model).
+func pathOf(view *core.View, id string) []string {
+	for _, t := range view.Threads {
+		for _, m := range view.ThreadMsgs(t.ID) {
+			if m.ID == id {
+				return m.Paths
+			}
+		}
+	}
+	return nil
 }

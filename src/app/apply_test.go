@@ -422,11 +422,8 @@ func TestApplyMoveFailureRefusesTag(t *testing.T) {
 }
 
 // TestApplyRefreshSeamRepointsPaths: an apply whose tag op renamed the
-// message's file (a maildir flag tag - the S flag sync renames the file)
-// must repoint the live row's Paths at the current file. A row that cached
-// the pre-rename path would open a deleted file on the next render (mode
-// toggle) until the refresh cycle caught up. The seam snapshots the id
-// after the successful ActTag and repoints every view holding it.
+// file (S-flag sync) must repoint the row at the current path, or the next
+// render opens a deleted file.
 func TestApplyRefreshSeamRepointsPaths(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	// the DB's post-apply state: m1 carries the new, flag-encoded file

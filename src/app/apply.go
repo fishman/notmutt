@@ -55,12 +55,8 @@ func applyStaged(view *core.View, views map[string]*core.View, groups []core.Tag
 			}
 			continue
 		}
-		// The tag op may have renamed the message's file (a maildir flag
-		// tag) or moved it (a folder move): a row that cached the pre-op
-		// path would open a deleted file on the next render. Refresh the
-		// path from the DB now (R1) - the refresh cycle would, but a
-		// reopen can outrun it. Thread identities defer like their tag
-		// baseline (SetThreadTags: a hydrated thread self-heals).
+		// the op may have renamed or moved the file: repoint the row, or
+		// the next render opens a deleted path. Threads defer (self-heal).
 		if !strings.HasPrefix(identity, "t:") {
 			refreshPaths(worker, views, identity)
 		}
@@ -247,13 +243,10 @@ func moveEntries(worker workerAPI, cfg config.Config, root string, identity stri
 	return entries, nil
 }
 
-// refreshPaths repoints every live view's row for msgID at its current file
-// paths (R1 - the DB is the source of truth). A tag op that renamed the
-// message's file (maildir flag sync) or moved it (a folder move) deletes the
-// pre-op path from disk; a row that cached it would open a deleted file on
-// the next render. Call at the tag seams where the op is out-of-band of a
-// refresh: the apply flush and the open read-mark. Views that do not hold the
-// message no-op (findMsgLocked misses).
+// refreshPaths repoints live rows for msgID at its current paths (R1): a
+// tag op that renamed or moved the file deleted the old path, and a row
+// caching it would open a deleted file. Call at tag seams out-of-band of a
+// refresh; views not holding the message no-op.
 func refreshPaths(worker workerAPI, views map[string]*core.View, msgID string) {
 	paths := currentPaths(worker, msgID)
 	if len(paths) == 0 {

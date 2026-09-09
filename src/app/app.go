@@ -679,11 +679,8 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 					bus.Publish(core.ViewDiff{View: name})
 				}
 			}
-			// an unread mark-read renamed the message's file to encode the
-			// S flag (maildir flag sync): the rows that cached the pre-rename
-			// path would open a deleted file on the next render (mode toggle,
-			// attachment, export). Refresh the path from the DB now, so the
-			// re-open reads the current file. Same seam as the apply flush.
+			// the unread mark-read renamed the file (S-flag sync): repoint
+			// rows so the next render opens the current file.
 			if renamed {
 				refreshPaths(worker, views, msgID)
 			}

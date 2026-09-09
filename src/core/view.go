@@ -890,11 +890,9 @@ func (v *View) SetTags(msgID string, tags []string) {
 	}
 }
 
-// SetPaths refreshes a message's file paths under the view lock. The tag
-// seams call this after an op whose maildir flag rename or folder move
-// changed the message's file name: a row that cached the pre-op path
-// would open a deleted file on the next render. A fresh slice, never an
-// alias into the caller's - rows share Paths with the merge path.
+// SetPaths repoints a held message's file paths. Tag seams call this
+// after an op renamed or moved the file, or the row opens a deleted
+// one. Copies: rows share Paths with the merge path.
 func (v *View) SetPaths(msgID string, paths []string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()

@@ -18,7 +18,7 @@ endif
 GO_CMD   = cd src && $(GO)
 GO_TAGS  = -tags "$(TAGS)"
 
-.PHONY: all build test test-race fuzz vet format clean
+.PHONY: all build test test-race fuzz vet format check clean
 
 all: build
 
@@ -43,13 +43,20 @@ fuzz:
 vet:
 	$(GO_CMD) vet $(GO_TAGS) ./...
 
-# format: the CI gofmt gate (default); `make format FMT=write` applies
-# the fixes instead. One file list serves both modes.
-FMT ?= check
-FMT_LIST := gofmt -l . | grep -v '^vendor/'
+# format applies gofmt to the source tree; check is the CI gate.
+# GOFMT_LIST lists the unformatted files outside vendor (one list, both
+# modes): format feeds it to gofmt -w, check fails if it is non-empty.
+GOFMT_LIST := gofmt -l . | grep -v '^vendor/'
 
 format:
-	cd src && if [ "$(FMT)" = write ]; then $(FMT_LIST) | xargs -r gofmt -w; else test -z "$$($(FMT_LIST))"; fi
+	cd src && $(GOFMT_LIST) | xargs -r gofmt -w
+
+# check: the CI gate - gofmt-clean, vet, and the tagged test run. Run
+# `make format` first if the gofmt step fails.
+check:
+	cd src && test -z "$$($(GOFMT_LIST))"
+	$(GO_CMD) vet $(GO_TAGS) ./...
+	$(GO_CMD) test $(GO_TAGS) ./...
 
 clean:
 	rm -f src/$(BIN)

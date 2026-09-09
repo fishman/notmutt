@@ -207,29 +207,36 @@ func (m *Mover) Move(rep *Report) (*MoveReport, error) {
 			}
 		}
 	}
-	if !m.dryRun && len(toRemove) > 0 {
-		// copy-then-delete: the sources go only after every copy
-		// landed. RemovePaths drops only the index link - the file
-		// itself is the mover's.
-		for _, p := range toRemove {
-			if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
-				return nil, fmt.Errorf("mover: remove %s: %w", p, err)
-			}
-		}
-	}
+	// DB-first, file-last: the index moves off the sources (AddPaths
+	// before RemovePaths - a remove of the last file deletes the message
+	// record and its tags) BEFORE any source file is removed, so a file
+	// is never deleted while the database still references it. The
+	// sources go only once the index has left them - a committed release
+	// (remove succeeded) or a backend without path ops (the cli, marked
+	// ErrUnsupported), whose `notmuch new` reconciles the move next poll.
+	// A failing update returns with every source intact: orphan dests are
+	// harmless duplicates, never loss.
 	if !m.dryRun && len(toAdd) > 0 {
-		// add-first keeps the tags: the new filename lands before the
-		// sources go. A backend without path ops (the cli) no-ops
-		// silently; its `notmuch new` reconciles the move next poll.
+		del := false
 		if rpl, err := m.worker.Call(notmuch.Action{Kind: notmuch.ActAddPaths, Paths: toAdd}); err != nil || rpl.Err != nil {
-			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+			if errors.Is(err, notmuch.ErrUnsupported) || errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+				del = true // cli: files go, notmuch new reconciles
+			} else {
 				return nil, fmt.Errorf("mover: add: %v %v", err, rpl.Err)
 			}
-			return out, nil
+		} else {
+			if rpl, err := m.worker.Call(notmuch.Action{Kind: notmuch.ActRemovePaths, Paths: toRemove}); err != nil || rpl.Err != nil {
+				if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
+					return nil, fmt.Errorf("mover: remove: %v %v", err, rpl.Err)
+				}
+			}
+			del = true // the index released the sources; safe to remove
 		}
-		if rpl, err := m.worker.Call(notmuch.Action{Kind: notmuch.ActRemovePaths, Paths: toRemove}); err != nil || rpl.Err != nil {
-			if !errors.Is(err, notmuch.ErrUnsupported) && !errors.Is(rpl.Err, notmuch.ErrUnsupported) {
-				return nil, fmt.Errorf("mover: remove: %v %v", err, rpl.Err)
+		if del {
+			for _, p := range toRemove {
+				if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+					return nil, fmt.Errorf("mover: remove %s: %w", p, err)
+				}
 			}
 		}
 	}

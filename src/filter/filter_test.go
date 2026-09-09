@@ -4,6 +4,7 @@
 package filter
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -562,5 +563,57 @@ func TestMoverSkipsMessageAlreadyHome(t *testing.T) {
 	}
 	if len(w.pathOps) != 0 {
 		t.Fatalf("path ops = %+v, want none", w.pathOps)
+	}
+}
+
+// failAddWorker fails the ActAddPaths step - the error arm of the
+// mover's copy-then-delete DB update.
+type failAddWorker struct {
+	fakeWorker
+}
+
+func (f *failAddWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
+	if a.Kind == notmuch.ActAddPaths {
+		return notmuch.Reply{}, errors.New("add failed")
+	}
+	return f.fakeWorker.Call(a)
+}
+
+// TestMoverKeepsSourceOnDbError pins the mover's write order: the index
+// must move off a source (AddPaths then RemovePaths) BEFORE its file is
+// removed. A failing add step used to return after the delete loop, so
+// the source file was gone while the database still referenced it - the
+// archived-then-vanished report. DB-first means a failed update leaves
+// every source intact.
+func TestMoverKeepsSourceOnDbError(t *testing.T) {
+	testutil.CacheDir(t)
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	for _, d := range []string{"INBOX", "Archives"} {
+		if err := os.MkdirAll(filepath.Join(root, "gmail", d, "cur"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	src := filepath.Join(root, "gmail", "INBOX", "cur", "1")
+	if err := os.WriteFile(src, []byte("mail"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	w := &failAddWorker{}
+	rep := &Report{Entries: []Entry{
+		{ID: "m1", Account: "gmail", Folder: "archive", Paths: []string{"gmail/INBOX/cur/1"}},
+	}}
+
+	if _, err := NewMover(w, cfg, root).Move(rep); err == nil {
+		t.Fatal("Move must surface the add failure")
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Fatal("source was deleted although the database update failed")
+	}
+	if len(w.pathOps) != 0 {
+		t.Fatalf("path ops = %+v, want none (remove must not run after a failed add)", w.pathOps)
 	}
 }

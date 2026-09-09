@@ -2,7 +2,7 @@
 
 ## Problem
 
-The filter poll classifies only the (pre, cur] lastmod bracket that its
+The filter poll classifies only the (pre, cur) lastmod bracket that its
 own `notmuch new` discovers (`pollDiff`, app.go:1402). When the run
 finds nothing new it returns before any classification. That gate is
 wrong: the notmuch database revision advances on every write - tag ops,

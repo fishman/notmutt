@@ -207,6 +207,47 @@ func TestTableDemotedToBlockFlowsCellsAsBlocks(t *testing.T) {
 	}
 }
 
+func TestDemotedCellInRowKeepsColumn(t *testing.T) {
+	// author display:block on a real cell demotes it to RoleBlock (box.go),
+	// but the row keeps its other real cells: the block takes the next free
+	// column as an anonymous cell (CSS 2.1) - a demoted cell must not vanish
+	// (the email gutter/centering idiom, td display:block)
+	bs := buildBody(`<table><tr><td>a</td><td style="display:block">x</td><td>b</td></tr></table>`)
+	rs := LayoutBlock(bs, 40, mono(1), false)
+	if len(rs) != 1 || len(rs[0].Cells) != 3 {
+		t.Fatalf("rows/cells = %d/%d, want one grid row of 3 cells", len(rs), len(rs[0].Cells))
+	}
+	for i, want := range []string{"a", "x", "b"} {
+		if got := fragText(rs[0].Cells[i]); got != want {
+			t.Fatalf("cell %d = %q, want %q", i, got, want)
+		}
+	}
+}
+
+func TestDemotedCellHostsNestedTable(t *testing.T) {
+	// the xolo shape: a full-width row whose display:block cell carries a
+	// nested table - its grid must flow inside the anonymous column, not drop
+	bs := buildBody(`<table><tr><td>&nbsp;</td>` +
+		`<td style="display:block"><table><tr><td>deep</td></tr></table></td>` +
+		`<td>&nbsp;</td></tr></table>`)
+	rs := LayoutBlock(bs, 60, mono(1), false)
+	var all []string
+	for _, r := range rs {
+		for _, c := range r.Cells {
+			all = append(all, fragText(c))
+		}
+	}
+	found := false
+	for _, s := range all {
+		if strings.Contains(s, "deep") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("nested table content lost: cells = %q", all)
+	}
+}
+
 func TestColspanDistributesOverColumns(t *testing.T) {
 	// base row gives col0 (aaa -> content 3, box 5) and col1 (bbb -> box 5).
 	// The colspan-2 cell's text is 16px + 2px padding = 18 > base max sum

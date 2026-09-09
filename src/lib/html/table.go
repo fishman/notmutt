@@ -13,12 +13,11 @@ import "math"
 // stream. A grid row is one horizontal strip: its stream Row carries Cells
 // fragments, one per cell content line, at absolute X. The grid readers skip
 // non-conforming children (a row-group box that is not a row, a row box that
-// is not a cell): author CSS that demotes a real table tag out of the family
-// leaves such a box, and layout must skip it, never assume - there is no
-// anonymous repair to wrap it. A demoted table tag (display:block) is
-// RoleBlock and flows its table-family descendants as plain blocks - the grid
-// case keys on the RoleTable "table" slot, which only a real, un-demoted
-// table carries.
+// is not a cell). A table-family tag that author CSS demotes out of the
+// family (a display:block td) still fills a column: it holds an anonymous
+// cell (CSS 2.1) with a 1x1 span, so its content lays in the next free
+// column instead of vanishing - the email gutter/centering idiom. Only a
+// non-table child of a row (a stray div) is no grid slot and is skipped.
 
 const (
 	tableSpacing = 2 // UA table border-spacing, px (probe-measured; html5_ua.css)
@@ -176,6 +175,18 @@ func cellExtents(cell *Box, m Metrics) (minW, maxW int) {
 	return minW + 2*tablePad, maxW + 2*tablePad
 }
 
+// rowCell reports whether a row child fills a grid column: a real cell, or a
+// table-family element that author CSS demoted out of the family (a
+// display:block td). The demoted box holds an anonymous column (CSS 2.1): a
+// 1x1 cell at the next free grid slot, so its content lays there instead of
+// vanishing. A stray non-table child of a row is not a cell and is skipped.
+func rowCell(cb *Box) bool {
+	if cb.Tbl == "cell" {
+		return true
+	}
+	return isTableTag(cb.Tag)
+}
+
 // buildGrid places every cell of a table's row-group children into grid
 // rows and returns the grid plus its column count. Column count is the
 // widest row by cell count - a colspan never mints empty spacer columns
@@ -200,7 +211,7 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 			}
 			n := 0
 			for _, cb := range rb.Children {
-				if cb.Tbl == "cell" {
+				if rowCell(cb) {
 					n++
 				}
 			}
@@ -222,10 +233,13 @@ func buildGrid(t *Box) (rows []gridRow, cols int) {
 			var gr gridRow
 			cur := 0
 			for _, cb := range rb.Children {
-				if cb.Tbl != "cell" {
+				if !rowCell(cb) {
 					continue
 				}
 				cs, rs := spanOf(cb)
+				if cb.Tbl != "cell" {
+					cs, rs = 1, 1 // anonymous column: span attrs are inert on a demoted box
+				}
 				for cur < cols && busy[cur] > ri { // skip columns still claimed at this row
 					cur++
 				}

@@ -656,3 +656,33 @@ func TestMCPTagCapabilityGate(t *testing.T) {
 	}
 	noWrites("out-of-scope")
 }
+
+// TestMCPInScopeAbsolutePaths (regression, 2026-09-09): notmuch reports
+// message filenames absolute (go.notmuch documents Filenames as
+// absolute; show --format=json emits the stored path), so the scope's
+// folder pin has to match the root-relative form the engine normalizes
+// to - serveMCP wires scope.root = mailRoot. Before the fix every live
+// message failed inScope and thread_info/thread_bodies returned
+// {"count":0} for threads search showed in scope.
+func TestMCPInScopeAbsolutePaths(t *testing.T) {
+	cfg := capCfg(capGrant{})
+	root := "/home/u/Mail"
+	scope, err := resolveMCPScope(&cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.root = root
+	in := core.Message{Tags: []string{"gmail", "inbox"}, Paths: []string{root + "/gmail/Inbox/cur/1"}}
+	if !scope.inScope(in) {
+		t.Error("message under the granted account folder must be in scope")
+	}
+	out := core.Message{Tags: []string{"gmail", "inbox"}, Paths: []string{root + "/outlook/Inbox/cur/1"}}
+	if scope.inScope(out) {
+		t.Error("message outside the granted account folder must be out of scope")
+	}
+	// without the root the absolute path must not false-positive into scope
+	bare, _ := resolveMCPScope(&cfg)
+	if bare.inScope(in) {
+		t.Error("an un-rooted scope must not admit an absolute path")
+	}
+}

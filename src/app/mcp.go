@@ -325,8 +325,9 @@ func mcpBodiesTool(worker workerAPI, root string, cfg config.Config, scope *mcpS
 			}
 			msgs := make([]map[string]any, 0, len(rows))
 			for _, m := range rows {
-				// the cleaner reads m.Paths[0]; snapshot paths are
-				// root-relative, so absolutize before the file open
+				// the cleaner reads m.Paths[0]; notmuch reports absolute
+				// filenames, absMailPath passes them through (a relative
+				// path would be joined for the fake-worker tests)
 				p := m.Paths[0]
 				mm := m
 				mm.Paths = []string{absMailPath(root, p)}
@@ -575,6 +576,9 @@ func serveMCP() error {
 	if err != nil {
 		return fmt.Errorf("mcp: mail root: %w", err)
 	}
+	// notmuch reports absolute filenames; the scope's folder pin matches
+	// the root-relative form, so it needs the same root the worker opened
+	scope.root = root
 	bus := core.NewBus()
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
 	ctx, cancel := context.WithCancel(context.Background())

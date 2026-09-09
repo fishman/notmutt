@@ -311,8 +311,7 @@ func attachmentsOnce() error {
 }
 
 // absMailPath resolves a message path against the mail root; absolute
-// paths pass through (snapshot paths are root-relative as notmuch
-// reports them).
+// paths pass through (notmuch reports filenames absolute).
 func absMailPath(root, p string) string {
 	if filepath.IsAbs(p) {
 		return p

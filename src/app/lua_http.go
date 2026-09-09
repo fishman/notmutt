@@ -225,6 +225,7 @@ type mcpScope struct {
 	folders []string // account folder prefixes; the account tag is the folder name
 	tags    []string // allowed soft tags; a message must carry one
 	query   string   // the scope as a notmuch term, for query intersection
+	root    string   // the mail root; the folder pin matches root-relative paths
 }
 
 // allowed reports whether the scope admits anything at all: both lists
@@ -262,9 +263,25 @@ func (s *mcpScope) inScope(m core.Message) bool {
 	for _, t := range m.Tags {
 		has[t] = true
 	}
+	// notmuch reports absolute filenames (go.notmuch documents
+	// Filenames as absolute); the folder pin matches the engine's
+	// root-relative form, so strip the root first - the account tag
+	// already pins identity, this is the second pin against a moved
+	// message.
+	paths := m.Paths
+	if s.root != "" {
+		paths = make([]string, len(m.Paths))
+		for i, p := range m.Paths {
+			if strings.HasPrefix(p, s.root) {
+				paths[i] = strings.Trim(strings.TrimPrefix(p, s.root), "/")
+			} else {
+				paths[i] = p
+			}
+		}
+	}
 	under := false
 	for _, f := range s.folders {
-		if has[f] && underFolder(m.Paths, f) {
+		if has[f] && underFolder(paths, f) {
 			under = true
 			break
 		}

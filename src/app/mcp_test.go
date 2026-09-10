@@ -173,9 +173,9 @@ func TestMCPRestrictedSurface(t *testing.T) {
 }
 
 // TestMCPAttachmentsGate: the attachments tool is absent from the
-// default registry and served only when [mcp] allow names it. Served,
-// it lists a real message's attachments (name, mime, size - never
-// bytes) with the mail-root join for relative paths.
+// default registry and served only when an account's capability grant
+// enables it. Served, it lists a real message's attachments (name,
+// mime, size - never bytes) with the mail-root join for relative paths.
 func TestMCPAttachmentsGate(t *testing.T) {
 	root := t.TempDir()
 	fixtureMail(t, root, "m1.eml", "hotel invoice", "Delta <delta@example.com>", "invoice.pdf", time.Date(2026, 8, 20, 12, 0, 0, 0, time.Local))
@@ -203,14 +203,6 @@ func TestMCPAttachmentsGate(t *testing.T) {
 	}
 	if strings.Contains(s, "fake pdf bytes") || strings.Contains(s, "fake png bytes") {
 		t.Errorf("attachment bytes must never cross: %s", s)
-	}
-
-	// an unknown allow name is a startup error, never a silent drop
-	if _, err := resolveMCPAllow([]string{"attachments"}); err != nil {
-		t.Fatalf("attachments must be a known name: %v", err)
-	}
-	if _, err := resolveMCPAllow([]string{"bogus"}); err == nil {
-		t.Fatal("an unknown allow name must error")
 	}
 }
 
@@ -262,7 +254,7 @@ func TestMCPScopeEnforcement(t *testing.T) {
 	if _, err := resolveMCPScope(cfg); err != nil {
 		t.Fatalf("empty scope config must be legal (deny-all), got %v", err)
 	}
-	cfg.MCP.Accounts = []string{"gmail"}
+	cfg.MCP.Accounts = map[string]config.MCPAccount{"gmail": {}}
 	if s, err := resolveMCPScope(cfg); err != nil {
 		t.Fatalf("accounts without tags must be legal (deny-all): %v", err)
 	} else if s.allowed() {
@@ -277,15 +269,15 @@ func TestMCPScopeEnforcement(t *testing.T) {
 	if s.query != wantQuery {
 		t.Errorf("scope query = %q, want %q", s.query, wantQuery)
 	}
-	cfg.MCP.Accounts = []string{"bogus"}
+	cfg.MCP.Accounts = map[string]config.MCPAccount{"bogus": {}}
 	if _, err := resolveMCPScope(cfg); err == nil {
 		t.Fatal("an unknown account in [mcp] accounts must error")
 	}
-	cfg.MCP.Accounts = []string{"atlas"}
+	cfg.MCP.Accounts = map[string]config.MCPAccount{"atlas": {}}
 	if _, err := resolveMCPScope(cfg); err == nil {
 		t.Fatal("a readonly account in [mcp] accounts must error (no account tag = never matches)")
 	}
-	cfg.MCP.Accounts = []string{"gmail"}
+	cfg.MCP.Accounts = map[string]config.MCPAccount{"gmail": {}}
 	cfg.MCP.Tags = []string{"inbox) or tag:spam"}
 	if _, err := resolveMCPScope(cfg); err == nil {
 		t.Fatal("a query-breaking tag must error at config resolution, not at query time")
@@ -436,12 +428,13 @@ func capCfg(g capGrant) config.Config {
 	return config.Config{
 		Accounts: map[string]config.Account{"gmail": {}},
 		MCP: config.MCP{
-			Accounts:    []string{"gmail"},
-			Tags:        []string{"inbox"},
-			Attachments: config.MCPCap{Enabled: g.att},
-			Bodies:      config.MCPBodies{Enabled: g.bodies},
-			Tagging:     config.MCPCap{Enabled: g.tagging},
-			Apply:       config.MCPCap{Enabled: g.apply},
+			Tags: []string{"inbox"},
+			Accounts: map[string]config.MCPAccount{"gmail": {
+				Attachments: config.MCPCap{Enabled: g.att},
+				Bodies:      config.MCPBodies{Enabled: g.bodies},
+				Tagging:     config.MCPCap{Enabled: g.tagging},
+				Apply:       config.MCPCap{Enabled: g.apply},
+			}},
 		},
 		TagGroups: map[string]core.TagGroup{"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}},
 	}
@@ -552,7 +545,9 @@ func TestMCPBodiesBoundary(t *testing.T) {
 	}
 
 	// the pull cap: max_messages 1 serves the newest in-scope row only
-	cfg.MCP.Bodies.MaxMessages = 1
+	acct := cfg.MCP.Accounts["gmail"]
+	acct.Bodies.MaxMessages = 1
+	cfg.MCP.Accounts["gmail"] = acct
 	tools = mcpCfgTools(fw, root, cfg, scope)
 	res = callTool(t, tools, "thread_bodies", map[string]any{"thread_id": "gt"})
 	b, _ = json.Marshal(res.StructuredContent)
@@ -567,6 +562,158 @@ func TestMCPBodiesBoundary(t *testing.T) {
 	res = callTool(t, denyTools, "thread_bodies", map[string]any{"thread_id": "gt"})
 	if b, _ := json.Marshal(res.StructuredContent); strings.Contains(string(b), "inbox newest report") {
 		t.Errorf("deny-all thread_bodies leaked a row: %s", b)
+	}
+}
+
+// TestMCPGrantIsExplicit (LOCKED): the boundary can only be widened by
+// naming an account under [mcp.accounts] AND enabling a capability
+// under it. An [accounts.<name>] the [mcp] section does not name stays
+// invisible; a named account with no capability table serves metadata
+// only; a capability table without enabled grants nothing. AGENTS.md
+// forbids loosening or removing this without explicit user approval -
+// it is the regression guard against a config change quietly handing
+// the agent a whole account or a whole capability.
+func TestMCPGrantIsExplicit(t *testing.T) {
+	fw := &fakeWorker{}
+	gm := core.Message{ID: "gm1", ThreadID: "gt", Timestamp: 1755400000,
+		Subject: "gmail inbox report", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}}
+	om := core.Message{ID: "om1", ThreadID: "ot", Timestamp: 1755401000,
+		Subject: "outlook inbox mail", Tags: []string{"outlook", "inbox"}, Paths: []string{"outlook/Inbox/cur/1"}}
+	fw.setStubs([]core.Message{gm, om})
+	fw.setThreadMsgs(map[string][]core.Message{"gt": {gm}, "ot": {om}})
+
+	// both accounts exist for the TUI; neither is granted to mcp
+	cfg := config.Config{Accounts: map[string]config.Account{"gmail": {}, "outlook": {}}}
+	cfg.MCP.Tags = []string{"inbox"}
+	run := func(c config.Config) []server.ServerTool {
+		t.Helper()
+		scope, err := resolveMCPScope(&c)
+		if err != nil {
+			t.Fatalf("resolveMCPScope: %v", err)
+		}
+		return mcpCfgTools(fw, "", c, scope)
+	}
+	only := func(label string, tools []server.ServerTool, want ...string) {
+		t.Helper()
+		if got := toolNames(tools); !slices.Equal(got, want) {
+			t.Fatalf("%s: served tools = %v, want %v", label, got, want)
+		}
+	}
+	meta := []string{"thread_info", "search", "count"}
+	has := func(tools []server.ServerTool, name string, args map[string]any) bool {
+		t.Helper()
+		res := callTool(t, tools, name, args)
+		b, _ := json.Marshal(res)
+		return strings.Contains(string(b), "inbox")
+	}
+
+	// no [mcp.accounts] table: nothing is granted, the metadata three are
+	// all a client sees, and they answer nothing
+	only("no account granted", run(cfg), meta...)
+	scope, _ := resolveMCPScope(&cfg)
+	if scope.allowed() {
+		t.Fatal("configured accounts without [mcp.accounts] tables must not open the scope")
+	}
+	if has(run(cfg), "thread_info", map[string]any{"thread_id": "gt"}) {
+		t.Error("an ungranted account's mail reached thread_info")
+	}
+
+	// granting one account opens exactly that folder space, and nothing
+	// more until a capability says so
+	cfg.MCP.Accounts = map[string]config.MCPAccount{"gmail": {}}
+	only("gmail granted, no capabilities", run(cfg), meta...)
+	if !has(run(cfg), "thread_info", map[string]any{"thread_id": "gt"}) {
+		t.Error("the granted account's mail must reach thread_info")
+	}
+	if has(run(cfg), "thread_info", map[string]any{"thread_id": "ot"}) {
+		t.Error("an account the [mcp] section never named must stay invisible")
+	}
+	callTool(t, run(cfg), "search", map[string]any{"query": "tag:inbox"})
+	if q, _ := fw.lastQuery.Load().(string); strings.Contains(q, "tag:outlook") || strings.Contains(q, "outlook/") {
+		t.Errorf("the scope query named an ungranted account: %q", q)
+	}
+
+	// a capability table without enabled grants nothing
+	cfg.MCP.Accounts["gmail"] = config.MCPAccount{Bodies: config.MCPBodies{MaxMessages: 3}}
+	only("capability table without enabled", run(cfg), meta...)
+
+	// enabled: true is what serves it - one capability at a time
+	cfg.MCP.Accounts["gmail"] = config.MCPAccount{Bodies: config.MCPBodies{Enabled: true}}
+	only("bodies enabled", run(cfg), append(meta, "thread_bodies")...)
+	cfg.MCP.Accounts["gmail"] = config.MCPAccount{}
+	only("back to no capabilities", run(cfg), meta...)
+}
+
+// TestMCPPerAccountGrants pins the per-account grant model: the served
+// tool list is the union of the configured accounts' grants (a tool one
+// account enables is served for the whole server), and each call is
+// then admitted per message by the OWNING account's own grant - so
+// bodies, tagging, and the folder-verb apply each follow the message's
+// account, not a global switch.
+func TestMCPPerAccountGrants(t *testing.T) {
+	ftw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	gm := core.Message{ID: "gm1", ThreadID: "mt", Timestamp: 1755400000,
+		Subject: "gmail inbox report", Tags: []string{"gmail", "inbox"}, Paths: []string{"gmail/Inbox/cur/1"}}
+	om := core.Message{ID: "om1", ThreadID: "mt", Timestamp: 1755401000,
+		Subject: "outlook inbox mail", Tags: []string{"outlook", "inbox"}, Paths: []string{"outlook/Inbox/cur/1"}}
+	cfg := config.Config{
+		Accounts: map[string]config.Account{"gmail": {}, "outlook": {}},
+		MCP: config.MCP{
+			Tags: []string{"inbox"},
+			Accounts: map[string]config.MCPAccount{
+				"gmail":   {Bodies: config.MCPBodies{Enabled: true}, Tagging: config.MCPCap{Enabled: true}},
+				"outlook": {Apply: config.MCPCap{Enabled: true}},
+			},
+		},
+		TagGroups: map[string]core.TagGroup{"folder": {Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}},
+	}
+	scope, err := resolveMCPScope(&cfg)
+	if err != nil {
+		t.Fatalf("resolveMCPScope: %v", err)
+	}
+	tools := mcpCfgTools(ftw, "", cfg, scope)
+	names := toolNames(tools)
+	for _, want := range []string{"thread_bodies", "mark_read", "apply"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("%s not served: the union of the account grants enables it (got %v)", want, names)
+		}
+	}
+
+	// bodies are gmail's grant alone: the outlook message in the same
+	// thread never renders
+	ftw.setThreadMsgs(map[string][]core.Message{"mt": {gm, om}})
+	res := callTool(t, tools, "thread_bodies", map[string]any{"thread_id": "mt"})
+	b, _ := json.Marshal(res.StructuredContent)
+	if !strings.Contains(string(b), "gmail inbox report") {
+		t.Errorf("gmail body missing (its account grants bodies): %s", b)
+	}
+	if strings.Contains(string(b), "outlook inbox mail") {
+		t.Errorf("outlook body leaked (its account grants no bodies): %s", b)
+	}
+
+	// mark_read writes a soft tag: gmail's grant admits its own message,
+	// outlook's lack refuses its own
+	ftw.setMsgs([]core.Message{gm})
+	if res := callTool(t, tools, "mark_read", map[string]any{"id": "gm1"}); res.IsError {
+		t.Errorf("gmail mark_read refused (its account grants tagging): %v", res)
+	}
+	ftw.setMsgs([]core.Message{om})
+	res = callTool(t, tools, "mark_read", map[string]any{"id": "om1"})
+	if !res.IsError || !strings.Contains(errText(res), "tagging") {
+		t.Errorf("outlook mark_read must be refused per account: %v", res)
+	}
+
+	// a folder verb is outlook's grant alone: it clears gmail's gate on
+	// outlook mail and refuses gmail's own
+	ftw.setMsgs([]core.Message{gm})
+	res = callTool(t, tools, "tag", map[string]any{"id": "gm1", "add": []string{"archive"}})
+	if !res.IsError || !strings.Contains(errText(res), ".apply") {
+		t.Errorf("gmail folder verb must be refused per account: %v", res)
+	}
+	ftw.setMsgs([]core.Message{om})
+	res = callTool(t, tools, "tag", map[string]any{"id": "om1", "add": []string{"archive"}})
+	if res.IsError && strings.Contains(errText(res), ".apply") {
+		t.Errorf("outlook folder verb refused on the capability, not the move: %v", res)
 	}
 }
 

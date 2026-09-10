@@ -217,15 +217,40 @@ func luaNetworkEndpointAllowed(method, path string, paths []string) bool {
 }
 
 // mcpScope is the MCP server's data boundary: the account folder
-// spaces it may see (each = folder prefix AND the account's tag) and
-// the soft tags whose mail is reachable. Deny by default: an empty
-// accounts or tags list allows nothing, and the nil scope (network
-// plugin VMs, which carry their own config gates) is unscoped.
+// spaces it may see (each = folder prefix AND the account's tag), the
+// soft tags whose mail is reachable, and the per-account capability
+// grants. Deny by default: an empty accounts table or no reachable tag
+// allows nothing, and the nil scope (network plugin VMs, which carry
+// their own config gates) is unscoped.
 type mcpScope struct {
-	folders []string // account folder prefixes; the account tag is the folder name
-	tags    []string // allowed soft tags; a message must carry one
-	query   string   // the scope as a notmuch term, for query intersection
-	root    string   // the mail root; the folder pin matches root-relative paths
+	folders []string           // account folder prefixes; the account tag is the folder name
+	tags    []string           // reachable soft tags: the [mcp] list plus every account's own additions
+	caps    map[string]mcpCaps // capability grants, keyed by the folder name (the account tag)
+	query   string             // the scope as a notmuch term, for query intersection
+	root    string             // the mail root; the folder pin matches root-relative paths
+}
+
+// mcpCaps is one account's resolved capability grant: what the server
+// may do with THAT account's mail. Deny by default - a granted account
+// with no capability table is metadata-only.
+type mcpCaps struct {
+	attachments bool
+	bodies      bool
+	tagging     bool
+	apply       bool
+}
+
+// mcpSurface is the served-tool summary: a capability tool is served
+// when any configured account enables it (one no account can use is
+// dead weight), and the per-message check then consults the owning
+// account's own grant. Derived from the config, not the resolved scope,
+// so a deny-all scope still serves the tools and answers empty - the
+// deny is a data fact, not a tool absence.
+type mcpSurface struct {
+	attachments bool
+	bodies      bool
+	tagging     bool
+	apply       bool
 }
 
 // allowed reports whether the scope admits anything at all: both lists
@@ -246,22 +271,33 @@ func (s *mcpScope) and(q string) string {
 	return "(" + q + ") AND " + s.query
 }
 
-// inScope is the per-message check for the id-addressed tools
-// (thread_info rows, attachments): the message must live under an
-// allowed account's folder space, carry that account's tag, and
-// carry at least one allowed soft tag - the folder pin alone could
-// be spoofed by a moved message, the tag alone by a retag. A nil
-// scope (plugin VMs) admits everything.
-func (s *mcpScope) inScope(m core.Message) bool {
+// accountOf is the per-message boundary check for the id-addressed
+// tools (thread_info rows, attachments, bodies, every write): the
+// message must live under an allowed account's folder space, carry
+// that account's tag, and carry at least one reachable soft tag - the
+// folder pin alone could be spoofed by a moved message, the tag alone
+// by a retag. It returns the granted account, the capability key. A
+// nil scope (plugin VMs) admits everything.
+func (s *mcpScope) accountOf(m core.Message) (string, bool) {
 	if s == nil {
-		return true
+		return "", true
 	}
 	if !s.allowed() {
-		return false
+		return "", false
 	}
 	has := make(map[string]bool, len(m.Tags))
 	for _, t := range m.Tags {
 		has[t] = true
+	}
+	reachable := false
+	for _, t := range s.tags {
+		if has[t] {
+			reachable = true
+			break
+		}
+	}
+	if !reachable {
+		return "", false
 	}
 	// notmuch reports absolute filenames (go.notmuch documents
 	// Filenames as absolute); the folder pin matches the engine's
@@ -277,22 +313,35 @@ func (s *mcpScope) inScope(m core.Message) bool {
 			}
 		}
 	}
-	under := false
 	for _, f := range s.folders {
 		if has[f] && underFolder(paths, f) {
-			under = true
-			break
+			return f, true
 		}
 	}
-	if !under {
-		return false
+	return "", false
+}
+
+// inScope is accountOf without the account name: the projection gate
+// the read tools share.
+func (s *mcpScope) inScope(m core.Message) bool {
+	_, ok := s.accountOf(m)
+	return ok
+}
+
+// capsOf resolves the capability grant of the account a message
+// belongs to: in scope first, then that account's own grant. ok=false
+// is the deny - an out-of-scope message, or a scope-less call (the
+// capability tools exist only on the serveMCP path, which always
+// carries a scope).
+func (s *mcpScope) capsOf(m core.Message) (mcpCaps, bool) {
+	if s == nil {
+		return mcpCaps{}, false
 	}
-	for _, t := range s.tags {
-		if has[t] {
-			return true
-		}
+	f, ok := s.accountOf(m)
+	if !ok {
+		return mcpCaps{}, false
 	}
-	return false
+	return s.caps[f], true
 }
 
 func underFolder(paths []string, folder string) bool {

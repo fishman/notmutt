@@ -23,7 +23,7 @@ const (
 	BodyCap = 4000
 	// totalBodyCap is the all-bodies ceiling (chars) the command
 	// builder applies across a thread - the prompt stays bounded. The
-	// MCP bodies tool bounds by message count instead ([mcp.bodies]).
+	// MCP bodies tool bounds by message count instead ([mcp.accounts.<name>.bodies]).
 	totalBodyCap = 20000
 	// bodyHTMLWidth is the render width (cells) for an html-only body fed
 	// to a model: no terminal width exists here, 100 reads comfortably

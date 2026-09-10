@@ -20,24 +20,28 @@ interval = 10
 # default-views = { "linkedin.com" = "html", "substack.com" = "html" }
 
 # The mcp stdio server (notmutt mcp, built with TAGS="lua mcp") serves
-# metadata for mail in scope: [mcp] accounts + tags name the data
-# boundary (both deny-by-default - empty lists serve nothing). Beyond
-# the metadata three (thread_info/search/count), each capability below
-# is off until enabled. The deleted-home tag is never reachable.
+# metadata for mail in scope: [mcp] tags names the reachable soft tags,
+# each [mcp.accounts.<name>] grants one account's folder space AND its
+# account tag. Deny by default - no account table serves nothing. Beyond
+# the metadata three (thread_info/search/count), each capability is off
+# until the owning account enables it. The deleted-home tag is never
+# reachable.
 # [mcp]
-# accounts = ["gmail"]      # folder space AND the account tag
 # tags = ["inbox"]          # a message must carry one of these
 
-# [mcp.attachments]         # attachment list metadata (name/mime/size)
+# [mcp.accounts.dynamia]    # the name must match an [accounts.<name>]
+# tags = ["work"]           # this account's own additions to [mcp] tags
+
+# [mcp.accounts.dynamia.attachments]  # attachment list metadata
 # enabled = true
 
-# [mcp.bodies]              # cleaned body text, no headers
+# [mcp.accounts.dynamia.bodies]       # cleaned body text, no headers
 # enabled = true
-# max_messages = 10         # per-thread pull cap (default 10)
+# max_messages = 10         # per-account per-thread pull cap (default 10)
 
-# [mcp.tagging]             # write soft tags on in-scope mail (no moves)
+# [mcp.accounts.dynamia.tagging]      # write soft tags (no moves)
 # enabled = true
 
-# [mcp.apply]               # non-destructive folder verbs (archive, ...)
-# enabled = true            #   via the folder-move apply; delete denied
+# [mcp.accounts.dynamia.apply]        # folder verbs (archive, ...);
+# enabled = true            #   the deleted home is code-denied
 

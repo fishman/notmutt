@@ -439,20 +439,32 @@ type Attachments struct {
 // empty, expanded against the home dir at use.
 const DefaultAttachFolder = "~/Downloads/Attachments"
 
-// MCP is the [mcp] section: the capability grants the stdio server
-// exposes beyond the metadata-only defaults (thread_info, search,
-// count). Accounts and Tags are the server's data boundary - the
-// folder spaces it may see and the soft tags whose mail is reachable;
-// both deny-by-default (empty list serves nothing). Each capability is
-// its own table under [mcp], enabled explicitly: Attachments lists
-// attachment metadata, Bodies extracts cleaned body text (capped per
-// thread), Tagging writes soft tags, Apply drives non-destructive
-// folder verbs through the folder-move apply (archive/pending/...).
-// The destructive deleted-home tag is code-denied, never a config
-// choice. Only the mcp+lua build reads it; unknown keys are a load
-// error, so a typo fails loudly.
+// MCP is the [mcp] section: the stdio server's data boundary and its
+// per-account capability grants. Tags names the reachable soft tags -
+// the general half of the boundary, one list every granted account
+// shares; Accounts names the folder spaces the server may see, one
+// [mcp.accounts.<name>] table per granted account, and the table's
+// presence IS the grant. Deny by default: an empty accounts table or
+// an empty tag set serves nothing, and a granted account with no
+// capability table is metadata-only (thread_info, search, count).
+//
+// Capabilities are per account, each enabled explicitly: Attachments
+// lists attachment metadata, Bodies extracts cleaned body text (its
+// own per-thread pull cap), Tagging writes soft tags, Apply drives
+// non-destructive folder verbs through the folder-move apply
+// (archive/pending/...). The destructive deleted-home tag is
+// code-denied, never a config choice. Only the mcp+lua build reads it;
+// unknown keys are a load error, so a typo fails loudly.
 type MCP struct {
-	Accounts    []string  `toml:"accounts"`
+	Tags     []string              `toml:"tags"`
+	Accounts map[string]MCPAccount `toml:"accounts"`
+}
+
+// MCPAccount is one [mcp.accounts.<name>] grant: the account's own
+// soft-tag additions (unioned with the [mcp] list - the boundary is
+// one tag pool, this list keeps the account-specific names readable
+// next to their account) and its capability tables.
+type MCPAccount struct {
 	Tags        []string  `toml:"tags"`
 	Attachments MCPCap    `toml:"attachments"`
 	Bodies      MCPBodies `toml:"bodies"`
@@ -460,22 +472,23 @@ type MCP struct {
 	Apply       MCPCap    `toml:"apply"`
 }
 
-// MCPCap is one [mcp] capability grant: a single Enabled gate, deny by default.
+// MCPCap is one capability grant under an account table: a single
+// Enabled gate, deny by default.
 type MCPCap struct {
 	Enabled bool `toml:"enabled"`
 }
 
-// MCPBodies is the [mcp.bodies] grant: cleaned body text, no headers.
-// MaxMessages caps how many messages of a thread a pull attaches (a
-// 100-message thread serves at most N); the per-body char cap is
-// shared with the AI command builder. MaxMessages <= 0 means the
-// default.
+// MCPBodies is one account's bodies grant: cleaned body text, no
+// headers. MaxMessages caps how many of that account's messages a
+// thread pull attaches (a 100-message thread serves at most N per
+// account); the per-body char cap is shared with the AI command
+// builder. MaxMessages <= 0 means the default.
 type MCPBodies struct {
 	Enabled     bool `toml:"enabled"`
 	MaxMessages int  `toml:"max_messages"`
 }
 
-// PullCap resolves the [mcp.bodies] pull cap: the configured value,
+// PullCap resolves one account's body pull cap: the configured value,
 // else the default.
 func (b MCPBodies) PullCap() int {
 	if b.MaxMessages > 0 {

@@ -442,23 +442,32 @@ The [mcp] server is an LLM-agent boundary: every tool result is metadata
 an agent may act on. The scope config is the boundary, and it is
 deny-by-default:
 
-- `[mcp] accounts` - the account folder spaces the server may see. Each
-  entry grants its folder prefix AND its account tag
-  (`folder:/^<name>\// AND tag:<name>`, subfolders included) - the
-  physical location and the logical identity, both required. A read-only
-  account can never match (its mail carries no account tag) and is a
-  load error, not a silent empty grant.
-- `[mcp] tags` - the soft tags whose mail is reachable; a message must
-  carry at least one allowed tag. The account tag is part of the account
-  grant, not this list.
-- Empty `accounts` or `tags` serves nothing. Enforcement is per-tool:
-  search/count intersect the query with the scope, thread_info projects
-  only in-scope messages, attachments refuses out-of-scope ids before
-  any file open.
+- `[mcp.accounts.<name>]` - the account folder spaces the server may
+  see, one table per granted account. Each grants its folder prefix AND
+  its account tag (`folder:/^<name>\// AND tag:<name>`, subfolders
+  included) - the physical location and the logical identity, both
+  required. A read-only account can never match (its mail carries no
+  account tag) and is a load error, not a silent empty grant. The
+  table's presence IS the grant.
+- `[mcp] tags` plus each account's own `tags` - the soft tags whose mail
+  is reachable; a message must carry at least one. The account tag is
+  part of the account grant, not this pool.
+- Capability grants are per account too: `[mcp.accounts.<name>.attachments]`,
+  `.bodies` (with its own pull cap), `.tagging`, `.apply`. A tool is
+  served when any granted account enables it; each call is admitted per
+  message by the owning account's own grant.
+- Empty accounts (or no reachable tag) serves nothing. Enforcement is
+  per-tool: search/count intersect the query with the scope, thread_info
+  projects only in-scope messages, attachments/bodies/tag/apply refuse
+  out-of-scope ids and un-granted capabilities before any file open or
+  tag write.
 
-The correctness test for this boundary is `TestMCPScopeEnforcement`
-(src/app/mcp_test.go). It is LOCKED: it must never be loosened, weakened,
-or removed without explicit user approval stated in the conversation - a
+The correctness tests for this boundary are `TestMCPScopeEnforcement`
+(the scope itself) and `TestMCPGrantIsExplicit` (the grant can only be
+widened by naming the account and enabling the capability - no config
+change opens an account or a capability by accident), both in
+src/app/mcp_test.go. They are LOCKED: never loosened, weakened, or
+removed without explicit user approval stated in the conversation - a
 change to the boundary must start with that approval, not end with a
 test edit.
 

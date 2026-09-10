@@ -592,55 +592,72 @@ the `[mcp]` data boundary below holds no matter which client started
 it. Launch it from an environment that reaches that config dir - with
 none reachable the scope is empty and every tool serves nothing.
 
-The surface is read-only by construction and every tool result is a
-record: `search` returns `{threads: [...]}`, `count` returns
+The metadata surface is read-only by construction and every tool result
+is a record: `search` returns `{threads: [...]}`, `count` returns
 `{count: N}`. Queries are intersected with the scope before they reach
-notmuch, so `tag:inbox` means "in-scope threads tagged inbox", and no
-tool reads message bodies - ask only about the metadata the tools
-return.
+notmuch, so `tag:inbox` means "in-scope threads tagged inbox".
 
-Beyond the metadata-only defaults, content-adjacent tools are gated:
-they are served only when `[mcp] allow` names them. The one such tool
-is `attachments(id)` - the attachment list of one message (name, mime,
-size per attachment; bytes never cross). Whitelist it explicitly:
-
-```toml
-[mcp]
-allow = ["attachments"]
-```
-
-An unknown name in `allow` is a startup error - a typo fails loudly
-instead of silently serving fewer tools.
+Beyond the metadata-only defaults, the content-adjacent and write tools
+are gated per account: `attachments(id)` (the attachment list of one
+message - name, mime, size; bytes never cross), `thread_bodies(...)`
+(cleaned body text, no headers), `tag(...)` and `mark_read(...)` (soft
+tags, no moves), and `apply(...)` (the non-destructive folder verbs).
+A tool is served when any account granted in `[mcp]` enables it; each
+call is then admitted per message by the grant of the account the
+message belongs to.
 
 ## The data boundary: accounts and tags
 
-The server's world is explicit: `[mcp] accounts` names the account
-folder spaces it may see, `[mcp] tags` the soft tags whose mail is
-reachable. Deny by default - an empty `accounts` or `tags` list
-serves nothing.
+The server's world is explicit and deny-by-default: `[mcp] tags` names
+the soft tags whose mail is reachable, and each `[mcp.accounts.<name>]`
+table grants one account - its folder space, its account tag, and its
+capabilities. No account table serves nothing.
 
 ```toml
 [mcp]
-allow = ["attachments"]
-accounts = ["gmail"]        # folder space AND the account tag
 tags = ["inbox", "sent"]    # a message must carry one of these
+
+[mcp.accounts.gmail]        # the name must match an [accounts.<name>]
+tags = ["work"]             # this account's own additions to [mcp] tags
+
+[mcp.accounts.gmail.attachments]
+enabled = true
+
+[mcp.accounts.gmail.bodies]
+enabled = true
+max_messages = 10           # per-account, per-thread pull cap
+
+[mcp.accounts.gmail.tagging]
+enabled = true
+
+[mcp.accounts.gmail.apply]
+enabled = true              # folder verbs; the deleted home is denied
 ```
 
-Each allowed account grants its folder prefix AND its account tag
-(`folder:/^gmail\// AND tag:gmail`, subfolders included). Every tool
-enforces the scope: `search` and `count` intersect the query with the
-scope before it reaches notmuch, `thread_info` projects only in-scope
-messages of the thread, and the gated `attachments` tool refuses any
-message outside the scope before its file is opened. An unknown
-account name, a read-only account (its mail carries no account tag,
-so the scope could never match), or a tag that would break the query
-are startup errors - never a silent partial grant.
+Each granted account contributes its folder prefix AND its account tag
+(`folder:/^gmail\// AND tag:gmail`, subfolders included); the tag lists
+are one reachable pool, so a general tag serves every granted account
+and an account's own additions apply wherever that mail lands. Every
+tool then enforces the scope: `search` and `count` intersect the query
+with the scope before it reaches notmuch, `thread_info` projects only
+in-scope messages of the thread, and the gated tools check each message
+before its file is opened or its tag written. An unknown account name,
+a read-only account (its mail carries no account tag, so the scope
+could never match), or a tag that would break the query are startup
+errors - never a silent partial grant.
+
+Grants are per account, so one account can expose bodies while another
+stays metadata-only, or allow tagging without allowing moves. A
+capability call on a message whose account does not grant it is
+refused and names the config fix.
 
 The privacy rule (never submit mail content to an LLM) is a hard
-boundary of the server: results carry thread metadata only. Bodies,
-raw maildir paths, and headers are never projected, and no tool reads
-them; the gated `attachments` tool projects attachment metadata only,
-never bytes.
+boundary of the server: results carry thread metadata only. Headers and
+raw maildir paths are never projected; body text crosses only on an
+account whose `bodies` grant enables it, attachment metadata only (never
+bytes), and body text passes the same cleaner as the `[ai-data]`
+allowlist grants. The `deleted` home is code-denied, never a config
+choice.
 
 ## AI commands
 

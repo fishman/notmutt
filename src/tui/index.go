@@ -273,8 +273,10 @@ func displayAuthor(raw string) string {
 // tagGlyphs renders up to max tags as styled glyphs in display order
 // (the tag-groups priority list supplies the order later, spec section
 // 6), each through its per-tag style (R11), falling back to the
-// default tag style. An icon entry in ui.tags.icons renders instead of
-// the name (muttrc tag-transforms). Skipped: flag-slot tags (flagTag)
+// default tag style. Icon mode renders mapped tags only - the slot is a
+// fixed strip, so an unmapped tag is not a cell here; the status bar
+// lists it. Icons off renders names instead. Skipped: flag-slot tags
+// (flagTag)
 // and the signed marker tag - they own row-start cells (flagChars,
 // signedIcon); the attachment marker tag - it owns the attachment
 // slot; account tags - the account lives in the status bar (R2),
@@ -289,7 +291,10 @@ func tagGlyphs(tags []string, max int, tagStyle func(string) sgr, t config.UITag
 		if n >= max {
 			break
 		}
-		if t.ShowIcons && t.Icons[tag] != "" {
+		if t.ShowIcons {
+			if t.Icons[tag] == "" {
+				continue
+			}
 			// icons are config glyphs (1-2 cells): natural width, one separator - padding would leave gaps
 			b.WriteString(tagStyle(tag).render(t.Icons[tag]))
 			b.WriteByte(' ')
@@ -319,7 +324,10 @@ func tagRunWidth(tags []string, max int, t config.UITags, accounts map[string]bo
 			break
 		}
 		w := runewidth.StringWidth(tag)
-		if t.ShowIcons && t.Icons[tag] != "" {
+		if t.ShowIcons {
+			if t.Icons[tag] == "" {
+				continue
+			}
 			w = runewidth.StringWidth(t.Icons[tag])
 		}
 		if n > 0 {

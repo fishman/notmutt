@@ -117,13 +117,13 @@ func accountTag(tags []string, set map[string]bool) string {
 	return core.AccountTag(tags, set)
 }
 
-// iconLegend builds the status-bar icon library for the selected
-// message: the cursor row's tagged icons render as "icon name" pairs
-// in row order. Account tags never appear - the account owns the
-// accountSegment, one surface per fact. Empty when icons are off or
-// the row has no mapped tags.
+// iconLegend builds the status-bar tag list for the selected message:
+// every tag in row order, "icon name" where mapped and the bare name
+// where not. The index row shows mapped tags only, so an unmapped tag
+// is visible here or nowhere. Account tags own the accountSegment.
+// Empty when icons are off (the index renders names then).
 func iconLegend(tags []string, t config.UITags, accounts map[string]bool) string {
-	if !t.ShowIcons || len(t.Icons) == 0 {
+	if !t.ShowIcons {
 		return ""
 	}
 	var b strings.Builder
@@ -132,15 +132,13 @@ func iconLegend(tags []string, t config.UITags, accounts map[string]bool) string
 		if accounts[tag] {
 			continue
 		}
-		icon, ok := t.Icons[tag]
-		if !ok {
-			continue
-		}
 		if n > 0 {
 			b.WriteByte(' ')
 		}
-		b.WriteString(icon)
-		b.WriteByte(' ')
+		if icon := t.Icons[tag]; icon != "" {
+			b.WriteString(icon)
+			b.WriteByte(' ')
+		}
 		b.WriteString(tag)
 		n++
 	}

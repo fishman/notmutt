@@ -19,6 +19,15 @@ interval = 10
 [pager]
 # default-views = { "linkedin.com" = "html", "substack.com" = "html" }
 
+# Tag icons. The builtin set covers the client's own tags; yours layers
+# on top without dropping them. The index row renders mapped tags only -
+# the status bar lists every tag of the cursor message, so an unmapped
+# tag is never lost.
+# [ui.tags.icons]
+# xolo = "💼"
+# cfp = "🎤"
+# exhibition = "🏛"
+
 # The mcp stdio server (notmutt mcp, built with TAGS="lua mcp") serves
 # metadata for mail in scope: [mcp] tags names the reachable soft tags,
 # each [mcp.accounts.<name>] grants one account's folder space AND its

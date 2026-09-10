@@ -22,10 +22,10 @@ func TestStatusLineSegments(t *testing.T) {
 	}
 }
 
-// TestStatusLineLegend pins the icon library: the selected message's
-// tags with icons render as "icon name" pairs in row order; unmapped
-// tags and account tags (they own the account segment) are skipped;
-// icons off renders nothing.
+// TestStatusLineLegend pins the status-bar tag list: every tag in row
+// order, "icon name" where mapped and bare where not. Account tags
+// (they own the account segment) are skipped; icons off renders
+// nothing.
 func TestStatusLineLegend(t *testing.T) {
 	ui := config.Default().UI
 	accounts := config.Default().AccountTags()
@@ -36,8 +36,11 @@ func TestStatusLineLegend(t *testing.T) {
 	if !strings.Contains(legend, ui.Tags.Icons["work"]+" work") {
 		t.Fatalf("soft tags must appear: %q", legend)
 	}
-	if strings.Contains(legend, "unmapped") {
-		t.Fatalf("tags without icons must be skipped: %q", legend)
+	if !strings.Contains(legend, "unmapped") {
+		t.Fatalf("a tag with no icon still lists, bare: %q", legend)
+	}
+	if !strings.Contains(legend, ui.Tags.Icons["work"]+" work unmapped") {
+		t.Fatalf("an unmapped tag lists bare, no glyph: %q", legend)
 	}
 	if strings.Contains(legend, "gmail") {
 		t.Fatalf("account tags must not leak into the legend: %q", legend)

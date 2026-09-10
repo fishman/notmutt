@@ -1392,13 +1392,14 @@ func Default() Config {
 				Max:       2,
 				Attach:    "attachment",
 				ShowIcons: true,
+				// the client's own tags; personal icons merge over these in the user config
 				Icons: map[string]string{
 					"attachment": "📎", "archive": "📦", "deleted": "🗑",
 					"draft": "✏️", "sent": "📤", "spam": "🚫", "pending": "⏰", "inbox": "📥",
-					"unread": "✉", "xolo": "💼", "work": "🏢",
+					"unread": "✉", "work": "🏢",
 					"receipt": "🧾", "important": "⭐", "todo": "✅",
-					"later": "⏳", "personal": "👤", "cfp": "🎤",
-					"conference": "🎫", "exhibition": "🏛", "flagged": "🚩",
+					"later": "⏳", "personal": "👤",
+					"conference": "🎫", "flagged": "🚩",
 					"signed": "🔒", "meeting": "📅", "newsletter": "📰",
 					"forwarded": "↪",
 				},

@@ -298,6 +298,69 @@ func (v *View) rowsLocked() []Row {
 	return v.filterRows
 }
 
+// FullRows is the whole index as rows: every thread expanded and
+// unwindowed, the display filter applied exactly like Rows so a search
+// can only land where the view can show. The search scan's surface - a
+// match a fold or a collapse hides is still findable. Never memoized:
+// the search prompt is not a paint loop.
+func (v *View) FullRows() []Row {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	var rows []Row
+	for _, t := range v.Threads {
+		rows = append(rows, flattenThread(t, false, v.threaded, v.msgDesc)...)
+	}
+	if v.filter == "" {
+		return rows
+	}
+	out := rows[:0]
+	for _, r := range rows {
+		if rowMatches(r, v.filter) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// RevealMsg makes the message visible and returns its row index in the
+// current emission: a collapsed thread expands - a match inside means
+// the thread is worth reading - and a windowed thread slides until the
+// message sits inside the window. The cursor anchor moves there. -1
+// when the id is not in the view.
+func (v *View) RevealMsg(id string) int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, t := range v.Threads {
+		full := flattenThread(t, false, v.threaded, v.msgDesc)
+		at := -1
+		for i, r := range full {
+			if r.Msg != nil && r.Msg.ID == id {
+				at = i
+				break
+			}
+		}
+		if at < 0 {
+			continue
+		}
+		t.Collapsed = false
+		if v.winRows > 0 && len(full) > v.winRows && (at < t.WinStart || at >= t.WinStart+v.winRows) {
+			t.WinStart = max(0, min(at-v.winRows/2, len(full)-v.winRows))
+		}
+		v.dirty = true
+		v.cursorID = id
+		v.rows = v.rowsLocked()
+		v.dirty = false
+		for i, r := range v.rows {
+			if r.Msg != nil && r.Msg.ID == id {
+				v.lastRow = i
+				return i
+			}
+		}
+		return -1
+	}
+	return -1
+}
+
 // rowMatches is the filter predicate: a case-insensitive substring
 // over author, subject, and tag names (the F filter).
 func rowMatches(r Row, f string) bool {

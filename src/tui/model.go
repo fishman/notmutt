@@ -166,10 +166,6 @@ type Model struct {
 	// searchQuery is the / key's pattern: matching rows highlight, n
 	// jumps to the next match. Empty = no active search.
 	searchQuery string
-	// pendingCollapse is the C-collapsed thread: the collapse is
-	// cursor-scoped, so moving off it expands again. Empty = no pending
-	// escape (ctrl+v's flat mode is persistent, not scoped).
-	pendingCollapse string
 	// imgProto is the terminal's image protocol ("" = unsupported);
 	// imgCache the decoded+scaled images; painted the terminal's rects
 	// (paint-diff source). imgMode is the load-remote-images toggle (0
@@ -1186,8 +1182,8 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		deferred = true
 	case "collapse-thread":
 		// the C key: the cursor thread collapses to its root row or
-		// expands back. A collapse arms the escape: the thread expands
-		// again when the cursor moves off it.
+		// expands back. The collapse sticks until toggled again -
+		// motion passes over it, never through it.
 		if m.mode == "index" {
 			rows := m.activeView().Rows()
 			m.rows = rows
@@ -1195,11 +1191,6 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 			if idx >= 0 && idx < len(rows) && rows[idx].Msg != nil {
 				threadID := rows[idx].ThreadID
 				m.activeView().ToggleCollapsed(threadID)
-				if m.activeView().Collapsed(threadID) {
-					m.pendingCollapse = threadID
-				} else if m.pendingCollapse == threadID {
-					m.pendingCollapse = ""
-				}
 				m.rows = m.activeView().Rows()
 				m.clampIndexOffset()
 				deferPaint()
@@ -1343,7 +1334,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.pageDown()
 		} else if m.mode == "index" {
-			m.moveCursor(m.pageRows())
+			m.scrollCursor(m.pageRows())
 		}
 		deferPaint()
 		deferred = true
@@ -1353,7 +1344,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.pageUp()
 		} else if m.mode == "index" {
-			m.moveCursor(-m.pageRows())
+			m.scrollCursor(-m.pageRows())
 		}
 		deferPaint()
 		deferred = true
@@ -1363,7 +1354,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.halfPageDown()
 		} else if m.mode == "index" {
-			m.moveCursor(m.pageRows() / 2)
+			m.scrollCursor(m.pageRows() / 2)
 		}
 		deferPaint()
 		deferred = true
@@ -1373,7 +1364,7 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 		} else if m.mode == "compose" && m.previewPager != nil {
 			m.previewPager.halfPageUp()
 		} else if m.mode == "index" {
-			m.moveCursor(-(m.pageRows() / 2))
+			m.scrollCursor(-(m.pageRows() / 2))
 		}
 		deferPaint()
 		deferred = true
@@ -2883,15 +2874,60 @@ func (m Model) cursorTags() []string {
 	return tags
 }
 
-// moveCursor moves the index cursor n rows (a counted move loops
-// single steps so edge crossings page). The window holds still within
-// the page; only at a page edge does it jump a full page. Stepping is
-// index-local against the cached rows; the view records the cursor on
-// every move (O(1) paint reads, no flatten).
+// moveCursor moves the index cursor n LINES: the target is the emitted
+// row n rows away, so the line number in the number slot is the line the
+// cursor lands on - a folded or collapsed thread counts as the rows it
+// shows, never as its hidden tail. A ghost row is not a landing spot:
+// the target snaps to the nearest real row in the direction of travel.
+// The window follows the target (anchorLineAt).
 func (m *Model) moveCursor(delta int) {
 	rows := m.activeView().Rows()
 	m.rows = rows
-	if len(rows) == 0 {
+	if len(rows) == 0 || delta == 0 {
+		return
+	}
+	dir := 1
+	if delta < 0 {
+		dir = -1
+	}
+	m.land(rows, cursorLandAt(rows, max(0, min(m.CursorIndex()+delta, len(rows)-1)), dir))
+}
+
+// land is the single landing point for a line move: the view records
+// the anchor and the window pages to hold the line.
+func (m *Model) land(rows []core.Row, idx int) {
+	m.setCursorAt(rows, idx)
+	m.anchorLineAt(rows, idx)
+}
+
+// anchorLineAt pages the window to hold a line target: the window holds
+// while the target is inside it, a crossing turns whole pages, and the
+// partial page at the tail anchors on the target so a long jump stays
+// visible.
+func (m *Model) anchorLineAt(rows []core.Row, idx int) {
+	h := m.listHeight()
+	for idx < m.indexOffset {
+		m.indexOffset = max(0, m.indexOffset-h)
+	}
+	for idx > m.indexOffset+h-1 {
+		next := min(m.indexOffset+h, max(0, len(rows)-h))
+		if next <= m.indexOffset {
+			break // the tail page is already anchored over the target
+		}
+		m.indexOffset = next
+	}
+	m.clampIndexOffset()
+}
+
+// scrollCursor is the page walk (page-down/up and the half pages): the
+// read position moves a page through the window, sliding a folded
+// thread's tree window at its edges so a thread deeper than the window
+// stays readable page by page. Steps are single rows; the window slide
+// is the only move that holds the cursor's screen row.
+func (m *Model) scrollCursor(delta int) {
+	rows := m.activeView().Rows()
+	m.rows = rows
+	if len(rows) == 0 || delta == 0 {
 		return
 	}
 	m.clampIndexOffset()
@@ -2902,10 +2938,6 @@ func (m *Model) moveCursor(delta int) {
 		n = -n
 		step = -1
 	}
-	// a single down step crossing the page bottom may snap the page to
-	// the cursor thread's head (the j/k scroll snap); counted moves
-	// (page down, search, goto) keep the plain flip
-	snap := n == 1 && delta > 0
 	for i := 0; i < n; i++ {
 		if m.windowSlideAt(rows, idx, step) {
 			// the window moved under the cursor: the emission re-flattens
@@ -2917,15 +2949,7 @@ func (m *Model) moveCursor(delta int) {
 		}
 		idx = cursorStepAt(rows, idx, step)
 		m.setCursorAt(rows, idx)
-		if m.collapseEscapeAt(rows, idx, step) {
-			// the step left the C-collapsed thread: the expansion
-			// re-flattens, the cursor stays on the destination (the view
-			// re-anchored it by id)
-			rows = m.activeView().Rows()
-			m.rows = rows
-			idx = m.CursorIndex()
-		}
-		idx = m.pageAtEdgeAt(rows, idx, snap)
+		idx = m.pageAtEdgeAt(rows, idx)
 	}
 }
 
@@ -2955,54 +2979,37 @@ func (m *Model) windowSlideAt(rows []core.Row, idx, step int) bool {
 	return m.activeView().SlideWindow(r.ThreadID, step)
 }
 
-// collapseEscapeAt expands the pending C-collapsed thread when the
-// cursor stepped off it: the collapse is a cursor-scoped view, so
-// leaving the thread restores its tree. The previous real row in the
-// move direction names the thread left (ghosts pass through). False
-// when the cursor still rests on the collapsed row or the step could
-// not move.
-func (m *Model) collapseEscapeAt(rows []core.Row, idx, step int) bool {
-	if m.pendingCollapse == "" {
-		return false
-	}
-	r := rows[idx]
-	if r.Msg == nil || r.ThreadID == m.pendingCollapse {
-		return false
-	}
-	prev := idx
-	for {
-		prev -= step
-		if prev < 0 || prev >= len(rows) {
-			return false
-		}
-		if rows[prev].Msg != nil {
-			break
-		}
-	}
-	if rows[prev].ThreadID != m.pendingCollapse {
-		return false
-	}
-	m.activeView().SetCollapsed(m.pendingCollapse, false)
-	m.pendingCollapse = ""
-	return true
-}
-
 // searchNext jumps the cursor to the next search match at or after
-// the current row (the / prompt's enter and the n key). The scan
-// wraps; a miss logs the notice and leaves the cursor. The move goes
-// through moveCursor so the window pages like any counted move.
+// the current message (the / prompt's enter and the n key). The scan
+// runs over every thread's full tree, so a match a fold or a collapse
+// hides is found: its thread expands, its window slides to reveal the
+// row, and the cursor lands on that line. The scan wraps; a miss logs
+// the notice and leaves the cursor.
 func (m *Model) searchNext() {
-	rows := m.activeView().Rows()
-	m.rows = rows
-	if len(rows) == 0 {
-		return
+	v := m.activeView()
+	full := v.FullRows()
+	start := 0
+	if cur, ok := v.CursorRow(); ok && cur.Msg != nil {
+		for i, r := range full {
+			if r.Msg != nil && r.Msg.ID == cur.Msg.ID {
+				start = i + 1
+				break
+			}
+		}
 	}
-	idx := nextMatch(rows, m.CursorIndex()+1, m.searchQuery)
+	idx := nextMatch(full, start, m.searchQuery)
 	if idx < 0 {
 		m.logEntry("search: no match", false)
 		return
 	}
-	m.moveCursor(idx - m.CursorIndex())
+	at := v.RevealMsg(full[idx].Msg.ID)
+	if at < 0 {
+		m.logEntry("search: no match", false)
+		return
+	}
+	rows := v.Rows()
+	m.rows = rows
+	m.land(rows, at)
 }
 
 // nextMatch finds the first real row at or after start (wrapping)
@@ -3047,24 +3054,16 @@ func cursorStepAt(rows []core.Row, idx, dir int) int {
 	return idx
 }
 
-// pageAtEdgeAt jumps the window a full page when the cursor crossed a
-// page edge (the read-position model): crossing the bottom lands on
-// the new page's first line, the top on its last. A single down step
-// crossing the bottom inside a windowed thread snaps instead
-// (pageSnapAt): the window advances to the next chunk and the page
-// re-anchors at the thread head. Returns the possibly re-anchored
-// cursor index.
-func (m *Model) pageAtEdgeAt(rows []core.Row, idx int, snap bool) int {
+// pageAtEdgeAt jumps the window a full page when the page walk crossed
+// a page edge (the read-position model): crossing the bottom lands on
+// the new page's first line, the top on its last. Returns the possibly
+// re-anchored cursor index.
+func (m *Model) pageAtEdgeAt(rows []core.Row, idx int) int {
 	if len(rows) == 0 {
 		return idx
 	}
 	h := m.listHeight()
 	if idx > m.indexOffset+h-1 {
-		if snap {
-			if i := m.pageSnapAt(rows, idx); i >= 0 {
-				return i
-			}
-		}
 		m.indexOffset = min(m.indexOffset+h, len(rows)-h)
 		idx = cursorLandAt(rows, m.indexOffset, 1)
 		m.setCursorAt(rows, idx)
@@ -3077,56 +3076,6 @@ func (m *Model) pageAtEdgeAt(rows []core.Row, idx int, snap bool) int {
 		return idx
 	}
 	return idx
-}
-
-// pageSnapAt snaps a bottom-edge crossing to the cursor thread's head:
-// the window advances to the next chunk boundary and the page re-
-// anchors at the thread's head (its leading "+N more" ghost when the
-// window is cut). The boundary arithmetic absorbs the one-row walk
-// before the crossing, so the snap jumps the page, never past it.
-// Refuses when the thread has no hidden tail or the window cannot
-// advance. Returns the re-anchored cursor index, -1 on refuse.
-func (m *Model) pageSnapAt(rows []core.Row, idx int) int {
-	r := rows[idx]
-	if r.Msg == nil || r.ThreadID == "" {
-		return -1
-	}
-	j := idx
-	for j+1 < len(rows) && rows[j+1].Msg != nil && rows[j+1].ThreadID == r.ThreadID {
-		j++
-	}
-	if rows[j].More <= 0 {
-		return -1 // no hidden tail: the window cannot advance
-	}
-	win := m.activeView().WindowRows()
-	if win <= 0 {
-		return -1
-	}
-	// the next chunk boundary: the boundary walk before the crossing
-	// already advanced the window one row - the chunk jump absorbs it
-	// instead of adding it
-	start := m.activeView().WindowStart(r.ThreadID)
-	next := ((start + win) / win) * win
-	if !m.activeView().SlideWindow(r.ThreadID, next-start) {
-		return -1
-	}
-	rows = m.activeView().Rows()
-	m.rows = rows
-	for i := 0; i < len(rows); i++ {
-		if rows[i].Msg != nil && rows[i].ThreadID == r.ThreadID {
-			// a top ghost starts the page with the hidden-above count
-			// visible, mirroring the tail ghost under the window
-			first := i
-			if i > 0 && rows[i-1].MoreTop > 0 {
-				first = i - 1
-			}
-			m.indexOffset = first
-			m.clampIndexOffset()
-			m.setCursorAt(rows, i)
-			return i
-		}
-	}
-	return -1
 }
 
 // cursorLandAt anchors on the nearest real row from idx, walking dir
@@ -3224,12 +3173,6 @@ func (m *Model) cursorEdge(dir int) {
 	}
 	for i >= 0 && i < len(rows) {
 		if rows[i].Msg != nil {
-			// an edge jump off the C-collapsed thread expands it (the
-			// escape is scoped to the cursor's row, not the walk)
-			if m.pendingCollapse != "" && rows[i].ThreadID != m.pendingCollapse {
-				m.activeView().SetCollapsed(m.pendingCollapse, false)
-				m.pendingCollapse = ""
-			}
 			m.setCursorAt(rows, i)
 			return
 		}

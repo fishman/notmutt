@@ -5313,11 +5313,10 @@ func TestModelCollapseThread(t *testing.T) {
 	}
 }
 
-// TestModelCollapseEscapesOnMove pins the collapse escape: the C
-// collapse is cursor-scoped - moving the cursor off the collapsed
-// thread expands it again. A manual C expand clears the escape; an
-// edge jump (G) off the thread expands it too.
-func TestModelCollapseEscapesOnMove(t *testing.T) {
+// TestCollapsedThreadStaysCollapsedOnMove pins the persistent collapse:
+// a C-collapsed thread counts as the single row it shows, and moving
+// over it (j, k, G) leaves it collapsed - only the C toggle expands it.
+func TestCollapsedThreadStaysCollapsedOnMove(t *testing.T) {
 	cfg := config.Default()
 	st := config.NewStore(cfg)
 	view := core.NewView("inbox", "tag:inbox")
@@ -5334,36 +5333,32 @@ func TestModelCollapseEscapesOnMove(t *testing.T) {
 	if rows := m.view.Rows(); len(rows) != 3 {
 		t.Fatalf("collapse must leave 3 rows, got %d", len(rows))
 	}
-	// the next step leaves the collapsed thread: it expands, the cursor
-	// lands on t2
+	// j lands on line 2 (t2): the collapse holds
 	m = press(t, m, "j")
-	rows := m.view.Rows()
-	if len(rows) != 4 {
-		t.Fatalf("leaving the collapsed thread must expand it, got %d rows", len(rows))
+	if r, _ := m.view.CursorRow(); r.Msg == nil || r.Msg.ID != "c" {
+		t.Fatalf("j must land on t2, got %+v", r.Msg)
 	}
-	r, _ := m.view.CursorRow()
-	if r.Msg == nil || r.Msg.ID != "c" {
-		t.Fatalf("the cursor must land on t2, got %+v", r.Msg)
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("the collapsed thread must stay collapsed, got %d rows", len(rows))
 	}
-	// a manual expand clears the escape: moving away keeps the tree
+	// k returns to line 1, G jumps to line 3: still collapsed
 	m = press(t, m, "k")
-	m = press(t, m, "C") // collapse t1 again
-	m = press(t, m, "C") // expand manually
-	m = press(t, m, "j")
-	if rows := m.view.Rows(); len(rows) != 4 {
-		t.Fatalf("a manually expanded thread must stay expanded, got %d rows", len(rows))
+	if r, _ := m.view.CursorRow(); r.Msg == nil || r.Msg.ID != "a" {
+		t.Fatalf("k must land on the collapsed row, got %+v", r.Msg)
 	}
-	// an edge jump off the collapsed thread expands it too
-	m = press(t, m, "k")
-	m = press(t, m, "C") // collapse t1 again
 	m = press(t, m, "G")
-	rows = m.view.Rows()
-	if len(rows) != 4 {
-		t.Fatalf("an edge jump off the collapsed thread must expand it, got %d rows", len(rows))
+	if r, _ := m.view.CursorRow(); r.Msg == nil || r.Msg.ID != "d" {
+		t.Fatalf("G must land on the last line, got %+v", r.Msg)
 	}
-	r, _ = m.view.CursorRow()
-	if r.Msg == nil || r.Msg.ID != "d" {
-		t.Fatalf("G must land on the last row, got %+v", r.Msg)
+	if rows := m.view.Rows(); len(rows) != 3 {
+		t.Fatalf("an edge jump must not expand the collapse, got %d rows", len(rows))
+	}
+	// the C toggle is the only way back
+	m = press(t, m, "k")
+	m = press(t, m, "k")
+	m = press(t, m, "C")
+	if rows := m.view.Rows(); len(rows) != 4 {
+		t.Fatalf("C must expand the thread again, got %d rows", len(rows))
 	}
 }
 
@@ -6662,12 +6657,12 @@ func TestFilePickerMark(t *testing.T) {
 	}
 }
 
-// TestWindowSlidesWithCursor pins the bounded tree window navigation
-// (R3): stepping past a thread's window edge slides the window instead
-// of leaving the thread - the cursor keeps its row while the revealed
-// message lands under it; at the tail the step crosses into the next
-// thread; stepping up slides back to the root.
-func TestWindowSlidesWithCursor(t *testing.T) {
+// TestLineMoveSkipsFoldedTail pins the line model over a bounded tree
+// window (R3): j/k step emitted lines, so a fold counts as the rows it
+// shows and a step off its last row crosses into the next thread -
+// the hidden tail is reached by paging (scrollCursor), never by a step
+// that slides the window under the cursor.
+func TestLineMoveSkipsFoldedTail(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
 		core.NewThread("t0", threadChain(40)),
@@ -6682,55 +6677,36 @@ func TestWindowSlidesWithCursor(t *testing.T) {
 		}
 		return r.Msg.ID
 	}
-	// nine steps: m10 at the window edge, the window still at the root
+	// the emission: the window's ten rows, the "+30 more" ghost, then t1
+	if rows := view.Rows(); len(rows) != 12 || !rows[10].Ghost || rows[10].More != 30 {
+		t.Fatalf("fixture wrong: %d rows, row 11 %+v", len(rows), rows[10])
+	}
+	// nine steps: m10, the window's last row
 	for i := 0; i < 9; i++ {
 		m = press(t, m, "j")
 	}
 	if cursorID() != "m10" || m.CursorIndex() != 9 {
-		t.Fatalf("cursor must rest on m10 at the window edge, got %s @ %d", cursorID(), m.CursorIndex())
+		t.Fatalf("cursor must rest on the window's last row, got %s @ %d", cursorID(), m.CursorIndex())
 	}
-	if r, _ := m.view.CursorRow(); r.Msg.ID != "m10" {
-		t.Fatalf("window must still show the root rows: %s", r.Msg.ID)
-	}
-	// the tenth step slides: the window leaves the root, so the top
-	// indicator materializes above it and the cursor lands one row down
-	// with the revealed message under it
+	// the next line is the ghost: the step crosses into the next thread,
+	// skipping the thread's hidden tail, and the window never slides
 	m = press(t, m, "j")
-	if cursorID() != "m11" || m.CursorIndex() != 10 {
-		t.Fatalf("the step must land on the revealed row at the same position: %s @ %d", cursorID(), m.CursorIndex())
+	if cursorID() != "other" || m.CursorIndex() != 11 {
+		t.Fatalf("the step must skip the folded tail, got %s @ %d", cursorID(), m.CursorIndex())
 	}
-	// the emission re-read: the top indicator leads the window at m2
-	// (plus the overflow indicator row and the second thread)
-	rows := view.Rows()
-	if !rows[0].Ghost || rows[0].MoreTop != 1 || rows[1].Msg.ID != "m2" || len(rows) != 13 {
-		t.Fatalf("the window must slide under the cursor: first=%+v rows=%d", rows[0], len(rows))
+	if rows := view.Rows(); rows[0].Msg.ID != "m1" || rows[0].Ghost {
+		t.Fatalf("the window must not slide under a line move: %+v", rows[0])
 	}
-	// 29 more steps reach the tail (m40); the window slides each time
-	for i := 0; i < 29; i++ {
-		m = press(t, m, "j")
-	}
-	if cursorID() != "m40" {
-		t.Fatalf("39 steps must reach the thread tail, got %s", cursorID())
-	}
-	// the tail step crosses into the next thread (the window is exhausted)
-	m = press(t, m, "j")
-	if cursorID() != "other" {
-		t.Fatalf("the step past the tail must cross into the next thread, got %s", cursorID())
-	}
-	// stepping up slides back: 40 steps return to m1 at the root
+	// and back up: the ghost is no landing spot either
 	m = press(t, m, "k")
-	if cursorID() != "m40" {
-		t.Fatalf("k must return to the thread tail, got %s", cursorID())
+	if cursorID() != "m10" || m.CursorIndex() != 9 {
+		t.Fatalf("k must return to the window's last row, got %s @ %d", cursorID(), m.CursorIndex())
 	}
-	for i := 0; i < 39; i++ {
-		m = press(t, m, "k")
-	}
-	if cursorID() != "m1" || m.CursorIndex() != 0 {
-		t.Fatalf("40 up-steps must return to the root row, got %s @ %d", cursorID(), m.CursorIndex())
-	}
-	rows = view.Rows()
-	if rows[0].Msg.ID != "m1" {
-		t.Fatalf("the window must be back at the thread root: %s", rows[0].Msg.ID)
+	// paging still walks the window: the tail is reached page by page
+	// (pinned in detail by TestPageDownPagesPlainly)
+	m = press(t, m, "pgdown")
+	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop == 0 {
+		t.Fatalf("a page must slide the window into the hidden tail: %+v", rows[0])
 	}
 }
 
@@ -6801,14 +6777,12 @@ func TestPageDownFoldKeepsPlainFlip(t *testing.T) {
 	}
 }
 
-// TestScrollSnapsToThreadHead pins the j-scroll snap: a down step
-// crossing the page bottom inside a windowed thread advances the
-// window to the next chunk boundary and re-anchors the page at the
-// thread head - the top becomes "beginning of thread -1" (the leading
-// "+N more" ghost when the window is cut). The snap repeats chunk by
-// chunk; once the tail is reached the crossing flips plainly - page
-// down keeps the plain flip, a counted move never snaps.
-func TestScrollSnapsToThreadHead(t *testing.T) {
+// TestLineMoveTurnsPagePlainly pins the line move at the page bottom
+// inside a folded thread: the crossing turns a whole page and lands on
+// the next line (m6 at the page top), never re-anchoring at the thread
+// head - and the fold's window stays where it was. The thread's hidden
+// tail is reached by paging, not by the step.
+func TestLineMoveTurnsPagePlainly(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
 		core.NewThread("t0", threadChain(40)),
@@ -6831,39 +6805,156 @@ func TestScrollSnapsToThreadHead(t *testing.T) {
 	if cursorID() != "m5" || m.indexOffset != 0 {
 		t.Fatalf("fixture wrong: four steps must reach the bottom, got %s @ %d", cursorID(), m.indexOffset)
 	}
-	// the bottom crossing snaps to the thread head even though the head
-	// is still on the page
+	// the crossing turns the page onto the next line
 	m = press(t, m, "j")
-	if cursorID() != "m11" || m.indexOffset != 0 {
-		t.Fatalf("the bottom crossing must snap to the thread head, got %s @ %d", cursorID(), m.indexOffset)
+	if cursorID() != "m6" || m.indexOffset != 5 {
+		t.Fatalf("the bottom crossing must turn a page onto the next line, got %s @ %d", cursorID(), m.indexOffset)
 	}
-	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop != 10 {
-		t.Fatalf("the head ghost must start the page: %+v", rows[0])
+	// the fold above is untouched: the emission still starts at m1, no
+	// window slide and no top ghost
+	if rows := view.Rows(); rows[0].Msg.ID != "m1" || rows[0].Ghost {
+		t.Fatalf("the page turn must not slide the fold: %+v", rows[0])
 	}
-	// the snap repeats chunk by chunk until the tail (three in-page
-	// steps, then the crossing snap)
-	for _, want := range []string{"m21", "m31"} {
-		for i := 0; i < 3; i++ {
-			m = press(t, m, "j")
-		}
+	// within the page the lines count one by one; the ghost line under
+	// the window's last row is no landing spot (the thread ends there)
+	for _, want := range []string{"m7", "m8", "m9", "m10"} {
 		m = press(t, m, "j")
-		if cursorID() != want || m.indexOffset != 0 {
-			t.Fatalf("the snap must reach %s, got %s @ %d", want, cursorID(), m.indexOffset)
+		if cursorID() != want || m.indexOffset != 5 {
+			t.Fatalf("the page must hold to %s, got %s @ %d", want, cursorID(), m.indexOffset)
 		}
 	}
-	// the tail chunk is exhausted: the crossing flips plainly
-	for i := 0; i < 3; i++ {
-		m = press(t, m, "j")
-	}
 	m = press(t, m, "j")
-	if cursorID() != "m35" || m.indexOffset != 5 {
-		t.Fatalf("the tail crossing must flip plainly, got %s @ %d", cursorID(), m.indexOffset)
+	if cursorID() != "m10" || m.indexOffset != 5 {
+		t.Fatalf("the ghost line must not move the cursor, got %s @ %d", cursorID(), m.indexOffset)
 	}
-	// page down keeps the raw flip: a counted move never snaps
+	// paging reveals the hidden tail: the window slides and the page
+	// re-anchors (the read-position model, pinned by TestPageDown*)
 	m = press(t, m, "pgdown")
-	if cursorID() != "m36" || m.indexOffset != 6 {
-		t.Fatalf("page down must raw-scroll at the tail, got %s @ %d", cursorID(), m.indexOffset)
+	rows := view.Rows()
+	if !rows[0].Ghost || rows[0].MoreTop == 0 {
+		t.Fatalf("a page must slide the window into the hidden tail: %+v", rows[0])
 	}
+	found := false
+	for _, r := range rows {
+		if r.Msg != nil && r.Msg.ID == "m11" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the page must reveal the row under the window: %d rows", len(rows))
+	}
+}
+
+// foldModel is the line-motion fixture: chain (40 messages) whose tree
+// window shows ten rows plus the "+30 more" ghost, then n single-message
+// threads. Threads sort newest-first, so the chain carries the newest
+// timestamps and leads the index.
+func foldModel(chain []*core.Message, extra int) (Model, *core.View) {
+	view := core.NewView("inbox", "tag:inbox")
+	threads := []*core.Thread{core.NewThread("t0", chain)}
+	for i := 0; i < extra; i++ {
+		threads = append(threads, core.NewThread(fmt.Sprintf("th%d", i), []*core.Message{{
+			ID: fmt.Sprintf("x%d", i), Timestamp: int64(-1 - i), Author: "Bob", Subject: "t", Tags: []string{"inbox"}}}))
+	}
+	view.MergeThreads(threads)
+	view.SetWindowBudget(10)
+	return sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)), view
+}
+
+// TestLineMoveCountsEmittedRows pins the line semantics: a goto or a
+// counted move lands on the emitted row with that number. The folded
+// thread above counts as the rows it shows, so 17G skips past them to
+// line 17 - the fold's window never slides under the cursor.
+func TestLineMoveCountsEmittedRows(t *testing.T) {
+	m, view := foldModel(threadChain(40), 8)
+	rows := view.Rows()
+	// the window's ten rows, the "+30 more" ghost, then x0..x7
+	if len(rows) != 19 || !rows[10].Ghost || rows[10].More != 30 || rows[16].Msg == nil {
+		t.Fatalf("fixture wrong: %d rows, row 11 %+v", len(rows), rows[10])
+	}
+	m = press(t, m, "1")
+	m = press(t, m, "7")
+	m = press(t, m, "g")
+	if got := m.CursorIndex(); got != 16 {
+		t.Fatalf("17g must land on index 16, got %d", got)
+	}
+	r, _ := m.view.CursorRow()
+	if r.Msg.ID != "x5" {
+		t.Fatalf("17g must land on the row line 17 shows (x5), got %s", r.Msg.ID)
+	}
+	if rows = view.Rows(); rows[0].Msg.ID != "m1" || rows[0].Ghost {
+		t.Fatalf("the fold must not slide under a line move: %+v", rows[0])
+	}
+	// the ghost line is no landing spot: it snaps to the fold's last real
+	// row, the nearest one in the direction of travel
+	m = press(t, m, "1")
+	m = press(t, m, "1")
+	m = press(t, m, "g")
+	r, _ = m.view.CursorRow()
+	if r.Msg.ID != "m10" {
+		t.Fatalf("line 11 is the ghost row: it must snap to m10, got %s", r.Msg.ID)
+	}
+}
+
+// TestSearchRevealsHiddenMatch pins the search reveal: the scan runs
+// over every thread's full tree, so a match a fold or a collapse hides
+// is found - the thread slides its window (or expands), the view pages
+// to the match, and the cursor lands on it (both / and n).
+func TestSearchRevealsHiddenMatch(t *testing.T) {
+	needleChain := func() []*core.Message {
+		msgs := threadChain(40)
+		msgs[24].Subject = "needle report"
+		msgs[39].Subject = "needle again"
+		return msgs
+	}
+	search := func(t *testing.T, m Model, query string) Model {
+		t.Helper()
+		m = press(t, m, "/")
+		for _, k := range query {
+			m = press(t, m, string(k))
+		}
+		return press(t, m, "enter")
+	}
+	visible := func(t *testing.T, m Model) {
+		t.Helper()
+		idx, lo := m.CursorIndex(), m.indexOffset
+		if idx < lo || idx > lo+m.listHeight()-1 {
+			t.Fatalf("the match must be on screen: cursor %d, page [%d,%d)", idx, lo, lo+m.listHeight())
+		}
+	}
+	// the fold: m25 sits outside the window
+	m, view := foldModel(needleChain(), 8)
+	m.height = 8 // listHeight 5: the reveal must page the viewport too
+	m = search(t, m, "needle")
+	r, _ := m.view.CursorRow()
+	if r.Msg == nil || r.Msg.ID != "m25" {
+		t.Fatalf("/ must reveal the folded match, got %+v", r.Msg)
+	}
+	if rows := view.Rows(); rows[0].MoreTop == 0 {
+		t.Fatalf("the window must slide to the match: %+v", rows[0])
+	}
+	visible(t, m)
+	// n moves to the next match, far below: the window and the page
+	// follow it
+	m = press(t, m, "n")
+	r, _ = m.view.CursorRow()
+	if r.Msg == nil || r.Msg.ID != "m40" {
+		t.Fatalf("n must reveal the next folded match, got %+v", r.Msg)
+	}
+	visible(t, m)
+	// the collapse: the whole thread is one row
+	m, view = foldModel(needleChain(), 8)
+	m.height = 8
+	m = press(t, m, "C")
+	if rows := view.Rows(); len(rows) != 9 {
+		t.Fatalf("collapse must leave one row for the thread, got %d", len(rows))
+	}
+	m = search(t, m, "needle")
+	r, _ = m.view.CursorRow()
+	if r.Msg == nil || r.Msg.ID != "m25" {
+		t.Fatalf("/ must reveal a match inside a collapsed thread, got %+v", r.Msg)
+	}
+	visible(t, m)
 }
 
 // TestTaskOverlay: the task view (T) lists the running background tasks

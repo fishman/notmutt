@@ -38,7 +38,7 @@ every key is described there and rebindable.
 | ctrl+d / ctrl+u | half-page scroll |
 | pgdown / pgup | page scroll |
 | h / l, left / right | scroll horizontally (rows longer than the window pan, never wrap) |
-| C | collapse the cursor thread to its summary row (cursor-scoped) |
+| C | collapse the cursor thread to its summary row (persistent) |
 | ctrl+v | flatten every thread to one row, or expand the whole index back |
 | [ / ] | previous / next tab |
 | ? | help |
@@ -57,25 +57,32 @@ fills in the tab strip and the current surface stays.
 The index renders each thread as a tree, windowed to
 `[index.thread] max-rows`: a thread bigger than the window shows its
 chunk with a leading "-N more" ghost (rows hidden above) and a trailing
-"+N more" ghost (rows hidden below). Walking to the window edge slides
-it to the next chunk, so the whole thread is reachable row by row.
+"+N more" ghost (rows hidden below). Paging slides the window to the
+next chunk, so the whole thread is reachable page by page.
 `[index.thread] sort` orders the flattened rows inside a thread:
 `"desc"` (the default) reads newest-first like the index, `"asc"` the
 notmuch-native oldest-first order.
 
-`C` collapses the cursor thread to its summary row. The collapse is
-cursor-scoped: moving the cursor off the thread expands it again, so a
-thread never stays hidden after the cursor moved past. `ctrl+v`
-flattens every thread to one row (or restores the full tree) and is
-persistent - it survives cursor movement until toggled back.
+The number slot is the line number: `j`/`k`, `Ng` (goto line), `G`, and
+the search land on emitted lines, so a folded or collapsed thread counts
+as the rows it shows, never as its hidden tail - a step off its last row
+crosses into the next thread. A ghost row is no landing spot: the cursor
+snaps to the nearest real row in the direction of travel.
 
-At the bottom of the page, a single `j`/down step snaps the page to
-the cursor thread's head: the thread window advances to its next chunk
-and the page re-anchors at the beginning of the thread - 1, with the
-leading "+N more" ghost on top when the window is cut. `pgdown`/`pgup`
-flip the page plainly without re-anchoring - the cursor lands on the
-new page's first (or last) row, in whatever thread it finds there.
-Enter opens the cursor message only, never the whole thread.
+`C` collapses the cursor thread to its summary row; the collapse is
+persistent - moving over it leaves it collapsed, only another `C`
+expands it. `ctrl+v` flattens every thread to one row (or restores the
+full tree).
+
+`/` searches the whole index, including rows a fold or a collapse
+hides: the match's thread reveals it (window slide or expand), the page
+scrolls to the match, and `n` repeats from there.
+
+At the page bottom a `j`/down step turns the page and lands on the next
+line; `pgdown`/`pgup` walk the thread window instead, revealing the
+chunk that the fold hides (the read-position model: a page keeps its
+offset, the window moves under it). Enter opens the cursor message only,
+never the whole thread.
 
 ### Pager
 

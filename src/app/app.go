@@ -180,9 +180,15 @@ func Run() error {
 		diag.Warn("filter: disabled", "err", rootErr.Error())
 	}
 
+	env := applyEnv{
+		worker: worker, bus: bus, views: views, cfg: cfg, root: root, groups: groups,
+		// the store's flag writes rename files unless it says otherwise
+		flagSyncOff: !worker.FlagSync(),
+	}
+
 	tui.SetApplyHandler(func(v *core.View) {
 		go func() {
-			if err := applyStaged(v, views, groups, worker, cfg, root); err != nil {
+			if err := applyStaged(v, env); err != nil {
 				bus.Publish(core.JobError{Job: "apply", Err: err})
 			}
 			// the view changed either way (applied drops and baselines); a
@@ -206,14 +212,11 @@ func Run() error {
 	// re-verify (the verdict already rendered).
 	tui.SetOpenHandler(func(req tui.OpenReq) {
 		dark, themeBG := cfg.HTMLDark()
-		var (
-			defViews  map[string]string
-			cryptoCfg config.Crypto
-		)
+		var defViews map[string]string
 		if req.Mode == core.RenderAuto {
-			defViews, cryptoCfg = cfg.Pager.DefaultViews, cfg.Crypto
+			defViews = cfg.Pager.DefaultViews
 		}
-		go openThread(worker, bus, views, req, defViews, cryptoCfg, dark, themeBG)
+		go openThread(env, req, defViews, dark, themeBG)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key in
@@ -376,7 +379,7 @@ func Run() error {
 	// send: the app runs the send job on its own goroutine; SendResult
 	// closes the tab or keeps it failed
 	tui.SetSendHandler(func(st compose.State) {
-		go sendJob(bus, worker, view, cfg, root, st)
+		go sendJob(env, view, st)
 	})
 	tui.SetScheduleHandler(func(st compose.State, at string) {
 		go scheduleJob(bus, worker, view, cfg, root, st, at)
@@ -392,7 +395,7 @@ func Run() error {
 	// delivers mail that came due while the client was closed; the tick
 	// covers mail due during the session. The spool lock serializes
 	// concurrent instances - a mail is never delivered twice.
-	go runScheduler(ctx, bus, worker, view, cfg, root)
+	go runScheduler(ctx, env, view)
 
 	// draft: the abort confirm's d key - a local write, runs inline;
 	// the error keeps the composition open
@@ -598,9 +601,10 @@ func refreshCtxFor(cfg config.Config, view string) RefreshCtx {
 // with an ActTag -unread (R1 - read is a tag; the refresh cycle
 // reconciles it into the view). A tag failure keeps the thread open
 // (the render already succeeded) and surfaces as a JobError.
-func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, req tui.OpenReq, defViews map[string]string, cryptoCfg config.Crypto, dark bool, themeBG string) {
+func openThread(env applyEnv, req tui.OpenReq, defViews map[string]string, dark bool, themeBG string) {
+	bus, worker := env.bus, env.worker
 	threadID, msgID := req.ThreadID, req.MsgID
-	msgs := threadFromViews(views, threadID)
+	msgs := threadFromViews(env.views, threadID)
 	if msgs == nil {
 		var err error
 		msgs, err = fetchMsgs(worker, threadID, msgID)
@@ -646,7 +650,7 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 	// is off (fail-closed); a set ca-file pins to that bundle.
 	var smime *core.SMIMEStatus
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
-		smime = verifySMIME(cryptoCfg, msgs[0].Paths[0])
+		smime = verifySMIME(env.cfg.Crypto, msgs[0].Paths[0])
 	}
 	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, req.Images, req.ImgSizes)
 	if err != nil {
@@ -657,31 +661,8 @@ func openThread(worker workerAPI, bus *core.Bus, views map[string]*core.View, re
 	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Images: req.Images, Refine: req.Refine, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime})
 	// the read mark names the opened message, never the whole thread
 	if !req.Preview && msgID != "" {
-		rpl, err := worker.Call(notmuch.Action{
-			Kind:   notmuch.ActTag,
-			Query:  "id:" + msgID,
-			TagOps: []core.TagOp{{Tag: "unread", Add: false}},
-		})
-		if err != nil || rpl.Err != nil {
-			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %v %v", msgID, err, rpl.Err)})
-		} else {
-			// the read mark is a direct notmuch op (R3): reflect it in
-			// every view that holds the message, or the flag stays stale
-			// until the next refresh
-			renamed := false
-			for name, v := range views {
-				if tags := v.Tags(msgID); tags != nil {
-					rem := withoutTag(tags, "unread")
-					renamed = renamed || len(rem) != len(tags)
-					v.SetTags(msgID, rem)
-					bus.Publish(core.ViewDiff{View: name})
-				}
-			}
-			// the unread mark-read renamed the file (S-flag sync): repoint
-			// rows so the next render opens the current file.
-			if renamed {
-				refreshPaths(worker, views, msgID)
-			}
+		if err := env.tagWrite(msgID, []core.TagOp{{Tag: "unread"}}, false); err != nil {
+			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %w", msgID, err)})
 		}
 	}
 }
@@ -704,18 +685,6 @@ func verifySMIME(cfg config.Crypto, path string) *core.SMIMEStatus {
 		return &core.SMIMEStatus{Present: true, Err: err.Error()}
 	}
 	return &core.SMIMEStatus{Present: true, Valid: res.Valid, Signer: res.Signer, Revoked: res.Revoked, Checked: res.Checked}
-}
-
-// withoutTag returns tags with one entry removed (the open path's
-// -unread reflection into the views).
-func withoutTag(tags []string, tag string) []string {
-	out := make([]string, 0, len(tags))
-	for _, t := range tags {
-		if t != tag {
-			out = append(out, t)
-		}
-	}
-	return out
 }
 
 // findMsg locates the opened message in the thread fetch by id; the

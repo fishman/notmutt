@@ -37,6 +37,17 @@ func (b *CLIBackend) Close(ctx context.Context) error {
 // that always sees the current state.
 func (b *CLIBackend) Reopen(ctx context.Context) error { return nil }
 
+// FlagSync reads maildir.synchronize_flags (argv, F4). Any failure -
+// no notmuch, an unknown key, a non-zero exit - reports true: only an
+// explicit "false" turns the rename bookkeeping off.
+func (b *CLIBackend) FlagSync(ctx context.Context) bool {
+	out, err := b.run(ctx, "notmuch", []string{"config", "get", "maildir.synchronize_flags"})
+	if err != nil {
+		return true
+	}
+	return flagSyncOn(string(out))
+}
+
 type searchItem struct {
 	Thread    string   `json:"thread"`
 	Timestamp int64    `json:"timestamp"`

@@ -59,6 +59,20 @@ func (b *CGOBackend) OpenConfig(ctx context.Context, dbPath, configPath string) 
 	return nil
 }
 
+// FlagSync reads notmuch's own maildir.synchronize_flags. An unset key
+// or a read error reports true (the safe default): only an explicit
+// "false" turns the rename bookkeeping off.
+func (b *CGOBackend) FlagSync(ctx context.Context) bool {
+	if b.db == nil {
+		return true
+	}
+	v, err := b.db.GetConfig("maildir.synchronize_flags")
+	if err != nil {
+		return true
+	}
+	return flagSyncOn(v)
+}
+
 func (b *CGOBackend) Close(ctx context.Context) error {
 	if b.db != nil {
 		err := b.db.Close()

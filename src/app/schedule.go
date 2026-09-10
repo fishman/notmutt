@@ -110,8 +110,9 @@ func readScheduled(path string) (scheduledMail, error) {
 // deliverScheduled assembles the stored state NOW (the delivery
 // instant stamps the Date and Message-ID; attachments read from their
 // paths like a live send) and runs the delivery core.
-func deliverScheduled(worker workerAPI, cfg config.Config, root string, m scheduledMail) error {
+func deliverScheduled(env applyEnv, m scheduledMail) error {
 	st := m.State
+	cfg, root := env.cfg, env.root
 	if st.Fcc == "" {
 		st.Fcc = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
@@ -119,7 +120,7 @@ func deliverScheduled(worker workerAPI, cfg config.Config, root string, m schedu
 	if err := st.Assemble(&buf); err != nil {
 		return err
 	}
-	_, _, err := deliverSend(worker, cfg, root, st, buf.Bytes())
+	_, _, err := deliverSend(env, st, buf.Bytes())
 	return err
 }
 
@@ -192,7 +193,8 @@ var netOnline = netcheck.Online
 // next client start retries, so a closed or offline client resumes
 // when it can. A corrupt file drops with a log; delivery is
 // at-least-once (a crash between transport and removal can double).
-func sendDue(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string) {
+func sendDue(ctx context.Context, env applyEnv, view *core.View) {
+	bus, cfg := env.bus, env.cfg
 	if !netOnline(ctx) {
 		diag.Info("schedule", "state", "offline: mail waits")
 		return
@@ -225,7 +227,7 @@ func sendDue(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.Vi
 		if err != nil || at.After(now) {
 			continue // not due yet
 		}
-		if err := deliverScheduled(worker, cfg, root, m); err != nil {
+		if err := deliverScheduled(env, m); err != nil {
 			bus.Publish(core.ScheduledResult{ID: m.State.ID, At: m.At, OK: false, Err: err})
 			diag.Warn("schedule", "send", m.State.ID, "err", err.Error())
 			continue // stays .pending: retry next tick
@@ -241,9 +243,9 @@ func sendDue(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.Vi
 // then a tick re-checks on the configured cadence for mail due during
 // the session. The spool lock inside sendDue keeps concurrent
 // instances safe.
-func runScheduler(ctx context.Context, bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string) {
-	sendDue(ctx, bus, worker, view, cfg, root)
-	iv := time.Duration(cfg.Schedule.Interval) * time.Second
+func runScheduler(ctx context.Context, env applyEnv, view *core.View) {
+	sendDue(ctx, env, view)
+	iv := time.Duration(env.cfg.Schedule.Interval) * time.Second
 	if iv <= 0 {
 		iv = 60 * time.Second
 	}
@@ -254,7 +256,7 @@ func runScheduler(ctx context.Context, bus *core.Bus, worker workerAPI, view *co
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			sendDue(ctx, bus, worker, view, cfg, root)
+			sendDue(ctx, env, view)
 		}
 	}
 }

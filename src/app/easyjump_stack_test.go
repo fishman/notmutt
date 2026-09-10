@@ -48,7 +48,7 @@ func TestEasyjumpFullStack(t *testing.T) {
 		if req.Mode == core.RenderAuto {
 			req.Mode = core.RenderPlain
 		}
-		go openThread(fw, bus, nil, req, nil, config.Crypto{}, false, "")
+		go openThread(applyEnv{worker: fw, bus: bus}, req, nil, false, "")
 	})
 	defer func() {
 		tui.SetOpenHandler(func(tui.OpenReq) {})

@@ -448,6 +448,9 @@ func mcpApply(worker workerAPI, root string, cfg config.Config, scope *mcpScope,
 			return nil, fmt.Errorf("%s: no message of thread %q is in the allowed mcp scope", verb, threadID)
 		}
 	}
+	// no views and no bus: the MCP server has no live surface, so the
+	// shared seam lands the write and skips the row reconcile
+	env := applyEnv{worker: worker, cfg: cfg, root: root, groups: groups}
 	var applied []string
 	for _, m := range targets {
 		if !scope.inScope(m) {
@@ -457,7 +460,7 @@ func mcpApply(worker workerAPI, root string, cfg config.Config, scope *mcpScope,
 		if len(resolved) == 0 {
 			continue // net no-op: tags already at the target state
 		}
-		if err := execApply(worker, cfg, root, groups, m.ID, resolved); err != nil {
+		if err := env.execApply(m.ID, resolved); err != nil {
 			return nil, fmt.Errorf("%s %s: %v", verb, m.ID, err)
 		}
 		applied = append(applied, m.ID)

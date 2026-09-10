@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strings"
 
 	"notmutt/core"
 )
@@ -86,6 +87,39 @@ type Backend interface {
 	// revision. The CLI backend is stateless - every call is a fresh
 	// subprocess - and no-ops.
 	Reopen(ctx context.Context) error
+}
+
+// flagSyncer is the optional backend capability behind Worker.FlagSync:
+// a backend answers whether a flag-tag write renames the message's file.
+// notmuch's maildir.synchronize_flags maps D/F/P/R/S in filenames to
+// draft/flagged/passed/replied/unread and writes the tags back into the
+// names; a store that keeps flags elsewhere changes no path on a flag
+// write, and the client's row bookkeeping can skip the repoint.
+//
+// Optional, and defaulted TRUE, because the failure modes are not
+// symmetric: repointing a path that did not move is a no-op, while
+// skipping a repoint that did move leaves a row naming a deleted file.
+// A backend that never renames opts in to the saving; anything else -
+// including a future store we have not written yet - pays one snapshot
+// per flag write and stays correct.
+type flagSyncer interface {
+	FlagSync(ctx context.Context) bool
+}
+
+// backendFlagSync reports whether the backend's flag writes rename
+// files, defaulting to true for a backend that does not answer.
+func backendFlagSync(ctx context.Context, b Backend) bool {
+	if fs, ok := b.(flagSyncer); ok {
+		return fs.FlagSync(ctx)
+	}
+	return true
+}
+
+// flagSyncOn parses maildir.synchronize_flags: only an explicit false
+// turns the flag-rename bookkeeping off. An unset key, a read error or
+// anything unparseable keeps the safe default (repoint).
+func flagSyncOn(v string) bool {
+	return !strings.EqualFold(strings.TrimSpace(v), "false")
 }
 
 // runFn abstracts one CLI invocation: `notmuch new` for cgo, everything

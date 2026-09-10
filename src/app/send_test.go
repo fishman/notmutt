@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"notmutt/compose"
 	"notmutt/config"
@@ -57,7 +58,7 @@ func TestSendJobFccStateWins(t *testing.T) {
 	st.Body = "y"
 	st.Fcc = filepath.Join(dir, "state-sent")
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -164,7 +165,7 @@ func TestSendJobNoFccSkipsCopy(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -197,7 +198,7 @@ func TestSendJobDelivers(t *testing.T) {
 	st.Subject = "hello"
 	st.Body = "the message body"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	e := (<-ch).(core.SendResult)
 	if !e.OK {
@@ -257,7 +258,7 @@ func TestSendJobTagsOriginalOnReply(t *testing.T) {
 	st.Mode = compose.ModeReply
 	st.OriginalID = "<orig@example.com>"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 	// the SendResult on the bus goes unread (drop-on-full is fine for
 	// one message); the assertions run on the recorded actions
 	if len(w.actions) != 2 {
@@ -294,7 +295,7 @@ func TestSendJobForwardTagAndQuoteEscape(t *testing.T) {
 	st.Mode = compose.ModeForward
 	st.OriginalID = "<a\"b@example.com>"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if len(w.actions) != 2 {
 		t.Fatalf("actions = %+v", w.actions)
@@ -329,7 +330,7 @@ func TestSendJobFailureKeepsDialogue(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	e := (<-ch).(core.SendResult)
 	if e.OK {
@@ -374,7 +375,7 @@ func TestSendJobPassesEnvelopeRecipients(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -420,7 +421,7 @@ func TestSendJobFccErrorNotesButDelivers(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, root, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: root}, view, *st)
 
 	e := (<-ch).(core.SendResult)
 	if !e.OK {
@@ -458,7 +459,7 @@ func TestSendJobBccEnvelopeOnly(t *testing.T) {
 	st.Subject = "x"
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -522,7 +523,7 @@ func TestSendJobRetiresResumePath(t *testing.T) {
 	st.Body = "y"
 	st.ResumePath = draft
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if e := (<-ch).(core.SendResult); !e.OK {
 		t.Fatalf("send failed: %v %q", e.Err, e.Output)
@@ -567,7 +568,7 @@ func TestSendJobFailureKeepsResumePath(t *testing.T) {
 	st.Body = "y"
 	st.ResumePath = draft
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if _, err := os.Stat(draft); err != nil {
 		t.Fatal("a failed send must keep the draft")
@@ -597,7 +598,7 @@ func TestSendJobEmptyResumePath(t *testing.T) {
 	st.To = []string{"alice@example.com"}
 	st.Body = "y"
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	for _, a := range w.actions {
 		if a.Kind == notmuch.ActRemovePaths {
@@ -629,7 +630,7 @@ func TestSendJobNoFccStillRetires(t *testing.T) {
 	st.Body = "y"
 	st.ResumePath = draft
 
-	sendJob(bus, w, view, cfg, dir, *st)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *st)
 
 	if _, err := os.Stat(draft); !os.IsNotExist(err) {
 		t.Fatal("no_fcc must not stop the draft retirement")
@@ -790,7 +791,7 @@ func TestResumeSendWorkflow(t *testing.T) {
 	res.ResumePath = draft
 
 	// send: the draft retires, the sent copy stays
-	sendJob(bus, w, view, cfg, dir, *res)
+	sendJob(applyEnv{worker: w, bus: bus, cfg: cfg, root: dir}, view, *res)
 
 	if _, err := os.Stat(draft); !os.IsNotExist(err) {
 		t.Fatal("the resumed draft must be gone after a successful send")
@@ -802,5 +803,77 @@ func TestResumeSendWorkflow(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(dir, "gmail", "Sent", "new", entries[0].Name()))
 	if err != nil || !strings.Contains(string(data), "draft subject") {
 		t.Fatalf("the sent copy must carry the message: %v", err)
+	}
+}
+
+// TestSendReplyReconcilesOriginalRow: the reply/forward mark on the
+// original is a DIRECT notmuch write (out of the staged buffer) and a
+// flag-tag write renames its file (maildir flag sync). The holding row
+// must reflect the new flag and repoint at the renamed file, or the
+// next open hits a deleted path.
+func TestSendReplyReconcilesOriginalRow(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["gmail"] = config.Account{Folders: map[string]string{"sent": "Sent"}}
+
+	oldPath := filepath.Join(dir, "cur", "old")
+	newPath := filepath.Join(dir, "cur", "renamed")
+	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+	fw.setMsgs([]core.Message{{ID: "orig", ThreadID: "t1", Paths: []string{newPath}}})
+
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+		{ID: "orig", ThreadID: "t1", Timestamp: 1, Tags: []string{"inbox"}, Paths: []string{oldPath}},
+	})})
+
+	st := compose.NewCompose("gmail", "bob@example.com", "", "")
+	st.ID = "tab20"
+	st.To = []string{"alice@example.com"}
+	st.Subject = "re: x"
+	st.Body = "y"
+	st.Mode = compose.ModeReply
+	st.OriginalID = "orig"
+
+	sendJob(applyEnv{worker: fw, bus: bus, cfg: cfg, root: dir, views: map[string]*core.View{"inbox": view}}, view, *st)
+	waitSendResult(t, ch)
+
+	var tagged bool
+	for _, c := range fw.tagCallsSnapshot() {
+		if c.query == `id:"orig"` && len(c.tagOps) == 1 && c.tagOps[0].Tag == "replied" && c.tagOps[0].Add {
+			tagged = true
+		}
+	}
+	if !tagged {
+		t.Fatalf("the reply must tag the original: %+v", fw.tagCallsSnapshot())
+	}
+	if tags := view.Tags("orig"); !slices.Contains(tags, "replied") {
+		t.Fatalf("the holding row must reflect +replied: %v", tags)
+	}
+	msgs := view.ThreadMsgs("t1")
+	if len(msgs) == 0 || len(msgs[0].Paths) != 1 || msgs[0].Paths[0] != newPath {
+		t.Fatalf("the holding row must repoint at the renamed file: %+v", msgs)
+	}
+}
+
+// waitSendResult drains the bus until the send's own result - the
+// reconcile events ride ahead of it.
+func waitSendResult(t *testing.T, ch <-chan core.Event) core.SendResult {
+	t.Helper()
+	for {
+		select {
+		case e := <-ch:
+			if r, ok := e.(core.SendResult); ok {
+				if !r.OK {
+					t.Fatalf("send failed: %v %q", r.Err, r.Output)
+				}
+				return r
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatal("no SendResult")
+		}
 	}
 }

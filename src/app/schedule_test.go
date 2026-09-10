@@ -211,7 +211,7 @@ func sendDueOnce(t *testing.T, cfg config.Config, worker workerAPI) []core.Sched
 	t.Helper()
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	sendDue(context.Background(), bus, worker, core.NewView("inbox", "tag:inbox"), cfg, "")
+	sendDue(context.Background(), applyEnv{worker: worker, bus: bus, cfg: cfg}, core.NewView("inbox", "tag:inbox"))
 	var out []core.ScheduledResult
 	for {
 		select {

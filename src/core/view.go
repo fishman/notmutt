@@ -887,13 +887,17 @@ func (v *View) SetTags(msgID string, tags []string) {
 
 // SetPaths repoints a held message's file paths. Tag seams call this
 // after an op renamed or moved the file, or the row opens a deleted
-// one. Copies: rows share Paths with the merge path.
+// one. Idempotent: a store whose flag writes do not rename the file
+// repoints to the list the row already holds, and the write is skipped.
+// Copies: rows share Paths with the merge path.
 func (v *View) SetPaths(msgID string, paths []string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if m := v.findMsgLocked(msgID); m != nil {
-		m.Paths = append([]string(nil), paths...)
+	m := v.findMsgLocked(msgID)
+	if m == nil || slices.Equal(m.Paths, paths) {
+		return
 	}
+	m.Paths = append([]string(nil), paths...)
 }
 
 // Tags returns an identity's applied tags under the view lock; the

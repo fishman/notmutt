@@ -38,7 +38,8 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 // delivery core (deliverSend) and the dialogue's SendResult. Transport
 // first: what was not delivered is not stored; the fcc note rides the
 // result.
-func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config, root string, st compose.State) {
+func sendJob(env applyEnv, view *core.View, st compose.State) {
+	bus := env.bus
 	var buf bytes.Buffer
 	if err := st.Assemble(&buf); err != nil {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Err: err})
@@ -49,7 +50,7 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 	// Bcc header (envelope-only); the fcc copy keeps it - the sender's
 	// record shows the blind recipients.
 	data := buf.Bytes()
-	note, out, err := deliverSend(worker, cfg, root, st, data)
+	note, out, err := deliverSend(env, st, data)
 	if err != nil {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Output: out, Err: err})
 		return
@@ -65,7 +66,8 @@ func sendJob(bus *core.Bus, worker workerAPI, view *core.View, cfg config.Config
 // message never fails on a fcc error (a retry would double-send) - the
 // note carries it. A missing mail root leaves the fcc empty and skips
 // it silently. Shared by the dialogue send and the scheduled mailer.
-func deliverSend(worker workerAPI, cfg config.Config, root string, st compose.State, data []byte) (note, out string, err error) {
+func deliverSend(env applyEnv, st compose.State, data []byte) (note, out string, err error) {
+	worker, cfg, root := env.worker, env.cfg, env.root
 	cmd := exec.Command(cfg.Send.Command, sendArgs(cfg.Send, st)...)
 	cmd.Stdin = bytes.NewReader(compose.DropBcc(data))
 	raw, err := cmd.CombinedOutput()
@@ -89,24 +91,31 @@ func deliverSend(worker workerAPI, cfg config.Config, root string, st compose.St
 		if st.Mode == compose.ModeForward {
 			tag = "forwarded"
 		}
-		worker.Call(notmuch.Action{
-			Kind:   notmuch.ActTag,
-			Query:  idQuery(st.OriginalID),
-			TagOps: []notmuch.TagOp{{Tag: tag, Add: true}},
-		})
+		// the same seam the open read-mark uses: the flag write renames
+		// the original's file, so holding rows must follow. A delivered
+		// message never fails on this - the note carries it.
+		if err := env.tagWrite(st.OriginalID, []notmuch.TagOp{{Tag: tag, Add: true}}, false); err != nil {
+			note = appendNote(note, "reply tag failed: "+err.Error())
+		}
 	}
 	// a successful send retires the resumed draft (spec: edit-and-send
 	// removes it). Retirement is success-only; a retire failure notes the
 	// delivered send, never fails it (a retry would double-send).
 	if st.ResumePath != "" {
 		if err := retireDraftPath(worker, st.ResumePath); err != nil {
-			if note != "" {
-				note += "; "
-			}
-			note += "draft retire failed: " + err.Error()
+			note = appendNote(note, "draft retire failed: "+err.Error())
 		}
 	}
 	return note, "", nil
+}
+
+// appendNote stacks a post-delivery failure onto the note; the notes
+// never fail a delivered send (a retry would double-send).
+func appendNote(note, add string) string {
+	if note == "" {
+		return add
+	}
+	return note + "; " + add
 }
 
 // writeFcc lands the sent/draft copy in the maildir new/ slot (maildir

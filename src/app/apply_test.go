@@ -18,6 +18,19 @@ import (
 
 var applyGroups = []core.TagGroup{{Tags: []string{"inbox", "archive", "deleted", "sent", "draft", "pending", "spam"}}}
 
+// applyEnvFor wires the flush for one test view, with its own bus: the
+// seam notifies on every row it changes.
+func applyEnvFor(fw workerAPI, view *core.View, cfg config.Config, root string, groups []core.TagGroup) applyEnv {
+	return applyEnv{
+		worker: fw,
+		bus:    core.NewBus(),
+		views:  map[string]*core.View{view.ViewName(): view},
+		cfg:    cfg,
+		root:   root,
+		groups: groups,
+	}
+}
+
 func TestApplyStaged(t *testing.T) {
 	fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
 	view := core.NewView("inbox", "tag:inbox")
@@ -30,7 +43,7 @@ func TestApplyStaged(t *testing.T) {
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.Stage("m2", core.TagOp{Tag: "deleted", Add: true})
 
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fw.tagCallsSnapshot()
@@ -70,7 +83,7 @@ func TestApplyNetNoOpClearsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"archive"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true}) // net no-op
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -90,7 +103,7 @@ func TestApplyFailureKeepsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err == nil {
 		t.Fatal("apply must surface the worker error")
 	}
 	if !view.IsStaged("m1") {
@@ -110,7 +123,7 @@ func TestApplyReplyErrKeepsEntry(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err == nil {
 		t.Fatal("apply must surface the worker reply error")
 	}
 	if !view.IsStaged("m1") {
@@ -133,7 +146,7 @@ func TestApplyContinuesPastFailure(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.Stage("m2", core.TagOp{Tag: "deleted", Add: true})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err == nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err == nil {
 		t.Fatal("apply must surface the failed entry's error")
 	}
 	if !view.IsStaged("m1") {
@@ -167,7 +180,7 @@ func TestApplyThreadIdentity(t *testing.T) {
 		{ThreadID: "t1", Tags: []string{"inbox"}},
 	})})
 	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	calls := fw.tagCallsSnapshot()
@@ -198,7 +211,7 @@ func TestApplyStaleThreadClears(t *testing.T) {
 	})})
 	view.Stage("t:t1", core.TagOp{Tag: "archive", Add: true})
 	view.MergeThreads(nil) // the thread left the view
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -218,7 +231,7 @@ func TestApplyStaleMessageSkipped(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 	view.MergeThreads(nil) // the message left the view
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -241,7 +254,7 @@ func TestApplyKeepsMatchingRow(t *testing.T) {
 		{ID: "m1", ThreadID: "t1", Tags: []string{"inbox", "unread"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "unread", Add: false})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if len(view.Rows()) != 1 {
@@ -273,7 +286,7 @@ func TestApplyEvictsMessageKeepsThread(t *testing.T) {
 		{ID: "m2", ThreadID: "t1", Tags: []string{"inbox", "unread"}},
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, cfg, root, applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	rows := view.Rows()
@@ -335,7 +348,7 @@ func TestApplyGuardRefusesUnmovableFolderTags(t *testing.T) {
 				{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"}},
 			})})
 			view.Stage("m1", core.TagOp{Tag: "deleted", Add: true})
-			err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root)
+			err := applyStaged(view, applyEnvFor(fw, view, cfg, root, applyGroups))
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("guard error = %v, want substring %q", err, c.want)
 			}
@@ -368,7 +381,7 @@ func TestApplyMovesToFolderTag(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, cfg, root, applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "gmail", "Archives", "cur", "1")); err != nil {
@@ -406,7 +419,7 @@ func TestApplyMoveFailureRefusesTag(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "archive", Add: true})
 
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, cfg, root); err == nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, cfg, root, applyGroups)); err == nil {
 		t.Fatal("apply must surface the failed move")
 	}
 	if calls := fw.tagCallsSnapshot(); len(calls) != 0 {
@@ -435,7 +448,7 @@ func TestApplyRefreshSeamRepointsPaths(t *testing.T) {
 	})})
 	view.Stage("m1", core.TagOp{Tag: "unread", Add: false}) // mark read: renames 1 -> 1:2,S
 
-	if err := applyStaged(view, map[string]*core.View{view.ViewName(): view}, applyGroups, fw, config.Default(), t.TempDir()); err != nil {
+	if err := applyStaged(view, applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)); err != nil {
 		t.Fatal(err)
 	}
 	if got := pathOf(view, "m1"); !slices.Equal(got, []string{"/mail/cur/1:2,S"}) {
@@ -454,4 +467,55 @@ func pathOf(view *core.View, id string) []string {
 		}
 	}
 	return nil
+}
+
+// TestTagWritePathRepointGate: the row repoint is gated on the store's
+// flag-rename behavior - a flag write on a store that does not rename
+// files (maildir.synchronize_flags off, a backend keeping flags
+// elsewhere) skips it. The move signal forces it regardless: a folder
+// move relocates the file whatever the flag setting. Skipping is only
+// ever a saving - SetPaths is idempotent, so repointing when unsure is
+// always safe.
+func TestTagWritePathRepointGate(t *testing.T) {
+	newView := func() *core.View {
+		v := core.NewView("inbox", "tag:inbox")
+		v.SetGroups(applyGroups)
+		v.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
+			{ID: "m1", ThreadID: "t1", Tags: []string{"inbox", "unread"}, Paths: []string{"/mail/INBOX/cur/1"}},
+		})})
+		return v
+	}
+
+	t.Run("flag write on a non-renaming store", func(t *testing.T) {
+		fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+		fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"inbox"},
+			Paths: []string{"/mail/INBOX/cur/1:2,S"}}})
+		view := newView()
+		env := applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)
+		env.flagSyncOff = true
+		if err := env.tagWrite("m1", []core.TagOp{{Tag: "unread", Add: false}}, false); err != nil {
+			t.Fatal(err)
+		}
+		if hasTag(view.Tags("m1"), "unread") {
+			t.Fatal("the write itself must still land")
+		}
+		if got := pathOf(view, "m1"); !slices.Equal(got, []string{"/mail/INBOX/cur/1"}) {
+			t.Fatalf("a store that does not rename files must skip the repoint, got %v", got)
+		}
+	})
+
+	t.Run("folder move forces the repoint", func(t *testing.T) {
+		fw := &fakeTagWorker{fakeWorker: &fakeWorker{}}
+		fw.setMsgs([]core.Message{{ID: "m1", ThreadID: "t1", Tags: []string{"archive"},
+			Paths: []string{"/mail/Archives/cur/1"}}})
+		view := newView()
+		env := applyEnvFor(fw, view, config.Default(), t.TempDir(), applyGroups)
+		env.flagSyncOff = true
+		if err := env.tagWrite("m1", []core.TagOp{{Tag: "archive", Add: true}}, true); err != nil {
+			t.Fatal(err)
+		}
+		if got := pathOf(view, "m1"); !slices.Equal(got, []string{"/mail/Archives/cur/1"}) {
+			t.Fatalf("a move repoints even with flag sync off, got %v", got)
+		}
+	})
 }

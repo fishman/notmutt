@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"notmutt/config"
 	"notmutt/core"
 	"notmutt/tui"
 )
@@ -63,7 +62,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 		t.Fatalf("open must publish a non-preview ThreadLoaded: %+v", tl)
 	}
 	calls := fw.tagCallsSnapshot()
-	if len(calls) != 1 || calls[0].query != "id:a" || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Tag != "unread" || calls[0].tagOps[0].Add {
+	if len(calls) != 1 || calls[0].query != `id:"a"` || len(calls[0].tagOps) != 1 || calls[0].tagOps[0].Tag != "unread" || calls[0].tagOps[0].Add {
 		t.Fatalf("open must tag the opened message -unread: %+v", calls)
 	}
 
@@ -71,7 +70,7 @@ func TestOpenThreadMarksRead(t *testing.T) {
 	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1"}, {ID: "b", ThreadID: "t1"}})
 	runOpen(t, fw, nil, tui.OpenReq{ThreadID: "t1", MsgID: "b"})
 	calls = fw.tagCallsSnapshot()
-	if len(calls) != 2 || calls[1].query != "id:b" {
+	if len(calls) != 2 || calls[1].query != `id:"b"` {
 		t.Fatalf("a mid-thread open must tag its own message only: %+v", calls)
 	}
 }
@@ -162,7 +161,7 @@ func TestOpenThreadTagFailureKeepsOpen(t *testing.T) {
 	// explicit instead of runOpen's single read
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	openThread(fw, bus, nil, tui.OpenReq{ThreadID: "t1"}, nil, config.Crypto{}, false, "")
+	openThread(applyEnv{worker: fw, bus: bus}, tui.OpenReq{ThreadID: "t1"}, nil, false, "")
 	waitThread(t, ch)
 	select {
 	case e := <-ch:
@@ -286,6 +285,6 @@ func runOpen(t *testing.T, fw workerAPI, views map[string]*core.View, req tui.Op
 	t.Helper()
 	bus := core.NewBus()
 	ch := bus.Subscribe()
-	openThread(fw, bus, views, req, nil, config.Crypto{}, false, "")
+	openThread(applyEnv{worker: fw, bus: bus, views: views}, req, nil, false, "")
 	return waitThread(t, ch)
 }

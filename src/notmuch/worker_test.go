@@ -351,3 +351,17 @@ func TestWorkerPathWritersBudgeted(t *testing.T) {
 		}
 	}
 }
+
+// TestFlagSyncOn: the flag-rename capability defaults to true - only an
+// explicit false (the notmuch key spelled "false") turns the row
+// repoint off; an unset or unreadable key keeps the safe answer.
+func TestFlagSyncOn(t *testing.T) {
+	for v, want := range map[string]bool{
+		"false": false, "FALSE": false, " false\n": false,
+		"true": true, "": true, "yes": true,
+	} {
+		if got := flagSyncOn(v); got != want {
+			t.Errorf("flagSyncOn(%q) = %v, want %v", v, got, want)
+		}
+	}
+}

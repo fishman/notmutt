@@ -68,13 +68,18 @@ type Reply struct {
 // plus a WorkerLockTimeout event, never a blocked UI. Start must run
 // before any Call; Call waits on ready so the ctx install is synced.
 type Worker struct {
-	bus     *core.Bus
-	backend Backend
-	timeout time.Duration
-	actions chan Action
-	ctx     context.Context
-	ready   chan struct{}
+	bus      *core.Bus
+	backend  Backend
+	timeout  time.Duration
+	actions  chan Action
+	ctx      context.Context
+	ready    chan struct{}
+	flagSync bool
 }
+
+// FlagSync reports whether a flag-tag write renames files (the Backend
+// capability, defaulted true). Valid after ActOpen returns.
+func (w *Worker) FlagSync() bool { return w.flagSync }
 
 func NewWorker(bus *core.Bus, backend Backend, timeout time.Duration) *Worker {
 	return &Worker{
@@ -128,6 +133,9 @@ func (w *Worker) handle(a Action) {
 	switch a.Kind {
 	case ActOpen:
 		err = w.backend.Open(ctx, a.Query)
+		// probed once, after the DB is open (the config comes from it);
+		// the reply carries the happens-before for the reader
+		w.flagSync = backendFlagSync(ctx, w.backend)
 	case ActQuery, ActQueryMsgs, ActCount, ActThread, ActSnapshots, ActRevision, ActAddresses:
 		r = w.read(ctx, a)
 	case ActTag:

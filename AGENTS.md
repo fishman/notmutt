@@ -71,7 +71,7 @@ engine replacing afew.
 MailMover NATIVE (src/filter/mover.go; MailMover.py = reference logic,
 never runtime). Move mechanics - copy -> index update (Add before
 Remove) -> delete the source last, so a file is never deleted while the
-index references it (docs/moving-mail.md).
+index references it (docs/tags-paths-maildir.md).
 
 Engine owns the FULL pipeline (folder rules, header rules, mover
 in-process); muttrc hook + afew = reference shapes, not backends. Folder

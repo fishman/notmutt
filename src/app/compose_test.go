@@ -8,6 +8,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -205,6 +206,46 @@ func TestBuildComposeReply(t *testing.T) {
 	}
 	if st := buildCompose(cfg, view, nil, "reply", root); st != nil {
 		t.Fatal("reply without a message must return nil")
+	}
+}
+
+// TestBuildComposeForwardShape pins the [compose] forward switch at the
+// dialogue: attachment carries the original as a message/rfc822 part
+// streaming from its file, inline quotes it.
+func TestBuildComposeForwardShape(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "mail")
+	path := filepath.Join(dir, "msg.eml")
+	eml := "From: Alice <alice@example.com>\nTo: Bob <bob@example.com>\n" +
+		"Subject: hello\nMessage-Id: <m1@example.com>\n" +
+		"Date: Tue, 14 Aug 2026 10:00:00 +0000\n\nbody line\n"
+	if err := os.WriteFile(path, []byte(eml), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	g := cfg.Accounts["gmail"]
+	g.From = "Bob <bob@example.com>"
+	cfg.Accounts["gmail"] = g
+	view := core.NewView("inbox", "tag:inbox")
+	msg := &core.Message{
+		ID: "<m1@example.com>", ThreadID: "t1", Timestamp: time.Now().Unix(),
+		Author: "Alice <alice@example.com>", Subject: "hello",
+		Tags: []string{"inbox", "gmail"}, Paths: []string{path},
+	}
+
+	cfg.Compose.Forward = "attachment"
+	st := buildCompose(cfg, view, msg, "forward", root)
+	if st == nil || len(st.Attachments) != 1 {
+		t.Fatalf("attachment forward must carry the original: %+v", st)
+	}
+	if a := st.Attachments[0]; a.MimeType != "message/rfc822" || a.Path != path || a.DraftPart != 0 {
+		t.Fatalf("carried original = %+v", a)
+	}
+
+	cfg.Compose.Forward = ""
+	st = buildCompose(cfg, view, msg, "forward", root)
+	if len(st.Attachments) != 0 || !strings.Contains(st.Body, "> body line") {
+		t.Fatalf("inline forward must quote the original: %+v", st)
 	}
 }
 

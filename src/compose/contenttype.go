@@ -69,11 +69,16 @@ func InlineFacts(s *State) PartFacts {
 
 // AttachmentFacts derives an attachment's wire facts: the detected
 // type (octet-stream when unknown - the reader default), base64 (the
-// composer's fixed attachment encoding), no charset on the wire.
+// composer's fixed attachment encoding), no charset on the wire. A
+// message/* part is 8bit - RFC 2046 5.2.1 permits no other encoding.
 func AttachmentFacts(a Attachment) PartFacts {
 	typ := a.MimeType
 	if typ == "" {
 		typ = "application/octet-stream"
 	}
-	return PartFacts{Type: typ, Encoding: "base64"}
+	enc := "base64"
+	if strings.HasPrefix(typ, "message/") {
+		enc = "8bit"
+	}
+	return PartFacts{Type: typ, Encoding: enc}
 }

@@ -467,6 +467,24 @@ func TestLoadComposeWrapWidth(t *testing.T) {
 	}
 }
 
+// TestLoadComposeForward pins the [compose] forward switch: the seed and
+// the Go default are inline, a user value loads, an unknown shape errors.
+func TestLoadComposeForward(t *testing.T) {
+	if got := Default().Compose.Forward; got != "inline" {
+		t.Fatalf("default forward = %q, want the seed's inline", got)
+	}
+	cfg, err := Load(write(t, "[compose]\nforward = \"attachment\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Compose.Forward != "attachment" {
+		t.Fatalf("forward = %q, want attachment", cfg.Compose.Forward)
+	}
+	if _, err := Load(write(t, "[compose]\nforward = \"eml\"\n")); err == nil {
+		t.Fatal("an unknown forward shape must be a load error")
+	}
+}
+
 func TestLoadAIUnknownTypeErrors(t *testing.T) {
 	_, err := Load(write(t, `
 [ai.bad]

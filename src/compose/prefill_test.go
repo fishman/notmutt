@@ -5,6 +5,7 @@ package compose
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,94 @@ func TestForwardPrefill(t *testing.T) {
 	}
 	if !strings.Contains(s.Body, "> line one") {
 		t.Fatalf("forward must quote the body: %q", s.Body)
+	}
+}
+
+// forwardFixture is an html body plus two attachment parts: the shape
+// that breaks an ordinal counted over listed entries.
+func forwardFixture(t *testing.T) (string, *mail.Message) {
+	t.Helper()
+	raw := "From: alice@example.com\nTo: bob@example.com\nSubject: List Post\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\nMIME-Version: 1.0\n" +
+		"Content-Type: multipart/mixed; boundary=x\n\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n\nbody line\n" +
+		"--x\nContent-Type: text/html; charset=utf-8\n\n<p>body line</p>\n" +
+		"--x\nContent-Type: text/plain; charset=utf-8\n" +
+		"Content-Disposition: attachment; filename=\"notes.txt\"\n\nnotes\n" +
+		"--x\nContent-Type: application/pdf\n" +
+		"Content-Disposition: attachment; filename=\"doc.pdf\"\n\npdfbytes\n" +
+		"--x--\n"
+	path := filepath.Join(t.TempDir(), "msg")
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := mail.ParseMessage(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return path, parsed
+}
+
+// TestForwardShapes pins both [compose] forward shapes: inline keeps the
+// quote and carries the attachment parts, attachment drops the quote and
+// attaches the original whole.
+func TestForwardShapes(t *testing.T) {
+	path, parsed := forwardFixture(t)
+	orig := core.Message{ID: "m1", Timestamp: 100, Author: "Alice <alice@example.com>", Subject: "List Post", Paths: []string{path}}
+
+	inline := Forward(orig, parsed, "acct", "Bob <bob@example.com>", "", "")
+	inline.CarryForward(parsed, path, ForwardInline)
+	if !strings.Contains(inline.Body, "> body line") {
+		t.Fatalf("inline keeps the quote: %q", inline.Body)
+	}
+	if len(inline.Attachments) != 2 {
+		t.Fatalf("the original's attachment parts ride, the html row does not: %+v", inline.Attachments)
+	}
+	for i, want := range []struct{ name, mime string }{
+		{"notes.txt", "text/plain"}, {"doc.pdf", "application/pdf"},
+	} {
+		a := inline.Attachments[i]
+		if a.Name != want.name || a.MimeType != want.mime || a.Path != path || a.DraftPart != i+1 || a.Size == 0 {
+			t.Fatalf("carried attachment %d = %+v", i, a)
+		}
+	}
+
+	whole := Forward(orig, parsed, "acct", "Bob <bob@example.com>", "", "")
+	whole.CarryForward(parsed, path, ForwardAttachment)
+	if whole.Body != "" {
+		t.Fatalf("the attachment shape carries no quote: %q", whole.Body)
+	}
+	if len(whole.Attachments) != 1 {
+		t.Fatalf("one rfc822 part: %+v", whole.Attachments)
+	}
+	a := whole.Attachments[0]
+	if a.MimeType != "message/rfc822" || a.Name != "list-post.eml" || a.DraftPart != 0 || a.Path != path {
+		t.Fatalf("rfc822 attachment = %+v", a)
+	}
+	if a.Size == 0 {
+		t.Fatalf("the rfc822 part must list the original's size: %+v", a)
+	}
+	// no path = no carry (a row without a resolved file)
+	empty := Forward(orig, parsed, "acct", "Bob <bob@example.com>", "", "")
+	empty.CarryForward(parsed, "", ForwardAttachment)
+	if len(empty.Attachments) != 0 || empty.Body == "" {
+		t.Fatalf("a missing path must leave the prefill untouched: %+v", empty)
+	}
+}
+
+// TestForwardName: the attached original's filename is a safe basename
+// under an attacker-influenced subject, and never empty.
+func TestForwardName(t *testing.T) {
+	for _, tc := range []struct{ subject, want string }{
+		{"List Post", "list-post.eml"},
+		{"../../etc/passwd", "etcpasswd.eml"},
+		{"", "forwarded-message.eml"},
+		{"...", "forwarded-message.eml"},
+		{"Re: [list] a/b\\c", "re-list-abc.eml"},
+	} {
+		if got := forwardName(tc.subject); got != tc.want {
+			t.Fatalf("forwardName(%q) = %q, want %q", tc.subject, got, tc.want)
+		}
 	}
 }
 

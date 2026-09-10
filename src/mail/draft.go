@@ -111,11 +111,11 @@ func ParseDraft(path string) (*Draft, error) {
 }
 
 // WriteDraftAttachment streams the ordinal-th attachment part of the
-// stored draft to w (the resume path: assemble reads part bytes out of
-// the still-present draft file). Same attachment-only enumeration as
-// ParseDraft, so its ordinals index this stream directly. Unbounded on
-// purpose - send must not truncate a large attachment the way the
-// view/save demand path does.
+// message file to w - the resume path, and a forwarded original
+// (Attachment.Part indexes it, same attachment-only enumeration). An
+// ordinal the file does not have is an error, never a partial stream.
+// Unbounded on purpose - send must not truncate a large attachment the
+// way the view/save demand path does.
 func WriteDraftAttachment(path string, ordinal int, w io.Writer) (int64, error) {
 	f, err := os.Open(path)
 	if err != nil {

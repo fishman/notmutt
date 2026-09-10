@@ -136,6 +136,9 @@ type Attachment struct {
 	Truncated bool // size count hit the cap; the listed size is the cap
 	ContentID string
 	Data      []byte // image attachments only, for the render-on-key path
+	// Part is the 1-based ordinal among the message's attachment-header
+	// parts (0 for the html download row): WriteDraftAttachment's index.
+	Part int
 }
 
 // ParseMessage opens one mail file and reads its structure: text/plain
@@ -185,6 +188,7 @@ func ParseMessage(path string) (*Message, error) {
 	m.Date = hdr.Get("Date")
 	m.Subject = core.DecodeSubject(hdr.Get("Subject"))
 	var imgBuffered int64
+	var attParts int
 	for {
 		p, err := mr.NextPart()
 		if err == io.EOF {
@@ -226,7 +230,8 @@ func ParseMessage(path string) (*Message, error) {
 			if name == "" {
 				name = "attachment"
 			}
-			a := Attachment{Name: name, ContentID: h.Get("Content-Id")}
+			attParts++ // attachment-header parts only; the html row is not one
+			a := Attachment{Name: name, ContentID: h.Get("Content-Id"), Part: attParts}
 			ct, _, _ := h.ContentType()
 			a.MimeType = refineMimeType(ct, name)
 			if strings.HasPrefix(ct, "image/") && imgBuffered < imgBudget {

@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/emersion/go-message/mail"
+
+	"notmutt/core"
 )
 
 func TestAssemble(t *testing.T) {
@@ -151,6 +153,70 @@ func TestAssembleWireShapes(t *testing.T) {
 	}
 	if n := strings.Count(raw, "content-disposition: attachment"); n != 1 {
 		t.Fatalf("exactly the attachment must carry disposition, found %d:\n%s", n, buf.String())
+	}
+}
+
+// TestAssembleForwardShapes proves both forward shapes on the wire: the
+// inline carry streams the ORIGINAL'S parts by ordinal (a misaligned
+// ordinal would attach the html part or the wrong file), the attachment
+// shape carries the original whole as 8bit message/rfc822 - RFC 2046
+// 5.2.1 forbids base64 there.
+func TestAssembleForwardShapes(t *testing.T) {
+	path, parsed := forwardFixture(t)
+	orig := core.Message{ID: "m1", Timestamp: 100, Author: "Alice <alice@example.com>", Subject: "List Post", Paths: []string{path}}
+
+	carry := Forward(orig, parsed, "acct", "Bob <bob@example.com>", "", "")
+	carry.CarryForward(parsed, path, ForwardInline)
+	carry.To = []string{"a@b.c"}
+	var buf bytes.Buffer
+	if err := carry.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	mr, err := mail.CreateReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	var got []string
+	for {
+		p, err := mr.NextPart()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := p.Header.(*mail.AttachmentHeader); !ok {
+			continue
+		}
+		data, err := io.ReadAll(p.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, string(data))
+	}
+	if len(got) != 2 || got[0] != "notes" || got[1] != "pdfbytes" {
+		t.Fatalf("the carried parts must be the original's attachments: %q", got)
+	}
+
+	whole := Forward(orig, parsed, "acct", "Bob <bob@example.com>", "", "")
+	whole.CarryForward(parsed, path, ForwardAttachment)
+	whole.To = []string{"a@b.c"}
+	buf.Reset()
+	if err := whole.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	raw, lower := buf.String(), strings.ToLower(buf.String())
+	if !strings.Contains(lower, "content-type: message/rfc822") ||
+		!strings.Contains(lower, "content-transfer-encoding: 8bit") {
+		t.Fatalf("the original must ride as an 8bit message/rfc822 part:\n%s", raw)
+	}
+	if strings.Contains(lower, "base64") {
+		t.Fatalf("no part of a forward-as-attachment may be base64:\n%s", raw)
+	}
+	// the original's own headers and body survive verbatim
+	if !strings.Contains(raw, "Subject: List Post") || !strings.Contains(raw, "<p>body line</p>") {
+		t.Fatalf("the attached original must be whole:\n%s", raw)
 	}
 }
 

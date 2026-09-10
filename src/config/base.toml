@@ -38,9 +38,13 @@ image-protocol = "sixel"
 allow-tracking-images = false
 
 # generated draft bodies (the AI command drafts) hard-wrap to this line
-# width; 0 = the mutt default 72
+# width; 0 = the mutt default 72. forward = how a forwarded original
+# rides: "inline" quotes its text and carries its attachments,
+# "attachment" attaches it whole as message/rfc822 (html and list
+# headers survive)
 [compose]
 wrap-width = 72
+forward = "inline"
 
 # exclusive folder tag group (R2): one message has exactly one home;
 # applying any member removes the other members present (inbox included)

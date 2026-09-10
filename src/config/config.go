@@ -382,9 +382,12 @@ const DefaultWrapWidth = 72
 
 // ComposeSection is the [compose] section: WrapWidth is the line width
 // generated draft bodies (the AI command drafts) hard-wrap to; 0 = the
-// default (mutt's wrap, 72).
+// default (mutt's wrap, 72). Forward is the forward shape: "inline"
+// (empty = the default) quotes the original's text and carries its
+// attachments, "attachment" attaches the original whole.
 type ComposeSection struct {
-	WrapWidth int `toml:"wrap-width"`
+	WrapWidth int    `toml:"wrap-width"`
+	Forward   string `toml:"forward" enum:"inline,attachment"`
 }
 
 // Filter configures the classification pipeline (R2): Enabled turns
@@ -1788,6 +1791,9 @@ func validate(cfg Config) error {
 	}
 	if b := cfg.Notify.Backend; b != "" && !slices.Contains(enumOf(reflect.TypeOf(Notify{}), "Backend"), b) {
 		return fmt.Errorf("notify: unknown backend %q", b)
+	}
+	if v := cfg.Compose.Forward; v != "" && !slices.Contains(enumOf(reflect.TypeOf(ComposeSection{}), "Forward"), v) {
+		return fmt.Errorf("compose.forward: must be inline or attachment, got %q", v)
 	}
 	if len(cfg.Notify.Command) > 0 && strings.TrimSpace(cfg.Notify.Command[0]) == "" {
 		return fmt.Errorf("notify: command argv must not be empty")

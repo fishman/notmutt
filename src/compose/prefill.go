@@ -5,6 +5,7 @@ package compose
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -159,8 +160,74 @@ func replyAllCc(to, cc []string, own string, inTo []string) []string {
 	return out
 }
 
+// The [compose] forward shapes: inline quotes the original's text,
+// attachment carries it whole as message/rfc822.
+const (
+	ForwardInline     = "inline"
+	ForwardAttachment = "attachment"
+)
+
+// CarryForward applies the configured forward shape to a prefill: inline
+// carries the original's attachment parts, attachment attaches the
+// original whole (html and list headers survive). Both stream from the
+// original's file at assembly. No-op without a path.
+func (s *State) CarryForward(parsed *mail.Message, path, shape string) {
+	if path == "" {
+		return
+	}
+	if shape == ForwardAttachment {
+		s.Body = ""
+		s.Attachments = append(s.Attachments, Attachment{
+			Name: forwardName(parsed.Subject), Path: path,
+			Size: fileSize(path), MimeType: "message/rfc822",
+		})
+		return
+	}
+	for _, a := range parsed.Attachments {
+		if a.Part == 0 {
+			continue // the html body's download row, not an attachment part
+		}
+		s.Attachments = append(s.Attachments, Attachment{
+			Name: a.Name, Path: path, Size: a.Size,
+			MimeType: a.MimeType, DraftPart: a.Part,
+		})
+	}
+}
+
+// forwardName reduces the original's subject to a safe basename (it is
+// attacker-influenced) with an .eml extension.
+func forwardName(subject string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(subject) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == ' ' || r == '-' || r == '_' || r == '.':
+			b.WriteByte('-')
+		}
+		if b.Len() >= 60 {
+			break
+		}
+	}
+	name := strings.Trim(b.String(), "-")
+	if name == "" {
+		return "forwarded-message.eml"
+	}
+	return name + ".eml"
+}
+
+// fileSize is the attachment row's size; 0 when unreadable (assembly
+// reports the failure).
+func fileSize(path string) int64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return fi.Size()
+}
+
 // Forward prefills a forward: no recipients, one "Fwd: " prefix, the
-// quoted original as the body.
+// quoted original as the body. The shape rides on CarryForward.
 func Forward(orig core.Message, parsed *mail.Message, account, from, sigName, sigBody string) *State {
 	refs := orig.References
 	if parsed.MessageID != "" {

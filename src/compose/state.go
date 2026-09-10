@@ -58,10 +58,9 @@ type Attachment struct {
 	Size       int64
 	MimeType   string
 	// DraftPart selects the byte source: 0 = Path is the plain file to
-	// attach (every fresh compose); > 0 = Path is the stored draft and
-	// the bytes are its (DraftPart-1)-th attachment part, streamed at
-	// assembly (a resumed draft - attachments stay in the file until a
-	// successful send retires it, so a scheduled resume can stream them).
+	// attach (a fresh compose, a forwarded original); > 0 = Path is a
+	// message file and the bytes are its (DraftPart-1)-th attachment
+	// part, streamed at assembly (a resumed draft, a carried forward).
 	DraftPart int
 }
 

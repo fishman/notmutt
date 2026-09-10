@@ -107,6 +107,7 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 				st = compose.ReplyAll(*msg, parsed, account, from, own, sigName, sigBody)
 			case "forward":
 				st = compose.Forward(*msg, parsed, account, from, sigName, sigBody)
+				st.CarryForward(parsed, msg.Paths[0], cfg.Compose.Forward)
 			}
 			if st != nil {
 				st.Fcc = fcc

@@ -18,12 +18,25 @@ endif
 GO_CMD   = cd src && $(GO)
 GO_TAGS  = -tags "$(TAGS)"
 
-.PHONY: all build test test-race fuzz vet format check clean
+.PHONY: all build man test test-race fuzz vet format check clean
 
 all: build
 
 build:
 	$(GO_CMD) build $(GO_TAGS) -o ../$(BIN) .
+
+# man: the man pages are authored in docs/man/*.md and converted with
+# go-md2man (the section is the suffix, notmutt.1.md -> notmutt.1). The
+# roff is generated, never committed; the release workflow and the
+# packaging recipes call this target. Needs go-md2man in PATH.
+MAN_SRC = $(wildcard docs/man/*.md)
+MAN_OUT = $(patsubst docs/man/%.md,man/%,$(MAN_SRC))
+
+man: $(MAN_OUT)
+
+man/%: docs/man/%.md
+	@mkdir -p man
+	go-md2man -in $< -out $@
 
 # build-cli: the Apache-clean variant (no libnotmuch link). cgo (default)
 # links GPL libnotmuch; the cli tag drops go.notmuch entirely, so the
@@ -60,3 +73,4 @@ check:
 
 clean:
 	rm -f src/$(BIN)
+	rm -rf man

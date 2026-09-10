@@ -40,6 +40,9 @@ afew/
 /notmutt-cli
 /docs/_site/
 
+# generated man pages (docs/man/*.md is the source)
+/man/
+
 # release packaging artifacts (nfpm + makepkg)
 /dist/
 packaging/notmutt/src/

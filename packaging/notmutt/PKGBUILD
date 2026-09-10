@@ -12,17 +12,21 @@ url='https://github.com/fishman/notmutt'
 # NOT Apache-2.0. The Apache-clean CLI variant ships as notmutt-cli.
 license=('GPL-3.0-only')
 depends=('notmuch')
-makedepends=('go')
+makedepends=('go' 'go-md2man')
 source=("notmutt::git+https://github.com/fishman/notmutt.git#tag=v${pkgver}")
 sha256sums=('SKIP')
 
 build() {
     cd "$srcdir/notmutt/src"
     go build -tags lua -o ../notmutt .
+    cd "$srcdir/notmutt"
+    make man
 }
 
 package() {
     cd "$srcdir/notmutt"
     install -Dm755 notmutt "$pkgdir/usr/bin/notmutt"
     install -Dm644 README.md "$pkgdir/usr/share/doc/notmutt/README.md"
+    install -Dm644 man/notmutt.1 "$pkgdir/usr/share/man/man1/notmutt.1"
+    install -Dm644 man/notmutt-config.5 "$pkgdir/usr/share/man/man5/notmutt-config.5"
 }

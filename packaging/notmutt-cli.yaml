@@ -20,6 +20,14 @@ contents:
     dst: /usr/share/doc/notmutt-cli/README.md
     file_info:
       mode: 0644
+  - src: ./man/notmutt.1
+    dst: /usr/share/man/man1/notmutt-cli.1
+    file_info:
+      mode: 0644
+  - src: ./man/notmutt-config.5
+    dst: /usr/share/man/man5/notmutt-config.5
+    file_info:
+      mode: 0644
 overrides:
   # The CLI backend shells out to notmuch for every query and tag op.
   deb:

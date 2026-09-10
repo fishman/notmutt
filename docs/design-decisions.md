@@ -104,14 +104,24 @@ expires the chain; counted prefixes (12g) feed a count. '?' lists the
 current context's bindings - and an armed prefix lists its chained
 continuations.
 
-## 8. Crypto via system tools (R10)
+## 8. Crypto: system gpg, in-process S/MIME (R10)
 
-Decision: zero crypto code in the client. gpg CLI with --status-fd
-parsing, S/MIME via openssl smime, passphrase only through gpg-agent +
-external pinentry with TUI suspend/resume - the ONLY prompt path. No
-loopback mode: Go cannot zero secrets, smartcard PINs fail under
-loopback. The crypto layer takes a PromptFunction; it never prompts
-itself.
+Decision: the backend follows the real constraint - secret handling, not
+tooling symmetry. PGP via the gpg CLI with --status-fd parsing: the
+agent/passphrase machinery is the reason for the subprocess, and that
+backend is for PGP only. S/MIME runs in-process (go.mozilla.org/pkcs7 +
+stdlib crypto/x509) and the client owns its trust policy: roots from
+`[crypto] ca-file` (an empty one trusts the system CA pool - the
+mainstream posture, bounded by the emailProtection EKU gate and the
+identity-match), `use-system-pool = false` fails closed, revocation
+chosen per account and rendered honestly, and a valid signature from
+someone else's cert renders as a warning, not green. No openssl smime
+subprocess and no gpgsm backend: neither has a secret on the verify
+path, so a subprocess would add a CLI/argv surface and a second trust
+model for nothing. Passphrase only through gpg-agent + external pinentry
+with TUI suspend/resume - the ONLY prompt path. No loopback mode: Go
+cannot zero secrets, smartcard PINs fail under loopback. The crypto
+layer takes a PromptFunction; it never prompts itself.
 
 ## 9. Async bus with last-value snapshots (M1-M2)
 
@@ -529,7 +539,8 @@ code is the worst in the tree. The protocol surface is two shapes
 (anthropic /v1/messages NDJSON, OpenAI /v1/chat/completions SSE) that
 a request reader can see in full; the stream parsing is a bounded-line
 scanner, not a library-sized problem. The same reasoning already
-applies to crypto (R10: system tools, never vendored crypto) - the
+applies to crypto (R10: a system tool for anything holding a private
+key, in-process pkcs7 for the S/MIME verify path, which holds none) - the
 provider boundary is a network protocol, and the client keeps the
 smallest auditable surface between the user's secrets (the pass_cmd
 key) and the wire.

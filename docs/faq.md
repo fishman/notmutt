@@ -43,9 +43,10 @@ in-process; the theme, binding and config systems are data-driven.
 
 - **Crypto send**: the compose dialogue has a Security field (none /
   sign / encrypt / sign+encrypt) that cycles and displays, but the
-  send path does not wire a gpg/openssl transform into assembly yet.
-  Crypto runs through your system `gpg` when it lands - no vendored
-  crypto library, ever.
+  send path does not wire a crypto transform into assembly yet. PGP will
+  run through your system `gpg`; S/MIME signs and encrypts in-process
+  (pkcs7 + crypto/x509), since only PGP has an agent and a secret to
+  hand off.
 - **Algorithmic filters**: the filter engine (exclusive tag groups,
   derived folder rules, per-account mover, dry-run mode) runs
   in-process; bayes spam and DKIM validation are registered-interface

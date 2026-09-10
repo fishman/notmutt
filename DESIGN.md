@@ -282,20 +282,20 @@ Rules are data (TOML): `[filter.<name>] query = ...  add = [...]
 
 ## 7. Crypto (R10)
 
-PGP and S/MIME behind one Provider interface; backends are system CLIs,
-not libraries (aerc `lib/crypto` shape, neomutt `ncrypt/cryptglue`
-registration split per crypto family):
+PGP and S/MIME behind one Provider interface (aerc `lib/crypto` shape,
+neomutt `ncrypt/cryptglue` registration split per crypto family), but the
+backend per algorithm follows the real constraint - secret handling, not
+tooling symmetry:
 
 ```
 crypto.Provider (core interface, PromptFunction hooks)
-  -> crypto/gpg     system gpg: --status-fd 2 --batch, parsed status (aerc gpgbin)
-  -> crypto/smime   openssl smime (neomutt smime.c) or gpg CMS mode
-  -> crypto/pgp     OPTIONAL in-process OpenPGP via ProtonMail go-crypto
-                    (gopenpgp), aerc's "internal" provider: auto | gpg |
-                    internal, default gpg. Only for standalone keyrings /
-                    headless batch crypto; interop and key management
-                    are the client's problem in this mode. Never the
-                    default.
+  -> crypto/gpg     system gpg CLI: --status-fd 2 --batch, parsed status
+                    (aerc gpgbin). PGP only: the agent/passphrase
+                    machinery is the reason for the subprocess.
+  -> crypto/smime   IN-PROCESS: go.mozilla.org/pkcs7 + stdlib crypto/x509.
+                    No secret on the verify path, so no subprocess and no
+                    second trust model; the client owns the trust policy.
+  (no gpgsm backend, no openssl smime subprocess)
 ```
 
 - Compose path: dialogue flags {sign, signKeyId, encrypt, encryptTo} ->
@@ -304,16 +304,17 @@ crypto.Provider (core interface, PromptFunction hooks)
   contact) is async.
 - Read path: decrypt/verify as an async job; view model carries
   {decrypted body, sig status, signer, key id, error}; pager renders body
-  + status.
+  + status. The S/MIME parse lives in mail/smime.go (the CMS extract from
+  the message); verification is two independent results, crypto-valid AND
+  identity-match, and revocation is a state the client renders.
 - Passphrase: gpg-agent + external pinentry with TUI suspend/resume
-  (aerc `lib/pinentry`) - the only prompt path for the gpg backend.
-  NO loopback mode for gpg: the passphrase would enter client memory
+  (aerc `lib/pinentry`) - the ONLY prompt path, for anything that touches
+  a private key (a passphrase-protected S/MIME key included).
+  NO loopback mode: the passphrase would enter client memory
   (Go cannot zero secrets), the prompt path becomes the client's
   security surface (masking, scrollback, logs, crash dumps), and
   smartcard PINs fail under loopback. gpg-agent passphrase caching
-  (long --max-cache-ttl) makes pinentry rare anyway. Native
-  PromptFunction prompting is used ONLY by the in-process provider
-  (crypto/pgp), where no external agent exists.
+  (long --max-cache-ttl) makes pinentry rare anyway.
 - Key selection = selector dialogue state (section 5 machinery) fed by
   keyring queries (gpg --list-secret-keys --with-colons).
 - New crypto must be a dialogue: composing with a sign/encrypt decision
@@ -485,7 +486,7 @@ specific neomutt piece, not the whole parser.
 | TUI          | tcell + Lip Gloss (record 23 flips BubbleTea)   |
 | mail parse   | go-message (emersion)                          |
 | mail compose | go-message (mail package)                      |
-| crypto       | NO library - system gpg + openssl CLIs (R10)   |
+| crypto       | PGP: system gpg CLI; S/MIME: in-process pkcs7 + crypto/x509 (R10) |
 | notmuch      | aerc's cgo-free pattern: notmuch CLI via exec (worker/notmuch/lib), or in-tree cgo bindings - decide at M1 by benchmarking |
 | cell width   | mattn/go-runewidth (wcwidth for aligned rows)  |
 | cache        | bbolt (embedded KV) behind a `Cache` interface (R13) |
@@ -500,7 +501,7 @@ notmutt/
   core/          dialogue state machines, view model, filter engine, config store
   notmuch/       async notmuch layer (query, threads, tags)
   send/          async send jobs
-  crypto/        Provider interface + gpg/openssl backends (system CLIs)
+  crypto/        Provider interface: gpg CLI (PGP) + in-process pkcs7 (S/MIME)
   filter/        rule engine, exclusive groups, mover
   tui/           extractable TUI library (tcell frames/components)
   app/           client binary: models, event loop, windows, bindings

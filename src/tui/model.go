@@ -4433,18 +4433,75 @@ func (d *errorDialogue) handle(m *Model, msg KeyPressMsg) (dialogue, Cmd) {
 // Sanitize runs on the label and entry - dialogue text is user-typed,
 // not the pre-sanitized mail path (F1).
 func (d *textDialogue) render(m *Model) string {
-	inner := m.width - 2
+	rows, _, _ := d.wrap(m)
+	// the entry wraps at the label's column and the box grows upward
+	// (its bottom stays above the keyhint bar), so a long value stays
+	// whole instead of running off the box
+	label := core.SanitizeControls(d.label)
+	pad := m.styles.ComposeLabel.Render(strings.Repeat(" ", runewidth.StringWidth(label)))
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		if i == 0 {
+			out[i] = m.styles.ComposeLabel.Render(label)
+		} else {
+			out[i] = pad
+		}
+		out[i] += m.styles.Normal.Render(r)
+	}
+	return m.dialogueBox(out)
+}
+
+// wrap lays the entry over the box rows it needs: it cuts a row when the
+// next rune would pass the label's column, and windows the rows to the
+// cursor's when the box would outgrow the frame. Returns the visible
+// rows, the cursor's row within them, and its cell offset there. Every
+// row holds the same width, so the entry column never shifts (R11).
+func (d *textDialogue) wrap(m *Model) (rows []string, curRow, curCol int) {
 	label := core.SanitizeControls(d.label)
 	entry := core.SanitizeControls(d.input)
-	// labels are ASCII constants, so byte length is cell width; the
-	// entry truncates to the remaining inner width, so the box never
-	// word-wraps
-	budget := inner - len(label)
-	if budget < 0 {
-		budget = 0
+	// the box's border and its two trailing frame columns are not text
+	// columns: lipgloss fits the box to width-2 including the border, so
+	// a row wider than width-4-label re-wraps inside the box and the
+	// splice loses the bottom border
+	w := m.width - 4 - runewidth.StringWidth(label)
+	if w < 1 {
+		w = 1
 	}
-	return m.dialogueBox([]string{m.styles.ComposeLabel.Render(label) +
-		m.styles.Normal.Render(truncCells(entry, budget))})
+	cur := min(max(d.cur, 0), len(entry))
+	type span struct{ lo, hi int }
+	var spans []span
+	lo, cells := 0, 0
+	for i, r := range entry {
+		cw := runewidth.RuneWidth(r)
+		if cells+cw > w && i > lo {
+			spans = append(spans, span{lo, i})
+			lo, cells = i, 0
+		}
+		cells += cw
+	}
+	spans = append(spans, span{lo, len(entry)})
+	for i, s := range spans {
+		if cur <= s.hi || i == len(spans)-1 {
+			curRow, curCol = i, runewidth.StringWidth(entry[s.lo:cur])
+			break
+		}
+	}
+	// cap to the frame's content area (the box's two border rows, the
+	// keyhint/status pair, and the tab bar stay), then window so the
+	// cursor's row is always on screen
+	capRows := m.height - 5
+	if capRows < 1 {
+		capRows = 1
+	}
+	start := 0
+	if len(spans) > capRows {
+		start = min(max(curRow-capRows+1, 0), len(spans)-capRows)
+	}
+	end := min(start+capRows, len(spans))
+	for _, s := range spans[start:end] {
+		rows = append(rows, entry[s.lo:s.hi])
+	}
+	return rows, curRow - start, curCol
 }
 
 func (d *confirmDialogue) render(m *Model) string {
@@ -4456,7 +4513,10 @@ func (d *confirmDialogue) render(m *Model) string {
 }
 
 func (d *errorDialogue) render(m *Model) string {
-	inner := m.width - 2
+	// the box fits width-2 including its border and the frame keeps two
+	// trailing columns, so the text area is width-4: a wider row
+	// re-wraps inside the box and the splice loses the bottom border
+	inner := m.width - 4
 	// the box grows upward: the output is capped only by the frame
 	// rows above the keyhint/status lines, never a fixed count
 	outRows := m.height - 7 // label + hint + the two border rows
@@ -4495,17 +4555,12 @@ func (d *textDialogue) cursor(m *Model) (int, int, bool) {
 	if m.height < 5 || m.width < 3 {
 		return 0, 0, false
 	}
-	inner := m.width - 2
-	budget := inner - len(d.label)
-	if budget < 0 {
-		budget = 0
-	}
-	cur := d.cur
-	if cur > len(d.input) {
-		cur = len(d.input)
-	}
-	x := 1 + len(d.label) + min(runewidth.StringWidth(d.input[:cur]), budget)
-	return x, m.height - 4, true
+	// the box's bottom border stays above the keyhint bar, so the
+	// cursor's row follows the box height: content row i sits at
+	// height - rows - 3 + i
+	rows, curRow, curCol := d.wrap(m)
+	x := 1 + runewidth.StringWidth(core.SanitizeControls(d.label)) + curCol
+	return x, m.height - len(rows) - 3 + curRow, true
 }
 
 func (d *listDialogue) cursor(m *Model) (int, int, bool) {

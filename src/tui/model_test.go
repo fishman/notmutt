@@ -3569,6 +3569,70 @@ func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 	}
 }
 
+// TestDialogueBoxWrapsLongValue: a value too long for one box row wraps
+// at the label's column and the box grows UPWARD from its bottom anchor -
+// the compose field prompt's long Cc stays whole above the keyhint bar
+// instead of running off the box. The cursor follows the wrapped row.
+func TestDialogueBoxWrapsLongValue(t *testing.T) {
+	m := model()
+	next, _ := m.Update(WindowSizeMsg{Width: 40, Height: 24})
+	m = next
+	cc := "alpha@example.com, atlas@example.com, acme@example.com, anvil@example.com"
+	d := &textDialogue{field: "cc", label: "Cc: ", input: cc, cur: len(cc)}
+	chrome := strings.Split(stripANSI(m.render()), "\n")
+	m.dialogue = d
+	frame := stripANSI(m.render())
+	if got := strings.Count(frame, "\n") + 1; got != 24 {
+		t.Fatalf("the dialogue frame must be exactly 24 lines, got %d", got)
+	}
+	lines := strings.Split(frame, "\n")
+	last := len(lines) - 1
+	// the keyhint and status rows survive: the box splices whole list
+	// rows, and its bottom stays the row above the keyhint bar
+	if lines[last-1] != chrome[last-1] || lines[last] != chrome[last] {
+		t.Fatalf("the keyhint and status rows must survive the box:\n%s", frame)
+	}
+	top, bottom := -1, -1
+	for i, l := range lines {
+		switch {
+		case top < 0 && strings.HasPrefix(strings.TrimSpace(l), "╭"):
+			top = i
+		case strings.HasPrefix(strings.TrimSpace(l), "╰"):
+			bottom = i
+		}
+	}
+	if top < 0 || bottom != last-2 {
+		t.Fatalf("the box must close above the keyhint bar (top %d, bottom %d):\n%s", top, bottom, frame)
+	}
+	// the value is whole: the content rows, label column and borders
+	// stripped, rejoin to the entry
+	var joined strings.Builder
+	for _, l := range lines[top+1 : bottom] {
+		body := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(l), "│"), "│")
+		body = strings.TrimPrefix(body, "Cc: ")
+		body = strings.TrimPrefix(body, strings.Repeat(" ", len("Cc: ")))
+		joined.WriteString(strings.TrimRight(body, " "))
+	}
+	if got := joined.String(); got != cc {
+		t.Fatalf("the box must hold the whole value: got %q want %q:\n%s", got, cc, frame)
+	}
+	// the box grew upward: its top border sits above where a one-row
+	// box would put it (label at last-3)
+	if top >= last-4 {
+		t.Fatalf("a wrapped value must grow the box upward (top row %d, one-row box would be %d):\n%s", top, last-4, frame)
+	}
+	x, y, ok := d.cursor(&m)
+	if !ok {
+		t.Fatal("the prompt must publish a cursor")
+	}
+	if y != bottom-1 {
+		t.Fatalf("the cursor must sit on the box's last content row %d, got %d", bottom-1, y)
+	}
+	if x < 5 || x >= 40 {
+		t.Fatalf("the cursor x %d must stay inside the box", x)
+	}
+}
+
 // TestEditGatedDuringSending pins the edit gate: an in-flight
 // delivery's result is discarded when the send completes, so e must
 // not launch the editor while the job runs.

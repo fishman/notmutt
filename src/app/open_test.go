@@ -259,6 +259,40 @@ func TestOpenThreadRowsFirst(t *testing.T) {
 	}
 }
 
+// TestOpenThreadResolvesFileFromNotmuch: a row's cached path goes stale
+// the moment a tag op renames the file or a move relocates it, and the
+// seam's repoint is a separate round trip an open can outrun (the render
+// reads the row before any worker call). The open resolves the file from
+// notmuch, so a view-resident message never renders a deleted path, and
+// the row repoints on the way.
+func TestOpenThreadResolvesFileFromNotmuch(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "msg:2,S")
+	raw := "From: sender@example.com\nTo: alpha@example.com\nSubject: renamed\n" +
+		"Date: Tue, 01 Jan 2019 00:00:00 +0000\n\nbody\n"
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// the row was built before the flag-tag rename: it names the old file
+	gone := filepath.Join(dir, "msg")
+	msg := core.Message{ID: "a", ThreadID: "t1", Author: "sender@example.com", Subject: "renamed", Paths: []string{gone}}
+	v := core.NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{&msg})})
+	views := map[string]*core.View{v.ViewName(): v}
+
+	fw := &fakeWorker{}
+	fw.setMsgs([]core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}})
+	tl := runOpen(t, fw, views, tui.OpenReq{ThreadID: "t1", MsgID: "a", Width: 80})
+	for _, l := range tl.Lines {
+		if l.Kind == core.LineError {
+			t.Fatalf("the open rendered the stale row path: %q", l.Text)
+		}
+	}
+	if got := v.ThreadMsgs("t1")[0].Paths; !slices.Equal(got, []string{path}) {
+		t.Fatalf("the open must repoint the row to the present path: %v", got)
+	}
+}
+
 // waitThread fails unless the next bus event is the ThreadLoaded a full
 // open publishes, returning it.
 func waitThread(t *testing.T, ch <-chan core.Event) core.ThreadLoaded {

@@ -95,11 +95,16 @@ lookup while a wrong skip strands a row on a deleted file.
 ## The client must re-point its rows
 
 A view row keeps the path it was built with; `SetTags`/`reconcileMsg` never
-rewrite it, so a rename or move leaves the row naming a deleted file until
-the refresh re-fetches the thread. A reopen can outrun that, and the open
-path reads the view row first (rows-first, no worker round trip for a
-view-resident thread), so `ParseMessage` can open a renamed-away file until
-a restart.
+rewrite it, so a rename or move leaves the row naming a deleted file. No
+repair can be prompt enough to be safe: the rename and the repoint are two
+round trips, and an open that reads the row between them (rows-first - no
+worker call for a view-resident thread) opens the deleted file.
+
+So no reader trusts the row's path. **The open resolves the file from
+notmuch** (`refreshPaths` -> `currentPaths`, src/app/app.go openThread):
+one id snapshot before the render, and the rows repoint on the way. The
+seam below is then an optimization for the next open, never the fix that
+makes this one correct.
 
 One seam covers every rename-capable op out-of-band of a refresh:
 **`tagWrite`** (src/app/apply.go) - land the op, then for every view row
@@ -115,11 +120,13 @@ per-action special case:
   resolves any folder move, then calls the same seam;
 - the **MCP ops path** (src/app/mcp.go) - no live views, so a pure DB write.
 
-Thread identities skip the path repoint: a hydrated thread self-heals on
-the next fetch. Pinned by `TestApplyRefreshSeamRepointsPaths`
-(src/app/apply_test.go) and `TestSendReplyReconcilesOriginalRow`
-(src/app/send_test.go); the gate's two halves by `TestTagWritePathRepointGate`
-(same file).
+Thread identities skip the path repoint: the identity is a thread, not one
+message, so the seam has no single snapshot to take - those rows heal at
+the next open, which resolves the file itself. Pinned by
+`TestApplyRefreshSeamRepointsPaths` (src/app/apply_test.go) and
+`TestSendReplyReconcilesOriginalRow` (src/app/send_test.go); the gate's two
+halves by `TestTagWritePathRepointGate` (same file); the open's resolve by
+`TestOpenThreadResolvesFileFromNotmuch` (src/app/open_test.go).
 
 The repoint runs when a flag tag renamed the file *or* a folder move ran:
 a move relocates whatever the flag-sync setting, so the mover's call

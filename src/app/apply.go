@@ -277,25 +277,29 @@ func (e applyEnv) tagWrite(identity string, ops []core.TagOp, moved bool) error 
 		}
 		e.bus.Publish(core.ViewDiff{View: name})
 	}
-	// a hydrated thread defers: its messages self-heal on the next fetch
+	// a thread op repoints nothing: its rows' paths resolve at the next
+	// open, and a thread's file set is not one snapshot lookup
 	if changed && !thread && (moved || !e.flagSyncOff) {
 		refreshPaths(e.worker, e.views, identity)
 	}
 	return nil
 }
 
-// refreshPaths repoints live rows for msgID at its current paths (R1): a
-// tag op that renamed or moved the file deleted the old path, and a row
-// caching it would open a deleted file. Call at tag seams out-of-band of a
-// refresh; views not holding the message no-op.
-func refreshPaths(worker workerAPI, views map[string]*core.View, msgID string) {
+// refreshPaths repoints live rows for msgID at its current paths (R1) and
+// returns them: a tag op that renamed or moved the file deleted the old
+// path, and a row caching it would open a deleted file. Call at tag seams
+// out-of-band of a refresh, and before a read opens the row (the open path
+// resolves the file here, never from the row's cache); views not holding
+// the message no-op.
+func refreshPaths(worker workerAPI, views map[string]*core.View, msgID string) []string {
 	paths := currentPaths(worker, msgID)
 	if len(paths) == 0 {
-		return
+		return nil
 	}
 	for _, v := range views {
 		v.SetPaths(msgID, paths)
 	}
+	return paths
 }
 
 // currentPaths asks notmuch for the message's present file paths: one

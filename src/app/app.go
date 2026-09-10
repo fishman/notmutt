@@ -629,6 +629,16 @@ func openThread(env applyEnv, req tui.OpenReq, defViews map[string]string, dark 
 	if len(msgs) > 0 {
 		msgID = msgs[0].ID
 	}
+	// A row's cached path goes stale the instant a tag op renames the file
+	// or a move relocates it, and the seam's repoint is a separate round
+	// trip this open can outrun (the render reads rows before any worker
+	// call). Resolve the file from notmuch before anything opens it, and
+	// repoint the rows on the way.
+	if msgID != "" {
+		if paths := refreshPaths(worker, env.views, msgID); len(paths) > 0 {
+			msgs[0].Paths = paths
+		}
+	}
 	mode := req.Mode
 	if mode == core.RenderAuto {
 		mode = openViewMode(defViews, msgs)

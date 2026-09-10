@@ -2880,6 +2880,11 @@ func (m Model) cursorTags() []string {
 // shows, never as its hidden tail. A ghost row is not a landing spot:
 // the target snaps to the nearest real row in the direction of travel.
 // The window follows the target (anchorLineAt).
+// moveCursor steps the cursor delta emitted lines. A plain one-line step
+// that lands on a thread's fold ghost reveals the entry the window hides
+// - the window slides by the step, so j/k walk a long thread entry by
+// entry. Counted moves and gotos keep the emitted-line semantic: the
+// fold never slides under them.
 func (m *Model) moveCursor(delta int) {
 	rows := m.activeView().Rows()
 	m.rows = rows
@@ -2890,7 +2895,33 @@ func (m *Model) moveCursor(delta int) {
 	if delta < 0 {
 		dir = -1
 	}
-	m.land(rows, cursorLandAt(rows, max(0, min(m.CursorIndex()+delta, len(rows)-1)), dir))
+	idx := max(0, min(m.CursorIndex()+delta, len(rows)-1))
+	if delta == dir && rows[idx].Ghost {
+		m.slideFold(rows, idx, dir)
+		return
+	}
+	m.land(rows, cursorLandAt(rows, idx, dir))
+}
+
+// slideFold is the plain step's fold crossing: the ghost at idx is a
+// window edge of its thread, so sliding the window by dir reveals the
+// entry on the far side of the cursor and the cursor lands on it. A
+// refused slide (the thread fits the budget, or the window is already at
+// that edge) falls back to the emitted-line landing.
+func (m *Model) slideFold(rows []core.Row, idx, dir int) {
+	v := m.activeView()
+	cur, ok := v.CursorRow()
+	if ok && cur.Msg != nil && v.SlideWindow(rows[idx].ThreadID, dir) {
+		next := v.Rows()
+		m.rows = next
+		for i, r := range next {
+			if r.Msg != nil && r.Msg.ID == cur.Msg.ID {
+				m.land(next, cursorLandAt(next, i+dir, dir))
+				return
+			}
+		}
+	}
+	m.land(rows, cursorLandAt(rows, idx, dir))
 }
 
 // land is the single landing point for a line move: the view records

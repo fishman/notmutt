@@ -6662,7 +6662,53 @@ func TestFilePickerMark(t *testing.T) {
 // shows and a step off its last row crosses into the next thread -
 // the hidden tail is reached by paging (scrollCursor), never by a step
 // that slides the window under the cursor.
-func TestLineMoveSkipsFoldedTail(t *testing.T) {
+// TestPlainStepRevealsFoldedTail pins the plain j/k at a folded thread's
+// window edge: the step reveals the entry the window hides (the window
+// slides by one) instead of crossing into the next thread. A counted
+// move or a goto keeps the emitted-line semantic.
+func TestPlainStepRevealsFoldedTail(t *testing.T) {
+	m, view := foldModel(threadChain(40), 8)
+	if rows := view.Rows(); len(rows) != 19 || !rows[10].Ghost || rows[10].More != 30 {
+		t.Fatalf("fixture wrong: %d rows, row 11 %+v", len(rows), rows[10])
+	}
+	cursorID := func() string {
+		r, ok := m.view.CursorRow()
+		if !ok {
+			t.Fatal("cursor lost")
+		}
+		return r.Msg.ID
+	}
+	for i := 0; i < 9; i++ {
+		m = press(t, m, "j")
+	}
+	if cursorID() != "m10" {
+		t.Fatalf("nine steps must reach the window's last row, got %s", cursorID())
+	}
+	// the tenth step reveals m11: the window slides by one under the cursor
+	m = press(t, m, "j")
+	if cursorID() != "m11" {
+		t.Fatalf("a plain step must reveal the hidden entry, got %s", cursorID())
+	}
+	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop != 1 {
+		t.Fatalf("the window must slide by one: %+v", rows[0])
+	}
+	// k walks back through the window, then slides it to the head
+	for _, want := range []string{"m10", "m9", "m8", "m7", "m6", "m5", "m4", "m3", "m2", "m1"} {
+		m = press(t, m, "k")
+		if cursorID() != want {
+			t.Fatalf("k must walk back to %s, got %s", want, cursorID())
+		}
+	}
+	if rows := view.Rows(); rows[0].Ghost {
+		t.Fatalf("the last step must slide the window back to the head: %+v", rows[0])
+	}
+}
+
+// TestLineMoveWalksFoldedThread pins the crossing at the fold: plain
+// steps walk every entry of the thread, so the next thread follows the
+// thread's last entry, never its window. Paging still walks the window
+// (pinned in detail by TestPageDownPagesPlainly).
+func TestLineMoveWalksFoldedThread(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
 		core.NewThread("t0", threadChain(40)),
@@ -6681,29 +6727,25 @@ func TestLineMoveSkipsFoldedTail(t *testing.T) {
 	if rows := view.Rows(); len(rows) != 12 || !rows[10].Ghost || rows[10].More != 30 {
 		t.Fatalf("fixture wrong: %d rows, row 11 %+v", len(rows), rows[10])
 	}
-	// nine steps: m10, the window's last row
-	for i := 0; i < 9; i++ {
+	// the thread's 40 entries, then the next thread: the window slides
+	// under the cursor the whole way
+	// the cursor starts on m1
+	for i := 2; i <= 40; i++ {
 		m = press(t, m, "j")
+		if want := fmt.Sprintf("m%d", i); cursorID() != want {
+			t.Fatalf("step %d must land on %s, got %s", i, want, cursorID())
+		}
 	}
-	if cursorID() != "m10" || m.CursorIndex() != 9 {
-		t.Fatalf("cursor must rest on the window's last row, got %s @ %d", cursorID(), m.CursorIndex())
-	}
-	// the next line is the ghost: the step crosses into the next thread,
-	// skipping the thread's hidden tail, and the window never slides
 	m = press(t, m, "j")
 	if cursorID() != "other" || m.CursorIndex() != 11 {
-		t.Fatalf("the step must skip the folded tail, got %s @ %d", cursorID(), m.CursorIndex())
+		t.Fatalf("the step off the thread's last entry crosses into the next thread, got %s @ %d", cursorID(), m.CursorIndex())
 	}
-	if rows := view.Rows(); rows[0].Msg.ID != "m1" || rows[0].Ghost {
-		t.Fatalf("the window must not slide under a line move: %+v", rows[0])
-	}
-	// and back up: the ghost is no landing spot either
+	// and back up: the top ghost slides the window to m40's neighborhood
 	m = press(t, m, "k")
-	if cursorID() != "m10" || m.CursorIndex() != 9 {
-		t.Fatalf("k must return to the window's last row, got %s @ %d", cursorID(), m.CursorIndex())
+	if cursorID() != "m40" {
+		t.Fatalf("k must return to the thread's last entry, got %s", cursorID())
 	}
 	// paging still walks the window: the tail is reached page by page
-	// (pinned in detail by TestPageDownPagesPlainly)
 	m = press(t, m, "pgdown")
 	if rows := view.Rows(); !rows[0].Ghost || rows[0].MoreTop == 0 {
 		t.Fatalf("a page must slide the window into the hidden tail: %+v", rows[0])
@@ -6780,8 +6822,7 @@ func TestPageDownFoldKeepsPlainFlip(t *testing.T) {
 // TestLineMoveTurnsPagePlainly pins the line move at the page bottom
 // inside a folded thread: the crossing turns a whole page and lands on
 // the next line (m6 at the page top), never re-anchoring at the thread
-// head - and the fold's window stays where it was. The thread's hidden
-// tail is reached by paging, not by the step.
+// head. The fold slides only where the cursor reaches its window edge.
 func TestLineMoveTurnsPagePlainly(t *testing.T) {
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{
@@ -6823,14 +6864,23 @@ func TestLineMoveTurnsPagePlainly(t *testing.T) {
 			t.Fatalf("the page must hold to %s, got %s @ %d", want, cursorID(), m.indexOffset)
 		}
 	}
+	// the step off the window's last row reveals the entry the fold hides:
+	// the window slides by one and the page follows the cursor
 	m = press(t, m, "j")
-	if cursorID() != "m10" || m.indexOffset != 5 {
-		t.Fatalf("the ghost line must not move the cursor, got %s @ %d", cursorID(), m.indexOffset)
+	if cursorID() != "m11" {
+		t.Fatalf("the step must reveal the windowed tail, got %s", cursorID())
 	}
-	// paging reveals the hidden tail: the window slides and the page
-	// re-anchors (the read-position model, pinned by TestPageDown*)
-	m = press(t, m, "pgdown")
 	rows := view.Rows()
+	if !rows[0].Ghost || rows[0].MoreTop != 1 {
+		t.Fatalf("the step must slide the window by one: %+v", rows[0])
+	}
+	if idx := m.CursorIndex(); idx < m.indexOffset || idx > m.indexOffset+m.listHeight()-1 {
+		t.Fatalf("the revealed entry must be on the page: cursor %d, offset %d", idx, m.indexOffset)
+	}
+	// paging walks further into the tail (the read-position model,
+	// pinned by TestPageDown*)
+	m = press(t, m, "pgdown")
+	rows = view.Rows()
 	if !rows[0].Ghost || rows[0].MoreTop == 0 {
 		t.Fatalf("a page must slide the window into the hidden tail: %+v", rows[0])
 	}

@@ -63,11 +63,14 @@ next chunk, so the whole thread is reachable page by page.
 `"desc"` (the default) reads newest-first like the index, `"asc"` the
 notmuch-native oldest-first order.
 
-The number slot is the line number: `j`/`k`, `Ng` (goto line), `G`, and
-the search land on emitted lines, so a folded or collapsed thread counts
-as the rows it shows, never as its hidden tail - a step off its last row
-crosses into the next thread. A ghost row is no landing spot: the cursor
-snaps to the nearest real row in the direction of travel.
+`j`/`k` walk the index a row at a time. A step that reaches a thread's
+window edge slides the window instead of leaving the thread, so every
+entry of a long thread is reachable with `j` alone. A counted move and
+`Ng` (goto line) count emitted lines: the number slot is that line
+number, so a windowed thread counts as the rows it shows - a counted
+step off its last row crosses into the next thread, and the ghost row
+is no landing spot there (the cursor snaps to the nearest real row in
+the direction of travel).
 
 `C` collapses the cursor thread to its summary row; the collapse is
 persistent - moving over it leaves it collapsed, only another `C`

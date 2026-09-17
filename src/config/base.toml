@@ -71,6 +71,7 @@ tags = ["inbox", "unread"]
 [crypto]
 ca-file = ""
 use-system-pool = true
+gpg-command = "gpg"
 
 # the link opener (the pager F key): argv, the url is appended as the
 # last element (F4 - never shell-interpolated)

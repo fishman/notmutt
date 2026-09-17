@@ -1,12 +1,7 @@
-// Package crypto is the R10 crypto boundary, split into per-algorithm seams
-// because their surfaces differ: SMIME (this file, in-process) and a future
-// PGP seam (gpg CLI, aerc gpgbin pattern). S/MIME is in-process: pkcs7 does
-// the CMS parse, digest and signature math; stdlib x509 anchors the chain to
-// the configured roots (system CA pool by default, a pinned bundle when
-// [crypto] ca-file is set) with an emailProtection EKU gate. No secret on
-// the read path, so no CLI - S/MIME is internal always. The seam never
-// prompts - it takes a PromptFunction (R10). Verify is live;
-// sign/encrypt/decrypt are the send-path follow-on.
+// Package crypto is the R10 crypto boundary. PGP uses the system gpg binary
+// (agent and external pinentry stay outside the client); S/MIME verification
+// stays in process. The seam never prompts - it takes a PromptFunction where
+// a private-key operation needs one.
 package crypto
 
 import (

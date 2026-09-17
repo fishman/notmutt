@@ -89,6 +89,27 @@ func (p *pager) setSMIME(s *core.SMIMEStatus) {
 	p.setLines(p.lines)
 }
 
+// setPGP prepends the PGP/MIME status after the message was decoded on the
+// async open path. A signature failure remains a warning beside readable data.
+func (p *pager) setPGP(s *core.PGPStatus) {
+	if s == nil || (!s.Encrypted && !s.Signed) {
+		return
+	}
+	banner := core.Line{Text: "[PGP] encrypted message", Kind: core.LineSecurity, OK: true}
+	switch {
+	case s.Err != "":
+		banner.Text, banner.OK = "[PGP] could not verify: "+s.Err, false
+	case s.Signed && s.Valid && s.Encrypted:
+		banner.Text = "[PGP] encrypted, valid signature from " + s.Signer
+	case s.Signed && s.Valid:
+		banner.Text = "[PGP] valid signature from " + s.Signer
+	case s.Signed:
+		banner.Text, banner.OK = "[PGP] invalid or untrusted signature", false
+	}
+	p.lines = append([]core.Line{banner}, p.lines...)
+	p.setLines(p.lines)
+}
+
 func (p *pager) setLines(lines []core.Line) {
 	p.lines = lines
 	p.doc = nil

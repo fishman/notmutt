@@ -417,14 +417,12 @@ type Notify struct {
 	Max      int      `toml:"max"`
 }
 
-// Crypto configures the S/MIME verifier (R10): the in-process pkcs7
-// backend. A ca-file pins mail trust to that bundle; with an empty ca-file,
-// UseSystemPool trusts the system CA pool (default) or fails closed when
-// false. The gpg subprocess is reserved for PGP, a separate backend, not
-// S/MIME.
+// Crypto configures the R10 cryptographic backends. S/MIME verifies in
+// process; PGP invokes GPGCommand through argv only, defaulting to gpg.
 type Crypto struct {
 	CAFile        string `toml:"ca-file"`
 	UseSystemPool bool   `toml:"use-system-pool"`
+	GPGCommand    string `toml:"gpg-command"`
 }
 
 // Attachments configures the local attachment download pass
@@ -1133,6 +1131,7 @@ type Account struct {
 	Folder           *string             `toml:"folder"`
 	From             string              `toml:"from"`
 	DefaultSignature string              `toml:"default_signature"`
+	PGPKey           string              `toml:"pgp-key"`
 	Folders          map[string]string   `toml:"folders"`
 	Preset           string              `toml:"preset"`
 	Moves            map[string][]string `toml:"moves"`

@@ -223,6 +223,11 @@ are different: an empty folder is a load error.
 **default_signature** (string)
 : The signature file or text the composer seeds.
 
+**pgp-key** (string)
+: The secret-key fingerprint or key selector for PGP signing on this account.
+The composer uses it without opening a picker. Empty opens the gpg secret-key
+selector when signing is enabled.
+
 **folders** (table of strings)
 : The detected hard-tag folder map, as written by **notmutt setup**.
 The mover resolves move destinations against it.
@@ -369,6 +374,11 @@ extended-key-usage gate and the signer-identity match.
 **use-system-pool** (boolean, default `true`)
 : With an empty **ca-file**, whether the system CA pool is trusted. Set
 to false to fail closed: no system pool, no verification.
+
+**gpg-command** (string, default `"gpg"`)
+: The GnuPG executable used for PGP/MIME signing, encryption, decryption,
+and verification. It runs with argv only, using the normal gpg-agent and
+external pinentry; notmutt never supplies a passphrase.
 
 # MCP
 

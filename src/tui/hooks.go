@@ -134,6 +134,13 @@ func SetSendHandler(fn func(compose.State)) {
 	onSend = fn
 }
 
+// onPGPKeyRequest loads selectable secret keys off the UI loop.
+var onPGPKeyRequest = func(tabID string) {}
+
+func SetPGPKeyRequestHandler(fn func(tabID string)) {
+	onPGPKeyRequest = fn
+}
+
 // onSchedule is the schedule seam: the app stores the composition for
 // the parsed time and publishes ScheduledResult (OK closes the tab).
 var onSchedule = func(st compose.State, at string) {}

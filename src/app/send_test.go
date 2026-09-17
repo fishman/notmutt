@@ -859,6 +859,31 @@ func TestSendReplyReconcilesOriginalRow(t *testing.T) {
 	}
 }
 
+func TestSendJobPGPFailureSkipsTransport(t *testing.T) {
+	dir := t.TempDir()
+	called := filepath.Join(dir, "transport-called")
+	stub := "#!/bin/sh\ntouch " + called + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "send-stub"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Crypto.GPGCommand = filepath.Join(dir, "missing-gpg")
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	st := compose.NewCompose("gmail", "alpha@example.com", "", "")
+	st.ID, st.To, st.Subject, st.Body, st.Security = "pgp", []string{"atlas@example.com"}, "subject", "body", compose.SecuritySign
+	sendJob(applyEnv{worker: &stubWorker{}, bus: bus, cfg: cfg, root: dir}, core.NewView("inbox", "tag:inbox"), *st)
+	r := <-ch
+	result, ok := r.(core.SendResult)
+	if !ok || result.OK || result.Err == nil {
+		t.Fatalf("PGP failure result = %#v", r)
+	}
+	if _, err := os.Stat(called); !os.IsNotExist(err) {
+		t.Fatalf("transport ran after PGP failure: %v", err)
+	}
+}
+
 // waitSendResult drains the bus until the send's own result - the
 // reconcile events ride ahead of it.
 func waitSendResult(t *testing.T, ch <-chan core.Event) core.SendResult {

@@ -381,6 +381,17 @@ func Run() error {
 	tui.SetSendHandler(func(st compose.State) {
 		go sendJob(env, view, st)
 	})
+	tui.SetPGPKeyRequestHandler(func(tabID string) {
+		go func() {
+			keys, err := crypto.NewPGP(cfg.Crypto.GPGCommand).SecretKeys()
+			e := core.PGPKeysLoaded{TabID: tabID, Err: err}
+			for _, key := range keys {
+				e.Labels = append(e.Labels, key.Label)
+				e.IDs = append(e.IDs, key.ID)
+			}
+			bus.Publish(e)
+		}()
+	})
 	tui.SetScheduleHandler(func(st compose.State, at string) {
 		go scheduleJob(bus, worker, view, cfg, root, st, at)
 	})
@@ -652,23 +663,41 @@ func openThread(env applyEnv, req tui.OpenReq, defViews map[string]string, dark 
 			}
 		}
 	}
-	// S/MIME verdict (R10): detect + verify on the async open path, off the
-	// UI. A valid signature and its signer identity are separate - the pager
-	// shows the cert the user must judge against the From header.
-	// Detect always - the banner must appear for any S/MIME-signed message.
-	// An empty ca-file verifies against the system pool unless use-system-pool
-	// is off (fail-closed); a set ca-file pins to that bundle.
+	// Crypto verification/decryption runs on this existing open goroutine.
+	// PGP/MIME decoded bytes stay in memory and never replace mailbox files.
 	var smime *core.SMIMEStatus
+	var pgp *core.PGPStatus
+	var decoded []byte
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(env.cfg.Crypto, msgs[0].Paths[0])
+		if raw, readErr := os.ReadFile(msgs[0].Paths[0]); readErr == nil {
+			var status crypto.PGPStatus
+			var handled bool
+			decoded, status, handled, readErr = crypto.DecodePGPMIME(crypto.NewPGP(env.cfg.Crypto.GPGCommand), raw)
+			if readErr != nil {
+				bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: readErr})
+				return
+			}
+			if handled {
+				pgp = &core.PGPStatus{Encrypted: status.Encrypted, Signed: status.Signed, Valid: status.Valid, Signer: status.Signer, Err: status.Err}
+			}
+		}
 	}
-	lines, mime, links, err := mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, req.Images, req.ImgSizes)
+	var lines []core.Line
+	var mime string
+	var links []string
+	var err error
+	if pgp != nil {
+		lines, mime, links, err = mail.RenderMessageBytes(decoded, msgs[0], mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, req.Images, req.ImgSizes)
+	} else {
+		lines, mime, links, err = mail.RenderThread(msgs, mode, req.Headers, req.Width, req.LabelLinks, dark, themeBG, req.Images, req.ImgSizes)
+	}
 	if err != nil {
 		bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: err})
 		return
 	}
 	lines = applyBodyRenderHooks(lines)
-	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Images: req.Images, Refine: req.Refine, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime})
+	bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, RenderMode: mode, Headers: req.Headers, LinkLabels: req.LabelLinks, Images: req.Images, Refine: req.Refine, Origin: req.Origin, Links: links, Mime: mime, Lines: lines, SMIME: smime, PGP: pgp})
 	// the read mark names the opened message, never the whole thread
 	if !req.Preview && msgID != "" {
 		if err := env.tagWrite(msgID, []core.TagOp{{Tag: "unread"}}, false); err != nil {

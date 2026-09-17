@@ -7,6 +7,7 @@
 package mail
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"mime"
@@ -148,15 +149,26 @@ type Attachment struct {
 // path). Unknown charsets/encodings are tolerated, not fatal - the part
 // renders raw, undecoded. A structural part error ends the scan,
 // keeping the parts read so far (mutt-style).
+// ParseMessage opens one mail file and reads its structure.
 func ParseMessage(path string) (*Message, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	mr, err := openMail(f)
+	return parseMessage(f)
+}
+
+// ParseMessageBytes parses generated decrypted content without writing it to
+// disk. It has the same bounded part reads as the mailbox-file path.
+func ParseMessageBytes(data []byte) (*Message, error) {
+	return parseMessage(bytes.NewReader(data))
+}
+
+func parseMessage(r io.Reader) (*Message, error) {
+	mr, err := openMail(r)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
 	defer mr.Close()
 	hdr := mr.Header
@@ -207,7 +219,7 @@ func ParseMessage(path string) (*Message, error) {
 			case ct == "text/plain":
 				data, err := io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 				if err != nil {
-					return nil, fmt.Errorf("%s: %w", path, err)
+					return nil, err
 				}
 				parts := splitBody(string(data))
 				if len(data) > maxPartBytes {
@@ -219,7 +231,7 @@ func ParseMessage(path string) (*Message, error) {
 				// alternative pair survive the parse
 				data, err := io.ReadAll(io.LimitReader(p.Body, maxPartBytes+1))
 				if err != nil {
-					return nil, fmt.Errorf("%s: %w", path, err)
+					return nil, err
 				}
 				m.Parts = append(m.Parts, Part{Body: string(data), HTML: true, Truncated: len(data) > maxPartBytes})
 				// and as a download entry (the v dialog / s save path)
@@ -240,7 +252,7 @@ func ParseMessage(path string) (*Message, error) {
 				// images list without data
 				data, err := io.ReadAll(io.LimitReader(p.Body, maxImgBytes+1))
 				if err != nil {
-					return nil, fmt.Errorf("%s: %w", path, err)
+					return nil, err
 				}
 				a.Size = int64(len(data))
 				a.Truncated = len(data) > maxImgBytes
@@ -251,7 +263,7 @@ func ParseMessage(path string) (*Message, error) {
 			} else {
 				size, err := io.Copy(io.Discard, io.LimitReader(p.Body, maxPartBytes+1))
 				if err != nil {
-					return nil, fmt.Errorf("%s: %w", path, err)
+					return nil, err
 				}
 				a.Size = size
 				a.Truncated = size > maxPartBytes

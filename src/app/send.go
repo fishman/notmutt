@@ -17,6 +17,7 @@ import (
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/filter"
+	"notmutt/lib/crypto"
 	"notmutt/notmuch"
 )
 
@@ -34,10 +35,9 @@ func sendArgs(cfg config.Send, st compose.State) []string {
 	return args
 }
 
-// sendJob runs the send (spec section 8): assemble once, then the
-// delivery core (deliverSend) and the dialogue's SendResult. Transport
-// first: what was not delivered is not stored; the fcc note rides the
-// result.
+// sendJob runs the send (spec section 8): assemble, apply the selected PGP
+// transform, then delivery (deliverSend) and the dialogue's SendResult.
+// Transport first: what was not delivered is not stored.
 func sendJob(env applyEnv, view *core.View, st compose.State) {
 	bus := env.bus
 	var buf bytes.Buffer
@@ -45,11 +45,16 @@ func sendJob(env applyEnv, view *core.View, st compose.State) {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Err: err})
 		return
 	}
-	// snapshot the bytes: exec drains the buffer reading stdin, and the
-	// fcc must be the exact delivered bytes. The wire message drops the
-	// Bcc header (envelope-only); the fcc copy keeps it - the sender's
-	// record shows the blind recipients.
 	data := buf.Bytes()
+	if st.Security != compose.SecurityNone {
+		sign, encrypt := st.Security.Signing(), st.Security.Encrypting()
+		var err error
+		data, err = crypto.TransformPGP(crypto.NewPGP(env.cfg.Crypto.GPGCommand), data, sign, encrypt, st.PGPKey, pgpRecipients(st, sign && encrypt))
+		if err != nil {
+			bus.Publish(core.SendResult{TabID: st.ID, OK: false, Err: err})
+			return
+		}
+	}
 	note, out, err := deliverSend(env, st, data)
 	if err != nil {
 		bus.Publish(core.SendResult{TabID: st.ID, OK: false, Output: out, Err: err})
@@ -57,6 +62,26 @@ func sendJob(env applyEnv, view *core.View, st compose.State) {
 	}
 	bus.Publish(core.SendResult{TabID: st.ID, OK: true, Output: note})
 	bus.Publish(core.ViewDiff{View: view.ViewName()})
+}
+
+func pgpRecipients(st compose.State, includeSender bool) []string {
+	seen := make(map[string]bool, len(st.To)+len(st.Cc)+len(st.Bcc)+1)
+	out := make([]string, 0, len(seen))
+	add := func(values []string) {
+		for _, v := range values {
+			if v != "" && !seen[v] {
+				seen[v] = true
+				out = append(out, v)
+			}
+		}
+	}
+	add(st.To)
+	add(st.Cc)
+	add(st.Bcc)
+	if includeSender {
+		add([]string{st.From})
+	}
+	return out
 }
 
 // deliverSend runs the delivery core for pre-assembled bytes: the

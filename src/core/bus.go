@@ -216,6 +216,16 @@ type ComposeOpened struct {
 	References   []string
 	OriginalID   string
 	ResumePath   string
+	PGPKey       string
+}
+
+// PGPKeysLoaded is the asynchronous secret-key selector payload. Labels are
+// display-only; IDs are gpg fingerprints passed back to the provider.
+type PGPKeysLoaded struct {
+	TabID  string
+	Labels []string
+	IDs    []string
+	Err    error
 }
 
 // ComposeAttachment is the bus contract's attachment shape (core stays
@@ -310,6 +320,7 @@ type ThreadLoaded struct {
 	// SMIME is the opened message's S/MIME verdict (R10), nil when unsigned
 	// or no verifier is configured.
 	SMIME *SMIMEStatus
+	PGP   *PGPStatus
 	Err   error
 }
 
@@ -324,6 +335,16 @@ type SMIMEStatus struct {
 	Revoked bool
 	Checked bool
 	Err     string
+}
+
+// PGPStatus is the PGP/MIME read-path verdict. Validity and encryption are
+// independent so the pager never overstates what gpg established.
+type PGPStatus struct {
+	Encrypted bool
+	Signed    bool
+	Valid     bool
+	Signer    string
+	Err       string
 }
 
 // AttachmentLoaded carries the attachment view (the v dialog's enter):

@@ -96,6 +96,16 @@ func (s Security) Next() Security {
 	return Security((s + 1) % (SecuritySignEncrypt + 1))
 }
 
+// Signing and Encrypting decode the dialogue's one security selection. Every
+// send and picker path uses these methods rather than repeating the state set.
+func (s Security) Signing() bool {
+	return s == SecuritySign || s == SecuritySignEncrypt
+}
+
+func (s Security) Encrypting() bool {
+	return s == SecurityEncrypt || s == SecuritySignEncrypt
+}
+
 // State is one dialogue (R4): fields, attachments, send progress,
 // error output. The signature is stored SEPARATELY from the body
 // (SignatureBody) - re-attached at buffer build and assembly. A
@@ -119,6 +129,9 @@ type State struct {
 	MessageID     string // original message-id (In-Reply-To)
 	References    []string
 	OriginalID    string // original notmuch id (reply/forward tagging)
+	// PGPKey is the selected gpg secret-key fingerprint for signing.
+	// Empty lets gpg resolve the sender's default signing key.
+	PGPKey string
 	// ResumePath is the stored draft file this dialogue edits (the
 	// resume-draft key): a successful send retires it, an abort-to-save
 	// replaces it. Empty for every fresh compose (reply/forward/AI/CRM).

@@ -968,6 +968,14 @@ func (m Model) Update(msg any) (Model, Cmd) {
 			}
 		case core.ComposeOpened:
 			m.onComposeOpened(e)
+		case core.PGPKeysLoaded:
+			if e.Err != nil {
+				m.logEntry("pgp: "+e.Err.Error(), true)
+				break
+			}
+			if m.tabIdx > 0 && m.composeTab().ID == e.TabID {
+				m.dialogue = &listDialogue{f: newFuzzyPayload("pgp-key", "PGP signing key:", e.Labels, e.IDs)}
+			}
 		case core.SendResult:
 			m.onSendResult(e)
 		case core.ScheduledResult:
@@ -1646,6 +1654,17 @@ func (m Model) dispatchAction(action string, n int) (Model, Cmd) {
 	case "security":
 		if m.composeTab().Phase != compose.PhaseSending {
 			m.composeTab().Security = m.composeTab().Security.Next()
+			st := m.composeTab()
+			if st.Security.Signing() {
+				if st.PGPKey == "" {
+					st.PGPKey = m.st.Config().Accounts[st.Account].PGPKey
+				}
+				if st.PGPKey == "" {
+					onPGPKeyRequest(st.ID)
+				}
+			} else {
+				st.PGPKey = ""
+			}
 		}
 	case "send":
 		// PhaseSending gates duplicate presses: one job in flight (the
@@ -2001,6 +2020,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 			if e.ThreadID != pagerThreadID(m.pager) || e.MsgID != pagerMsgID(m.pager) {
 				m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 				m.pager.setSMIME(e.SMIME)
+				m.pager.setPGP(e.PGP)
 				w, h := m.pagerSize()
 				m.pager.setSize(w, h, m.styles)
 			}
@@ -2048,6 +2068,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		}
 		pg := newPager(e.ThreadID, e.MsgID, e.Lines)
 		pg.setSMIME(e.SMIME)
+		pg.setPGP(e.PGP)
 		pg.setImages(e.Images)
 		m.surfOpen[o] = &parkedOpen{pager: pg, renderMode: e.RenderMode, showHeaders: e.Headers, linkMode: e.LinkLabels, images: e.Images, renderMime: e.Mime}
 		return
@@ -2075,6 +2096,7 @@ func (m *Model) onThreadLoaded(e core.ThreadLoaded) {
 		m.cropLiveAt = time.Time{} // ...and a re-crop is not a continued burst
 		m.pager = newPager(e.ThreadID, e.MsgID, e.Lines)
 		m.pager.setSMIME(e.SMIME)
+		m.pager.setPGP(e.PGP)
 		// style once at load - width 0 (no WindowSizeMsg yet) pads
 		// nothing, the first resize re-styles at the real width
 		w, h := m.pagerSize()
@@ -4067,11 +4089,20 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 			}
 		}
 		return nil, nil
+	case "pgp-key":
+		if id, ok := d.f.selectedPayload(); ok && m.tabIdx > 0 {
+			m.composeTab().PGPKey = id
+		}
+		m.cancelDialogue()
+		return nil, nil
 	}
 	st := &m.tabs[m.tabIdx-1]
 	if d.f.kind == "account" {
 		a := m.st.Config().Accounts[entry]
-		st.Account, st.From = entry, a.From
+		st.Account, st.From, st.PGPKey = entry, a.From, a.PGPKey
+		if st.Security.Signing() && st.PGPKey == "" {
+			onPGPKeyRequest(st.ID)
+		}
 	} else {
 		if data, err := os.ReadFile(filepath.Join(sigDir, st.Account, entry)); err == nil {
 			st.SetSignature(entry, strings.TrimSuffix(string(data), "\n"))

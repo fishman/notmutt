@@ -44,6 +44,24 @@ func TestPagerSMIME(t *testing.T) {
 	}
 }
 
+func TestPagerPGP(t *testing.T) {
+	for _, c := range []struct {
+		status *core.PGPStatus
+		want   string
+		ok     bool
+	}{
+		{&core.PGPStatus{Encrypted: true}, "[PGP] encrypted message", true},
+		{&core.PGPStatus{Signed: true, Valid: true, Signer: "alpha@example.com"}, "[PGP] valid signature from alpha@example.com", true},
+		{&core.PGPStatus{Signed: true, Err: "badsig"}, "[PGP] could not verify: badsig", false},
+	} {
+		p := newPager("", "", []core.Line{{Text: "body"}})
+		p.setPGP(c.status)
+		if got := p.lines[0]; got.Text != c.want || got.OK != c.ok {
+			t.Fatalf("banner = %#v, want %q ok=%t", got, c.want, c.ok)
+		}
+	}
+}
+
 // TestAppendTextWraps pins the AI summary stream's wrap (the one
 // exception to the truncate-never-wrap rule): a streamed delta wraps to
 // the window width, a newline keeps a blank line, and a partial delta

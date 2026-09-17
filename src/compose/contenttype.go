@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"notmutt/mail"
+	"notmutt/lib/mimeutil"
 )
 
 // ContentTypeOf derives the body part's MIME type: text/plain by
@@ -32,9 +32,9 @@ func ContentTypeOf(body string) string {
 		}
 	}
 	if n >= 2 {
-		return mail.MIMETypeTextMarkdown.String()
+		return mimeutil.TextMarkdown.String()
 	}
-	return mail.MIMETypeTextPlain.String()
+	return mimeutil.TextPlain.String()
 }
 
 // MimeTypeOf guesses a file's MIME type from its extension
@@ -48,7 +48,7 @@ func MimeTypeOf(name string) string {
 		t = t[:i]
 	}
 	if t == "" {
-		return mail.MIMETypeOctetStream.String()
+		return mimeutil.OctetStream.String()
 	}
 	return t
 }
@@ -76,7 +76,7 @@ func InlineFacts(s *State) PartFacts {
 func AttachmentFacts(a Attachment) PartFacts {
 	typ := a.MimeType
 	if typ == "" {
-		typ = mail.MIMETypeOctetStream.String()
+		typ = mimeutil.OctetStream.String()
 	}
 	enc := "base64"
 	if strings.HasPrefix(typ, "message/") {

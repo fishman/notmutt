@@ -10,12 +10,12 @@ import (
 	"path/filepath"
 	"testing"
 
-	mail "notmutt/mail"
+	mimeutil "notmutt/lib/mimeutil"
 )
 
 func TestPGPMIMETransformRoundTrip(t *testing.T) {
 	p, key := testPGP(t)
-	message := []byte(fmt.Sprintf("From: Alpha <alpha@example.com>\r\nTo: Alpha <alpha@example.com>\r\nSubject: test\r\nContent-Type: %s; charset=utf-8\r\n\r\nhello alpha\r\n", mail.MIMETypeTextPlain))
+	message := []byte(fmt.Sprintf("From: Alpha <alpha@example.com>\r\nTo: Alpha <alpha@example.com>\r\nSubject: test\r\nContent-Type: %s; charset=utf-8\r\n\r\nhello alpha\r\n", mimeutil.TextPlain))
 	for _, security := range []struct{ sign, encrypt bool }{{true, false}, {false, true}, {true, true}} {
 		wire, err := TransformPGP(p, message, security.sign, security.encrypt, key, []string{"alpha@example.com"})
 		if err != nil {
@@ -57,12 +57,12 @@ func TestPGPMICALG(t *testing.T) {
 
 func TestDecodePGPMIMEVerifiesOriginalSignedPart(t *testing.T) {
 	p, key := testPGP(t)
-	entity := []byte(fmt.Sprintf("X-Zeta: z\r\nX-Alpha: first\r\n\tcontinued\r\nContent-Type: %s\r\n\r\nalpha\r\n", mail.MIMETypeTextPlain))
+	entity := []byte(fmt.Sprintf("X-Zeta: z\r\nX-Alpha: first\r\n\tcontinued\r\nContent-Type: %s\r\n\r\nalpha\r\n", mimeutil.TextPlain))
 	sig, _, err := p.Sign(entity, key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha; protocol=\"%s\"\r\n\r\n--alpha\r\n%s--alpha\r\nContent-Type: %s\r\n\r\n%s\r\n--alpha--\r\n", mail.MIMETypeMultipartSigned, mail.MIMETypePGPSignature, entity, mail.MIMETypePGPSignature, sig))
+	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha; protocol=\"%s\"\r\n\r\n--alpha\r\n%s--alpha\r\nContent-Type: %s\r\n\r\n%s\r\n--alpha--\r\n", mimeutil.MultipartSigned, mimeutil.PGPSignature, entity, mimeutil.PGPSignature, sig))
 	_, status, handled, err := DecodePGPMIME(p, wire)
 	if err != nil || !handled || !status.Valid {
 		t.Fatalf("status=%+v handled=%t err=%v", status, handled, err)
@@ -71,12 +71,12 @@ func TestDecodePGPMIMEVerifiesOriginalSignedPart(t *testing.T) {
 
 func TestDecodePGPMIMEDecodesEncryptedPartTransferEncoding(t *testing.T) {
 	p, _ := testPGP(t)
-	entity := []byte(fmt.Sprintf("Content-Type: %s\r\n\r\nalpha\r\n", mail.MIMETypeTextPlain))
+	entity := []byte(fmt.Sprintf("Content-Type: %s\r\n\r\nalpha\r\n", mimeutil.TextPlain))
 	ciphertext, _, err := p.Encrypt(entity, []string{"alpha@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha; protocol=\"%s\"\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--alpha\r\nContent-Type: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--alpha--\r\n", mail.MIMETypeMultipartEncrypted, mail.MIMETypePGPEncrypted, mail.MIMETypePGPEncrypted, mail.MIMETypeOctetStream, base64.StdEncoding.EncodeToString(ciphertext)))
+	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha; protocol=\"%s\"\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--alpha\r\nContent-Type: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--alpha--\r\n", mimeutil.MultipartEncrypted, mimeutil.PGPEncrypted, mimeutil.PGPEncrypted, mimeutil.OctetStream, base64.StdEncoding.EncodeToString(ciphertext)))
 	plain, status, handled, err := DecodePGPMIME(p, wire)
 	if err != nil || !handled || !status.Encrypted || !bytes.Contains(plain, []byte("alpha")) {
 		t.Fatalf("plain=%q status=%+v handled=%t err=%v", plain, status, handled, err)
@@ -85,12 +85,12 @@ func TestDecodePGPMIMEDecodesEncryptedPartTransferEncoding(t *testing.T) {
 
 func TestDecodePGPMIMEHandlesExchangeMixedEnvelope(t *testing.T) {
 	p, _ := testPGP(t)
-	entity := []byte(fmt.Sprintf("Content-Type: %s\r\n\r\nalpha\r\n", mail.MIMETypeTextPlain))
+	entity := []byte(fmt.Sprintf("Content-Type: %s\r\n\r\nalpha\r\n", mimeutil.TextPlain))
 	ciphertext, _, err := p.Encrypt(entity, []string{"alpha@example.com"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--alpha\r\nContent-Type: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--alpha--\r\n", mail.MIMETypeMultipartMixed, mail.MIMETypeTextPlain, mail.MIMETypePGPEncrypted, mail.MIMETypeOctetStream, base64.StdEncoding.EncodeToString(ciphertext)))
+	wire := []byte(fmt.Sprintf("Content-Type: %s; boundary=alpha\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\n\r\n--alpha\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--alpha\r\nContent-Type: %s\r\nContent-Transfer-Encoding: base64\r\n\r\n%s\r\n--alpha--\r\n", mimeutil.MultipartMixed, mimeutil.TextPlain, mimeutil.PGPEncrypted, mimeutil.OctetStream, base64.StdEncoding.EncodeToString(ciphertext)))
 	plain, status, handled, err := DecodePGPMIME(p, wire)
 	if err != nil || !handled || !status.Encrypted || !bytes.Contains(plain, []byte("alpha")) {
 		t.Fatalf("plain=%q status=%+v handled=%t err=%v", plain, status, handled, err)

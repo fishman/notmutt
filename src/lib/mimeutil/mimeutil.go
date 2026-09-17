@@ -1,4 +1,4 @@
-package mail
+package mimeutil
 
 import (
 	"bufio"
@@ -7,18 +7,33 @@ import (
 	"net/textproto"
 )
 
-// RawMIMEPart preserves one multipart part exactly as received. Raw includes
-// the header, body, and delimiter-adjacent line ending.
-type RawMIMEPart struct {
+// Type is a MIME media type used by the client.
+type Type string
+
+const (
+	MultipartEncrypted Type = "multipart/encrypted"
+	MultipartMixed     Type = "multipart/mixed"
+	MultipartSigned    Type = "multipart/signed"
+	PGPEncrypted       Type = "application/pgp-encrypted"
+	PGPSignature       Type = "application/pgp-signature"
+	OctetStream        Type = "application/octet-stream"
+	TextMarkdown       Type = "text/markdown"
+	TextPlain          Type = "text/plain"
+)
+
+func (t Type) String() string { return string(t) }
+
+// RawPart preserves one multipart part exactly as received. Raw includes the
+// header, body, and delimiter-adjacent line ending.
+type RawPart struct {
 	Header textproto.MIMEHeader
 	Body   []byte
 	Raw    []byte
 }
 
-// RawMIMEParts parses a multipart body without normalizing its part bytes.
-// Callers that verify detached signatures must use Raw rather than rebuilding
-// Header and Body.
-func RawMIMEParts(body []byte, boundary string) ([]RawMIMEPart, error) {
+// RawParts parses a multipart body without normalizing part bytes. Detached
+// signature verification uses Raw; other callers may use Header and Body.
+func RawParts(body []byte, boundary string) ([]RawPart, error) {
 	if boundary == "" {
 		return nil, fmt.Errorf("mime: missing boundary")
 	}
@@ -35,7 +50,7 @@ func RawMIMEParts(body []byte, boundary string) ([]RawMIMEPart, error) {
 	if start < 0 {
 		return nil, fmt.Errorf("mime: missing boundary")
 	}
-	var parts []RawMIMEPart
+	var parts []RawPart
 	for {
 		if !bytes.HasPrefix(body[start:], marker) {
 			return nil, fmt.Errorf("mime: malformed boundary")
@@ -55,16 +70,16 @@ func RawMIMEParts(body []byte, boundary string) ([]RawMIMEPart, error) {
 		}
 		next += partStart
 		raw := body[partStart : next+1]
-		header, content, err := rawPart(raw)
+		header, content, err := splitPart(raw)
 		if err != nil {
 			return nil, err
 		}
-		parts = append(parts, RawMIMEPart{Header: header, Body: content, Raw: raw})
+		parts = append(parts, RawPart{Header: header, Body: content, Raw: raw})
 		start = next + 1
 	}
 }
 
-func rawPart(raw []byte) (textproto.MIMEHeader, []byte, error) {
+func splitPart(raw []byte) (textproto.MIMEHeader, []byte, error) {
 	reader := bufio.NewReader(bytes.NewReader(raw))
 	header, err := textproto.NewReader(reader).ReadMIMEHeader()
 	if err != nil {

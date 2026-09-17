@@ -14,7 +14,7 @@ import (
 	"sort"
 	"strings"
 
-	mail "notmutt/mail"
+	mimeutil "notmutt/lib/mimeutil"
 )
 
 func TransformPGP(p PGP, message []byte, sign, encrypt bool, key string, recipients []string) ([]byte, error) {
@@ -46,8 +46,8 @@ func DecodePGPMIME(p PGP, message []byte) ([]byte, PGPStatus, bool, error) {
 		return message, PGPStatus{}, false, nil
 	}
 	switch ct {
-	case mail.MIMETypeMultipartEncrypted.String(), mail.MIMETypeMultipartMixed.String():
-		parts, err := mail.RawMIMEParts(body, params["boundary"])
+	case mimeutil.MultipartEncrypted.String(), mimeutil.MultipartMixed.String():
+		parts, err := mimeutil.RawParts(body, params["boundary"])
 		if err != nil {
 			return nil, PGPStatus{}, false, err
 		}
@@ -71,11 +71,11 @@ func DecodePGPMIME(p PGP, message []byte) ([]byte, PGPStatus, bool, error) {
 			status.Signed, status.Valid, status.Signer, status.MICALG, status.Err = innerStatus.Signed, innerStatus.Valid, innerStatus.Signer, innerStatus.MICALG, innerStatus.Err
 		}
 		return mergeOuterHeaders(h, inner), status, true, nil
-	case mail.MIMETypeMultipartSigned.String():
-		if params["protocol"] != mail.MIMETypePGPSignature.String() {
+	case mimeutil.MultipartSigned.String():
+		if params["protocol"] != mimeutil.PGPSignature.String() {
 			return message, PGPStatus{}, false, nil
 		}
-		parts, err := mail.RawMIMEParts(body, params["boundary"])
+		parts, err := mimeutil.RawParts(body, params["boundary"])
 		if err != nil || len(parts) != 2 {
 			return nil, PGPStatus{}, true, fmt.Errorf("pgp: invalid signed MIME envelope")
 		}
@@ -108,7 +108,7 @@ func signMIME(p PGP, message []byte, key string) ([]byte, error) {
 	}
 	boundary := multipart.NewWriter(io.Discard).Boundary()
 	h.Set("MIME-Version", "1.0")
-	h.Set("Content-Type", mime.FormatMediaType(mail.MIMETypeMultipartSigned.String(), map[string]string{"boundary": boundary, "protocol": mail.MIMETypePGPSignature.String(), "micalg": status.MICALG}))
+	h.Set("Content-Type", mime.FormatMediaType(mimeutil.MultipartSigned.String(), map[string]string{"boundary": boundary, "protocol": mimeutil.PGPSignature.String(), "micalg": status.MICALG}))
 	var out bytes.Buffer
 	out.Write(writeHeader(h))
 	fmt.Fprintf(&out, "--%s\r\n", boundary)
@@ -116,7 +116,7 @@ func signMIME(p PGP, message []byte, key string) ([]byte, error) {
 	if !bytes.HasSuffix(entity, []byte("\r\n")) {
 		out.WriteString("\r\n")
 	}
-	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\n", boundary, mail.MIMETypePGPSignature)
+	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\n", boundary, mimeutil.PGPSignature)
 	out.Write(sig)
 	if !bytes.HasSuffix(sig, []byte("\r\n")) {
 		out.WriteString("\r\n")
@@ -136,10 +136,10 @@ func encryptMIME(p PGP, message []byte, recipients []string) ([]byte, error) {
 	}
 	boundary := multipart.NewWriter(io.Discard).Boundary()
 	h.Set("MIME-Version", "1.0")
-	h.Set("Content-Type", mime.FormatMediaType(mail.MIMETypeMultipartEncrypted.String(), map[string]string{"boundary": boundary, "protocol": mail.MIMETypePGPEncrypted.String()}))
+	h.Set("Content-Type", mime.FormatMediaType(mimeutil.MultipartEncrypted.String(), map[string]string{"boundary": boundary, "protocol": mimeutil.PGPEncrypted.String()}))
 	var out bytes.Buffer
 	out.Write(writeHeader(h))
-	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, mail.MIMETypePGPEncrypted, boundary, mail.MIMETypeOctetStream)
+	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, mimeutil.PGPEncrypted, boundary, mimeutil.OctetStream)
 	out.Write(ciphertext)
 	if !bytes.HasSuffix(ciphertext, []byte("\r\n")) {
 		out.WriteString("\r\n")
@@ -220,14 +220,14 @@ func mergeOuterHeaders(outer textproto.MIMEHeader, entity []byte) []byte {
 	return writeMIME(outer, body)
 }
 
-func pgpEncryptedPart(typ string, params map[string]string, parts []mail.RawMIMEPart) (mail.RawMIMEPart, bool) {
-	if typ == mail.MIMETypeMultipartEncrypted.String() && strings.EqualFold(params["protocol"], mail.MIMETypePGPEncrypted.String()) && len(parts) == 2 && mediaType(parts[0].Header) == mail.MIMETypePGPEncrypted.String() && mediaType(parts[1].Header) == mail.MIMETypeOctetStream.String() {
+func pgpEncryptedPart(typ string, params map[string]string, parts []mimeutil.RawPart) (mimeutil.RawPart, bool) {
+	if typ == mimeutil.MultipartEncrypted.String() && strings.EqualFold(params["protocol"], mimeutil.PGPEncrypted.String()) && len(parts) == 2 && mediaType(parts[0].Header) == mimeutil.PGPEncrypted.String() && mediaType(parts[1].Header) == mimeutil.OctetStream.String() {
 		return parts[1], true
 	}
-	if typ == mail.MIMETypeMultipartMixed.String() && len(parts) == 3 && mediaType(parts[0].Header) == mail.MIMETypeTextPlain.String() && len(bytes.TrimSpace(parts[0].Body)) == 0 && mediaType(parts[1].Header) == mail.MIMETypePGPEncrypted.String() && mediaType(parts[2].Header) == mail.MIMETypeOctetStream.String() {
+	if typ == mimeutil.MultipartMixed.String() && len(parts) == 3 && mediaType(parts[0].Header) == mimeutil.TextPlain.String() && len(bytes.TrimSpace(parts[0].Body)) == 0 && mediaType(parts[1].Header) == mimeutil.PGPEncrypted.String() && mediaType(parts[2].Header) == mimeutil.OctetStream.String() {
 		return parts[2], true
 	}
-	return mail.RawMIMEPart{}, false
+	return mimeutil.RawPart{}, false
 }
 
 func mediaType(header textproto.MIMEHeader) string {
@@ -238,7 +238,7 @@ func mediaType(header textproto.MIMEHeader) string {
 	return strings.ToLower(typ)
 }
 
-func decodeTransfer(part mail.RawMIMEPart) ([]byte, error) {
+func decodeTransfer(part mimeutil.RawPart) ([]byte, error) {
 	switch strings.ToLower(part.Header.Get("Content-Transfer-Encoding")) {
 	case "", "7bit", "8bit", "binary":
 		return part.Body, nil
@@ -250,8 +250,6 @@ func decodeTransfer(part mail.RawMIMEPart) ([]byte, error) {
 		return nil, fmt.Errorf("pgp: unsupported content-transfer-encoding %q", part.Header.Get("Content-Transfer-Encoding"))
 	}
 }
-
-
 
 // VerifyDetached presents the signature by a private temporary path because
 // gpg's detached-verify interface accepts the signed entity on stdin.

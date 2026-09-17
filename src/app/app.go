@@ -15,8 +15,8 @@ import (
 	"io/fs"
 	"log"
 	"mime"
-	"net/textproto"
 	netmail "net/mail"
+	"net/textproto"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +31,7 @@ import (
 	"notmutt/filter"
 	"notmutt/i18n"
 	"notmutt/lib/crypto"
+	"notmutt/lib/mimeutil"
 	"notmutt/lib/xdg"
 	"notmutt/mail"
 	"notmutt/notmuch"
@@ -729,12 +730,12 @@ func readPGPMessage(path string) ([]byte, bool, error) {
 		return nil, false, nil
 	}
 	typ, params, err := mime.ParseMediaType(header.Get("Content-Type"))
-	if err != nil || (!strings.EqualFold(typ, mail.MIMETypeMultipartEncrypted.String()) && !strings.EqualFold(typ, mail.MIMETypeMultipartMixed.String())) {
+	if err != nil || (!strings.EqualFold(typ, mimeutil.MultipartEncrypted.String()) && !strings.EqualFold(typ, mimeutil.MultipartMixed.String())) {
 		return nil, false, nil
 	}
-	candidate := strings.EqualFold(typ, mail.MIMETypeMultipartEncrypted.String()) && strings.EqualFold(params["protocol"], mail.MIMETypePGPEncrypted.String())
-	if strings.EqualFold(typ, mail.MIMETypeMultipartMixed.String()) {
-		candidate = bytes.Contains(bytes.ToLower(probe), []byte("content-type: "+mail.MIMETypePGPEncrypted.String()))
+	candidate := strings.EqualFold(typ, mimeutil.MultipartEncrypted.String()) && strings.EqualFold(params["protocol"], mimeutil.PGPEncrypted.String())
+	if strings.EqualFold(typ, mimeutil.MultipartMixed.String()) {
+		candidate = bytes.Contains(bytes.ToLower(probe), []byte("content-type: "+mimeutil.PGPEncrypted.String()))
 	}
 	if !candidate {
 		return nil, false, nil

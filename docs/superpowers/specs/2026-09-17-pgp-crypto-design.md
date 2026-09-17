@@ -38,14 +38,20 @@ boundary. It must not introduce a shell or send mail data to logs.
 The transform owns the outer MIME envelope; `compose.Assemble` remains the one
 place that builds the clear RFC 5322 message.
 
-- Signing splits the clear message into top-level headers and body, removes
-  `MIME-Version` from the signed entity only, and signs the exact CRLF
-  canonicalized entity (part headers plus body). It emits RFC 3156
-  `multipart/signed; protocol="application/pgp-signature"; micalg=...` with
-  the clear entity first and an armored `application/pgp-signature` second.
+- Signing canonicalizes client-produced line endings to CRLF and signs the
+  resulting entity. Verification passes the exact first multipart bytes to
+  gpg: header order, folding, casing, and the delimiter-adjacent line ending
+  remain unchanged.
+- The reader decodes base64 and quoted-printable encrypted payloads before
+  invoking gpg. It also accepts the Microsoft Exchange malformed envelope:
+  `multipart/mixed` with an empty `text/plain` part followed by the PGP/MIME
+  control and encrypted parts.
+- PGP input, stdout, and status buffers are capped at 32 MiB. A candidate is
+  identified from the initial 64 KiB before the full bounded read; non-PGP
+  messages retain the existing renderer path.
+
 - Encryption first produces the signed form when both flags are selected. It
-  removes the transport headers from the encrypted payload, encrypts the full
-  inner entity, and emits `multipart/encrypted;
+  encrypts the full inner content entity and emits `multipart/encrypted;
   protocol="application/pgp-encrypted"`: a `Version: 1` control part and an
   armored `application/octet-stream` part. The original transport headers
   remain visible outside the envelope.

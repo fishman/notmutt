@@ -3,13 +3,18 @@ package crypto
 import (
 	"bufio"
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
+	"mime/quotedprintable"
 	"net/textproto"
 	"os"
 	"sort"
+	"strings"
+
+	mail "notmutt/mail"
 )
 
 func TransformPGP(p PGP, message []byte, sign, encrypt bool, key string, recipients []string) ([]byte, error) {
@@ -41,18 +46,20 @@ func DecodePGPMIME(p PGP, message []byte) ([]byte, PGPStatus, bool, error) {
 		return message, PGPStatus{}, false, nil
 	}
 	switch ct {
-	case "multipart/encrypted":
-		if params["protocol"] != "application/pgp-encrypted" {
+	case mail.MIMETypeMultipartEncrypted.String(), mail.MIMETypeMultipartMixed.String():
+		parts, err := mail.RawMIMEParts(body, params["boundary"])
+		if err != nil {
+			return nil, PGPStatus{}, false, err
+		}
+		payload, encrypted := pgpEncryptedPart(ct, params, parts)
+		if !encrypted {
 			return message, PGPStatus{}, false, nil
 		}
-		parts, err := mimeParts(body, params["boundary"])
-		if err != nil || len(parts) != 2 {
-			return nil, PGPStatus{}, true, fmt.Errorf("pgp: invalid encrypted MIME envelope")
+		ciphertext, err := decodeTransfer(payload)
+		if err != nil {
+			return nil, PGPStatus{}, true, err
 		}
-		if parts[0].Header.Get("Content-Type") != "application/pgp-encrypted" {
-			return nil, PGPStatus{}, true, fmt.Errorf("pgp: invalid encrypted MIME control part")
-		}
-		plain, status, err := p.Decrypt(parts[1].Data)
+		plain, status, err := p.Decrypt(ciphertext)
 		if err != nil {
 			return nil, status, true, err
 		}
@@ -64,18 +71,23 @@ func DecodePGPMIME(p PGP, message []byte) ([]byte, PGPStatus, bool, error) {
 			status.Signed, status.Valid, status.Signer, status.MICALG, status.Err = innerStatus.Signed, innerStatus.Valid, innerStatus.Signer, innerStatus.MICALG, innerStatus.Err
 		}
 		return mergeOuterHeaders(h, inner), status, true, nil
-	case "multipart/signed":
-		if params["protocol"] != "application/pgp-signature" {
+	case mail.MIMETypeMultipartSigned.String():
+		if params["protocol"] != mail.MIMETypePGPSignature.String() {
 			return message, PGPStatus{}, false, nil
 		}
-		parts, err := mimeParts(body, params["boundary"])
+		parts, err := mail.RawMIMEParts(body, params["boundary"])
 		if err != nil || len(parts) != 2 {
 			return nil, PGPStatus{}, true, fmt.Errorf("pgp: invalid signed MIME envelope")
 		}
-		signed := append(writeMIME(parts[0].Header, parts[0].Data), "\r\n"...)
-		status, _ := p.VerifyDetached(signed, parts[1].Data)
-		// The pager renders the signed content with a warning when verification
-		// fails.
+		signed := parts[0].Raw
+		signature, err := decodeTransfer(parts[1])
+		if err != nil {
+			return nil, PGPStatus{}, true, err
+		}
+		status, verifyErr := p.VerifyDetached(signed, signature)
+		if verifyErr != nil && status.Err == "" {
+			status.Err = verifyErr.Error()
+		}
 		return mergeOuterHeaders(h, signed), status, true, nil
 	default:
 		return message, PGPStatus{}, false, nil
@@ -89,14 +101,14 @@ func signMIME(p PGP, message []byte, key string) ([]byte, error) {
 	}
 	entityHeader := cloneHeader(h)
 	entityHeader.Del("Mime-Version")
-	entity := writeMIME(entityHeader, body)
+	entity := canonicalCRLF(writeMIME(entityHeader, body))
 	sig, status, err := p.Sign(entity, key)
 	if err != nil {
 		return nil, err
 	}
 	boundary := multipart.NewWriter(io.Discard).Boundary()
 	h.Set("MIME-Version", "1.0")
-	h.Set("Content-Type", mime.FormatMediaType("multipart/signed", map[string]string{"boundary": boundary, "protocol": "application/pgp-signature", "micalg": status.MICALG}))
+	h.Set("Content-Type", mime.FormatMediaType(mail.MIMETypeMultipartSigned.String(), map[string]string{"boundary": boundary, "protocol": mail.MIMETypePGPSignature.String(), "micalg": status.MICALG}))
 	var out bytes.Buffer
 	out.Write(writeHeader(h))
 	fmt.Fprintf(&out, "--%s\r\n", boundary)
@@ -104,7 +116,7 @@ func signMIME(p PGP, message []byte, key string) ([]byte, error) {
 	if !bytes.HasSuffix(entity, []byte("\r\n")) {
 		out.WriteString("\r\n")
 	}
-	fmt.Fprintf(&out, "--%s\r\nContent-Type: application/pgp-signature\r\n\r\n", boundary)
+	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\n", boundary, mail.MIMETypePGPSignature)
 	out.Write(sig)
 	if !bytes.HasSuffix(sig, []byte("\r\n")) {
 		out.WriteString("\r\n")
@@ -124,10 +136,10 @@ func encryptMIME(p PGP, message []byte, recipients []string) ([]byte, error) {
 	}
 	boundary := multipart.NewWriter(io.Discard).Boundary()
 	h.Set("MIME-Version", "1.0")
-	h.Set("Content-Type", mime.FormatMediaType("multipart/encrypted", map[string]string{"boundary": boundary, "protocol": "application/pgp-encrypted"}))
+	h.Set("Content-Type", mime.FormatMediaType(mail.MIMETypeMultipartEncrypted.String(), map[string]string{"boundary": boundary, "protocol": mail.MIMETypePGPEncrypted.String()}))
 	var out bytes.Buffer
 	out.Write(writeHeader(h))
-	fmt.Fprintf(&out, "--%s\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n--%s\r\nContent-Type: application/octet-stream\r\n\r\n", boundary, boundary)
+	fmt.Fprintf(&out, "--%s\r\nContent-Type: %s\r\n\r\nVersion: 1\r\n--%s\r\nContent-Type: %s\r\n\r\n", boundary, mail.MIMETypePGPEncrypted, boundary, mail.MIMETypeOctetStream)
 	out.Write(ciphertext)
 	if !bytes.HasSuffix(ciphertext, []byte("\r\n")) {
 		out.WriteString("\r\n")
@@ -146,6 +158,7 @@ func splitMIME(data []byte) (textproto.MIMEHeader, []byte, error) {
 	return h, body, err
 }
 func writeHeader(h textproto.MIMEHeader) []byte { return writeMIME(h, nil) }
+
 func writeMIME(h textproto.MIMEHeader, body []byte) []byte {
 	keys := make([]string, 0, len(h))
 	for key := range h {
@@ -161,6 +174,21 @@ func writeMIME(h textproto.MIMEHeader, body []byte) []byte {
 	b.WriteString("\r\n")
 	b.Write(body)
 	return b.Bytes()
+}
+
+func canonicalCRLF(data []byte) []byte {
+	if !bytes.Contains(data, []byte("\n")) {
+		return data
+	}
+	var out bytes.Buffer
+	out.Grow(len(data))
+	for i, b := range data {
+		if b == '\n' && (i == 0 || data[i-1] != '\r') {
+			out.WriteByte('\r')
+		}
+		out.WriteByte(b)
+	}
+	return out.Bytes()
 }
 func cloneHeader(h textproto.MIMEHeader) textproto.MIMEHeader {
 	out := make(textproto.MIMEHeader, len(h))
@@ -192,32 +220,38 @@ func mergeOuterHeaders(outer textproto.MIMEHeader, entity []byte) []byte {
 	return writeMIME(outer, body)
 }
 
-type mimePart struct {
-	Header textproto.MIMEHeader
-	Data   []byte
+func pgpEncryptedPart(typ string, params map[string]string, parts []mail.RawMIMEPart) (mail.RawMIMEPart, bool) {
+	if typ == mail.MIMETypeMultipartEncrypted.String() && strings.EqualFold(params["protocol"], mail.MIMETypePGPEncrypted.String()) && len(parts) == 2 && mediaType(parts[0].Header) == mail.MIMETypePGPEncrypted.String() && mediaType(parts[1].Header) == mail.MIMETypeOctetStream.String() {
+		return parts[1], true
+	}
+	if typ == mail.MIMETypeMultipartMixed.String() && len(parts) == 3 && mediaType(parts[0].Header) == mail.MIMETypeTextPlain.String() && len(bytes.TrimSpace(parts[0].Body)) == 0 && mediaType(parts[1].Header) == mail.MIMETypePGPEncrypted.String() && mediaType(parts[2].Header) == mail.MIMETypeOctetStream.String() {
+		return parts[2], true
+	}
+	return mail.RawMIMEPart{}, false
 }
 
-func mimeParts(body []byte, boundary string) ([]mimePart, error) {
-	if boundary == "" {
-		return nil, fmt.Errorf("missing boundary")
+func mediaType(header textproto.MIMEHeader) string {
+	typ, _, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil {
+		return ""
 	}
-	mr := multipart.NewReader(bytes.NewReader(body), boundary)
-	var parts []mimePart
-	for {
-		p, err := mr.NextPart()
-		if err == io.EOF {
-			return parts, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		data, err := io.ReadAll(p)
-		if err != nil {
-			return nil, err
-		}
-		parts = append(parts, mimePart{Header: cloneHeader(p.Header), Data: data})
+	return strings.ToLower(typ)
+}
+
+func decodeTransfer(part mail.RawMIMEPart) ([]byte, error) {
+	switch strings.ToLower(part.Header.Get("Content-Transfer-Encoding")) {
+	case "", "7bit", "8bit", "binary":
+		return part.Body, nil
+	case "base64":
+		return io.ReadAll(base64.NewDecoder(base64.StdEncoding, bytes.NewReader(part.Body)))
+	case "quoted-printable":
+		return io.ReadAll(quotedprintable.NewReader(bytes.NewReader(part.Body)))
+	default:
+		return nil, fmt.Errorf("pgp: unsupported content-transfer-encoding %q", part.Header.Get("Content-Transfer-Encoding"))
 	}
 }
+
+
 
 // VerifyDetached presents the signature by a private temporary path because
 // gpg's detached-verify interface accepts the signed entity on stdin.

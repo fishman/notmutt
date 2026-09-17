@@ -3,6 +3,7 @@ package crypto
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -17,6 +18,20 @@ type PGPStatus struct {
 	Signer    string
 	Err       string
 	MICALG    string
+}
+
+// MaxMessageBytes bounds PGP's in-memory message and subprocess buffers.
+const MaxMessageBytes = 32 << 20
+
+var errMessageTooLarge = errors.New("pgp: message exceeds 32 MiB")
+
+type limitedBuffer struct{ bytes.Buffer }
+
+func (b *limitedBuffer) Write(p []byte) (int, error) {
+	if len(p) > MaxMessageBytes-b.Len() {
+		return 0, errMessageTooLarge
+	}
+	return b.Buffer.Write(p)
 }
 
 // PGPKey is one selectable secret-key identity.
@@ -36,14 +51,20 @@ func NewPGP(command string) PGP {
 }
 
 func (p PGP) run(input []byte, args ...string) ([]byte, PGPStatus, error) {
+	if len(input) > MaxMessageBytes {
+		return nil, PGPStatus{}, errMessageTooLarge
+	}
 	argv := make([]string, 0, len(args)+4)
 	argv = append(argv, "--batch", "--no-tty", "--status-fd=2")
 	argv = append(argv, args...)
 	cmd := exec.Command(p.Command, argv...)
 	cmd.Stdin = bytes.NewReader(input)
-	var stdout, stderr bytes.Buffer
+	var stdout, stderr limitedBuffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
+	if errors.Is(err, errMessageTooLarge) {
+		return nil, PGPStatus{}, errMessageTooLarge
+	}
 	status := parsePGPStatus(stderr.Bytes())
 	if err != nil {
 		if status.Err != "" {
@@ -157,6 +178,12 @@ func pgpMICALG(id string) string {
 		return "pgp-sha1"
 	case "3":
 		return "pgp-ripemd160"
+	case "5":
+		return "pgp-md2"
+	case "6":
+		return "pgp-tiger192"
+	case "7":
+		return "pgp-haval-5-160"
 	case "8":
 		return "pgp-sha256"
 	case "9":

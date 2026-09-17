@@ -4,6 +4,8 @@
 package app
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"embed"
 	"errors"
@@ -12,6 +14,8 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
+	"net/textproto"
 	netmail "net/mail"
 	"os"
 	"os/exec"
@@ -670,7 +674,10 @@ func openThread(env applyEnv, req tui.OpenReq, defViews map[string]string, dark 
 	var decoded []byte
 	if len(msgs) > 0 && len(msgs[0].Paths) > 0 {
 		smime = verifySMIME(env.cfg.Crypto, msgs[0].Paths[0])
-		if raw, readErr := os.ReadFile(msgs[0].Paths[0]); readErr == nil {
+		if raw, candidate, readErr := readPGPMessage(msgs[0].Paths[0]); readErr != nil {
+			bus.Publish(core.ThreadLoaded{ThreadID: threadID, MsgID: msgID, Preview: req.Preview, Origin: req.Origin, Err: readErr})
+			return
+		} else if candidate {
 			var status crypto.PGPStatus
 			var handled bool
 			decoded, status, handled, readErr = crypto.DecodePGPMIME(crypto.NewPGP(env.cfg.Crypto.GPGCommand), raw)
@@ -704,6 +711,47 @@ func openThread(env applyEnv, req tui.OpenReq, defViews map[string]string, dark 
 			bus.Publish(core.JobError{Job: "open", Err: fmt.Errorf("mark read %s: %w", msgID, err)})
 		}
 	}
+}
+
+func readPGPMessage(path string) ([]byte, bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	probe, err := io.ReadAll(io.LimitReader(f, 64<<10))
+	f.Close()
+	if err != nil {
+		return nil, false, err
+	}
+	reader := textproto.NewReader(bufio.NewReader(bytes.NewReader(probe)))
+	header, err := reader.ReadMIMEHeader()
+	if err != nil {
+		return nil, false, nil
+	}
+	typ, params, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil || (!strings.EqualFold(typ, mail.MIMETypeMultipartEncrypted.String()) && !strings.EqualFold(typ, mail.MIMETypeMultipartMixed.String())) {
+		return nil, false, nil
+	}
+	candidate := strings.EqualFold(typ, mail.MIMETypeMultipartEncrypted.String()) && strings.EqualFold(params["protocol"], mail.MIMETypePGPEncrypted.String())
+	if strings.EqualFold(typ, mail.MIMETypeMultipartMixed.String()) {
+		candidate = bytes.Contains(bytes.ToLower(probe), []byte("content-type: "+mail.MIMETypePGPEncrypted.String()))
+	}
+	if !candidate {
+		return nil, false, nil
+	}
+	f, err = os.Open(path)
+	if err != nil {
+		return nil, false, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, crypto.MaxMessageBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if len(data) > crypto.MaxMessageBytes {
+		return nil, false, fmt.Errorf("pgp: message exceeds %d MiB", crypto.MaxMessageBytes>>20)
+	}
+	return data, true, nil
 }
 
 // verifySMIME detects an S/MIME signature in the opened message and verifies

@@ -80,6 +80,7 @@ func accountFrom(cfg config.Config, root string, msgTags, cursorTags []string) (
 func newCompose(cfg config.Config, root string, msgTags, cursorTags []string) *compose.State {
 	account, from, sigName, sigBody, fcc := accountFrom(cfg, root, msgTags, cursorTags)
 	st := compose.NewCompose(account, from, sigName, sigBody)
+	st.PGPKey = cfg.Accounts[account].PGPKey
 	st.Fcc = fcc
 	return st
 }
@@ -111,6 +112,7 @@ func buildCompose(cfg config.Config, view *core.View, msg *core.Message, mode, r
 			}
 			if st != nil {
 				st.Fcc = fcc
+				st.PGPKey = cfg.Accounts[account].PGPKey
 			}
 		}
 	}

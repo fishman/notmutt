@@ -509,3 +509,12 @@ func TestResumePrefillGate(t *testing.T) {
 		t.Fatalf("nil must no-op: %v %+v", err, st)
 	}
 }
+
+func TestNewComposeUsesAccountPGPKey(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"alpha": {From: "alpha@example.com", PGPKey: "FINGERPRINT"}}
+	st := newCompose(cfg, t.TempDir(), []string{"alpha"}, nil)
+	if st.PGPKey != "FINGERPRINT" {
+		t.Fatalf("PGPKey = %q, want account key", st.PGPKey)
+	}
+}

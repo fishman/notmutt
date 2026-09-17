@@ -380,6 +380,11 @@ to false to fail closed: no system pool, no verification.
 and verification. It runs with argv only, using the normal gpg-agent and
 external pinentry; notmutt never supplies a passphrase.
 
+**PGP/MIME confidentiality limitation**
+: PGP/MIME encrypts message content. The outer `From`, recipient, `Subject`,
+and routing headers remain readable. Protected headers are unsupported; do not
+use notmutt PGP/MIME where subject confidentiality is required.
+
 # MCP
 
 ## [mcp]

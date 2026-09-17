@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -31,6 +32,30 @@ func TestPGPMIMETransformRoundTrip(t *testing.T) {
 		if !bytes.Contains(plain, []byte("hello alpha")) {
 			t.Fatalf("decoded body missing: %q", plain)
 		}
+	}
+}
+
+func TestPGPMIMESignsContentEntity(t *testing.T) {
+	p, key := testPGP(t)
+	message := []byte(fmt.Sprintf("From: Alpha <alpha@example.com>\r\nTo: Alpha <alpha@example.com>\r\nSubject: test\r\nContent-Type: %s\r\n\r\nalpha\r\n", mimeutil.TextPlain))
+	wire, err := TransformPGP(p, message, true, false, key, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	header, body, err := splitMIME(wire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, params, err := mime.ParseMediaType(header.Get("Content-Type"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts, err := mimeutil.RawParts(body, params["boundary"])
+	if err != nil || len(parts) != 2 {
+		t.Fatalf("parts=%d err=%v", len(parts), err)
+	}
+	if bytes.Contains(parts[0].Raw, []byte("From:")) || bytes.Contains(parts[0].Raw, []byte("Subject:")) {
+		t.Fatalf("signed entity includes transport headers: %q", parts[0].Raw)
 	}
 }
 

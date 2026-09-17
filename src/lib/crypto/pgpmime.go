@@ -72,7 +72,7 @@ func DecodePGPMIME(p PGP, message []byte) ([]byte, PGPStatus, bool, error) {
 		}
 		return mergeOuterHeaders(h, inner), status, true, nil
 	case mimeutil.MultipartSigned.String():
-		if params["protocol"] != mimeutil.PGPSignature.String() {
+		if !strings.EqualFold(params["protocol"], mimeutil.PGPSignature.String()) {
 			return message, PGPStatus{}, false, nil
 		}
 		parts, err := mimeutil.RawParts(body, params["boundary"])
@@ -99,7 +99,7 @@ func signMIME(p PGP, message []byte, key string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	entityHeader := cloneHeader(h)
+	entityHeader := contentHeaders(h)
 	entityHeader.Del("Mime-Version")
 	entity := canonicalCRLF(writeMIME(entityHeader, body))
 	sig, status, err := p.Sign(entity, key)

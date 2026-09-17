@@ -7,6 +7,19 @@ encryption, decryption, and verification use the user's `gpg` binary. The
 provider never handles passphrases or private-key bytes; gpg-agent invokes its
 configured external pinentry.
 
+## Critical limitation: protected headers unsupported
+
+PGP/MIME encrypts the MIME entity only. The outer `From`, `To`, `Cc`,
+`Subject`, and mail-routing headers remain readable to mail servers, notmuch,
+and anyone with access to the encrypted message. `Subject` confidentiality is
+not provided.
+
+Do not use this implementation where subject confidentiality is required.
+Protected-header support requires an RFC 3156-compatible inner header entity,
+explicit display/index precedence, and a test corpus before it can be enabled.
+Until then, all encrypted compose output must retain the visible outer headers
+and the pager must report them as outer metadata.
+
 ## Context
 
 Compose currently stores a `Security` selection but delivers the unmodified

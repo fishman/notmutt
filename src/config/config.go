@@ -165,13 +165,10 @@ type Setup struct {
 	Templates []string `toml:"templates"`
 }
 
-// Pager is the [pager] table: the open key resolves the thread's
-// sender domain against DefaultViews (unmapped = plain default); the v
-// toggle and F/ctrl+u always request explicit views. ImageProtocol
-// picks the terminal image protocol: sixel (default) or kitty.
-// AllowTrackingImages lifts the 1x1 tracking-pixel block on fetched
-// remote images.
+// Pager configures message rendering. DefaultView applies without a sender
+// override; DefaultViews selects per-sender domains.
 type Pager struct {
+	DefaultView         string            `toml:"default-view" enum:"plain,html"`
 	DefaultViews        map[string]string `toml:"default-views"`
 	ImageProtocol       string            `toml:"image-protocol" enum:"sixel,kitty"`
 	AllowTrackingImages bool              `toml:"allow-tracking-images"`
@@ -380,14 +377,13 @@ type Refresh struct {
 // same default.
 const DefaultWrapWidth = 72
 
-// ComposeSection is the [compose] section: WrapWidth is the line width
-// generated draft bodies (the AI command drafts) hard-wrap to; 0 = the
-// default (mutt's wrap, 72). Forward is the forward shape: "inline"
-// (empty = the default) quotes the original's text and carries its
-// attachments, "attachment" attaches the original whole.
+// ComposeSection configures generated draft bodies. Format selects the send
+// wire representation: "html" emits Markdown-derived text and HTML
+// alternatives; "text" emits the authored text/plain body.
 type ComposeSection struct {
 	WrapWidth int    `toml:"wrap-width"`
 	Forward   string `toml:"forward" enum:"inline,attachment"`
+	Format    string `toml:"format" enum:"html,text"`
 }
 
 // Filter configures the classification pipeline (R2): Enabled turns

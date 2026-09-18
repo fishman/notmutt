@@ -12,6 +12,12 @@ git.sr.ht/~jackmordaunt/go-toast/wintoast
 ## explicit; go 1.18
 github.com/BurntSushi/toml
 github.com/BurntSushi/toml/internal
+# github.com/alecthomas/chroma/v2 v2.21.1
+## explicit; go 1.22
+github.com/alecthomas/chroma/v2
+github.com/alecthomas/chroma/v2/formatters/html
+github.com/alecthomas/chroma/v2/lexers
+github.com/alecthomas/chroma/v2/styles
 # github.com/andybalholm/cascadia v1.3.4
 ## explicit; go 1.25.0
 github.com/andybalholm/cascadia
@@ -41,6 +47,10 @@ github.com/clipperhouse/displaywidth
 # github.com/clipperhouse/uax29/v2 v2.7.0
 ## explicit; go 1.18
 github.com/clipperhouse/uax29/v2/graphemes
+# github.com/dlclark/regexp2 v1.11.5
+## explicit; go 1.13
+github.com/dlclark/regexp2
+github.com/dlclark/regexp2/syntax
 # github.com/emersion/go-message v0.18.2
 ## explicit; go 1.14
 github.com/emersion/go-message
@@ -147,6 +157,20 @@ github.com/xo/terminfo
 # github.com/yosida95/uritemplate/v3 v3.0.2
 ## explicit; go 1.14
 github.com/yosida95/uritemplate/v3
+# github.com/yuin/goldmark v1.8.2
+## explicit; go 1.22
+github.com/yuin/goldmark
+github.com/yuin/goldmark/ast
+github.com/yuin/goldmark/extension
+github.com/yuin/goldmark/extension/ast
+github.com/yuin/goldmark/parser
+github.com/yuin/goldmark/renderer
+github.com/yuin/goldmark/renderer/html
+github.com/yuin/goldmark/text
+github.com/yuin/goldmark/util
+# github.com/yuin/goldmark-highlighting/v2 v2.0.0-20220924101305-151362477c87
+## explicit; go 1.13
+github.com/yuin/goldmark-highlighting/v2
 # github.com/yuin/gopher-lua v1.1.2
 ## explicit; go 1.23
 github.com/yuin/gopher-lua

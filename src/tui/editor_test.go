@@ -51,6 +51,19 @@ func TestEditorBufferRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMarkdownEditorBufferUsesMDSuffix(t *testing.T) {
+	s := compose.NewCompose("gmail", "Bob <bob@example.com>", "", "")
+	s.Markdown = true
+	path, err := writeEditorBuffer(*s, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(path)
+	if filepath.Ext(path) != ".md" {
+		t.Fatalf("Markdown buffer = %q", path)
+	}
+}
+
 func TestApplyEditorResultParsesEdits(t *testing.T) {
 	s := compose.NewCompose("gmail", "Bob <bob@example.com>", "gmail", "bob")
 	s.Body = "old body"

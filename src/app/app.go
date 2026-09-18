@@ -14,6 +14,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"maps"
 	"mime"
 	netmail "net/mail"
 	"net/textproto"
@@ -219,7 +220,11 @@ func Run() error {
 		dark, themeBG := cfg.HTMLDark()
 		var defViews map[string]string
 		if req.Mode == core.RenderAuto {
-			defViews = cfg.Pager.DefaultViews
+			defViews = maps.Clone(cfg.Pager.DefaultViews)
+			if defViews == nil {
+				defViews = map[string]string{}
+			}
+			defViews[""] = cfg.Pager.DefaultView
 		}
 		go openThread(env, req, defViews, dark, themeBG)
 	})
@@ -910,16 +915,22 @@ func saveAttachment(worker workerAPI, bus *core.Bus, views map[string]*core.View
 	bus.Publish(core.AttachmentSaved{Path: path})
 }
 
-// openViewMode resolves the open key's default view for a thread: the
-// sender domain's configured default ([pager] default-views), plain
-// otherwise. The thread's first message is the thread identity.
+// openViewMode resolves the open key's default view. A sender-domain rule
+// overrides Pager.DefaultView; malformed senders use the configured default.
 func openViewMode(defViews map[string]string, msgs []core.Message) core.RenderMode {
-	if len(msgs) > 0 && defViews != nil {
-		if d := senderDomain(msgs[0].Author); d != "" {
-			if v, ok := defViews[d]; ok && v == "html" {
-				return core.RenderHTML
+	if defViews == nil {
+		return core.RenderPlain
+	}
+	view := defViews[""]
+	if len(msgs) > 0 {
+		if domain := senderDomain(msgs[0].Author); domain != "" {
+			if configured, ok := defViews[domain]; ok {
+				view = configured
 			}
 		}
+	}
+	if view == "html" {
+		return core.RenderHTML
 	}
 	return core.RenderPlain
 }

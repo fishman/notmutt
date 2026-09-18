@@ -223,7 +223,8 @@ func TestAssembleForwardShapes(t *testing.T) {
 func TestAssembleMarkdownBody(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"a@b.c"}
-	s.Body = "# title\n\n- one\n- two"
+	s.Body = "# title\n\n- one\n- two\n\n```go\nfmt.Println(\"alpha\")\n```"
+	s.Markdown = true
 	var buf bytes.Buffer
 	if err := s.Assemble(&buf); err != nil {
 		t.Fatal(err)
@@ -233,12 +234,24 @@ func TestAssembleMarkdownBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer mr.Close()
-	p, err := mr.NextPart()
-	if err != nil {
-		t.Fatal(err)
+	if ct := mr.Header.Get("Content-Type"); !strings.HasPrefix(ct, "multipart/alternative") {
+		t.Fatalf("Markdown Content-Type = %q", ct)
 	}
-	if ct := p.Header.Get("Content-Type"); ct != "text/markdown; charset=utf-8" {
-		t.Fatalf("markdown body Content-Type = %q", ct)
+	plain, err := mr.NextPart()
+	if err != nil || plain.Header.Get("Content-Type") != "text/plain; charset=utf-8" {
+		t.Fatalf("plain alternative = %v %q", err, plain.Header.Get("Content-Type"))
+	}
+	text, _ := io.ReadAll(plain.Body)
+	if !strings.Contains(string(text), "title") || !strings.Contains(string(text), "one") {
+		t.Fatalf("plain alternative = %q", text)
+	}
+	html, err := mr.NextPart()
+	if err != nil || html.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("HTML alternative = %v %q", err, html.Header.Get("Content-Type"))
+	}
+	data, _ := io.ReadAll(html.Body)
+	if !strings.Contains(string(data), "<h1>title</h1>") || !strings.Contains(string(data), "background-color:#282a36") {
+		t.Fatalf("HTML alternative = %q", data)
 	}
 }
 

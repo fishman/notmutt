@@ -20,7 +20,7 @@ func ToEvent(s *State) core.ComposeOpened {
 		Subject: s.Subject, Body: s.Body, Fcc: s.Fcc, Security: s.Security.String(),
 		Signature: s.Signature, SigContent: s.SignatureBody,
 		MessageID: s.MessageID, References: s.References, OriginalID: s.OriginalID,
-		ResumePath: s.ResumePath, PGPKey: s.PGPKey,
+		ResumePath: s.ResumePath, PGPKey: s.PGPKey, Markdown: s.Markdown,
 	}
 	for _, a := range s.Attachments {
 		e.Attachments = append(e.Attachments, core.ComposeAttachment{Name: a.Name, Path: a.Path, Size: a.Size, MimeType: a.MimeType, DraftPart: a.DraftPart})
@@ -35,7 +35,7 @@ func FromEvent(e core.ComposeOpened) *State {
 		Subject: e.Subject, Body: e.Body, Fcc: e.Fcc, Security: parseSecurity(e.Security),
 		Signature: e.Signature, SignatureBody: e.SigContent,
 		MessageID: e.MessageID, References: e.References, OriginalID: e.OriginalID,
-		ResumePath: e.ResumePath, PGPKey: e.PGPKey,
+		ResumePath: e.ResumePath, PGPKey: e.PGPKey, Markdown: e.Markdown,
 	}
 	for _, a := range e.Attachments {
 		s.Attachments = append(s.Attachments, Attachment{Name: a.Name, Path: a.Path, Size: a.Size, MimeType: a.MimeType, DraftPart: a.DraftPart})

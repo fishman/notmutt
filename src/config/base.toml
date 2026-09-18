@@ -36,6 +36,7 @@ language = "auto"
 [pager]
 image-protocol = "sixel"
 allow-tracking-images = false
+default-view = "plain"
 
 # generated draft bodies (the AI command drafts) hard-wrap to this line
 # width; 0 = the mutt default 72. forward = how a forwarded original
@@ -45,6 +46,7 @@ allow-tracking-images = false
 [compose]
 wrap-width = 72
 forward = "inline"
+format = "html"
 
 # exclusive folder tag group (R2): one message has exactly one home;
 # applying any member removes the other members present (inbox included)
@@ -76,6 +78,7 @@ gpg-command = "gpg"
 # the link opener (the pager F key): argv, the url is appended as the
 # last element (F4 - never shell-interpolated)
 opener = ["xdg-open"]
+
 
 [schemes.vim.index]
 "j" = { fun = "cursor-down", desc = "Move the cursor down" }

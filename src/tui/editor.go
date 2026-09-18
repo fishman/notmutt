@@ -18,13 +18,17 @@ import (
 // fields, never the editor. The dialogue state never leaves the model.
 func writeEditorBuffer(st compose.State, path string) (string, error) {
 	if path == "" {
-		// mutt-family temp name: neovim maps mutt-*/neomutt-* basenames to the mail filetype
-		f, err := os.CreateTemp("", "mutt-notmutt-*")
+		// Neovim detects the suffix and selects Markdown syntax rendering.
+		pattern := "mutt-notmutt-*"
+		if st.Markdown {
+			pattern += ".md"
+		}
+		f, err := os.CreateTemp("", pattern)
 		if err != nil {
 			return "", err
 		}
 		path = f.Name()
-		f.Close() // the rewrite below reopens it
+		f.Close()
 	}
 	if err := os.WriteFile(path, []byte(compose.BodyWithSig(st.Body, st.SignatureBody)), 0600); err != nil {
 		return "", err

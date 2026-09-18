@@ -267,6 +267,12 @@ no per-account transport.
 **args** (array of strings, default `["--read-envelope-from"]`)
 : Its argv.
 
+
+## [pager]
+
+**default-view** (string, default `"plain"`)
+: The default message body view: **"plain"** or **"html"**. A matching
+`default-views` sender-domain rule overrides this value.
 ## [compose]
 
 **wrap-width** (integer, default `72`)
@@ -277,6 +283,10 @@ default (mutt's wrap, the RFC 3676 norm).
 : The forward shape: **"inline"** quotes the original's text and carries
 its attachments, **"attachment"** attaches the original whole as
 message/rfc822, so its HTML and list headers survive.
+
+**format** (string, default `"html"`)
+: **"html"** renders the Markdown compose body into `text/plain` and
+`text/html` alternatives. **"text"** sends the authored body as `text/plain`.
 
 ## [schedule]
 

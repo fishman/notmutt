@@ -125,6 +125,7 @@ type State struct {
 	Signature     string // signature name ("" = none)
 	SignatureBody string
 	Fcc           string // sent-folder path, derived from the account
+	Markdown      bool
 	Security      Security
 	MessageID     string // original message-id (In-Reply-To)
 	References    []string

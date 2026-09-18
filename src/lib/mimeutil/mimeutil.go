@@ -11,14 +11,16 @@ import (
 type Type string
 
 const (
-	MultipartEncrypted Type = "multipart/encrypted"
-	MultipartMixed     Type = "multipart/mixed"
-	MultipartSigned    Type = "multipart/signed"
-	PGPEncrypted       Type = "application/pgp-encrypted"
-	PGPSignature       Type = "application/pgp-signature"
-	OctetStream        Type = "application/octet-stream"
-	TextMarkdown       Type = "text/markdown"
-	TextPlain          Type = "text/plain"
+	MultipartAlternative Type = "multipart/alternative"
+	MultipartEncrypted   Type = "multipart/encrypted"
+	MultipartMixed       Type = "multipart/mixed"
+	MultipartSigned      Type = "multipart/signed"
+	PGPEncrypted         Type = "application/pgp-encrypted"
+	PGPSignature         Type = "application/pgp-signature"
+	OctetStream          Type = "application/octet-stream"
+	TextHTML             Type = "text/html"
+	TextMarkdown         Type = "text/markdown"
+	TextPlain            Type = "text/plain"
 )
 
 func (t Type) String() string { return string(t) }

@@ -217,6 +217,7 @@ type ComposeOpened struct {
 	OriginalID   string
 	ResumePath   string
 	PGPKey       string
+	Markdown     bool
 }
 
 // PGPKeysLoaded is the asynchronous secret-key selector payload. Labels are

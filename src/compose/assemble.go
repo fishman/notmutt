@@ -14,14 +14,12 @@ import (
 	"github.com/emersion/go-message"
 	"github.com/emersion/go-message/mail"
 
+	"notmutt/lib/mimeutil"
 	notmail "notmutt/mail"
 )
 
-// DropBcc removes the Bcc header (mutt delivery shape): Bcc rides the
-// envelope only, never the wire (write_bcc off); the fcc copy keeps it
-// (FCC mode always writes Bcc). Header-block only - the scan stops at
-// the first blank line (LF/CRLF), so a body "Bcc:" never matches;
-// folded continuations go with the header.
+// DropBcc removes the Bcc header from a delivered message. The FCC copy keeps
+// it so the sender's record retains blind recipients.
 func DropBcc(data []byte) []byte {
 	end := len(data)
 	for i := 0; i+1 < len(data); i++ {
@@ -37,72 +35,57 @@ func DropBcc(data []byte) []byte {
 		if len(l) == 0 {
 			continue
 		}
-		line := l
-		if line[len(line)-1] == '\n' {
-			line = line[:len(line)-1]
-		}
-		if skip && (line[0] == ' ' || line[0] == '\t') {
+		line := bytes.TrimSuffix(l, []byte("\n"))
+		if skip && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') {
 			continue
 		}
-		skip = false
-		if len(line) >= 4 && strings.EqualFold(string(line[:4]), "bcc:") {
-			skip = true
-			continue
+		skip = len(line) >= 4 && strings.EqualFold(string(line[:4]), "bcc:")
+		if !skip {
+			b.Write(l)
 		}
-		b.Write(l)
 	}
 	b.Write(rest)
 	return b.Bytes()
 }
 
-// Assemble writes the message bytes: headers (From/To/Cc/Subject/Date/
-// Message-ID, In-Reply-To/References for replies), one text/plain body
-// part (signature attached), one part per attachment. The send job
-// writes the same buffer to transport and fcc. Nothing here sanitizes
-// (render-only, F1); References is written verbatim - the prefill
-// carries the full chain (spec section 6).
-//
-// Wire shape per neomutt (send/send.c, send/multipart.c, send/header.c):
-// a bare body is ONE text/plain part, no multipart or Content-Disposition;
-// attachments wrap in multipart/mixed, only they carry Content-Disposition.
-// The mail package's Writer would force multipart/mixed + inline
-// Content-Disposition on every message - clients (Betterbird) read that
-// as an attached body file.
+// Assemble writes the composition. Markdown becomes text/plain plus text/html
+// alternatives; attachments wrap the body entity in multipart/mixed.
 func (s *State) Assemble(w io.Writer) error {
+	hdr, err := composeHeader(s)
+	if err != nil {
+		return err
+	}
+	body := BodyWithSig(s.Body, s.SignatureBody)
+	if s.Markdown {
+		plain, html, err := markdownAlternatives(body)
+		if err != nil {
+			return err
+		}
+		return assembleMarkdown(w, hdr, s.Attachments, plain, html)
+	}
+	return assemblePlain(w, hdr, s.Attachments, body, InlineFacts(s))
+}
+
+func composeHeader(s *State) (mail.Header, error) {
 	hdr := mail.Header{}
-	setAddrs := func(name string, addrs []string) error {
-		var parsed []*mail.Address
-		for _, a := range addrs {
-			p, err := mail.ParseAddress(a)
+	for name, addrs := range map[string][]string{"From": {s.From}, "To": s.To, "Cc": s.Cc, "Bcc": s.Bcc, "Reply-To": s.ReplyTo} {
+		if len(addrs) == 0 {
+			continue
+		}
+		parsed := make([]*mail.Address, 0, len(addrs))
+		for _, addr := range addrs {
+			p, err := mail.ParseAddress(addr)
 			if err != nil {
-				return fmt.Errorf("%s: %v", name, err)
+				return hdr, fmt.Errorf("%s: %v", name, err)
 			}
 			parsed = append(parsed, p)
 		}
 		hdr.SetAddressList(name, parsed)
-		return nil
-	}
-	if err := setAddrs("From", []string{s.From}); err != nil {
-		return err
-	}
-	if err := setAddrs("To", s.To); err != nil {
-		return err
-	}
-	if err := setAddrs("Cc", s.Cc); err != nil {
-		return err
-	}
-	if err := setAddrs("Bcc", s.Bcc); err != nil {
-		return err
-	}
-	if len(s.ReplyTo) > 0 {
-		if err := setAddrs("Reply-To", s.ReplyTo); err != nil {
-			return err
-		}
 	}
 	hdr.SetSubject(s.Subject)
 	hdr.SetDate(time.Now())
 	if err := hdr.GenerateMessageID(); err != nil {
-		return err
+		return hdr, err
 	}
 	if s.MessageID != "" {
 		hdr.Set("In-Reply-To", s.MessageID)
@@ -110,11 +93,13 @@ func (s *State) Assemble(w io.Writer) error {
 			hdr.Set("References", strings.Join(s.References, " "))
 		}
 	}
-	f := InlineFacts(s)
-	body := BodyWithSig(s.Body, s.SignatureBody)
-	if len(s.Attachments) == 0 {
-		hdr.Set("Content-Type", f.Type+"; charset="+f.Charset)
-		hdr.Set("Content-Transfer-Encoding", f.Encoding)
+	return hdr, nil
+}
+
+func assemblePlain(w io.Writer, hdr mail.Header, atts []Attachment, body string, facts PartFacts) error {
+	if len(atts) == 0 {
+		hdr.Set("Content-Type", facts.Type+"; charset="+facts.Charset)
+		hdr.Set("Content-Transfer-Encoding", facts.Encoding)
 		mw, err := message.CreateWriter(w, hdr.Header)
 		if err != nil {
 			return err
@@ -124,52 +109,96 @@ func (s *State) Assemble(w io.Writer) error {
 		}
 		return mw.Close()
 	}
-	hdr.Set("Content-Type", "multipart/mixed")
+	hdr.Set("Content-Type", mimeutil.MultipartMixed.String())
 	mw, err := message.CreateWriter(w, hdr.Header)
 	if err != nil {
 		return err
 	}
-	bh := message.Header{}
-	bh.Set("Content-Type", f.Type+"; charset="+f.Charset)
-	bh.Set("Content-Transfer-Encoding", f.Encoding)
-	bp, err := mw.CreatePart(bh)
-	if err != nil {
+	if err := writeTextPart(mw, facts.Type, []byte(body)); err != nil {
 		return err
 	}
-	if _, err := io.WriteString(bp, body); err != nil {
-		return err
-	}
-	if err := bp.Close(); err != nil {
-		return err
-	}
-	for _, a := range s.Attachments {
-		ah := mail.AttachmentHeader{}
-		afacts := AttachmentFacts(a)
-		ah.Set("Content-Type", afacts.Type)
-		ah.Set("Content-Transfer-Encoding", afacts.Encoding)
-		ah.SetFilename(a.Name)
-		ab, err := mw.CreatePart(ah.Header)
+	return writeAttachments(mw, atts)
+}
+
+func assembleMarkdown(w io.Writer, hdr mail.Header, atts []Attachment, plain string, html []byte) error {
+	if len(atts) == 0 {
+		hdr.Set("Content-Type", mimeutil.MultipartAlternative.String())
+		mw, err := message.CreateWriter(w, hdr.Header)
 		if err != nil {
 			return err
 		}
-		var cerr error
+		if err := writeAlternatives(mw, plain, html); err != nil {
+			return err
+		}
+		return mw.Close()
+	}
+	hdr.Set("Content-Type", mimeutil.MultipartMixed.String())
+	mw, err := message.CreateWriter(w, hdr.Header)
+	if err != nil {
+		return err
+	}
+	altHeader := message.Header{}
+	altHeader.Set("Content-Type", mimeutil.MultipartAlternative.String())
+	alt, err := mw.CreatePart(altHeader)
+	if err != nil {
+		return err
+	}
+	if err := writeAlternatives(alt, plain, html); err != nil {
+		return err
+	}
+	if err := alt.Close(); err != nil {
+		return err
+	}
+	return writeAttachments(mw, atts)
+}
+
+func writeAlternatives(w *message.Writer, plain string, html []byte) error {
+	if err := writeTextPart(w, mimeutil.TextPlain.String(), []byte(plain)); err != nil {
+		return err
+	}
+	return writeTextPart(w, mimeutil.TextHTML.String(), html)
+}
+
+func writeTextPart(w *message.Writer, typ string, body []byte) error {
+	h := message.Header{}
+	h.Set("Content-Type", typ+"; charset=utf-8")
+	h.Set("Content-Transfer-Encoding", "quoted-printable")
+	part, err := w.CreatePart(h)
+	if err != nil {
+		return err
+	}
+	if _, err := part.Write(body); err != nil {
+		return err
+	}
+	return part.Close()
+}
+
+func writeAttachments(mw *message.Writer, atts []Attachment) error {
+	for _, a := range atts {
+		ah := mail.AttachmentHeader{}
+		facts := AttachmentFacts(a)
+		ah.Set("Content-Type", facts.Type)
+		ah.Set("Content-Transfer-Encoding", facts.Encoding)
+		ah.SetFilename(a.Name)
+		part, err := mw.CreatePart(ah.Header)
+		if err != nil {
+			return err
+		}
+		var copyErr error
 		if a.DraftPart > 0 {
-			// a resumed attachment: stream its (DraftPart-1)-th part out of
-			// the stored draft - retirement is success-only, so the file is
-			// still there even for a scheduled delivery
-			_, cerr = notmail.WriteDraftAttachment(a.Path, a.DraftPart-1, ab)
+			_, copyErr = notmail.WriteDraftAttachment(a.Path, a.DraftPart-1, part)
 		} else {
-			af, err := os.Open(a.Path)
+			f, err := os.Open(a.Path)
 			if err != nil {
 				return err
 			}
-			_, cerr = io.Copy(ab, af)
-			af.Close()
+			_, copyErr = io.Copy(part, f)
+			f.Close()
 		}
-		if cerr != nil {
-			return cerr
+		if copyErr != nil {
+			return copyErr
 		}
-		if err := ab.Close(); err != nil {
+		if err := part.Close(); err != nil {
 			return err
 		}
 	}

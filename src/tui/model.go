@@ -1871,15 +1871,16 @@ func chainContinuation(km map[string]string, prefix string) bool {
 // The event only names the section - the store owns the config, so
 // the model re-reads it (SetThemeVariant mutates the store's internal
 // config; this re-read makes the switch live).
+// onConfig applies the store snapshot after a configuration write or reload.
 func (m *Model) onConfig(e core.ConfigChanged) {
+	cfg := m.st.Config()
+	if e.Section == "ui" {
+		m.bindings, m.tagActions, m.ui = cfg.Bindings, cfg.TagActions, cfg.UI
+	}
 	if e.Section == "theme" {
-		cfg := m.st.Config()
 		m.styles = ResolveStyles(cfg.Theme, cfg.Palette)
 		m.styleVer++
 		if m.pager != nil {
-			// the pager's render is cached - without re-styling here a
-			// variant switch keeps the old colors until the next
-			// resize or re-open (pagerSize)
 			w, h := m.pagerSize()
 			m.pager.setSize(w, h, m.styles)
 		}

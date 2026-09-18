@@ -118,6 +118,7 @@ func Run() error {
 	defer cancel()
 	go worker.Start(ctx)
 	go walkWorker.Start(ctx)
+	go watchConfig(ctx, configDir(), st, bus)
 
 	// DB open check plus per-view query validation (spec section 3). The
 	// empty path resolves inside the backend via `notmuch config get

@@ -91,6 +91,17 @@ func (s *Store) Subscribe(section string, fn func()) {
 	s.mu.Unlock()
 }
 
+// Replace atomically installs a fully validated configuration and notifies
+// every live configuration surface.
+func (s *Store) Replace(cfg Config) {
+	s.mu.Lock()
+	s.cfg = cfg
+	s.mu.Unlock()
+	for _, section := range []string{"ui", "view", "theme", "refresh"} {
+		s.notify(section)
+	}
+}
+
 func (s *Store) SetKeymap(k string) error {
 	if _, ok := baseConfig.Schemes[k]; !ok {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", k)

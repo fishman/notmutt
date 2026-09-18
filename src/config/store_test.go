@@ -149,3 +149,18 @@ func TestConfigClonesTagActions(t *testing.T) {
 		t.Fatal("Config() must not leak new keys into the store")
 	}
 }
+
+func TestStoreReplaceNotifiesLiveSections(t *testing.T) {
+	s := NewStore(Default())
+	var got []string
+	for _, section := range []string{"ui", "view", "theme", "refresh"} {
+		section := section
+		s.Subscribe(section, func() { got = append(got, section) })
+	}
+	cfg := Default()
+	cfg.UI.Keymap = "emacs"
+	s.Replace(cfg)
+	if len(got) != 4 || s.Config().UI.Keymap != "emacs" {
+		t.Fatalf("notifications=%v config=%q", got, s.Config().UI.Keymap)
+	}
+}

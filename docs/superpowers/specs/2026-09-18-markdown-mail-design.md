@@ -20,6 +20,14 @@ option remains disabled, so authored HTML is escaped. Chroma highlights fenced
 code blocks using the `dracula` style and `monokai` fallback lexer. No external
 styles, images, scripts, tracking, or network references are emitted.
 
+## Signature directive
+
+Markdown editor buffers use `<!-- notmutt-signature -->` as a private
+signature delimiter. It never reaches either MIME alternative. Plain output
+replaces it with the conventional `-- ` line; HTML output replaces it with an
+`<hr>` before the rendered signature. The compose preview renders the same
+generated HTML fragment through the existing terminal HTML renderer.
+
 ## MIME shape
 
 - No attachments: `multipart/alternative` with `text/plain; charset=utf-8`

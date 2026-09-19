@@ -30,7 +30,7 @@ func writeEditorBuffer(st compose.State, path string) (string, error) {
 		path = f.Name()
 		f.Close()
 	}
-	if err := os.WriteFile(path, []byte(compose.BodyWithSig(st.Body, st.SignatureBody)), 0600); err != nil {
+	if err := os.WriteFile(path, []byte(compose.MessageBody(st)), 0600); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -54,6 +54,14 @@ func applyEditorResult(st compose.State, path string) (compose.State, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return st, err
+	}
+	if st.Markdown {
+		body, sigBody := compose.SplitMarkdownBuffer(string(data), st.SignatureBody)
+		st.Body, st.SignatureBody = body, sigBody
+		if sigBody == "" {
+			st.Signature = ""
+		}
+		return st, nil
 	}
 	body, sigName, sigBody := compose.ParseBuffer(string(data), st.Signature, st.SignatureBody)
 	st.Body, st.Signature, st.SignatureBody = body, sigName, sigBody

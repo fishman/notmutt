@@ -68,3 +68,13 @@ func ParseBuffer(buf, prevSigName, prevSigBody string) (body, sigName, sigBody s
 	}
 	return body, "", ""
 }
+
+// SplitMarkdownBuffer detaches the directive-delimited Markdown signature.
+func SplitMarkdownBuffer(buf, previous string) (body, sig string) {
+	buf = strings.TrimSuffix(strings.ReplaceAll(buf, "\r\n", "\n"), "\n")
+	body, sig = splitMarkdownSignature(buf)
+	if sig == "" || sig != previous {
+		return buf, ""
+	}
+	return body, sig
+}

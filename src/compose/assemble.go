@@ -55,7 +55,7 @@ func (s *State) Assemble(w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	body := BodyWithSig(s.Body, s.SignatureBody)
+	body := MessageBody(*s)
 	if s.Markdown {
 		plain, html, err := markdownAlternatives(body)
 		if err != nil {

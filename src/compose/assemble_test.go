@@ -255,6 +255,36 @@ func TestAssembleMarkdownBody(t *testing.T) {
 	}
 }
 
+func TestAssembleMarkdownSignature(t *testing.T) {
+	s := NewCompose("gmail", "bob@example.com", "", "signature")
+	s.To, s.Body, s.Markdown = []string{"a@b.c"}, "hello", true
+	var buf bytes.Buffer
+	if err := s.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	mr, err := mail.CreateReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	plain, err := mr.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := io.ReadAll(plain.Body)
+	if !strings.Contains(string(p), "-- \r\nsignature") {
+		t.Fatalf("plain = %q", p)
+	}
+	html, err := mr.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, _ := io.ReadAll(html.Body)
+	if strings.Contains(string(h), MarkdownSignatureDirective) || !strings.Contains(string(h), "<hr>") {
+		t.Fatalf("html = %q", h)
+	}
+}
+
 func TestAssembleBadAddressFails(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"not an address"}

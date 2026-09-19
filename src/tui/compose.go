@@ -135,14 +135,21 @@ func (m Model) sendOverlay(frame string) string {
 // value copy, so a reassignment would be lost; the in-place rebuild
 // survives and the next setSize re-styles the window.
 func (m *Model) syncPreviewPager(st compose.State) {
-	content := compose.BodyWithSig(st.Body, st.SignatureBody)
+	content := compose.MessageBody(st)
 	if st.Phase == compose.PhaseFailed {
 		content = i18n.T("send failed") + ":\n" + st.Output
 	}
-	if content != m.previewContent {
-		m.previewContent = content
-		m.previewPager.setLines(previewLinesOf(content))
+	if content == m.previewContent {
+		return
 	}
+	m.previewContent = content
+	if st.Markdown && st.Phase != compose.PhaseFailed {
+		if html, err := compose.MarkdownHTML(content); err == nil {
+			m.previewPager.setLines(mail.RenderHTML(string(html), nil, m.previewPager.width))
+			return
+		}
+	}
+	m.previewPager.setLines(previewLinesOf(content))
 }
 
 // previewLinesOf converts the compose content to pager lines: body

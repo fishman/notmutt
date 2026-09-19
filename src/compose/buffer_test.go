@@ -94,3 +94,11 @@ func TestSplitSignatureSignatureOnly(t *testing.T) {
 		t.Fatalf("body=%q sig=%q", body, sig)
 	}
 }
+
+func TestSplitMarkdownBuffer(t *testing.T) {
+	buf := "body\n\n" + MarkdownSignatureDirective + "\n\nsignature"
+	body, sig := SplitMarkdownBuffer(buf, "signature")
+	if body != "body" || sig != "signature" {
+		t.Fatalf("body=%q sig=%q", body, sig)
+	}
+}

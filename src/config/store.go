@@ -21,6 +21,10 @@ type Store struct {
 	subs map[string][]func()
 }
 
+// LiveSections are configuration surfaces that existing runtime consumers
+// apply without restarting the client.
+var LiveSections = []string{"ui", "view", "theme", "refresh"}
+
 func NewStore(cfg Config) *Store {
 	return &Store{cfg: cfg, subs: map[string][]func(){}}
 }
@@ -97,7 +101,7 @@ func (s *Store) Replace(cfg Config) {
 	s.mu.Lock()
 	s.cfg = cfg
 	s.mu.Unlock()
-	for _, section := range []string{"ui", "view", "theme", "refresh"} {
+	for _, section := range LiveSections {
 		s.notify(section)
 	}
 }

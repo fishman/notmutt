@@ -100,10 +100,10 @@ func Run() error {
 	me := cfg.MyAddrs()
 	bus := core.NewBus()
 	st := config.NewStore(cfg)
-	st.Subscribe("ui", func() { bus.Publish(core.ConfigChanged{Section: "ui"}) })
-	st.Subscribe("view", func() { bus.Publish(core.ConfigChanged{Section: "view"}) })
-	st.Subscribe("theme", func() { bus.Publish(core.ConfigChanged{Section: "theme"}) })
-	st.Subscribe("refresh", func() { bus.Publish(core.ConfigChanged{Section: "refresh"}) })
+	for _, section := range config.LiveSections {
+		section := section
+		st.Subscribe(section, func() { bus.Publish(core.ConfigChanged{Section: section}) })
+	}
 	openDiagLog()
 	go runDiagBus(bus)
 	worker := notmuch.NewWorker(bus, notmuch.New(), lockBudget)
@@ -218,16 +218,19 @@ func Run() error {
 	// already-open message: no read-mark, no domain map, no S/MIME
 	// re-verify (the verdict already rendered).
 	tui.SetOpenHandler(func(req tui.OpenReq) {
-		dark, themeBG := cfg.HTMLDark()
+		current := st.Config()
+		dark, themeBG := current.HTMLDark()
 		var defViews map[string]string
 		if req.Mode == core.RenderAuto {
-			defViews = maps.Clone(cfg.Pager.DefaultViews)
+			defViews = maps.Clone(current.Pager.DefaultViews)
 			if defViews == nil {
 				defViews = map[string]string{}
 			}
-			defViews[""] = cfg.Pager.DefaultView
+			defViews[""] = current.Pager.DefaultView
 		}
-		go openThread(env, req, defViews, dark, themeBG)
+		liveEnv := env
+		liveEnv.cfg = current
+		go openThread(liveEnv, req, defViews, dark, themeBG)
 	})
 
 	// the attachment view (the v dialog's enter) and save (the s key in
@@ -332,17 +335,18 @@ func Run() error {
 	// shell-interpolated), a missing config opens with xdg-open.
 	// Fire-and-forget: the opener detaches its viewer and returns.
 	tui.SetOpenLinkHandler(func(url string) {
+		current := st.Config()
 		if strings.HasPrefix(strings.ToLower(url), "mailto:") {
-			st, err := mailtoCompose(cfg, root, url)
+			state, err := mailtoCompose(current, root, url)
 			if err != nil {
 				diag.Warn("mailto", "err", err.Error())
 				return
 			}
-			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-			bus.Publish(compose.ToEvent(st))
+			state.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(state))
 			return
 		}
-		argv := cfg.Opener
+		argv := current.Opener
 		if len(argv) == 0 {
 			argv = []string{"xdg-open"}
 		}
@@ -353,55 +357,58 @@ func Run() error {
 	// default signature) and publishes ComposeOpened - the TUI attaches
 	// the tab
 	tui.SetReplyHandler(func(msg *core.Message, mode string) {
-		go func() {
-			st, err := replyPrefill(cfg, view, worker, msg, mode, root)
+		go func(current config.Config) {
+			state, err := replyPrefill(current, view, worker, msg, mode, root)
 			if err != nil {
 				diag.Warn("reply", "err", err.Error())
 				bus.Publish(core.JobError{Job: "reply", Err: err})
 				return
 			}
-			if st == nil {
+			if state == nil {
 				return
 			}
-			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-			bus.Publish(compose.ToEvent(st))
-		}()
+			state.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(state))
+		}(st.Config())
 	})
 
 	// resume-draft: the app parses the stored draft back into a dialogue
 	// (account detection, faithful body) and publishes ComposeOpened -
 	// the TUI attaches the tab. A non-draft row is a silent no-op.
 	tui.SetResumeHandler(func(msg *core.Message) {
-		go func() {
-			st, err := resumePrefill(cfg, view, worker, msg, root)
+		go func(current config.Config) {
+			state, err := resumePrefill(current, view, worker, msg, root)
 			if err != nil {
 				diag.Warn("resume", "err", err.Error())
 				bus.Publish(core.JobError{Job: "resume", Err: err})
 				return
 			}
-			if st == nil {
+			if state == nil {
 				return
 			}
-			st.ID = fmt.Sprintf("%d", time.Now().UnixNano())
-			bus.Publish(compose.ToEvent(st))
-		}()
+			state.ID = fmt.Sprintf("%d", time.Now().UnixNano())
+			bus.Publish(compose.ToEvent(state))
+		}(st.Config())
 	})
 
 	// send: the app runs the send job on its own goroutine; SendResult
 	// closes the tab or keeps it failed
-	tui.SetSendHandler(func(st compose.State) {
-		go sendJob(env, view, st)
+	tui.SetSendHandler(func(state compose.State) {
+		liveEnv := env
+		liveEnv.cfg = st.Config()
+		go sendJob(liveEnv, view, state)
 	})
 	tui.SetPGPKeyRequestHandler(func(tabID string) {
-		go func() {
-			keys, err := crypto.NewPGP(cfg.Crypto.GPGCommand).SecretKeys()
+		current := st.Config()
+		go func(command string) {
+			keys, err := crypto.NewPGP(command).SecretKeys()
 			e := core.PGPKeysLoaded{TabID: tabID, Err: err}
 			for _, key := range keys {
 				e.Labels = append(e.Labels, key.Label)
 				e.IDs = append(e.IDs, key.ID)
 			}
 			bus.Publish(e)
-		}()
+		}(current.Crypto.GPGCommand)
 	})
 	tui.SetScheduleHandler(func(st compose.State, at string) {
 		go scheduleJob(bus, worker, view, cfg, root, st, at)

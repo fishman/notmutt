@@ -153,7 +153,7 @@ func TestConfigClonesTagActions(t *testing.T) {
 func TestStoreReplaceNotifiesLiveSections(t *testing.T) {
 	s := NewStore(Default())
 	var got []string
-	for _, section := range []string{"ui", "view", "theme", "refresh"} {
+	for _, section := range LiveSections {
 		section := section
 		s.Subscribe(section, func() { got = append(got, section) })
 	}

@@ -2,16 +2,16 @@ package compose
 
 import (
 	"bytes"
-	"strings"
-
 	"github.com/yuin/goldmark"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
+	"html"
+	"strings"
 )
 
 // MarkdownSignatureDirective separates the authored body from its signature.
 // It is editor-facing Markdown metadata, never emitted on the wire.
-const MarkdownSignatureDirective = "<!-- notmutt-signature -->"
+const MarkdownSignatureDirective = "<!-- signature -->"
 
 var markdownRenderer = goldmark.New(
 	goldmark.WithExtensions(
@@ -25,7 +25,7 @@ func MessageBody(s State) string {
 	if !s.Markdown || s.SignatureBody == "" {
 		return BodyWithSig(s.Body, s.SignatureBody)
 	}
-	return strings.TrimRight(s.Body, "\n") + "\n\n" + MarkdownSignatureDirective + "\n\n" + s.SignatureBody
+	return strings.TrimRight(s.Body, "\n") + "\n\n" + MarkdownSignatureDirective + "\n" + s.SignatureBody
 }
 
 // MarkdownHTML renders compose Markdown for the TUI preview and HTML MIME part.
@@ -46,14 +46,18 @@ func markdownAlternatives(source string) (string, []byte, error) {
 		return "", nil, err
 	}
 	if signature != "" {
-		sig, err := renderMarkdown(signature)
-		if err != nil {
-			return "", nil, err
-		}
-		html = append(html, []byte("<hr>\n")...)
-		html = append(html, sig...)
+		html = append(html, []byte("<hr style=\"margin:0\">")...)
+		html = append(html, []byte(renderSignatureHTML(signature))...)
 	}
 	return plain, html, nil
+}
+
+func renderSignatureHTML(signature string) string {
+	lines := strings.Split(signature, "\n")
+	for i := range lines {
+		lines[i] = html.EscapeString(lines[i])
+	}
+	return strings.Join(lines, "<br>\n")
 }
 
 func splitMarkdownSignature(source string) (string, string) {
@@ -69,7 +73,16 @@ func renderMarkdown(source string) ([]byte, error) {
 	if err := markdownRenderer.Convert([]byte(source), &html); err != nil {
 		return nil, err
 	}
-	return html.Bytes(), nil
+	return styleMarkdownTables(html.Bytes()), nil
+}
+
+func styleMarkdownTables(html []byte) []byte {
+	out := strings.ReplaceAll(string(html), "<table>", "<table style=\"border-collapse:collapse\">")
+	out = strings.ReplaceAll(out, "<th>", "<th style=\"padding:0 8px 0 0\">")
+	out = strings.ReplaceAll(out, "</th>", "&nbsp;</th>")
+	out = strings.ReplaceAll(out, "<td>", "<td style=\"padding:0 8px 0 0\">")
+	out = strings.ReplaceAll(out, "</td>", "&nbsp;</td>")
+	return []byte(out)
 }
 
 func markdownText(source string) string {

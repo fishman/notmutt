@@ -223,7 +223,7 @@ func TestAssembleForwardShapes(t *testing.T) {
 func TestAssembleMarkdownBody(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"a@b.c"}
-	s.Body = "# title\n\n- one\n- two\n\n```go\nfmt.Println(\"alpha\")\n```"
+	s.Body = "# title\n\n| First | Second |\n| --- | --- |\n| alpha | beta |\n\n- one\n- two\n\n```go\nfmt.Println(\"alpha\")\n```"
 	s.Markdown = true
 	var buf bytes.Buffer
 	if err := s.Assemble(&buf); err != nil {
@@ -250,13 +250,13 @@ func TestAssembleMarkdownBody(t *testing.T) {
 		t.Fatalf("HTML alternative = %v %q", err, html.Header.Get("Content-Type"))
 	}
 	data, _ := io.ReadAll(html.Body)
-	if !strings.Contains(string(data), "<h1>title</h1>") || !strings.Contains(string(data), "background-color:#282a36") {
+	if !strings.Contains(string(data), "<h1>title</h1>") || !strings.Contains(string(data), "background-color:#282a36") || !strings.Contains(string(data), "border-collapse:collapse") || strings.Count(string(data), "padding:0 8px 0 0") != 4 || strings.Count(string(data), "&nbsp;") != 4 {
 		t.Fatalf("HTML alternative = %q", data)
 	}
 }
 
 func TestAssembleMarkdownSignature(t *testing.T) {
-	s := NewCompose("gmail", "bob@example.com", "", "signature")
+	s := NewCompose("gmail", "bob@example.com", "", "first\nsecond")
 	s.To, s.Body, s.Markdown = []string{"a@b.c"}, "hello", true
 	var buf bytes.Buffer
 	if err := s.Assemble(&buf); err != nil {
@@ -272,7 +272,7 @@ func TestAssembleMarkdownSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	p, _ := io.ReadAll(plain.Body)
-	if !strings.Contains(string(p), "-- \r\nsignature") {
+	if !strings.Contains(string(p), "-- \r\nfirst\r\nsecond") {
 		t.Fatalf("plain = %q", p)
 	}
 	html, err := mr.NextPart()
@@ -280,7 +280,7 @@ func TestAssembleMarkdownSignature(t *testing.T) {
 		t.Fatal(err)
 	}
 	h, _ := io.ReadAll(html.Body)
-	if strings.Contains(string(h), MarkdownSignatureDirective) || !strings.Contains(string(h), "<hr>") {
+	if strings.Contains(string(h), MarkdownSignatureDirective) || !strings.Contains(string(h), "<hr style=\"margin:0\">") || !strings.Contains(string(h), "first<br>") {
 		t.Fatalf("html = %q", h)
 	}
 }

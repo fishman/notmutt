@@ -22,11 +22,11 @@ styles, images, scripts, tracking, or network references are emitted.
 
 ## Signature directive
 
-Markdown editor buffers use `<!-- notmutt-signature -->` as a private
-signature delimiter. It never reaches either MIME alternative. Plain output
-replaces it with the conventional `-- ` line; HTML output replaces it with an
-`<hr>` before the rendered signature. The compose preview renders the same
-generated HTML fragment through the existing terminal HTML renderer.
+Markdown editor buffers use `<!-- signature -->` as a private signature
+delimiter. It never reaches either MIME alternative. Plain output replaces it
+with the conventional `-- ` line; HTML output replaces it with a zero-margin
+`<hr>` immediately before the rendered signature. The compose preview renders
+the same generated HTML fragment through the existing terminal HTML renderer.
 
 ## MIME shape
 

@@ -89,12 +89,30 @@ func markdownText(source string) string {
 	var out []string
 	for _, line := range strings.Split(source, "\n") {
 		line = strings.TrimSpace(line)
-		line = strings.TrimLeft(line, "#>-*+ ")
+		prefix := quotePrefix(line)
+		if prefix != "" {
+			line = strings.TrimSpace(strings.TrimLeft(line, "> "))
+		} else {
+			line = strings.TrimLeft(line, "#-*+ ")
+		}
 		line = strings.ReplaceAll(line, "**", "")
 		line = strings.ReplaceAll(line, "`", "")
 		if line != "" {
-			out = append(out, line)
+			out = append(out, prefix+line)
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+func quotePrefix(line string) string {
+	n := 0
+	for {
+		line = strings.TrimLeft(line, " ")
+		if !strings.HasPrefix(line, ">") {
+			break
+		}
+		n++
+		line = strings.TrimPrefix(line, ">")
+	}
+	return strings.Repeat("> ", n)
 }

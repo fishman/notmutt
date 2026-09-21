@@ -285,6 +285,28 @@ func TestAssembleMarkdownSignature(t *testing.T) {
 	}
 }
 
+func TestAssembleMarkdownKeepsQuoteDepthInPlainAlternative(t *testing.T) {
+	s := NewCompose("gmail", "bob@example.com", "", "")
+	s.To, s.Body, s.Markdown = []string{"a@b.c"}, "> first\n> > second", true
+	var buf bytes.Buffer
+	if err := s.Assemble(&buf); err != nil {
+		t.Fatal(err)
+	}
+	mr, err := mail.CreateReader(&buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mr.Close()
+	part, err := mr.NextPart()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain, _ := io.ReadAll(part.Body)
+	if !strings.Contains(string(plain), "> first\r\n> > second") {
+		t.Fatalf("plain alternative flattened quote depth: %q", plain)
+	}
+}
+
 func TestAssembleBadAddressFails(t *testing.T) {
 	s := NewCompose("gmail", "bob@example.com", "", "")
 	s.To = []string{"not an address"}

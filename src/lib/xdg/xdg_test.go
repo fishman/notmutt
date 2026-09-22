@@ -9,6 +9,14 @@ func TestRuntimeHomeUsesEnvironment(t *testing.T) {
 	}
 }
 
+func TestRuntimeOrStateFallsBackToState(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "/state/alpha")
+	if got := RuntimeOrState(); got != "/state/alpha" {
+		t.Fatalf("RuntimeOrState() = %q", got)
+	}
+}
+
 func TestStateAndDataHomesUseEnvironment(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/state/alpha")
 	t.Setenv("XDG_DATA_HOME", "/data/alpha")

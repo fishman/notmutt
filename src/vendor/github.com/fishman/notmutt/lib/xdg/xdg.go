@@ -39,6 +39,15 @@ func RuntimeHome() string {
 	return os.Getenv("XDG_RUNTIME_DIR")
 }
 
+// RuntimeOrState returns the runtime home when available, else the persistent
+// state home for callers whose local socket must survive without a runtime dir.
+func RuntimeOrState() string {
+	if runtime := RuntimeHome(); runtime != "" {
+		return runtime
+	}
+	return StateHome()
+}
+
 // StateHome returns $XDG_STATE_HOME or ~/.local/state, "" when
 // unresolvable.
 func StateHome() string {

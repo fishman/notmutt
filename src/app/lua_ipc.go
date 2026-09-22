@@ -30,11 +30,7 @@ import (
 // environment only - never the config dir, so a NOTMUTT_CONFIG override
 // cannot split client from server.
 func luaSocketPath() string {
-	home := xdg.RuntimeHome()
-	if home == "" {
-		home = xdg.StateHome()
-	}
-	return filepath.Join(home, "notmutt", "ipc.sock")
+	return filepath.Join(xdg.RuntimeOrState(), "notmutt", "ipc.sock")
 }
 
 // ipcRequest is the one request frame: the chunk, and the optional thread
@@ -51,10 +47,8 @@ type ipcReply struct {
 	Err    string
 }
 
-// maxIPCChunk caps the request body; a larger chunk is rejected, never
-// buffered into memory.
-const maxIPCChunk = 1 << 20
-
+// maxIPCChunk is the shared transport message cap.
+const maxIPCChunk = localipc.DefaultMaxMessage
 
 // luaSend carries one request to the socket and returns the reply. The
 // path is injected so tests drive a temp listener. The read deadline is a

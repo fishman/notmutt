@@ -8,6 +8,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.40.6
+	github.com/fishman/notmutt/lib/localipc v0.0.0
 	github.com/fishman/notmutt/lib/xdg v0.0.0
 	github.com/fishman/zaman v0.1.2
 	github.com/gdamore/tcell/v3 v3.4.2
@@ -18,6 +19,8 @@ require (
 	github.com/mattn/go-sixel v0.0.12
 	github.com/nicksnyder/go-i18n/v2 v2.6.1
 	github.com/sahilm/fuzzy v0.1.3
+	github.com/yuin/goldmark v1.8.2
+	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20220924101305-151362477c87
 	github.com/yuin/gopher-lua v1.1.2
 	go.etcd.io/bbolt v1.3.11
 	go.mozilla.org/pkcs7 v0.9.0
@@ -57,10 +60,10 @@ require (
 	github.com/tadvi/systray v0.0.0-20190226123456-11a2b8fa57af // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
-	github.com/yuin/goldmark v1.8.2 // indirect
-	github.com/yuin/goldmark-highlighting/v2 v2.0.0-20220924101305-151362477c87 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
 
 replace github.com/fishman/notmutt/lib/xdg => ./lib/xdg
+
+replace github.com/fishman/notmutt/lib/localipc => ./lib/localipc

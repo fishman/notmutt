@@ -7,29 +7,10 @@ import (
 	"encoding/json"
 	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
-
-// The lua IPC client side (lua_ipc.go) is unconditional: these tests run
-// in every build. The server's chunk-run behavior is lua_ipc_server_test.go
-// under the lua tag.
-
-func TestAllowPeer(t *testing.T) {
-	want := uint32(os.Getuid())
-	if !allowPeer(want) {
-		t.Fatal("the process's own uid must pass the peer check")
-	}
-	other := uint32(0)
-	if other == want {
-		other = 1
-	}
-	if allowPeer(other) {
-		t.Fatal("another uid must fail the peer check")
-	}
-}
 
 // TestLuaSend pins the request/reply framing against a fake listener that
 // decodes the request and answers with a canned reply: the client passes

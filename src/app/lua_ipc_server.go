@@ -8,14 +8,13 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"io"
 	"log"
 	"net"
-	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/fishman/notmutt/lib/localipc"
 	lua "github.com/yuin/gopher-lua"
 
 	"notmutt/config"
@@ -47,29 +46,12 @@ func serveLuaIPC(ctx context.Context, bus *core.Bus, worker workerAPI, cfg *conf
 // session owns it (in use); a failed dial = stale, removed and re-listened.
 // The socket file dies with the context.
 func serveLuaIPCat(ctx context.Context, bus *core.Bus, worker workerAPI, cfg *config.Config, sock string) error {
-	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
-		return err
-	}
-	if err := os.Chmod(filepath.Dir(sock), 0o700); err != nil {
-		return err
-	}
-	if conn, err := net.DialTimeout("unix", sock, 500*time.Millisecond); err == nil {
-		conn.Close()
-		return fmt.Errorf("socket %s is in use by another client", sock)
-	} else if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	l, err := net.Listen("unix", sock)
+	listener, err := localipc.Listen(ctx, sock)
 	if err != nil {
 		return err
 	}
-	go func() {
-		<-ctx.Done()
-		l.Close()
-		os.Remove(sock)
-	}()
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -86,20 +68,18 @@ func serveLuaIPCat(ctx context.Context, bus *core.Bus, worker workerAPI, cfg *co
 // the action budget, so a connection always closes.
 func handleIPCConn(conn net.Conn, bus *core.Bus, worker workerAPI, cfg *config.Config) {
 	defer conn.Close()
-	if err := peerCheck(conn); err != nil {
+	if err := localipc.CheckPeer(conn); err != nil {
 		writeIPReply(conn, ipcReply{Err: err.Error()})
 		return
 	}
 	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
-	raw, err := io.ReadAll(io.LimitReader(conn, maxIPCChunk+1))
-	if err != nil {
-		return
-	}
-	if len(raw) > maxIPCChunk {
-		// drain the tail so the close is a clean FIN - a close with unread
-		// bytes in the socket buffer sends RST and eats the reply
+	raw, err := localipc.Read(conn, maxIPCChunk)
+	if errors.Is(err, localipc.ErrTooLarge) {
 		io.Copy(io.Discard, conn)
 		writeIPReply(conn, ipcReply{Err: "lua ipc: chunk too large"})
+		return
+	}
+	if err != nil {
 		return
 	}
 	var req ipcRequest
@@ -107,9 +87,6 @@ func handleIPCConn(conn net.Conn, bus *core.Bus, worker workerAPI, cfg *config.C
 		writeIPReply(conn, ipcReply{Err: "lua ipc: bad request: " + err.Error()})
 		return
 	}
-	// a request without a thread id still gets the metadata queries; the
-	// empty thread makes the thread-scoped helpers (mail_lines, tag
-	// staging) no-ops or errors - the client passes -t for those.
 	output, runErr := runLuaChunk(req.Chunk, req.ThreadID, bus, cfg, worker, ipcCtx)
 	writeIPReply(conn, ipcReply{Output: output, Err: errString(runErr)})
 }
@@ -132,7 +109,7 @@ func writeIPReply(conn net.Conn, reply ipcReply) {
 	if err != nil {
 		return
 	}
-	conn.Write(body)
+	localipc.Write(conn, body)
 }
 
 func errString(err error) string {

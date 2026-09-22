@@ -4,17 +4,18 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/fishman/notmutt/lib/localipc"
 	"github.com/fishman/notmutt/lib/xdg"
 )
 
@@ -54,40 +55,21 @@ type ipcReply struct {
 // buffered into memory.
 const maxIPCChunk = 1 << 20
 
-// allowPeer is the same-user predicate behind the SO_PEERCRED check: the
-// caller must be this process's uid. Pure, for tests.
-func allowPeer(peer uint32) bool {
-	return peer == uint32(os.Getuid())
-}
 
 // luaSend carries one request to the socket and returns the reply. The
 // path is injected so tests drive a temp listener. The read deadline is a
 // literal past the server's actionDeadline (5m, lua-gated - a client that
 // compiles without Lua cannot reference it) plus margin for the JSON.
 func luaSend(sock string, req ipcRequest) (ipcReply, error) {
-	conn, err := net.DialTimeout("unix", sock, 2*time.Second)
-	if err != nil {
-		return ipcReply{}, fmt.Errorf("no live notmutt client: %w", err)
-	}
-	defer conn.Close()
-	conn.SetDeadline(time.Now().Add(6*time.Minute + 5*time.Second))
 	body, err := json.Marshal(req)
 	if err != nil {
 		return ipcReply{}, err
 	}
-	if _, err := conn.Write(body); err != nil {
-		return ipcReply{}, err
-	}
-	// the request is unframed JSON - the server reads to EOF, so close the
-	// write half: the reply still arrives on the open read side
-	if uw, ok := conn.(*net.UnixConn); ok {
-		if err := uw.CloseWrite(); err != nil {
-			return ipcReply{}, err
-		}
-	}
-	raw, err := io.ReadAll(conn)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute+5*time.Second)
+	defer cancel()
+	raw, err := localipc.Request(ctx, sock, body)
 	if err != nil {
-		return ipcReply{}, err
+		return ipcReply{}, fmt.Errorf("no live notmutt client: %w", err)
 	}
 	var reply ipcReply
 	if err := json.Unmarshal(raw, &reply); err != nil {

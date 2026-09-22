@@ -242,8 +242,8 @@ func TestAssembleMarkdownBody(t *testing.T) {
 		t.Fatalf("plain alternative = %v %q", err, plain.Header.Get("Content-Type"))
 	}
 	text, _ := io.ReadAll(plain.Body)
-	if !strings.Contains(string(text), "title") || !strings.Contains(string(text), "one") {
-		t.Fatalf("plain alternative = %q", text)
+	if !strings.Contains(string(text), "| alpha | beta |\r\n\r\none") {
+		t.Fatalf("plain alternative lost paragraph break: %q", text)
 	}
 	html, err := mr.NextPart()
 	if err != nil || html.Header.Get("Content-Type") != "text/html; charset=utf-8" {

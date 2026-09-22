@@ -26,6 +26,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fishman/notmutt/lib/xdg"
+
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
@@ -33,7 +35,6 @@ import (
 	"notmutt/i18n"
 	"notmutt/lib/crypto"
 	"notmutt/lib/mimeutil"
-	"notmutt/lib/xdg"
 	"notmutt/mail"
 	"notmutt/notmuch"
 	"notmutt/setup"

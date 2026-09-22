@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fishman/notmutt/lib/xdg"
 	"github.com/fishman/zaman"
 
 	"notmutt/compose"
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/lib/netcheck"
-	"notmutt/lib/xdg"
 	"notmutt/tui"
 )
 

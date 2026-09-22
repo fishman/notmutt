@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"strings"
 
-	"notmutt/lib/xdg"
+	"github.com/fishman/notmutt/lib/xdg"
 )
 
 // lastClassifyPath is the reconciling poll's floor file (the

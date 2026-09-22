@@ -14,8 +14,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/fishman/notmutt/lib/xdg"
+
 	"notmutt/config"
-	"notmutt/lib/xdg"
 	"notmutt/notmuch"
 )
 

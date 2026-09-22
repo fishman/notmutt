@@ -7,7 +7,7 @@ import (
 	"os"
 	"testing"
 
-	"notmutt/lib/xdg"
+	"github.com/fishman/notmutt/lib/xdg"
 )
 
 // TestCacheDir pins the hermetic-cache contract: the harness exports a

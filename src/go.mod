@@ -8,6 +8,7 @@ require (
 	github.com/andybalholm/cascadia v1.3.4
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.40.6
+	github.com/fishman/notmutt/lib/xdg v0.0.0
 	github.com/fishman/zaman v0.1.2
 	github.com/gdamore/tcell/v3 v3.4.2
 	github.com/gen2brain/beeep v0.11.2
@@ -61,3 +62,5 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/term v0.45.0 // indirect
 )
+
+replace github.com/fishman/notmutt/lib/xdg => ./lib/xdg

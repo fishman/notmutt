@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"notmutt/lib/xdg"
+	"github.com/fishman/notmutt/lib/xdg"
 )
 
 // The lua IPC channel (R8, roadmap item 6): `notmutt lua '<chunk>'` relays

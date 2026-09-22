@@ -6,18 +6,16 @@
 package localipc
 
 import (
-	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"net"
 	"os"
-
-	"golang.org/x/sys/unix"
 )
 
 func CheckPeer(conn net.Conn) error {
-	unixConn, ok := conn.(*net.UnixConn)
-	if !ok {
-		return errors.New("local ipc: non-unix connection")
+	unixConn, err := asUnix(conn)
+	if err != nil {
+		return err
 	}
 	raw, err := unixConn.SyscallConn()
 	if err != nil {

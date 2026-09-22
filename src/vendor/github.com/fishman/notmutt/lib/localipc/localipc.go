@@ -83,9 +83,9 @@ func Request(ctx context.Context, path string, body []byte) ([]byte, error) {
 	if err := Write(conn, body); err != nil {
 		return nil, err
 	}
-	unixConn, ok := conn.(*net.UnixConn)
-	if !ok {
-		return nil, errors.New("local ipc: non-unix connection")
+	unixConn, err := asUnix(conn)
+	if err != nil {
+		return nil, err
 	}
 	if err := unixConn.CloseWrite(); err != nil {
 		return nil, err
@@ -116,4 +116,12 @@ func Write(w io.Writer, body []byte) error {
 		body = body[n:]
 	}
 	return nil
+}
+
+func asUnix(conn net.Conn) (*net.UnixConn, error) {
+	unixConn, ok := conn.(*net.UnixConn)
+	if !ok {
+		return nil, errors.New("local ipc: non-unix connection")
+	}
+	return unixConn, nil
 }

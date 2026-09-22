@@ -1,9 +1,7 @@
 // Copyright 2026 Reza Jelveh
 // SPDX-License-Identifier: Apache-2.0
 
-// Package xdg resolves the XDG base directories (os.UserStateDir is
-// absent from this toolchain's stdlib). App-specific name suffixing
-// belongs to the caller.
+// Package xdg resolves the XDG base directories.
 package xdg
 
 import (
@@ -11,8 +9,7 @@ import (
 	"path/filepath"
 )
 
-// ConfigHome returns $XDG_CONFIG_HOME or the platform default, ""
-// when unresolvable.
+// ConfigHome returns $XDG_CONFIG_HOME or the platform default.
 func ConfigHome() string {
 	base, err := os.UserConfigDir()
 	if err != nil {
@@ -21,8 +18,7 @@ func ConfigHome() string {
 	return base
 }
 
-// CacheHome returns $XDG_CACHE_HOME or the platform default, ""
-// when unresolvable.
+// CacheHome returns $XDG_CACHE_HOME or the platform default.
 func CacheHome() string {
 	base, err := os.UserCacheDir()
 	if err != nil {
@@ -31,16 +27,10 @@ func CacheHome() string {
 	return base
 }
 
-// RuntimeHome returns $XDG_RUNTIME_DIR when set, else "" - the home for
-// per-session files (sockets) that must never persist. The caller falls
-// back to StateHome when unset; the XDG spec makes the runtime dir 0700
-// and owned by the user, which is the socket's same-user boundary.
-func RuntimeHome() string {
-	return os.Getenv("XDG_RUNTIME_DIR")
-}
+// RuntimeHome returns $XDG_RUNTIME_DIR when set.
+func RuntimeHome() string { return os.Getenv("XDG_RUNTIME_DIR") }
 
-// RuntimeOrState returns the runtime home when available, else the persistent
-// state home for callers whose local socket must survive without a runtime dir.
+// RuntimeOrState returns the runtime home when available, else state home.
 func RuntimeOrState() string {
 	if runtime := RuntimeHome(); runtime != "" {
 		return runtime
@@ -48,29 +38,19 @@ func RuntimeOrState() string {
 	return StateHome()
 }
 
-// StateHome returns $XDG_STATE_HOME or ~/.local/state, "" when
-// unresolvable.
-func StateHome() string {
-	if p := os.Getenv("XDG_STATE_HOME"); p != "" {
-		return p
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".local", "state")
-}
+// StateHome returns $XDG_STATE_HOME or ~/.local/state.
+func StateHome() string { return home("XDG_STATE_HOME", ".local", "state") }
 
-// DataHome returns $XDG_DATA_HOME or ~/.local/share, "" when
-// unresolvable - the home for data that must persist (scheduled
-// mail, unlike cache, is not deletable-by-design).
-func DataHome() string {
-	if p := os.Getenv("XDG_DATA_HOME"); p != "" {
-		return p
+// DataHome returns $XDG_DATA_HOME or ~/.local/share.
+func DataHome() string { return home("XDG_DATA_HOME", ".local", "share") }
+
+func home(env string, suffix ...string) string {
+	if value := os.Getenv(env); value != "" {
+		return value
 	}
-	home, err := os.UserHomeDir()
+	dir, err := os.UserHomeDir()
 	if err != nil {
 		return ""
 	}
-	return filepath.Join(home, ".local", "share")
+	return filepath.Join(append([]string{dir}, suffix...)...)
 }

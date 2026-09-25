@@ -241,7 +241,7 @@ type tScreen struct {
 	truecolor          bool
 	noColor            bool
 	legacy             bool
-	caps               Capabilities // capabilities reported via DA1
+	hasClipboard       bool // true if OSC 52 reported via DA1
 	finiOnce           sync.Once
 	initFiniLock       sync.Mutex
 	enterUrl           string
@@ -509,12 +509,7 @@ func (t *tScreen) processInitQ() {
 				if ev.Clipboard && t.setClipboard == "" {
 					t.setClipboard = setClipboard
 				}
-				if ev.Clipboard {
-					t.caps |= CapabilityClipboard
-				}
-				if ev.Sixel {
-					t.caps |= CapabilitySixel
-				}
+				t.hasClipboard = ev.Clipboard
 				t.initted = true
 				return
 			case *eventTermName:
@@ -1379,13 +1374,24 @@ func (t *tScreen) inputLoop(stopQ chan struct{}) {
 
 	defer t.wg.Done()
 	for {
+		readDone := make(chan bool)
+		chunk := make([]byte, 128)
+		var n int
+		var e error
 		select {
 		case <-stopQ:
 			return
 		default:
+			go func() {
+				n, e = t.tty.Read(chunk)
+				close(readDone)
+			}()
+			select {
+			case <-stopQ:
+				return
+			case <-readDone:
+			}
 		}
-		chunk := make([]byte, 128)
-		n, e := t.tty.Read(chunk)
 		switch e {
 		case nil:
 		default:
@@ -1807,12 +1813,8 @@ func (t *tScreen) GetClipboard() {
 	t.Unlock()
 }
 
-func (t *tScreen) Capabilities() Capabilities {
-	return t.caps
-}
-
 func (t *tScreen) HasClipboard() bool {
-	return t.caps&CapabilityClipboard != 0
+	return t.hasClipboard
 }
 
 func (t *tScreen) ShowNotification(title string, body string) {

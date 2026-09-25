@@ -64,9 +64,10 @@ const (
 const defaultControlStringLimit = 64 * 1024
 
 const (
-	// loneEscapeTimeout keeps bare Escape responsive when using legacy
-	// keyboard reporting, where ESC can also prefix an Alt-modified key.
-	loneEscapeTimeout = 200 * time.Millisecond
+	// loneEscapeTimeout keeps bare Escape responsive.  A lone ESC byte is
+	// always ambiguous, because it can also prefix an Alt-modified key or a
+	// longer sequence, so it cannot be resolved until this expires.
+	loneEscapeTimeout = 50 * time.Millisecond
 
 	// escapeSequenceTimeout bounds incomplete escape sequences. Once a
 	// sequence introducer has arrived, it is no longer ambiguous with a lone
@@ -129,27 +130,15 @@ func asciiByteFromInt(n int) (byte, bool) {
 	return byte(n), true
 }
 
-// Waiting returns true if the processor is waiting for
-// some more input (i.e. we are not in in the initial state.)
-// This can occur when we have ambiguous escape sequences, such
-// as the lone escape.  If this is typed, we expect at least a minimal
-// inter-key delay before the next stroke occurs, and the caller
-// should check for waiting, and call Scan() or ScanUTF8() to
-// finish the processing.  (Typically after a delay of around 100ms.)
-func (ip *inputParser) Waiting() bool {
-	ip.l.Lock()
-	defer ip.l.Unlock()
-	return ip.state != istInit
-}
-
 // waitDuration reports how long to wait for the next byte before resetting an
-// incomplete escape sequence. A bare ESC is only ambiguous with legacy
-// keyboard reporting; other protocols can use the longer sequence deadline.
+// incomplete escape sequence. A bare ESC is ambiguous under every keyboard
+// protocol, so it gets the short deadline; only once an introducer has arrived
+// is the longer sequence deadline used.
 func (ip *inputParser) waitDuration() time.Duration {
 	if ip.state == istInit {
 		return 0
 	}
-	if ip.state == istEsc && ip.legacy {
+	if ip.state == istEsc {
 		return loneEscapeTimeout
 	}
 	return escapeSequenceTimeout
@@ -1000,8 +989,10 @@ func kittyKeyText(params string) string {
 		return ""
 	}
 	var b strings.Builder
+	// Reject C0 control chars, DEL, and C1 control chars: they must never
+	// surface as key text.
 	for cp := range strings.SplitSeq(fields[2], ":") {
-		if n, err := strconv.ParseInt(cp, 10, 32); err == nil && n > 0 && utf8.ValidRune(rune(n)) {
+		if n, err := strconv.ParseInt(cp, 10, 32); err == nil && n >= 0x20 && (n < 0x7f || n > 0x9f) && utf8.ValidRune(rune(n)) {
 			b.WriteRune(rune(n))
 		}
 	}
@@ -1442,12 +1433,9 @@ func (ip *inputParser) handleCsi(mode rune, params []byte, intermediate []byte) 
 			if mod1 := kittyModifierKey(P0); mod1 != ModNone {
 				mod |= mod1
 			}
-			// kitty mode 16: a terminal that sends associated text reports
-			// the key's layout-correct output, already shifted - trust it
-			// over the base key. No text (e.g. terminals without mode 16)
-			// falls through to base key + modifiers.
+			// kitty mode 16: text is the layout-correct output, sent with its
+			// modifiers - keep both. No text falls through to the base key.
 			if text := kittyKeyText(pstr); text != "" {
-				mod &^= ModShift // the shift is expressed in the text
 				ip.postKeyEx(KeyRune, text, mod, pressed, physical, repeat)
 				return
 			}

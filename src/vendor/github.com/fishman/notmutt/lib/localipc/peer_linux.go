@@ -7,9 +7,9 @@ package localipc
 
 import (
 	"fmt"
+	"golang.org/x/sys/unix"
 	"net"
 	"os"
-	"golang.org/x/sys/unix"
 )
 
 func CheckPeer(conn net.Conn) error {

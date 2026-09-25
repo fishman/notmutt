@@ -12,14 +12,18 @@ import (
 // ConfigHome returns $XDG_CONFIG_HOME or the platform default.
 func ConfigHome() string {
 	base, err := os.UserConfigDir()
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return base
 }
 
 // CacheHome returns $XDG_CACHE_HOME or the platform default.
 func CacheHome() string {
 	base, err := os.UserCacheDir()
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return base
 }
 
@@ -28,7 +32,9 @@ func RuntimeHome() string { return os.Getenv("XDG_RUNTIME_DIR") }
 
 // RuntimeOrState returns the runtime home when available, else state home.
 func RuntimeOrState() string {
-	if runtime := RuntimeHome(); runtime != "" { return runtime }
+	if runtime := RuntimeHome(); runtime != "" {
+		return runtime
+	}
 	return StateHome()
 }
 
@@ -39,8 +45,12 @@ func StateHome() string { return home("XDG_STATE_HOME", ".local", "state") }
 func DataHome() string { return home("XDG_DATA_HOME", ".local", "share") }
 
 func home(env string, suffix ...string) string {
-	if value := os.Getenv(env); value != "" { return value }
+	if value := os.Getenv(env); value != "" {
+		return value
+	}
 	dir, err := os.UserHomeDir()
-	if err != nil { return "" }
+	if err != nil {
+		return ""
+	}
 	return filepath.Join(append([]string{dir}, suffix...)...)
 }

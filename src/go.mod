@@ -10,6 +10,7 @@ require (
 	github.com/fishman/go.notmuch v0.40.6
 	github.com/fishman/notmutt/lib/localipc v0.0.0
 	github.com/fishman/notmutt/lib/xdg v0.0.0
+	github.com/fishman/notmutt/lib/tui v0.0.0
 	github.com/fishman/zaman v0.1.2
 	github.com/gdamore/tcell/v3 v3.4.2
 	github.com/gen2brain/beeep v0.11.2
@@ -67,3 +68,5 @@ require (
 replace github.com/fishman/notmutt/lib/xdg => ./lib/xdg
 
 replace github.com/fishman/notmutt/lib/localipc => ./lib/localipc
+
+replace github.com/fishman/notmutt/lib/tui => ../lib/tui

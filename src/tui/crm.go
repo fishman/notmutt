@@ -8,8 +8,8 @@ import (
 
 	"github.com/mattn/go-runewidth"
 
+	"github.com/fishman/notmutt/lib/tui/table"
 	"notmutt/core"
-	"notmutt/lib/table"
 )
 
 // crm.go: the CRM review-queue surface - a non-mail list buffer whose rows

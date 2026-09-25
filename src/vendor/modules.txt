@@ -66,6 +66,9 @@ github.com/fishman/go.notmuch
 # github.com/fishman/notmutt/lib/localipc v0.0.0 => ./lib/localipc
 ## explicit; go 1.26.6
 github.com/fishman/notmutt/lib/localipc
+# github.com/fishman/notmutt/lib/tui v0.0.0 => ../lib/tui
+## explicit; go 1.26.6
+github.com/fishman/notmutt/lib/tui/table
 # github.com/fishman/notmutt/lib/xdg v0.0.0 => ./lib/xdg
 ## explicit; go 1.26.6
 github.com/fishman/notmutt/lib/xdg
@@ -244,3 +247,4 @@ golang.org/x/text/transform
 golang.org/x/text/unicode/norm
 # github.com/fishman/notmutt/lib/xdg => ./lib/xdg
 # github.com/fishman/notmutt/lib/localipc => ./lib/localipc
+# github.com/fishman/notmutt/lib/tui => ../lib/tui

@@ -13,6 +13,7 @@ package tui
 
 import (
 	"sync"
+	"testing"
 
 	"github.com/gdamore/tcell/v3"
 	"github.com/gdamore/tcell/v3/color"
@@ -92,6 +93,14 @@ func (s *fakeScreen) Fill(r rune, st tcell.Style) {
 	}
 }
 
+func (s *fakeScreen) FillArea(x, y, width, height int, r rune, style tcell.Style) {
+	for row := y; row < y+height; row++ {
+		for col := x; col < x+width; col++ {
+			s.SetContent(col, row, r, nil, style)
+		}
+	}
+}
+
 func (s *fakeScreen) EventQ() chan tcell.Event { return s.evQ }
 
 // InjectKey posts a key press onto the event queue (the v2 SimulationScreen helper the loop tests drove).
@@ -143,3 +152,17 @@ func (s *fakeScreen) Capabilities() tcell.Capabilities                 { return 
 func (s *fakeScreen) ShowNotification(string, string)                  {}
 func (s *fakeScreen) KeyboardProtocol() tcell.KeyProtocol              { return tcell.LegacyKeyboard }
 func (s *fakeScreen) Terminal() (string, string)                       { return "", "" }
+
+func TestFakeScreenFillArea(t *testing.T) {
+	s := newFakeScreen()
+	s.FillArea(1, 2, 2, 2, 'x', tcell.StyleDefault)
+	for _, point := range [][2]int{{1, 2}, {2, 2}, {1, 3}, {2, 3}} {
+		got, _, _ := s.Get(point[0], point[1])
+		if got != "x" {
+			t.Fatalf("filled cell %v = %q", point, got)
+		}
+	}
+	if got, _, _ := s.Get(0, 0); got != "" {
+		t.Fatalf("outside cell changed: %q", got)
+	}
+}

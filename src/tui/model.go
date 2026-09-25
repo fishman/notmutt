@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/fishman/notmutt/lib/tui/modal"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
 
@@ -3581,6 +3582,13 @@ func (m Model) dialogueBox(content []string) string {
 // Config border glyphs (R11), the indicator's background as the
 // border color.
 func spliceBox(lines []string, width int, ui config.UI, st Styles, content []string) []string {
+	position, ok := modal.Bottom(width, len(lines), len(content), 2)
+	if !ok {
+		return lines
+	}
+	if len(content) > position.BodyRows {
+		content = content[len(content)-position.BodyRows:]
+	}
 	g := ui.Glyphs
 	inner := width - 2
 	if inner < 1 {
@@ -3599,11 +3607,7 @@ func spliceBox(lines []string, width int, ui config.UI, st Styles, content []str
 		}
 		rows = append(rows, padRowSGR(line, width, st.sgr.normal))
 	}
-	top := len(lines) - len(rows) - 2 // anchored above the keyhint bar
-	if top < 0 {
-		top = 0
-	}
-	copy(lines[top:top+len(rows)], rows)
+	copy(lines[position.Y:position.Y+len(rows)], rows)
 	return lines
 }
 
@@ -4465,49 +4469,8 @@ func (d *textDialogue) render(m *Model) string {
 func (d *textDialogue) wrap(m *Model) (rows []string, curRow, curCol int) {
 	label := core.SanitizeControls(d.label)
 	entry := core.SanitizeControls(d.input)
-	// the box's border and its two trailing frame columns are not text
-	// columns: lipgloss fits the box to width-2 including the border, so
-	// a row wider than width-4-label re-wraps inside the box and the
-	// splice loses the bottom border
-	w := m.width - 4 - runewidth.StringWidth(label)
-	if w < 1 {
-		w = 1
-	}
-	cur := min(max(d.cur, 0), len(entry))
-	type span struct{ lo, hi int }
-	var spans []span
-	lo, cells := 0, 0
-	for i, r := range entry {
-		cw := runewidth.RuneWidth(r)
-		if cells+cw > w && i > lo {
-			spans = append(spans, span{lo, i})
-			lo, cells = i, 0
-		}
-		cells += cw
-	}
-	spans = append(spans, span{lo, len(entry)})
-	for i, s := range spans {
-		if cur <= s.hi || i == len(spans)-1 {
-			curRow, curCol = i, runewidth.StringWidth(entry[s.lo:cur])
-			break
-		}
-	}
-	// cap to the frame's content area (the box's two border rows, the
-	// keyhint/status pair, and the tab bar stay), then window so the
-	// cursor's row is always on screen
-	capRows := m.height - 5
-	if capRows < 1 {
-		capRows = 1
-	}
-	start := 0
-	if len(spans) > capRows {
-		start = min(max(curRow-capRows+1, 0), len(spans)-capRows)
-	}
-	end := min(start+capRows, len(spans))
-	for _, s := range spans[start:end] {
-		rows = append(rows, entry[s.lo:s.hi])
-	}
-	return rows, curRow - start, curCol
+	width := max(1, m.width-4-runewidth.StringWidth(label))
+	return modal.Wrap(entry, d.cur, width, max(1, m.height-5))
 }
 
 func (d *confirmDialogue) render(m *Model) string {

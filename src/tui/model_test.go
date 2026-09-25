@@ -3569,6 +3569,20 @@ func TestDialogueBoxKeepsKeyhintInFullIndex(t *testing.T) {
 	}
 }
 
+func TestDialogueBoxCapsOversizedContent(t *testing.T) {
+	m := model()
+	next, _ := m.Update(WindowSizeMsg{Width: 40, Height: 8})
+	m = next
+	content := make([]string, 30)
+	for i := range content {
+		content[i] = fmt.Sprintf("entry %d", i)
+	}
+	frame := strings.Split(stripANSI(m.dialogueBox(content)), "\n")
+	if len(frame) != 8 || !strings.HasPrefix(frame[5], "\u2570") || !strings.Contains(frame[7], "inbox") {
+		t.Fatalf("dialogue overflowed frame or footer: %q", frame)
+	}
+}
+
 // TestDialogueBoxWrapsLongValue: a value too long for one box row wraps
 // at the label's column and the box grows UPWARD from its bottom anchor -
 // the compose field prompt's long Cc stays whole above the keyhint bar

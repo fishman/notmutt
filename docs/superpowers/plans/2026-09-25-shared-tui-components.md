@@ -23,7 +23,7 @@
 
 ### Task 1: Theme resolution module
 
-**Files:** Create `lib/tui/go.mod`, `lib/tui/theme/theme.go`, `lib/tui/theme/theme_test.go`.
+**Files:** Create `lib/tui/go.mod`, `lib/tui/LICENSE` (copy the repository's Apache-2.0 license), `lib/tui/theme/theme.go`, `lib/tui/theme/theme_test.go`.
 
 **Interfaces:** Produce `theme.Style{Fg,Bg string; Attrs []string}`, `theme.Palette{Base map[string]string; Variants map[string]map[string]string}`, and `theme.Resolve(p Palette, variant string, styles map[string]Style) map[string]Style`. `styles["normal"]` is the inheritance root; values with empty components inherit normal. `theme.ValidHex(string) bool` is the strict `#RRGGBB` validator. Returned slices must not alias the input.
 
@@ -47,13 +47,13 @@ func TestResolveVariantAndInheritance(t *testing.T) {
 
 ### Task 2: Move fixed-column table into the module
 
-**Files:** Move `src/lib/table/table.go` to `lib/tui/table/table.go` and `src/lib/table/table_test.go` to `lib/tui/table/table_test.go`. Modify `lib/tui/go.mod` to require `github.com/mattn/go-runewidth v0.0.27`; update `src/tui/crm.go` import only after the root module requirement is introduced in Task 5.
+**Files:** Move `src/lib/table/table.go` to `lib/tui/table/table.go` and `src/lib/table/table_test.go` to `lib/tui/table/table_test.go`. Update `lib/tui/go.mod` to require `github.com/mattn/go-runewidth v0.0.27`, `src/go.mod` to require `github.com/fishman/notmutt/lib/tui v0.0.0` with `replace ... => ../lib/tui`, and `src/tui/crm.go` to import `github.com/fishman/notmutt/lib/tui/table`.
 
 **Interfaces:** Preserve `table.Col`, `table.Layout`, `(*Layout).Sizes(width int, tail bool) []int`, `(*Layout).Line(cells []string, sizes []int) string` exactly. No compatibility alias.
 
 - [ ] **Step 1: Before moving code, run** `go test ./lib/table` from `src` and save the passing baseline. The existing tests already exercise column edges and wide separators; preserve them byte-for-byte while moving.
 - [ ] **Step 2: Move** both files as a single rename, using the LSP rename-file action when supported. Do not modify assertions or public signatures.
-- [ ] **Step 3: Run** `go test ./table` from `lib/tui`; confirm it passes the unchanged tests. Then run `go test ./lib/table` from `src` and confirm the old package is gone.
+- [ ] **Step 3: Add** the root-module requirement and replace, migrate the CRM import, regenerate vendor while restoring patched tcell files, and run `go test ./table` from `lib/tui` plus `go test ./tui ./app` from `src`. The old `src/lib/table` path must be gone, not left as a compatibility alias.
 - [ ] **Step 4: Commit** `refactor(tui): move fixed-column table into module`.
 
 ### Task 3: Styled-run top tab bar
@@ -102,14 +102,14 @@ func TestStatusDropsProgressBeforeTitle(t *testing.T) {
 
 ### Task 5: Notmutt theme and component cutover
 
-**Files:** Modify `src/go.mod`, `src/config/config.go`, `src/tui/styles.go`, `src/tui/statusline.go`, `src/tui/model.go`, `src/tui/crm.go`, and affected notmutt tests. Update `src/vendor` via `go mod vendor` while preserving its tcell patches. Remove obsolete local table package after Task 2; do not leave re-exports.
+**Files:** Modify `src/config/config.go`, `src/tui/styles.go`, `src/tui/statusline.go`, `src/tui/model.go`, and affected notmutt tests. Refresh `src/vendor` only when module files change, preserving tcell patches. `src/go.mod`, CRM imports, and the old table package were handled in Task 2.
 
 **Interfaces:** `config.Theme.Resolved` retains its public signature `(map[string]config.Style, []config.Style)` and its header-color ordering. Build the raw ID map once and delegate property resolution to `theme.Resolve`. Convert resulting generic values back into existing `config.Style` values; remove duplicated palette/hex/inheritance logic only after all callers migrate. Replace `tabBar` width/drop loop with `chrome.Tabs`, and `statusLineWidth` fitting with `chrome.Status`. `statusData` and the mail-derived segment builders remain client-owned. Convert chrome runs to existing lipgloss styles by ID in one adapter; progress contains separate runs for filled/empty glyphs.
 
-- [ ] **Step 1: Run** `go test ./config ./tui ./lib/table` from `src` before changes. Use LSP references for exported config types if available; otherwise locate all call sites before replacing them.
+- [ ] **Step 1: Run** `go test ./config ./tui` from `src` and `go test ./table` from `lib/tui` before this cutover. Use LSP references for exported config types if available; otherwise locate all call sites before replacing them.
 - [ ] **Step 2: Write a consumer regression** asserting theme variant precedence and the terminal-width tab/status rows still match the current frame. Keep the existing locked frame/table tests unchanged.
 - [ ] **Step 3: Run** the new targeted tests before changing code; confirm they fail because the new module API is not wired.
-- [ ] **Step 4: Add** `require github.com/fishman/notmutt/lib/tui v0.0.0` and `replace github.com/fishman/notmutt/lib/tui => ../lib/tui` in `src/go.mod`, then migrate imports. Render each `chrome.Run` through the resolved lipgloss style for its `Style` ID, leaving mail-specific text in `statusData`.
+- [ ] **Step 4: Use** the already-required `github.com/fishman/notmutt/lib/tui` module, migrating theme, tab, and status rendering. Render each `chrome.Run` through the resolved lipgloss style for its `Style` ID, leaving mail-specific text in `statusData`.
 - [ ] **Step 5: Run** `go test ./config ./tui ./app` from `src`; compare frame widths and output of existing tests. Preserve all regression tests.
 - [ ] **Step 6: Regenerate** vendor files and restore any intentional vendored tcell modifications lost by `go mod vendor`; verify `go test -mod=vendor ./...` and `go test -tags "lua mcp crm" ./...` from `src`.
 - [ ] **Step 7: Commit** `refactor(tui): consume standalone chrome and theme`.

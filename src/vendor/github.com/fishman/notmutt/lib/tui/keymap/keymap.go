@@ -144,8 +144,9 @@ func Compile(scheme map[string]map[string]Binding, parents map[string]string) (T
 		for _, key := range keys {
 			binding := bindings[key]
 			result.Bindings[context][key] = binding.Fun
-			result.entries[context] = append(result.entries[context], Entry{Key: key, Fun: binding.Fun, Desc: binding.Desc, Show: binding.Show})
-			if own, ok := scheme[context][key]; ok && own.Show {
+			shown := scheme[context][key].Show
+			result.entries[context] = append(result.entries[context], Entry{Key: key, Fun: binding.Fun, Desc: binding.Desc, Show: shown})
+			if shown {
 				result.Shown[context][key] = true
 			}
 		}

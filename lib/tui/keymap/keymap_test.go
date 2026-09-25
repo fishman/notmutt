@@ -60,7 +60,7 @@ func TestCompilePreservesCaseAndOptInInheritance(t *testing.T) {
 	if got := compiled.Hints("pager"); !reflect.DeepEqual(got, []Entry{{Key: "j", Fun: "scroll", Desc: "Scroll", Show: true}, {Key: "x", Fun: "close", Desc: "Close", Show: true}}) {
 		t.Fatalf("pager hints = %#v", got)
 	}
-	if got := compiled.Entries("pager"); len(got) != 3 || got[0].Key != "J" || got[0].Desc != "Next entry" {
+	if got := compiled.Entries("pager"); len(got) != 3 || got[0].Key != "J" || got[0].Desc != "Next entry" || got[0].Show {
 		t.Fatalf("full contextual help = %#v", got)
 	}
 }

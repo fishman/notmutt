@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"charm.land/lipgloss/v2"
+	"github.com/fishman/notmutt/lib/tui/keymap"
 	"github.com/fishman/notmutt/lib/tui/modal"
 	"github.com/mattn/go-runewidth"
 	sfuzzy "github.com/sahilm/fuzzy"
@@ -2724,12 +2725,11 @@ func (m Model) previewContentSize() (int, int) {
 // then BubbleTea's canonical name ("ctrl+n", "alt+v", ...) so control
 // keys are bindable.
 func actionForKey(msg KeyPressMsg, km map[string]string) string {
+	typed := ""
 	if msg.Typed() {
-		if a, ok := km[msg.Text]; ok {
-			return a
-		}
+		typed = msg.Text
 	}
-	return km[msg.String()]
+	return keymap.Resolve(km, typed, msg.String())
 }
 
 func pagerThreadID(p *pager) string {

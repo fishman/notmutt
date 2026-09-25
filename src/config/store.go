@@ -111,9 +111,13 @@ func (s *Store) SetKeymap(k string) error {
 		return fmt.Errorf("keymap: must be vim or emacs, got %q", k)
 	}
 	s.mu.Lock()
+	previous := s.cfg.UI.Keymap
 	s.cfg.UI.Keymap = k
-	s.cfg.Bindings, s.cfg.Shown = bindingsFromScheme(s.cfg.Schemes[k])
-	s.cfg.Descriptions = deriveDescriptions(s.cfg.Schemes, k)
+	if err := compileBindings(&s.cfg); err != nil {
+		s.cfg.UI.Keymap = previous
+		s.mu.Unlock()
+		return err
+	}
 	s.mu.Unlock()
 	s.notify("ui")
 	return nil

@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/fishman/notmutt/lib/tui/keymap"
+
 	"notmutt/core"
 )
 
@@ -927,6 +929,13 @@ func TestLoadInvalidEnum(t *testing.T) {
 	}
 }
 
+func TestLoadRejectsWrongBindingFlagType(t *testing.T) {
+	_, err := Load(write(t, "\n[schemes.vim.index]\n\"x\" = { fun = \"quit\", show = \"true\" }\n"))
+	if err == nil {
+		t.Fatal("string show flag bypassed keymap validation")
+	}
+}
+
 func TestLoadUILanguage(t *testing.T) {
 	cfg, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nlanguage = \"de\"\n"))
 	if err != nil {
@@ -1116,7 +1125,11 @@ func TestDefaultBindings(t *testing.T) {
 	cfg := Default()
 	// the default bindings ARE the embedded vim scheme (base.toml),
 	// context for context - the Go side derives, never re-declares
-	bs, _ := bindingsFromScheme(baseConfig.Schemes["vim"])
+	compiled, err := keymap.Compile(baseConfig.Schemes["vim"], contextParents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bs := compiled.Bindings
 	// the per-account goto keys derive from the accounts table, not the
 	// base scheme: drop them before the equality check
 	for key := range cfg.DerivedGKeys {
@@ -1262,15 +1275,15 @@ func TestLoadUnknownBindingKey(t *testing.T) {
 
 func TestValidateBindings(t *testing.T) {
 	cfg := Default()
-	cfg.Schemes["vim"]["index"] = map[string]Binding{}
+	cfg.Schemes["vim"]["index"] = map[string]keymap.Binding{}
 	if err := validate(cfg); err == nil {
 		t.Fatal("empty context must error")
 	}
-	cfg.Schemes["vim"]["index"] = map[string]Binding{"": {Fun: "archive"}}
+	cfg.Schemes["vim"]["index"] = map[string]keymap.Binding{"": {Fun: "archive"}}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank key must error")
 	}
-	cfg.Schemes["vim"]["index"] = map[string]Binding{"x": {Fun: " "}}
+	cfg.Schemes["vim"]["index"] = map[string]keymap.Binding{"x": {Fun: " "}}
 	if err := validate(cfg); err == nil {
 		t.Fatal("blank action must error")
 	}
@@ -1278,7 +1291,7 @@ func TestValidateBindings(t *testing.T) {
 
 func TestValidateUnknownBindingContext(t *testing.T) {
 	cfg := Default()
-	cfg.Schemes["vim"]["indicx"] = map[string]Binding{"q": {Fun: "quit"}}
+	cfg.Schemes["vim"]["indicx"] = map[string]keymap.Binding{"q": {Fun: "quit"}}
 	if err := validate(cfg); err == nil || !strings.Contains(err.Error(), "indicx") {
 		t.Fatalf("unknown context must error naming it, got %v", err)
 	}
@@ -1403,7 +1416,11 @@ func TestDefaultShownSet(t *testing.T) {
 	if !cfg.Shown["index"]["q"] || !cfg.Shown["pager"]["q"] || !cfg.Shown["compose"]["y"] || !cfg.Shown["fuzzy"]["enter"] {
 		t.Fatal("the command keys must be shown")
 	}
-	_, emacsShown := bindingsFromScheme(Default().Schemes["emacs"])
+	emacs, err := keymap.Compile(Default().Schemes["emacs"], contextParents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	emacsShown := emacs.Shown
 	for _, ctx := range []string{"pager", "compose", "fuzzy"} {
 		for _, k := range []string{"j", "k", "up", "down", "ctrl+n", "ctrl+p", "ctrl+v", "pgdown"} {
 			if emacsShown[ctx][k] {

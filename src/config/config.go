@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/fishman/notmutt/lib/tui/keymap"
 	uitheme "github.com/fishman/notmutt/lib/tui/theme"
 	"golang.org/x/text/language"
 
@@ -43,66 +44,6 @@ func mustBase() Config {
 // R8).
 var bindingContexts = map[string]bool{
 	"index": true, "pager": true, "compose": true, "fuzzy": true,
-}
-
-// Binding is one keybinding entry: a plain string (the action), a
-// two-element array ["action", "description"], or a table
-// { fun, desc, show }. Descriptions travel with the binding - the
-// help vocabulary derives from these entries (R8). Visibility is
-// opt-in: only show = true entries appear in the keyhint row.
-type Binding struct {
-	Fun  string
-	Desc string
-	Show bool
-	// Inherit opts a key INTO context inheritance (the hierarchical key
-	// layout): the pager inherits only the index mail actions marked
-	// true. Deny by default - a view or navigation action never reaches
-	// the pager unless deliberately opted in; the child can always bind
-	// the key itself.
-	Inherit bool
-}
-
-func (b *Binding) UnmarshalTOML(v any) error {
-	switch t := v.(type) {
-	case string:
-		b.Fun = t
-	case []any:
-		if len(t) != 2 {
-			return fmt.Errorf("binding: array must be [fun, desc], got %d elements", len(t))
-		}
-		fun, ok := t[0].(string)
-		if !ok {
-			return fmt.Errorf("binding: array fun must be a string")
-		}
-		desc, ok := t[1].(string)
-		if !ok {
-			return fmt.Errorf("binding: array desc must be a string")
-		}
-		b.Fun, b.Desc = fun, desc
-	case map[string]any:
-		fun, ok := t["fun"].(string)
-		if !ok {
-			return fmt.Errorf("binding: table must carry a string fun")
-		}
-		b.Fun = fun
-		if desc, ok := t["desc"].(string); ok {
-			b.Desc = desc
-		}
-		if show, ok := t["show"].(bool); ok {
-			b.Show = show
-		}
-		if inh, ok := t["inherit"].(bool); ok {
-			b.Inherit = inh
-		}
-		for k := range t {
-			if k != "fun" && k != "desc" && k != "show" && k != "inherit" {
-				return fmt.Errorf("binding: unknown key %q", k)
-			}
-		}
-	default:
-		return fmt.Errorf("binding: expected a string, [fun, desc], or { fun = ..., desc = ... }")
-	}
-	return nil
 }
 
 type Config struct {
@@ -146,13 +87,13 @@ type Config struct {
 	// Opener is the link opener argv (pager F key): the url is appended
 	// as the final argv element (F4 - argv only, never a shell string).
 	// Empty = xdg-open.
-	Opener  []string                                 `toml:"opener"`
-	Pager   Pager                                    `toml:"pager"`
-	HTML    HTMLSection                              `toml:"html"`
-	Export  ExportSection                            `toml:"export"`
-	Palette Palette                                  `toml:"palette"`
-	Theme   Theme                                    `toml:"theme"`
-	Schemes map[string]map[string]map[string]Binding `toml:"schemes"`
+	Opener  []string                                        `toml:"opener"`
+	Pager   Pager                                           `toml:"pager"`
+	HTML    HTMLSection                                     `toml:"html"`
+	Export  ExportSection                                   `toml:"export"`
+	Palette Palette                                         `toml:"palette"`
+	Theme   Theme                                           `toml:"theme"`
+	Schemes map[string]map[string]map[string]keymap.Binding `toml:"schemes"`
 	// Descriptions is the derived help vocabulary (action -> text),
 	// collected from the scheme entries - never a config block
 	Descriptions map[string]string `toml:"-"`
@@ -1164,21 +1105,21 @@ func (c Config) MyAddrs() []string {
 // [schemes.vim.index] table replaces the whole context table when
 // decoded into the nested map, so the R9 overlay is applied explicitly
 // (context and key levels merge).
-func mergeSchemes(base, over map[string]map[string]map[string]Binding) map[string]map[string]map[string]Binding {
-	out := make(map[string]map[string]map[string]Binding, len(base))
+func mergeSchemes(base, over map[string]map[string]map[string]keymap.Binding) map[string]map[string]map[string]keymap.Binding {
+	out := make(map[string]map[string]map[string]keymap.Binding, len(base))
 	for km, ctxs := range base {
-		out[km] = make(map[string]map[string]Binding, len(ctxs))
+		out[km] = make(map[string]map[string]keymap.Binding, len(ctxs))
 		for c, keys := range ctxs {
 			out[km][c] = maps.Clone(keys)
 		}
 	}
 	for km, ctxs := range over {
 		if out[km] == nil {
-			out[km] = make(map[string]map[string]Binding)
+			out[km] = make(map[string]map[string]keymap.Binding)
 		}
 		for c, keys := range ctxs {
 			if out[km][c] == nil {
-				out[km][c] = make(map[string]Binding)
+				out[km][c] = make(map[string]keymap.Binding)
 			}
 			maps.Copy(out[km][c], keys)
 		}
@@ -1191,16 +1132,16 @@ func mergeSchemes(base, over map[string]map[string]map[string]Binding) map[strin
 // first (a user desc on a rebound key overrides the scheme default),
 // then the others sorted. A desc defined once describes the action
 // everywhere.
-func deriveDescriptions(schemes map[string]map[string]map[string]Binding, keymap string) map[string]string {
+func deriveDescriptions(schemes map[string]map[string]map[string]keymap.Binding, selected string) map[string]string {
 	out := map[string]string{}
 	var others []string
 	for km := range schemes {
-		if km != keymap {
+		if km != selected {
 			others = append(others, km)
 		}
 	}
 	sort.Strings(others)
-	for _, km := range append([]string{keymap}, others...) {
+	for _, km := range append([]string{selected}, others...) {
 		for _, c := range sortedKeys(schemes[km]) {
 			for _, k := range sortedKeys(schemes[km][c]) {
 				e := schemes[km][c][k]
@@ -1232,7 +1173,7 @@ func deriveAccountViews(cfg *Config) {
 	}
 	index := cfg.Schemes["vim"]["index"]
 	if index == nil {
-		index = map[string]Binding{}
+		index = map[string]keymap.Binding{}
 		cfg.Schemes["vim"]["index"] = index
 	}
 	for key, tag := range cfg.DerivedGKeys {
@@ -1252,7 +1193,7 @@ func deriveAccountViews(cfg *Config) {
 		}
 		key := fmt.Sprintf("g %d", i)
 		if _, ok := index[key]; !ok {
-			index[key] = Binding{Fun: "goto-" + tag, Desc: "Show the " + tag + " view", Show: true}
+			index[key] = keymap.Binding{Fun: "goto-" + tag, Desc: "Show the " + tag + " view", Show: true}
 			cfg.DerivedGKeys[key] = tag
 		}
 	}
@@ -1293,46 +1234,14 @@ func sortedKeys[V any](m map[string]V) []string {
 // actions (r, d, a, ...), so they work in the pager too.
 var contextParents = map[string]string{"pager": "index"}
 
-func bindingsFromScheme(scheme map[string]map[string]Binding) (map[string]map[string]string, map[string]map[string]bool) {
-	out := make(map[string]map[string]string, len(scheme))
-	shown := make(map[string]map[string]bool, len(scheme))
-	inherit := make(map[string]map[string]bool, len(scheme))
-	for ctx, km := range scheme {
-		m := make(map[string]string, len(km))
-		s := make(map[string]bool, len(km))
-		ih := make(map[string]bool, len(km))
-		for k, b := range km {
-			m[k] = b.Fun
-			ih[k] = b.Inherit
-			if b.Show {
-				s[k] = true
-			}
-		}
-		out[ctx] = m
-		shown[ctx] = s
-		inherit[ctx] = ih
+func compileBindings(cfg *Config) error {
+	compiled, err := keymap.Compile(cfg.Schemes[cfg.UI.Keymap], contextParents)
+	if err != nil {
+		return fmt.Errorf("keymap %q: %w", cfg.UI.Keymap, err)
 	}
-	// inheritance: parent's dispatch map first, the context's own keys
-	// win. Only inheritable parent keys copy over (the entry's inherit
-	// flag); `shown` (the keyhint) stays context-local so the pager hint
-	// never bloats with index actions - inherited keys fire without
-	// advertising themselves.
-	for ctx, parent := range contextParents {
-		pm, ok := out[parent]
-		if !ok {
-			continue
-		}
-		ph := inherit[parent]
-		m := make(map[string]string, len(out[ctx])+len(pm))
-		for k, v := range pm {
-			if ph[k] {
-				m[k] = v
-			}
-		}
-		maps.Copy(m, out[ctx])
-		out[ctx] = m
-	}
-	return out, shown
+	cfg.Bindings, cfg.Shown = compiled.Bindings, compiled.Shown
+	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
+	return nil
 }
 
 func Default() Config {
@@ -1422,9 +1331,10 @@ func Default() Config {
 	}
 	deriveAccountViews(&cfg)
 	cfg.ActiveView = defaultView(cfg)
-	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes["vim"])
-	cfg.Descriptions = deriveDescriptions(cfg.Schemes, "vim")
 	if err := validate(cfg); err != nil {
+		panic(err)
+	}
+	if err := compileBindings(&cfg); err != nil {
 		panic(err)
 	}
 	return cfg
@@ -1581,9 +1491,10 @@ func Load(dir string) (Config, error) {
 	cfg.Schemes = mergeSchemes(baseConfig.Schemes, cfg.Schemes)
 	deriveAccountViews(&cfg)
 	cfg.ActiveView = defaultView(cfg)
-	cfg.Bindings, cfg.Shown = bindingsFromScheme(cfg.Schemes[cfg.UI.Keymap])
-	cfg.Descriptions = deriveDescriptions(cfg.Schemes, cfg.UI.Keymap)
 	if err := validate(cfg); err != nil {
+		return cfg, err
+	}
+	if err := compileBindings(&cfg); err != nil {
 		return cfg, err
 	}
 	return cfg, nil

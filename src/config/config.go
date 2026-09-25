@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	uitheme "github.com/fishman/notmutt/lib/tui/theme"
 	"golang.org/x/text/language"
 
 	"notmutt/core"
@@ -543,30 +544,6 @@ type Style struct {
 	Attrs []string `toml:"attrs" enum:"bold,italic,underline,reverse"`
 }
 
-// Resolved resolves fg/bg through the palette: a raw hex stays, a
-// palette name looks up the variant override first, then the base.
-func (s Style) Resolved(p Palette, variant string) Style {
-	if s.Fg != "" && !isHex(s.Fg) {
-		s.Fg = p.Color(s.Fg, variant)
-	}
-	if s.Bg != "" && !isHex(s.Bg) {
-		s.Bg = p.Color(s.Bg, variant)
-	}
-	return s
-}
-
-func isHex(s string) bool {
-	if len(s) != 7 || s[0] != '#' {
-		return false
-	}
-	for _, c := range s[1:] {
-		if !strings.ContainsRune("0123456789abcdefABCDEF", c) {
-			return false
-		}
-	}
-	return true
-}
-
 // Palette holds named colors: the base table plus per-variant
 // overrides that replace single names without touching styles (R11).
 // Resolution order: style hex > variant palette > base palette.
@@ -610,15 +587,6 @@ func (p *Palette) UnmarshalTOML(v any) error {
 		}
 	}
 	return nil
-}
-
-// Color resolves a palette name: the variant override first, then the
-// base table.
-func (p Palette) Color(name, variant string) string {
-	if v, ok := p.Variants[variant][name]; ok {
-		return v
-	}
-	return p.Base[name]
 }
 
 // StyleTable is one variant's full style surface. Style identifiers
@@ -1002,41 +970,24 @@ func (t *Theme) UnmarshalTOML(v any) error {
 // palette resolution applied: the id-keyed map plus the resolved pager
 // header rotation (list order preserved).
 func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
-	table, ok := t.Variants[variant]
-	if !ok {
-		table = StyleTable{}
+	table := t.Variants[variant]
+	raw := make(map[string]uitheme.Style)
+	add := func(id string, s Style) {
+		raw[id] = uitheme.Style{Fg: s.Fg, Bg: s.Bg, Attrs: s.Attrs}
 	}
-	out := map[string]Style{}
-	normal := table.Normal.Resolved(p, variant)
-	apply := func(id string, s Style) Style {
-		if s.Fg == "" {
-			s.Fg = normal.Fg
-		} else {
-			s.Fg = s.Resolved(p, variant).Fg
-		}
-		if s.Bg == "" {
-			s.Bg = normal.Bg
-		} else {
-			s.Bg = s.Resolved(p, variant).Bg
-		}
-		if len(s.Attrs) == 0 {
-			s.Attrs = append([]string(nil), normal.Attrs...)
-		}
-		return s
-	}
-	out["normal"] = normal
-	out["indicator"] = apply("indicator", table.Indicator)
-	out["status"] = apply("status", table.Status)
-	out["status.view"] = apply("status.view", table.View)
-	out["status.count"] = apply("status.count", table.Count)
-	out["status.account"] = apply("status.account", table.Account)
-	out["progress"] = apply("progress", table.Progress)
-	out["error"] = apply("error", table.Error)
-	out["tabbar"] = apply("tabbar", table.Tabbar.Default)
-	out["tabbar.active"] = apply("tabbar.active", table.Tabbar.Active)
-	out["compose.label"] = apply("compose.label", table.Compose.Label)
-	out["compose.divider"] = apply("compose.divider", table.Compose.Divider)
-	out["queue.header"] = apply("queue.header", table.Queue.Header)
+	add("normal", table.Normal)
+	add("indicator", table.Indicator)
+	add("status", table.Status)
+	add("status.view", table.View)
+	add("status.count", table.Count)
+	add("status.account", table.Account)
+	add("progress", table.Progress)
+	add("error", table.Error)
+	add("tabbar", table.Tabbar.Default)
+	add("tabbar.active", table.Tabbar.Active)
+	add("compose.label", table.Compose.Label)
+	add("compose.divider", table.Compose.Divider)
+	add("queue.header", table.Queue.Header)
 	for id, s := range map[string]Style{
 		"index.number": table.Index.Number, "index.date": table.Index.Date,
 		"index.author": table.Index.Author, "index.subject": table.Index.Subject,
@@ -1044,24 +995,32 @@ func (t Theme) Resolved(p Palette, variant string) (map[string]Style, []Style) {
 		"index.ghost": table.Index.Ghost, "index.tree": table.Index.Tree,
 		"index.collapsed": table.Index.Collapsed,
 	} {
-		out[id] = apply(id, s)
+		add(id, s)
 	}
-	out["index.tag"] = apply("index.tag", table.Index.Tag.Default)
+	add("index.tag", table.Index.Tag.Default)
 	for name, s := range table.Index.Tag.Tags {
-		out["index.tag."+name] = apply("index.tag."+name, s)
+		add("index.tag."+name, s)
 	}
-	out["pager.header"] = apply("pager.header", table.Pager.Header)
-	out["pager.hdrdefault"] = apply("pager.hdrdefault", table.Pager.HdrDefault)
-	for i := 0; i < 6; i++ {
-		out[fmt.Sprintf("pager.quoted%d", i)] = apply(fmt.Sprintf("pager.quoted%d", i), table.Pager.Quoted[i])
+	add("pager.header", table.Pager.Header)
+	add("pager.hdrdefault", table.Pager.HdrDefault)
+	for i, s := range table.Pager.Quoted {
+		add(fmt.Sprintf("pager.quoted%d", i), s)
 	}
-	out["pager.signature"] = apply("pager.signature", table.Pager.Signature)
-	out["pager.attachment"] = apply("pager.attachment", table.Pager.Attachment)
-	out["pager.recent"] = apply("pager.recent", table.Pager.Recent)
-	out["pager.other-side"] = apply("pager.other-side", table.Pager.OtherSide)
-	colors := make([]Style, len(table.Pager.HeaderColors))
+	add("pager.signature", table.Pager.Signature)
+	add("pager.attachment", table.Pager.Attachment)
+	add("pager.recent", table.Pager.Recent)
+	add("pager.other-side", table.Pager.OtherSide)
 	for i, s := range table.Pager.HeaderColors {
-		colors[i] = apply(fmt.Sprintf("pager.header-colors[%d]", i), s)
+		add(fmt.Sprintf("pager.header-colors[%d]", i), s)
+	}
+	resolved := uitheme.Resolve(uitheme.Palette{Base: p.Base, Variants: p.Variants}, variant, raw)
+	out := make(map[string]Style, len(resolved))
+	for id, s := range resolved {
+		out[id] = Style{Fg: s.Fg, Bg: s.Bg, Attrs: s.Attrs}
+	}
+	colors := make([]Style, len(table.Pager.HeaderColors))
+	for i := range colors {
+		colors[i] = out[fmt.Sprintf("pager.header-colors[%d]", i)]
 	}
 	return out, colors
 }
@@ -1870,13 +1829,13 @@ func validate(cfg Config) error {
 		}
 	}
 	for name, color := range cfg.Palette.Base {
-		if !isHex(color) {
+		if !uitheme.ValidHex(color) {
 			return fmt.Errorf("palette.%s: bad color %q", name, color)
 		}
 	}
 	for variant, colors := range cfg.Palette.Variants {
 		for name, color := range colors {
-			if !isHex(color) {
+			if !uitheme.ValidHex(color) {
 				return fmt.Errorf("palette.%s.%s: bad color %q", variant, name, color)
 			}
 		}
@@ -2025,7 +1984,7 @@ func validateStyleTable(t StyleTable, p Palette) error {
 
 func validateStyle(s Style, p Palette, path string) error {
 	for _, v := range []struct{ kind, val string }{{"fg", s.Fg}, {"bg", s.Bg}} {
-		if v.val == "" || isHex(v.val) {
+		if v.val == "" || uitheme.ValidHex(v.val) {
 			continue
 		}
 		if _, ok := p.Base[v.val]; !ok {

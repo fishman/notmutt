@@ -68,7 +68,9 @@ github.com/fishman/go.notmuch
 github.com/fishman/notmutt/lib/localipc
 # github.com/fishman/notmutt/lib/tui v0.0.0 => ../lib/tui
 ## explicit; go 1.26.6
+github.com/fishman/notmutt/lib/tui/chrome
 github.com/fishman/notmutt/lib/tui/table
+github.com/fishman/notmutt/lib/tui/theme
 # github.com/fishman/notmutt/lib/xdg v0.0.0 => ./lib/xdg
 ## explicit; go 1.26.6
 github.com/fishman/notmutt/lib/xdg

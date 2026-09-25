@@ -48,3 +48,13 @@ func TestStatusClipsWideText(t *testing.T) {
 		}
 	}
 }
+
+func TestStatusSegmentWidth(t *testing.T) {
+	segs := []Segment{
+		{Runs: []Run{{Text: "\u754c", Style: "view"}}},
+		{Runs: []Run{{Text: "done", Style: "progress"}}},
+	}
+	if got := Width(segs); got != 11 {
+		t.Fatalf("two padded segments with a gap occupy %d cells, want 11", got)
+	}
+}

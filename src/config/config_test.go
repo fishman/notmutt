@@ -1867,3 +1867,15 @@ func TestLoadExportPaper(t *testing.T) {
 		t.Fatalf("unknown paper must error naming the key, got: %v", err)
 	}
 }
+
+func TestResolvedThemeDoesNotAliasNormalAttrs(t *testing.T) {
+	theme := Theme{Variants: map[string]StyleTable{
+		"dark": {Normal: Style{Fg: "#aaaaaa", Attrs: []string{"bold"}}, Status: Style{}},
+	}}
+	resolved, _ := theme.Resolved(Palette{}, "dark")
+	normal := resolved["normal"]
+	normal.Attrs[0] = "mutated"
+	if theme.Variants["dark"].Normal.Attrs[0] != "bold" {
+		t.Fatal("resolved normal attrs alias source config")
+	}
+}

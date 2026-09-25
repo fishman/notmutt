@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/fishman/notmutt/lib/tui/chrome"
 
 	"notmutt/config"
 	"notmutt/core"
@@ -21,7 +22,7 @@ import (
 
 // viewSegment is the view name - priority 10, always survives the width fit.
 func viewSegment(name string, st Styles) statusSegment {
-	return statusSegment{content: name, style: st.View, priority: 10}
+	return statusSegment{content: name, style: st.View, id: "status.view", priority: 10}
 }
 
 // statusIdleGlyph and statusSpinFrames are the status spinner's fixed
@@ -45,18 +46,16 @@ var statusSpinFramesRunes = []rune(statusSpinFrames)
 // colors, never hex. Priority 9 - drops before the view name on a
 // narrow row, outlives the count and account.
 func spinnerSegment(busy bool, frame int, st Styles) statusSegment {
-	content := statusIdleGlyph
-	style := st.Count
+	content, style, id := statusIdleGlyph, st.Count, "status.count"
 	if busy {
-		content = string(statusSpinFramesRunes[frame%len(statusSpinFramesRunes)])
-		style = st.View
+		content, style, id = string(statusSpinFramesRunes[frame%len(statusSpinFramesRunes)]), st.View, "status.view"
 	}
-	return statusSegment{content: content, style: style, priority: 9}
+	return statusSegment{content: content, style: style, id: id, priority: 9}
 }
 
 // countSegment is the visible thread count.
 func countSegment(visible int, st Styles) statusSegment {
-	return statusSegment{content: strconv.Itoa(visible), style: st.Count, priority: 5}
+	return statusSegment{content: strconv.Itoa(visible), style: st.Count, id: "status.count", priority: 5}
 }
 
 // editedSegment marks a cursor message with staged tag ops (R14): the
@@ -64,7 +63,7 @@ func countSegment(visible int, st Styles) statusSegment {
 // name. Priority 7 - survives the count and account, never outlives the
 // view name.
 func editedSegment(glyph string, st Styles) statusSegment {
-	return statusSegment{content: glyph, style: st.Index.Staged, priority: 7}
+	return statusSegment{content: glyph, style: st.Index.Staged, id: "index.staged", priority: 7}
 }
 
 // accountSegment is the cursor message's account (R2): the account tag
@@ -72,7 +71,7 @@ func editedSegment(glyph string, st Styles) statusSegment {
 // drop, never outlives the view name. Empty when the message has no
 // account tag; the segment does not compose then.
 func accountSegment(name string, st Styles) statusSegment {
-	return statusSegment{content: name, style: st.Account, priority: 6}
+	return statusSegment{content: name, style: st.Account, id: "status.account", priority: 6}
 }
 
 // mimeSegment labels what the pager renders (text/plain or text/html,
@@ -96,20 +95,21 @@ func legendSegment(legend string, budget int) statusSegment {
 // width; err styles it with the error style. Priority 0 - drops with
 // the progress region first on overrun.
 func msgSegment(msg string, budget int, err bool, st Styles) statusSegment {
-	s := statusSegment{content: truncCells(msg, budget), priority: 0}
+	segment := statusSegment{content: truncCells(msg, budget), id: "status", priority: 0}
 	if err {
-		s.style = st.Error
+		segment.style, segment.id = st.Error, "error"
 	}
-	return s
+	return segment
 }
 
 // progressSegment is the job progress region (R15).
 func progressSegment(ui config.UI, p core.Progress, st Styles) statusSegment {
 	label := fmt.Sprintf("%s %d/%d", p.Job, p.Done, p.Total)
 	fill := max(0, progressWidth-lipgloss.Width(label)-1)
-	fillBar, emptyBar := progressBar(ui, p, fill)
-	bar := styleBar(fillBar, emptyBar, st)
-	return statusSegment{content: label + " " + bar, style: st.Status, priority: 0}
+	filled, empty := progressBar(ui, p, fill)
+	return statusSegment{priority: 0, runs: []chrome.Run{
+		{Text: label + " ", Style: "status"}, {Text: filled, Style: "progress"}, {Text: empty, Style: "normal"},
+	}}
 }
 
 // accountTag is the message's account: core owns the one definition (the compose dialogue's detection chain uses it too).

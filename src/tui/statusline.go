@@ -7,19 +7,20 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/fishman/notmutt/lib/tui/chrome"
 
 	"notmutt/config"
 	"notmutt/core"
 	"notmutt/i18n"
 )
 
-// statusSegment is one composable cell of the status line: content,
-// style, and a drop priority (powerline-go Segment, cut to notmutt).
-// Lower priority drops earlier when the row exceeds the terminal width.
+// statusSegment keeps its resolved style for existing callers and a shared style ID.
 type statusSegment struct {
 	content  string
-	style    lipgloss.Style // zero value inherits the status style
+	style    lipgloss.Style
+	id       string
 	priority int
+	runs     []chrome.Run
 }
 
 // statusData is the status line's input state, built from the view and progress state.
@@ -66,114 +67,82 @@ func statusLineWidth(st Styles, ui config.UI, d statusData, width int) string {
 	if d.on && d.prog != nil {
 		right = append(right, progressSegment(ui, *d.prog, st))
 	}
-	// The status message (R4 send completions) is the reserved right
-	// slot: rightmost, pre-fitted to the leftover width, truncated
-	// wcwidth-aware (R11 slot reservation) - the row never shifts with
-	// the message.
 	if d.msg != "" {
-		fixed := groupWidth(left)
-		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
+		budget := width - chrome.Width(chromeSegments(left)) - chrome.Width(chromeSegments(right)) - 3*lipgloss.Width(pillGap)
 		if budget > 0 {
 			right = append(right, msgSegment(d.msg, budget, d.msgErr, st))
 		}
 	}
-	// The legend takes the leftover slot, pre-fitted to its leftover
-	// width; the drop loop stays as the backstop when a future segment
-	// overruns. The footprint is content + two inner gaps + the bar gap
-	// before it.
 	if d.legend != "" {
-		fixed := groupWidth(left)
-		budget := width - fixed - groupWidth(right) - 3*lipgloss.Width(pillGap)
+		budget := width - chrome.Width(chromeSegments(left)) - chrome.Width(chromeSegments(right)) - 3*lipgloss.Width(pillGap)
 		if budget > 0 {
 			left = append(left, legendSegment(d.legend, budget))
 		}
 	}
-	for {
-		w := groupWidth(left) + groupWidth(right)
-		if width <= 0 || w <= width {
-			break
-		}
-		dropFrom, dropIdx := pickLowest(left, right)
-		if dropIdx < 0 {
-			break // only the view name is left; it survives
-		}
-		if dropFrom == 0 {
-			left = append(left[:dropIdx], left[dropIdx+1:]...)
-		} else {
-			right = append(right[:dropIdx], right[dropIdx+1:]...)
-		}
-	}
-	row, rowWidth := composeGroup(left, st)
-	if rightWidth := groupWidth(right); rightWidth > 0 {
-		rr, _ := composeGroup(right, st)
-		// lipgloss places the right group: right-aligned in the leftover
-		// width, the gap padded in the status background (R11)
-		row += st.Status.Width(width - rowWidth).Align(lipgloss.Right).Render(rr)
-		return row
-	}
-	if pad := width - rowWidth; pad > 0 {
-		row += st.Status.Render(strings.Repeat(" ", pad))
-	}
-	return row
+	return renderChrome(chrome.Status(width, "status", chromeSegments(left), chromeSegments(right)), st, true)
 }
 
-// pickLowest finds the lowest-priority droppable segment across the
-// left (0) and right (1) groups; priorities >= 10 never drop.
-func pickLowest(left, right []statusSegment) (from, idx int) {
-	from, idx = -1, -1
-	lowest := 1 << 30
-	consider := func(g int, segs []statusSegment) {
-		for i, s := range segs {
-			if s.priority >= 10 {
-				continue
-			}
-			if s.priority < lowest {
-				lowest, from, idx = s.priority, g, i
-			}
+func chromeSegments(segments []statusSegment) []chrome.Segment {
+	out := make([]chrome.Segment, 0, len(segments))
+	for _, segment := range segments {
+		runs := segment.runs
+		if len(runs) == 0 {
+			runs = []chrome.Run{{Text: segment.content, Style: segment.id}}
 		}
+		out = append(out, chrome.Segment{Runs: runs, Priority: segment.priority})
 	}
-	consider(0, left)
-	consider(1, right)
-	return from, idx
+	return out
 }
 
-// groupWidth is a pill run's visible width: each segment's content plus its two inner gaps, and a bar gap between pills (lipgloss, SGR-aware).
-func groupWidth(segs []statusSegment) int {
-	if len(segs) == 0 {
-		return 0
+func renderChrome(runs []chrome.Run, st Styles, groupPills bool) string {
+	var row, span strings.Builder
+	styleID := ""
+	paint := func() {
+		if span.Len() == 0 {
+			return
+		}
+		style := st.Status
+		switch styleID {
+		case "tabbar":
+			style = st.Tabbar
+		case "tabbar.active":
+			style = st.TabActive
+		case "status.view":
+			style = st.View
+		case "status.count":
+			style = st.Count
+		case "status.account":
+			style = st.Account
+		case "index.staged":
+			style = st.Index.Staged
+		case "progress":
+			style = st.Progress
+		case "error":
+			style = st.Error
+		case "normal":
+			style = st.Normal
+		}
+		row.WriteString(style.Render(span.String()))
+		span.Reset()
 	}
-	w := 0
-	for _, s := range segs {
-		w += lipgloss.Width(s.content) + 2*lipgloss.Width(pillGap)
+	for _, run := range runs {
+		if run.Text == "" {
+			continue
+		}
+		if run.Style != styleID || !groupPills {
+			paint()
+			styleID = run.Style
+		}
+		span.WriteString(run.Text)
+		if !groupPills {
+			paint()
+		}
 	}
-	return w + (len(segs)-1)*lipgloss.Width(pillGap)
+	paint()
+	return row.String()
 }
 
 const pillGap = " "
-
-// composeGroup renders a run of segments as pills: each segment is a colored block with inner padding, separated by whitespace on the bar - never connected.
-func composeGroup(segs []statusSegment, st Styles) (string, int) {
-	if len(segs) == 0 {
-		return "", 0
-	}
-	var b strings.Builder
-	for i, s := range segs {
-		if i > 0 {
-			b.WriteString(st.Status.Render(pillGap))
-		}
-		cur := segmentStyle(s, st)
-		b.WriteString(cur.Render(pillGap + s.content + pillGap))
-	}
-	return b.String(), lipgloss.Width(b.String())
-}
-
-// segmentStyle resolves a segment's zero style to the status style.
-func segmentStyle(s statusSegment, st Styles) lipgloss.Style {
-	if s.style.GetForeground() == (lipgloss.NoColor{}) && s.style.GetBackground() == (lipgloss.NoColor{}) {
-		return st.Status
-	}
-	return s.style
-}
 
 // progressBar builds the fill and empty glyph runs for done/total at
 // the given cell budget. The glyphs are config data (R11), so the bar
@@ -194,53 +163,12 @@ func progressBar(ui config.UI, p core.Progress, cells int) (string, string) {
 	return strings.Repeat(ui.Glyphs.ProgressFill, fill), strings.Repeat(ui.Glyphs.ProgressEmpty, cells-fill)
 }
 
-// styleBar applies the progress style to the fill run and the base style to the empty run.
-func styleBar(fill, empty string, st Styles) string {
-	if empty == "" {
-		return st.Progress.Render(fill)
-	}
-	return st.Progress.Render(fill) + st.Normal.Render(empty)
-}
-
 // tabBar renders the tab strip: the mail surface tab and every open
 // dialogue, the active one highlighted. Trailing tabs drop to fit the
 // width, the active tab always survives (it trades places with the
 // dropped tail); the row pads to the full width (R11).
 func (m Model) tabBar() string {
-	if m.width <= 0 {
-		return ""
-	}
-	names := m.tabNames()
-	active := m.tabIdx
-	if active >= len(names) {
-		active = 0
-	}
-	for len(names) > 1 && tabStripWidth(names, active, m.styles) > m.width {
-		last := len(names) - 1
-		if last == active {
-			// the tail is the active tab: drop the one before it so the active keeps the tail slot
-			names = append(names[:last-1], names[last:]...)
-			active = len(names) - 1
-		} else {
-			names = names[:last]
-		}
-	}
-	var b strings.Builder
-	for i, n := range names {
-		s := m.styles.Tabbar
-		if i == active {
-			s = m.styles.TabActive
-		}
-		if i > 0 {
-			b.WriteString(m.styles.Tabbar.Render(pillGap))
-		}
-		b.WriteString(s.Render(pillGap + n + pillGap))
-	}
-	row := b.String()
-	if pad := m.width - lipgloss.Width(row); pad > 0 {
-		row += m.styles.Tabbar.Render(strings.Repeat(" ", pad))
-	}
-	return row
+	return renderChrome(chrome.Tabs(m.tabNames(), m.tabIdx, m.width, "tabbar", "tabbar.active"), m.styles, false)
 }
 
 // tabNames is the strip's labels in session order: the mail surface
@@ -273,20 +201,4 @@ func (m Model) tabNames() []string {
 		names = append(names, capName(i18n.T("summary")))
 	}
 	return names
-}
-
-// tabStripWidth is the pill run's visible width (groupWidth for the tab strip, gaps included).
-func tabStripWidth(names []string, active int, st Styles) int {
-	w := 0
-	for i, n := range names {
-		s := st.Tabbar
-		if i == active {
-			s = st.TabActive
-		}
-		w += lipgloss.Width(s.Render(pillGap + n + pillGap))
-		if i > 0 {
-			w += lipgloss.Width(pillGap)
-		}
-	}
-	return w
 }

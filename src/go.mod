@@ -9,10 +9,10 @@ require (
 	github.com/emersion/go-message v0.18.2
 	github.com/fishman/go.notmuch v0.40.6
 	github.com/fishman/notmutt/lib/localipc v0.0.0
-	github.com/fishman/notmutt/lib/xdg v0.0.0
 	github.com/fishman/notmutt/lib/tui v0.0.0
+	github.com/fishman/notmutt/lib/xdg v0.0.0
 	github.com/fishman/zaman v0.1.2
-	github.com/gdamore/tcell/v3 v3.4.2
+	github.com/gdamore/tcell/v3 v3.5.0
 	github.com/gen2brain/beeep v0.11.2
 	github.com/godbus/dbus/v5 v5.1.0
 	github.com/mark3labs/mcp-go v0.58.0

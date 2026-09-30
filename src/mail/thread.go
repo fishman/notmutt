@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // register the common charsets with the decoder
@@ -528,31 +529,44 @@ func renderPlain(body string) []core.Line {
 }
 
 // QuoteParts returns the parts to quote: the plain parts (html
-// filtered out - the quote never carries raw markup), or the rendered
-// text of the first html part when the original is html-only.
+// filtered out - the quote never carries raw markup) when they kept the
+// original's line structure, else the rendered text of the first html
+// part (html-only originals, and senders whose text/plain half is the
+// whole body on one unwrapped line).
 func QuoteParts(parts []Part, width int) []Part {
-	plain := false
-	for _, p := range parts {
-		if !p.HTML {
-			plain = true
-			break
-		}
-	}
-	if plain {
-		out := make([]Part, 0, len(parts))
-		for _, p := range parts {
-			if !p.HTML {
-				out = append(out, p)
-			}
-		}
-		return out
-	}
+	var plain []Part
+	html := ""
 	for _, p := range parts {
 		if p.HTML {
-			return HTMLQuoteBody(p.Body, width)
+			if html == "" {
+				html = p.Body
+			}
+			continue
 		}
+		plain = append(plain, p)
+	}
+	if len(plain) > 0 && (html == "" || !unwrapped(plain)) {
+		return plain
+	}
+	if html != "" {
+		return HTMLQuoteBody(html, width)
 	}
 	return nil
+}
+
+// unwrapped reports whether the plain alternative lost the sender's line
+// structure: a part wider than the render width that holds a space (so a
+// wrapper would have broken it) means the senders' half was never
+// wrapped, and quoting it folds the original into one long line. A wide
+// token with no space (a URL) is nobody's wrap job - it never switches
+// the quote to the markup.
+func unwrapped(parts []Part) bool {
+	for _, p := range parts {
+		if strings.ContainsRune(p.Body, ' ') && utf8.RuneCountInString(p.Body) > htmlWrapWidth {
+			return true
+		}
+	}
+	return false
 }
 
 // HTMLQuoteBody renders an html-only original to quote parts: the

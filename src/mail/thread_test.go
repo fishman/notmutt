@@ -736,3 +736,60 @@ func TestParseMessageMimeType(t *testing.T) {
 		t.Fatalf("the html entry must carry text/html: %+v", m.Attachments)
 	}
 }
+
+// TestQuotePartsPrefersHTMLWhenPlainIsFlattened pins the reply source
+// choice: a sender's text/plain alternative is sometimes the html with
+// every newline gone - quoting that folds the whole original into one
+// line, so the html render wins when it has the structure the plain
+// part lost. A plain part that kept its newlines is still preferred.
+func TestQuotePartsPrefersHTMLWhenPlainIsFlattened(t *testing.T) {
+	write := func(name, body string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), name)
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	alt := func(plain, html string) string {
+		return "From: a@example.com\nSubject: alt\nDate: Tue, 01 Jan 2019 00:00:00 +0000\n" +
+			"MIME-Version: 1.0\nContent-Type: multipart/alternative; boundary=x\n\n" +
+			"--x\nContent-Type: text/plain; charset=utf-8\n\n" + plain + "\n" +
+			"--x\nContent-Type: text/html; charset=utf-8\n\n" + html + "\n" +
+			"--x--\n"
+	}
+
+	flat := write("flat", alt(strings.Repeat("alpha beta ", 20),
+		"<div>alpha one</div><div>beta two</div><div>gamma three</div>"))
+	m, err := ParseMessage(flat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted := QuoteParts(m.Parts, 0)
+	if len(quoted) != 3 || quoted[0].Body != "alpha one" || quoted[2].Body != "gamma three" {
+		t.Fatalf("the flattened plain alternative must not be quoted: %+v", quoted)
+	}
+
+	structured := write("structured", alt("alpha one\nalpha two",
+		"<div>ignored</div>"))
+	m, err = ParseMessage(structured)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted = QuoteParts(m.Parts, 0)
+	if len(quoted) != 2 || quoted[0].Body != "alpha one" || quoted[1].Body != "alpha two" {
+		t.Fatalf("a plain part with line structure must still win: %+v", quoted)
+	}
+
+	// a wide token with no space is nobody's wrap job: the plain part stays
+	token := write("token", alt("https://example.com/"+strings.Repeat("a", 130)+"\nshort line",
+		"<div>ignored</div>"))
+	m, err = ParseMessage(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted = QuoteParts(m.Parts, 0)
+	if len(quoted) != 2 || quoted[1].Body != "short line" {
+		t.Fatalf("a wide url must not switch the quote to the markup: %+v", quoted)
+	}
+}

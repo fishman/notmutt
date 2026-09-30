@@ -5,6 +5,7 @@ import (
 	"github.com/yuin/goldmark"
 	highlighting "github.com/yuin/goldmark-highlighting/v2"
 	"github.com/yuin/goldmark/extension"
+	gmhtml "github.com/yuin/goldmark/renderer/html"
 	"html"
 	"strings"
 )
@@ -18,6 +19,9 @@ var markdownRenderer = goldmark.New(
 		extension.GFM,
 		highlighting.NewHighlighting(highlighting.WithStyle("dracula"), highlighting.WithGuessLanguage(true)),
 	),
+	// html mode mirrors the plain alternative: a soft break stays a break
+	// (the reply quote is line-oriented text, not markdown prose)
+	goldmark.WithRendererOptions(gmhtml.WithHardWraps()),
 )
 
 // MessageBody is the editor and assembly source for a dialogue.

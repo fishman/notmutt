@@ -68,19 +68,25 @@ func defaultSig(cfg config.Config, account string) (name, body string) {
 // mailto) - the fcc line never repeats.
 func accountFrom(cfg config.Config, root string, msgTags, cursorTags []string) (account, from, sigName, sigBody, fcc string) {
 	account = resolveAccount(cfg, msgTags, cursorTags)
-	from = cfg.Accounts[account].From
-	sigName, sigBody = defaultSig(cfg, account)
-	fcc = sentPath(root, account, cfg.Accounts[account])
+	from, sigName, sigBody, fcc = accountSettings(cfg, root, account)
 	return account, from, sigName, sigBody, fcc
+}
+
+// accountSettings is the account-owned dialogue identity, shared by
+// dialogue builders and the compose account picker.
+func accountSettings(cfg config.Config, root, account string) (from, sigName, sigBody, fcc string) {
+	a := cfg.Accounts[account]
+	sigName, sigBody = defaultSig(cfg, account)
+	return a.From, sigName, sigBody, sentPath(root, account, a)
 }
 
 // switchAccount re-derives the account-owned dialogue settings after
 // the compose account picker changed st.Account.
 func switchAccount(cfg config.Config, root string, st *compose.State) {
-	a := cfg.Accounts[st.Account]
-	st.From, st.PGPKey = a.From, a.PGPKey
-	st.SetSignature(defaultSig(cfg, st.Account))
-	st.Fcc = sentPath(root, st.Account, a)
+	var sigName, sigBody string
+	st.From, sigName, sigBody, st.Fcc = accountSettings(cfg, root, st.Account)
+	st.SetSignature(sigName, sigBody)
+	st.PGPKey = cfg.Accounts[st.Account].PGPKey
 }
 
 // newCompose builds the compose-mode dialogue shell: the sender

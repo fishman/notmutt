@@ -4710,8 +4710,10 @@ func (m *Model) openPicker(kind string) {
 	st := &m.tabs[m.tabIdx-1]
 	if kind == "account" {
 		names := make([]string, 0, len(m.st.Config().Accounts))
-		for n := range m.st.Config().Accounts {
-			names = append(names, n)
+		for n, a := range m.st.Config().Accounts {
+			if !a.ReadOnly {
+				names = append(names, n)
+			}
 		}
 		m.dialogue = &listDialogue{f: newFuzzy("account", "account:", names)}
 		return

@@ -3736,6 +3736,21 @@ func TestAccountSwitchRederivesAccountSettings(t *testing.T) {
 	}
 }
 
+func TestAccountPickerOmitsReadonlyAccounts(t *testing.T) {
+	m := openDialogue(t, model(), "t1")
+	cfg := m.st.Config()
+	cfg.Accounts = map[string]config.Account{"alpha": {}, "toptal": {ReadOnly: true}}
+	m.st = config.NewStore(cfg)
+	m = press(t, m, "A")
+	for _, r := range "toptal" {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, tcell.KeyEnter)
+	if m.tabs[0].Account == "toptal" {
+		t.Fatal("a readonly account must not be selectable as the sender")
+	}
+}
+
 func TestEditorEditArmsExec(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.formIdx = 1 // the redesign: e arms the body editor at any slot

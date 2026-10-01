@@ -371,7 +371,9 @@ keeps deleted, sent, and archived reclassification quiet.
 : An eligible message carrying *any* listed tag gets one individual urgent
 notification and leaves the ordinary batch. Eligibility still requires every
 shared **[notify] tags** entry. The platform backend uses `beeep.Alert`,
-which also plays a sound; the command backend receives **critical** urgency.
+which also plays a sound: the sender is its title, the subject its body (no
+message-body text or repeated sender). The command backend receives
+**critical** urgency and keeps its configured **{subjects}** rows.
 An empty list preserves the old batch-only behavior.
 
 # ATTACHMENTS

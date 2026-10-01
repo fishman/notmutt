@@ -5,11 +5,18 @@ package app
 
 import (
 	"strconv"
+	"sync"
 
 	"github.com/gen2brain/beeep"
 
 	"notmutt/core"
 )
+
+var notifyAppName sync.Once
+
+func setNotifyAppName() {
+	notifyAppName.Do(func() { beeep.AppName = AppName })
+}
 
 // notifyBeeep shows the platform notification (beeep: dbus, falling
 // back to notify-send and kdialog on linux; osascript on darwin): the
@@ -18,12 +25,20 @@ import (
 // ids (F6). beeep.AppName is the daemon's source label; it defaults to
 // "DefaultAppName" and must be set explicitly.
 func notifyBeeep(entries int, head []core.NotifyHeadline) {
-	beeep.AppName = AppName
+	setNotifyAppName()
 	body := strconv.Itoa(entries) + " new messages"
 	if rows := notifyRows(head); rows != "" {
 		body += "\n" + rows
 	}
 	if err := beeep.Notify(notifyTitle(head), body, ""); err != nil {
+		diag.Warn("notify", "err", err.Error())
+	}
+}
+
+func notifyBeeepImportant(h core.NotifyHeadline) {
+	setNotifyAppName()
+	head := []core.NotifyHeadline{h}
+	if err := beeep.Alert(notifyTitle(head), notifyRows(head), ""); err != nil {
 		diag.Warn("notify", "err", err.Error())
 	}
 }

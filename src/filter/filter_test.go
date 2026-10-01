@@ -18,11 +18,12 @@ import (
 
 // fakeWorker serves canned reads and records ActTag writes.
 type fakeWorker struct {
-	delta   []core.Message
-	snaps   []core.Message
-	header  map[string]bool // ids the header-rule query matches
-	tagged  []notmuch.Action
-	pathOps []notmuch.Action
+	delta      []core.Message
+	deltaQuery string
+	snaps      []core.Message
+	header     map[string]bool // ids the header-rule query matches
+	tagged     []notmuch.Action
+	pathOps    []notmuch.Action
 }
 
 func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
@@ -31,6 +32,7 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		// the worker contract: QueryMsgs delivers via the emit closure, never the reply
 		var msgs []core.Message
 		if strings.HasPrefix(a.Query, "lastmod:") {
+			f.deltaQuery = a.Query
 			msgs = f.delta
 		} else {
 			for _, m := range f.delta {
@@ -50,6 +52,17 @@ func (f *fakeWorker) Call(a notmuch.Action) (notmuch.Reply, error) {
 		f.pathOps = append(f.pathOps, a)
 	}
 	return notmuch.Reply{}, nil
+}
+
+func TestDeltaStartsAfterPersistedRevision(t *testing.T) {
+	cfg := config.Default()
+	w := &fakeWorker{}
+	if _, err := New(w, cfg, t.TempDir()).Run(5, 6); err != nil {
+		t.Fatal(err)
+	}
+	if w.deltaQuery != "lastmod:6..6" {
+		t.Fatalf("inclusive notmuch range must exclude revision 5, query = %q", w.deltaQuery)
+	}
 }
 
 func TestEngineClassification(t *testing.T) {
@@ -212,6 +225,27 @@ func TestEntryPriority(t *testing.T) {
 	}
 	if len(rep.Entries) != 1 || rep.Entries[0].Priority {
 		t.Fatalf("unrelated priority tag flagged: %+v", rep.Entries)
+	}
+}
+
+func TestNotifyAlreadyClassifiedDelta(t *testing.T) {
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	cfg.Notify.Important.MatchTags = []string{"important"}
+	w := &fakeWorker{
+		delta: []core.Message{{ID: "urgent"}, {ID: "ordinary"}},
+		snaps: []core.Message{
+			{ID: "urgent", Tags: []string{"gmail", "inbox", "unread", "important"}, Paths: []string{"gmail/INBOX/cur/1"}},
+			{ID: "ordinary", Tags: []string{"gmail", "inbox", "unread"}, Paths: []string{"gmail/INBOX/cur/2"}},
+		},
+	}
+	rep, err := New(w, cfg, t.TempDir()).Run(0, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Entries) != 0 || len(w.tagged) != 0 {
+		t.Fatalf("re-seen classified mail must stay quiet: %+v, writes %d", rep.Entries, len(w.tagged))
 	}
 }
 

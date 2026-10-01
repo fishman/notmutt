@@ -1,0 +1,15 @@
+# New-mail notifications. Comment-only to preserve existing split-file overrides;
+# this file is seeded once and never overwritten.
+# The shared [notify] tags scope defaults to ["inbox", "unread"] (both
+# required); backend auto-detects the platform notifier.
+# If a post-new hook pre-applies folder/account tags, ordinary new mail can
+# have no filter ops and stay quiet; remove that legacy hook's folder rule.
+#
+# [notify.normal]
+# max = 3                     # ordinary batch headline cap
+#
+# [notify.important]
+# match-tags = ["important"]  # any tag sends one urgent alert per message
+#
+# Platform urgent alerts also play a sound. For [notify] command argv,
+# {urgency} expands to "normal" or "critical"; no shell is involved.

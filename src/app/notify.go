@@ -54,11 +54,9 @@ func notifyDaemonReachable() bool {
 	return call.Err == nil
 }
 
-// notifyNewMail runs the [notify] side effect for one processed batch
-// (the filter job's completion event, R2): the argv command backend or
-// the platform backend ("beeep"), resolved once at startup. The payload
-// is the count plus the priority headlines - sender, subject, timestamp
-// - never bodies or ids (F6). No entries is a no-op.
+// notifyNewMail delivers the ordinary batch through the shared backend.
+// Its payload is the count plus sender/subject/time rows, never bodies or
+// ids (F6). Zero entries send nothing.
 func notifyNewMail(cfg config.Config, backend string, entries int, head []core.NotifyHeadline) {
 	if entries <= 0 {
 		return
@@ -77,16 +75,35 @@ func notifyNewMail(cfg config.Config, backend string, entries int, head []core.N
 	}
 }
 
-// expandNotifyTokens replaces {count} (the entry count) and {subjects}
-// (the priority headlines as aligned sender/subject/time rows) in the
-// argv; absent tokens are left alone - a command that does not want
-// them keeps working.
+// notifyImportant delivers one alert per selected message, outside the batch cap.
+func notifyImportant(cfg config.Config, backend string, headlines []core.NotifyHeadline) {
+	for _, h := range headlines {
+		if backend == "beeep" {
+			notifyBeeepImportant(h)
+			continue
+		}
+		argv := expandNotifyUrgency(cfg.Notify.Command, 1, []core.NotifyHeadline{h}, "critical")
+		if len(argv) == 0 {
+			continue
+		}
+		if err := exec.Command(argv[0], argv[1:]...).Run(); err != nil {
+			diag.Warn("notify", "err", err.Error())
+		}
+	}
+}
+
+// expandNotifyTokens expands the normal batch's argv placeholders without
+// invoking a shell.
 func expandNotifyTokens(argv []string, entries int, head []core.NotifyHeadline) []string {
+	return expandNotifyUrgency(argv, entries, head, "normal")
+}
+
+func expandNotifyUrgency(argv []string, entries int, head []core.NotifyHeadline, urgency string) []string {
 	out := make([]string, len(argv))
 	n := strconv.Itoa(entries)
 	s := notifyRows(head)
 	for i, a := range argv {
-		out[i] = strings.ReplaceAll(strings.ReplaceAll(a, "{count}", n), "{subjects}", s)
+		out[i] = strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(a, "{count}", n), "{subjects}", s), "{urgency}", urgency)
 	}
 	return out
 }

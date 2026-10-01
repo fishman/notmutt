@@ -66,6 +66,9 @@ var crmSeed []byte
 //go:embed config.toml
 var configSeed []byte
 
+//go:embed notification.toml
+var notificationSeed []byte
+
 func Run() error {
 	if len(os.Args) > 1 && os.Args[1] == "setup" {
 		return setupAccounts()
@@ -90,6 +93,7 @@ func Run() error {
 		return luaOnce(os.Args[2:])
 	}
 	seedFile(configDir(), "config.toml", configSeed)
+	seedFile(configDir(), "notification.toml", notificationSeed)
 	seedFile(configDir(), "ai.toml", aiConfigSeed)
 	seedFile(configDir(), "crm.toml", crmSeed)
 	seedAICommands(configDir())
@@ -470,7 +474,10 @@ func Run() error {
 		ch := bus.Subscribe()
 		for e := range ch {
 			if d, ok := e.(core.FilterDone); ok && !d.DryRun {
-				go notifyNewMail(st.Config(), backend, d.Notify, d.Priority)
+				go func(cfg config.Config) {
+					notifyImportant(cfg, backend, d.Important)
+					notifyNewMail(cfg, backend, d.Notify, d.Priority)
+				}(st.Config())
 			}
 		}
 	}()

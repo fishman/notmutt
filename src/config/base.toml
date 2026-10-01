@@ -60,6 +60,9 @@ tags = ["inbox", "archive", "deleted", "sent", "draft", "pending", "spam"]
 [notify]
 tags = ["inbox", "unread"]
 
+# Optional [notify.normal] max and [notify.important] match-tags live in
+# notification.toml. An empty important tag list keeps the ordinary batch.
+
 # the S/MIME verifier (R10): in-process pkcs7. An empty ca-file trusts the
 # system CA pool - the mainstream out-of-the-box posture (Thunderbird/Outlook
 # trust OS roots; the emailProtection EKU gate still applies). Set ca-file to

@@ -172,6 +172,10 @@ jobs:
           # checkout `git describe` names the tag itself)
           prev=$(git tag -l 'v*' --sort=-version:refname | sed -n 2p)
           body="$(scripts/changelog.sh "$prev" "${GITHUB_REF_NAME}")"
+          note="docs/releases/${GITHUB_REF_NAME}.md"
+          if [ -f "$note" ]; then
+            body="$(cat "$note")"$'\n\n'"$body"
+          fi
           { echo "body<<EOF"; printf '%s\n' "$body"; echo "EOF"; } >> "$GITHUB_OUTPUT"
 
       - name: Publish release

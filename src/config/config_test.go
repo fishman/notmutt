@@ -898,6 +898,26 @@ func TestLoadNotifyTagsOverride(t *testing.T) {
 	}
 }
 
+func TestLoadNotificationSplit(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "notification.toml"), []byte(`[notify]
+tags = ["inbox", "unread"]
+[notify.normal]
+max = 2
+[notify.important]
+match-tags = ["important", "vip"]
+`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Notify.Normal.Max == nil || *cfg.Notify.Normal.Max != 2 || len(cfg.Notify.Important.MatchTags) != 2 {
+		t.Fatalf("notification split = %+v", cfg.Notify)
+	}
+}
+
 func TestLoadUnknownKeyErrors(t *testing.T) {
 	_, err := Load(write(t, "\n[ui]\nkeymap = \"vim\"\nksy = true\n"))
 	if err == nil {

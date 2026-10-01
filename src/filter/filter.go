@@ -176,7 +176,7 @@ func (e *Engine) delta(pre, cur uint64) ([]string, error) {
 	var ids []string
 	rpl, err := e.worker.Call(notmuch.Action{
 		Kind:  notmuch.ActQueryMsgs,
-		Query: fmt.Sprintf("lastmod:%d..%d", pre, cur),
+		Query: fmt.Sprintf("lastmod:%d..%d", pre+1, cur),
 		Emit: func(chunk []core.Message) bool {
 			for i := range chunk {
 				ids = append(ids, chunk[i].ID)
@@ -297,17 +297,14 @@ func (e *Engine) classify(m core.Message, hits []map[string]bool) Entry {
 	ops = uniq
 	final, resolved := core.ResolveOps(m.Tags, ops, e.groups)
 	prio := false
-	if len(ops) > 0 && len(e.cfg.Notify.Priority) > 0 {
-		for _, t := range final {
-			for _, p := range e.cfg.Notify.Priority {
-				if t == p {
-					prio = true
-					break
-				}
-			}
-			if prio {
-				break
-			}
+	priorityTags := e.cfg.Notify.Important.MatchTags
+	if len(priorityTags) == 0 {
+		priorityTags = e.cfg.Notify.Priority
+	}
+	for _, p := range priorityTags {
+		if slices.Contains(final, p) {
+			prio = true
+			break
 		}
 	}
 	notif := len(e.cfg.Notify.Tags) == 0

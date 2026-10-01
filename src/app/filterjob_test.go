@@ -133,6 +133,31 @@ func TestFilterJob(t *testing.T) {
 	}
 }
 
+func TestFilterJobNewMailRoutesAndRetaggedQuiet(t *testing.T) {
+	testutil.CacheDir(t)
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{"gmail": {Preset: "gmail"}}
+	cfg.Filter.DryRun = false
+	cfg.Notify.Important.MatchTags = []string{"important"}
+	w := &fjWorker{
+		delta: []core.Message{{ID: "new"}, {ID: "ordinary"}, {ID: "retagged"}},
+		snaps: []core.Message{
+			{ID: "new", Subject: "new", Tags: []string{"inbox", "unread", "important"}, Paths: []string{"gmail/INBOX/cur/1"}},
+			{ID: "ordinary", Subject: "ordinary", Tags: []string{"inbox", "unread"}, Paths: []string{"gmail/INBOX/cur/2"}},
+			{ID: "retagged", Subject: "retagged", Tags: []string{"gmail", "inbox", "unread", "important"}, Paths: []string{"gmail/INBOX/cur/3"}},
+		},
+	}
+	w.rev.Store(5)
+	w.bump.Store(5)
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	newFilterJob(bus, w, config.NewStore(cfg), t.TempDir(), "inbox").run()
+	done, jerr := drain(ch)
+	if len(jerr) != 0 || len(done) != 1 || done[0].Notify != 1 || len(done[0].Important) != 1 || done[0].Important[0].Subject != "new" {
+		t.Fatalf("new mail routing = %+v errors %+v", done, jerr)
+	}
+}
+
 // TestRunFilterPipeline: a revision bump after ActNew classifies the
 // delta and moves (the manual trigger's effect); a quiet mailbox (no
 // bump) produces no classification pass.

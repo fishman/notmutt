@@ -69,7 +69,8 @@ func (j *filterJob) run() {
 	reportFilterDiag(rep, mr)
 	moved, skipped := moveCounts(mr)
 	notifiable := notifyEntries(cfg, rep)
-	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Notify: len(notifiable), Moves: moved, Skips: skipped, Priority: notifyHeadlines(cfg, notifiable)})
+	normalCount, normal, important := notifyRoutes(cfg, notifiable)
+	j.bus.Publish(core.FilterDone{DryRun: rep.DryRun, Entries: len(rep.Entries), Notify: normalCount, Moves: moved, Skips: skipped, Priority: normal, Important: important})
 }
 
 // moveCounts splits a move report into executed moves and skips -
@@ -134,20 +135,39 @@ func notifyEntries(cfg config.Config, rep *filter.Report) []filter.Entry {
 	return out
 }
 
-// notifyHeadlines builds the [notify] summary payload: priority-tagged
-// entries first, the rest filling the cap - the count line never ships
-// alone (F6: no ids, no bodies). max <= 0 disables the rows, the count
-// stays.
+// notifyRoutes partitions eligible mail before the ordinary headline cap.
+func notifyRoutes(cfg config.Config, entries []filter.Entry) (int, []core.NotifyHeadline, []core.NotifyHeadline) {
+	if len(cfg.Notify.Important.MatchTags) == 0 {
+		return len(entries), notifyHeadlines(cfg, entries), nil
+	}
+	normal := make([]filter.Entry, 0, len(entries))
+	var important []core.NotifyHeadline
+	for _, e := range entries {
+		if e.Priority {
+			important = append(important, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
+		} else {
+			normal = append(normal, e)
+		}
+	}
+	return len(normal), notifyHeadlines(cfg, normal), important
+}
+
+// notifyHeadlines caps the ordinary batch rows; legacy priority tags sort
+// first when no important route is configured. Zero max hides rows, not count.
 func notifyHeadlines(cfg config.Config, entries []filter.Entry) []core.NotifyHeadline {
-	if cfg.Notify.Max <= 0 {
+	max := cfg.Notify.Max
+	if cfg.Notify.Normal.Max != nil {
+		max = *cfg.Notify.Normal.Max
+	}
+	if max <= 0 {
 		return nil
 	}
-	out := make([]core.NotifyHeadline, 0, cfg.Notify.Max)
+	out := make([]core.NotifyHeadline, 0, max)
 	for _, pass := range []bool{true, false} {
 		for _, e := range entries {
 			if e.Priority == pass && e.Subject != "" {
 				out = append(out, core.NotifyHeadline{Sender: e.Sender, Subject: e.Subject, Timestamp: e.Timestamp})
-				if len(out) >= cfg.Notify.Max {
+				if len(out) >= max {
 					return out
 				}
 			}

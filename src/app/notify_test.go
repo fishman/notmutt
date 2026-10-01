@@ -109,6 +109,43 @@ func TestNotifyEntries(t *testing.T) {
 	}
 }
 
+func TestNotifyRoutes(t *testing.T) {
+	cfg := config.Default()
+	max := 1
+	cfg.Notify.Normal.Max = &max
+	cfg.Notify.Important.MatchTags = []string{"important"}
+	rep := &filter.Report{Entries: []filter.Entry{
+		{ID: "normal-a", Sender: "Alpha", Subject: "one", Notify: true},
+		{ID: "urgent-a", Sender: "Atlas", Subject: "two", Notify: true, Priority: true},
+		{ID: "normal-b", Sender: "Beta", Subject: "three", Notify: true},
+		{ID: "urgent-b", Sender: "Acme", Subject: "four", Notify: true, Priority: true},
+		{ID: "read", Sender: "Read", Subject: "five"},
+	}}
+	normalCount, normal, important := notifyRoutes(cfg, notifyEntries(cfg, rep))
+	if normalCount != 2 || len(normal) != 1 || normal[0].Subject != "one" ||
+		len(important) != 2 || important[0].Subject != "two" || important[1].Subject != "four" {
+		t.Fatalf("normal=%d %+v important=%+v", normalCount, normal, important)
+	}
+	cfg.Notify.Important.MatchTags = nil
+	normalCount, _, important = notifyRoutes(cfg, notifyEntries(cfg, rep))
+	if normalCount != 4 || len(important) != 0 {
+		t.Fatalf("legacy priority must stay in the normal batch: normal=%d important=%+v", normalCount, important)
+	}
+}
+
+func TestImportantCommandUrgency(t *testing.T) {
+	cfg := config.Default()
+	dir := t.TempDir()
+	cfg.Notify.Command = []string{"touch", filepath.Join(dir, "{urgency}-{subjects}")}
+	head := []core.NotifyHeadline{{Sender: "Alpha", Subject: "one"}, {Sender: "Atlas", Subject: "two"}}
+	notifyImportant(cfg, "command", head)
+	for _, h := range head {
+		if _, err := os.Stat(filepath.Join(dir, "critical-"+notifyRows([]core.NotifyHeadline{h}))); err != nil {
+			t.Fatalf("missing individual urgent command for %s: %v", h.Subject, err)
+		}
+	}
+}
+
 // TestNotifyTitleAndRows: the title is the deduped sender list
 // ellipsized (never a static app name), the rows the aligned
 // sender/subject/time 3-part table.

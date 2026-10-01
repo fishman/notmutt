@@ -178,6 +178,21 @@ func TestSeedFiles(t *testing.T) {
 	}
 }
 
+func TestNotificationSeed(t *testing.T) {
+	dir := t.TempDir()
+	seedFile(dir, "notification.toml", notificationSeed)
+	cfg, err := config.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Notify.Important.MatchTags) != 0 || cfg.Notify.Normal.Max != nil || cfg.Notify.Max != 3 {
+		t.Fatalf("seed changed notification defaults: %+v", cfg.Notify)
+	}
+	assertSeedPreserves(t, filepath.Join(dir, "notification.toml"), func() {
+		seedFile(dir, "notification.toml", notificationSeed)
+	})
+}
+
 // TestCrmSeedPromptsPinFlag pins the built-in CRM prompt seeds: both parse
 // strictly and carry the crm flag + compose action the queue picker
 // filters on.

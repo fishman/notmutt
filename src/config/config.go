@@ -341,17 +341,28 @@ type Filter struct {
 // Notify configures the new-mail notification side effect (R2): the
 // argv command backend or the platform backend ("beeep"). Empty =
 // auto-detect: platform when the session can show notifications,
-// command otherwise - explicit config always wins. {count} is the
-// processed entry count, {subjects} the aligned sender/subject/time
-// summary (priority first, capped at max). No command = disabled; the
-// beeep title is the deduped sender list, its body the count plus the
-// same rows. The payload never carries bodies or ids (F6).
+// command otherwise - explicit config always wins. Shared Tags require
+// every listed tag; Important.MatchTags selects individual alerts by any
+// matching tag. Legacy Priority only sorts the ordinary batch's headlines.
+// The payload never carries bodies or ids (F6).
 type Notify struct {
-	Backend  string   `toml:"backend" enum:"command,beeep"` // empty = auto-detect
-	Command  []string `toml:"command"`
-	Priority []string `toml:"priority"`
-	Tags     []string `toml:"tags"` // tags a message must carry (all) to notify; empty = every classified message
-	Max      int      `toml:"max"`
+	Backend   string          `toml:"backend" enum:"command,beeep"` // empty = auto-detect
+	Command   []string        `toml:"command"`
+	Priority  []string        `toml:"priority"`
+	Tags      []string        `toml:"tags"` // tags a message must carry (all) to notify; empty = every classified message
+	Max       int             `toml:"max"`
+	Normal    NotifyNormal    `toml:"normal"`
+	Important NotifyImportant `toml:"important"`
+}
+
+// Normal controls the ordinary batch. Nil Max inherits the legacy [notify] max.
+type NotifyNormal struct {
+	Max *int `toml:"max"`
+}
+
+// Important selects individual urgent alerts by any matching soft tag.
+type NotifyImportant struct {
+	MatchTags []string `toml:"match-tags"`
 }
 
 // Crypto configures the R10 cryptographic backends. S/MIME verifies in
@@ -1662,6 +1673,14 @@ func validate(cfg Config) error {
 	}
 	if cfg.Notify.Max < 0 {
 		return fmt.Errorf("notify: max must be >= 0")
+	}
+	if cfg.Notify.Normal.Max != nil && *cfg.Notify.Normal.Max < 0 {
+		return fmt.Errorf("notify.normal.max: must be >= 0")
+	}
+	for _, t := range cfg.Notify.Important.MatchTags {
+		if strings.TrimSpace(t) == "" {
+			return fmt.Errorf("notify.important.match-tags: tag must not be empty")
+		}
 	}
 	for _, t := range cfg.Notify.Priority {
 		if strings.TrimSpace(t) == "" {

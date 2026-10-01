@@ -401,12 +401,13 @@ type JobError struct {
 // the mover's moves and skips, dry-run or applied. Per-file detail
 // lines live in diag; this is the summary surface (R15's async channel).
 type FilterDone struct {
-	DryRun   bool
-	Entries  int
-	Notify   int // entries that carry every [notify] tags entry (default: unread inbox)
-	Moves    int
-	Skips    int
-	Priority []NotifyHeadline // summary rows: priority entries first, the batch filling the cap (F6: no ids, no bodies)
+	DryRun    bool
+	Entries   int
+	Notify    int // eligible ordinary batch count; important alerts are separate
+	Moves     int
+	Skips     int
+	Priority  []NotifyHeadline // ordinary batch rows (legacy priority-first sorting)
+	Important []NotifyHeadline // one urgent notification per eligible message
 }
 
 // NotifyHeadline is one notification row: sender, subject, timestamp -

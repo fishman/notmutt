@@ -332,8 +332,9 @@ not-already-applied guard itself, so re-runs touch only new mail.
 
 ## [notify]
 
-The new-mail notification side effect. The payload carries counts and
-sender/subject/time summaries, never bodies or message ids.
+The new-mail notification side effect. Shared settings apply to both the
+ordinary batch and individual important alerts. The payload carries counts
+and sender/subject/time summaries, never bodies or message ids.
 
 **backend** (string, default: auto-detected)
 : **"command"** runs **command**, **"beeep"** uses the platform
@@ -341,20 +342,37 @@ notification backend. Empty auto-detects: platform when the session can
 show notifications, command otherwise.
 
 **command** (array of strings)
-: The notification argv. **{count}** is the processed entry count,
-**{subjects}** the aligned summary rows. No command and no platform
-backend means notifications are off.
+: The notification argv. **{count}** is the batch count (or 1 for an
+important alert), **{subjects}** the aligned summary rows, and
+**{urgency}** is **normal** or **critical**. No command and no platform
+backend means notifications are off. Arguments are never shell-expanded.
 
-**priority** (array of strings)
-: Sender or address patterns that sort first in the summary.
+**priority** (array of strings; legacy)
+: Tags whose headlines sort first in an ordinary batch when no important
+route is configured. Use **[notify.important] match-tags** for individual alerts.
 
 **tags** (array of strings, default `["inbox", "unread"]`)
-: The notification scope: only mail carrying *every* tag here fires. The
-default keeps a poll quiet when it only reclassified deleted, sent, or
-archived mail. Empty means every classified message notifies.
+: The notification scope: only mail carrying *every* tag here is eligible.
+Classification must also produce a tag operation or move; re-seen mail with
+no changes never alerts. Empty tags allows every changed entry. The default
+keeps deleted, sent, and archived reclassification quiet.
 
 **max** (integer, default `3`)
 : Summary rows carried in the notification.
+
+## [notify.normal]
+
+**max** (integer, default: `[notify] max`, initially `3`)
+: Maximum ordinary batch headline rows. Does not cap important alerts.
+
+## [notify.important]
+
+**match-tags** (array of strings, default: empty)
+: An eligible message carrying *any* listed tag gets one individual urgent
+notification and leaves the ordinary batch. Eligibility still requires every
+shared **[notify] tags** entry. The platform backend uses `beeep.Alert`,
+which also plays a sound; the command backend receives **critical** urgency.
+An empty list preserves the old batch-only behavior.
 
 # ATTACHMENTS
 

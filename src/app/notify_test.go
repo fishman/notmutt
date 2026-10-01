@@ -146,6 +146,13 @@ func TestImportantCommandUrgency(t *testing.T) {
 	}
 }
 
+func TestImportantPopupContent(t *testing.T) {
+	title, body := importantPopupContent(core.NotifyHeadline{Sender: "Atlas", Subject: "Project update", Timestamp: 123})
+	if title != "Atlas" || body != "Project update" {
+		t.Fatalf("urgent popup title=%q body=%q, want sender title and subject-only body", title, body)
+	}
+}
+
 // TestNotifyTitleAndRows: the title is the deduped sender list
 // ellipsized (never a static app name), the rows the aligned
 // sender/subject/time 3-part table.

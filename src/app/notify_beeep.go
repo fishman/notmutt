@@ -37,8 +37,12 @@ func notifyBeeep(entries int, head []core.NotifyHeadline) {
 
 func notifyBeeepImportant(h core.NotifyHeadline) {
 	setNotifyAppName()
-	head := []core.NotifyHeadline{h}
-	if err := beeep.Alert(notifyTitle(head), notifyRows(head), ""); err != nil {
+	title, body := importantPopupContent(h)
+	if err := beeep.Alert(title, body, ""); err != nil {
 		diag.Warn("notify", "err", err.Error())
 	}
+}
+
+func importantPopupContent(h core.NotifyHeadline) (string, string) {
+	return notifyTitle([]core.NotifyHeadline{h}), h.Subject
 }

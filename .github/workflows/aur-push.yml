@@ -1,5 +1,4 @@
-# Push PKGBUILD + .SRCINFO to the AUR on a version tag. DISABLED: drop
-# the job-level if: false and set the AUR_SSH_KEY secret to enable.
+# Push PKGBUILD + .SRCINFO to the AUR on a version tag.
 name: AUR push
 
 on:
@@ -52,6 +51,15 @@ jobs:
           export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/aur -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
           rm -rf /tmp/aur-notmutt
           git clone "ssh://aur@aur.archlinux.org/notmutt.git" /tmp/aur-notmutt
+          old="$(sed -n 's/^[[:space:]]*pkgver = //p' /tmp/aur-notmutt/.SRCINFO | sed -n '1p')"
+          if [[ ! "$old" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "AUR .SRCINFO has no valid pkgver" >&2
+            exit 1
+          fi
+          if [ "$(printf '%s\n%s\n' "$VERSION" "$old" | sort -V | sed -n '2p')" = "$old" ]; then
+            echo "AUR already has $old; skip $VERSION"
+            exit 0
+          fi
           cp packaging/notmutt/PKGBUILD packaging/notmutt/.SRCINFO /tmp/aur-notmutt/
           cd /tmp/aur-notmutt
           git config user.name "notmutt release"
@@ -62,7 +70,7 @@ jobs:
           branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"; branch="${branch#origin/}"; branch="${branch:-master}"
           git checkout -B "$branch"
           git add PKGBUILD .SRCINFO
-          git commit -m "notmutt $VERSION"
+          git diff --cached --quiet || git commit -m "notmutt $VERSION"
           git push origin "HEAD:$branch"
         env:
           AUR_SSH_KEY: ${{ secrets.AUR_SSH_KEY }}

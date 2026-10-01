@@ -103,7 +103,7 @@ func deliverSend(env applyEnv, st compose.State, data []byte) (note, out string,
 	if sent == "" {
 		sent = sentPath(root, st.Account, cfg.Accounts[st.Account])
 	}
-	if sent != "" && !cfg.Accounts[st.Account].NoFcc {
+	if a := cfg.Accounts[st.Account]; sent != "" && !a.NoFcc && !a.ReadOnly {
 		if err := writeFcc(compose.ExpandHome(sent), data); err != nil {
 			note = "fcc failed: " + err.Error()
 		}

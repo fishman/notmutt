@@ -175,6 +175,28 @@ func TestSendJobNoFccSkipsCopy(t *testing.T) {
 	}
 }
 
+// TestSendJobReadonlySkipsCopy: a readonly account's folders are never
+// written by the client, even when the dialogue carries its derived fcc.
+func TestSendJobReadonlySkipsCopy(t *testing.T) {
+	dir := t.TempDir()
+	sendStub(t, dir)
+	cfg := config.Default()
+	cfg.Send = config.Send{Command: filepath.Join(dir, "send-stub")}
+	cfg.Accounts["toptal"] = config.Account{Folders: map[string]string{"sent": "Sent"}, ReadOnly: true}
+	bus := core.NewBus()
+	ch := bus.Subscribe()
+	st := compose.NewCompose("toptal", "bob@example.com", "", "")
+	st.ID, st.To, st.Subject, st.Body = "tab1", []string{"a@b.c"}, "x", "y"
+	st.Fcc = filepath.Join(dir, "toptal", "Sent")
+	sendJob(applyEnv{worker: &stubWorker{}, bus: bus, cfg: cfg, root: dir}, core.NewView("inbox", "tag:inbox"), *st)
+	if e := (<-ch).(core.SendResult); !e.OK {
+		t.Fatalf("send failed: %v %q", e.Err, e.Output)
+	}
+	if _, err := os.Stat(st.Fcc); !os.IsNotExist(err) {
+		t.Fatal("readonly account must not receive a client sent copy")
+	}
+}
+
 func TestSendJobDelivers(t *testing.T) {
 	dir := t.TempDir()
 	captured := filepath.Join(dir, "captured")

@@ -14,19 +14,20 @@ concurrency:
 jobs:
   fuzz:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
+      # Go 1.26.6 may report timed fuzzing as a deadline failure (go.dev/issue/75804).
       fail-fast: false
       matrix:
         include:
           - target: FuzzRenderHTML
             pkg: ./mail/
-            fuzztime: 120s
+            fuzztime: 800000x
           - target: FuzzCSSDeclarations
             pkg: ./lib/html/
-            fuzztime: 120s
-          # Go 1.26 can report its time limit as a fuzz error; cap executions instead.
+            fuzztime: 4000000x
           - target: FuzzLoadCommand
             pkg: ./app/aicmd/
             fuzztime: 4000000x

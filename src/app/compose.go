@@ -74,6 +74,15 @@ func accountFrom(cfg config.Config, root string, msgTags, cursorTags []string) (
 	return account, from, sigName, sigBody, fcc
 }
 
+// switchAccount re-derives the account-owned dialogue settings after
+// the compose account picker changed st.Account.
+func switchAccount(cfg config.Config, root string, st *compose.State) {
+	a := cfg.Accounts[st.Account]
+	st.From, st.PGPKey = a.From, a.PGPKey
+	st.SetSignature(defaultSig(cfg, st.Account))
+	st.Fcc = sentPath(root, st.Account, a)
+}
+
 // newCompose builds the compose-mode dialogue shell: the sender
 // identity and fcc path. Shared by the compose key and the mailto link;
 // reply/forward layer the parsed original on top (buildCompose).

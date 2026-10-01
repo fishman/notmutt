@@ -436,6 +436,9 @@ func Run() error {
 	tui.SetDraftHandler(func(st compose.State) error {
 		return saveDraft(bus, worker, view, cfg, root, st)
 	})
+	tui.SetAccountSwitchHandler(func(d *compose.State) {
+		switchAccount(st.Config(), root, d)
+	})
 
 	// address completion: the compose Tab trigger (lazy, debounced in
 	// the TUI) harvests the sender corpus once; the result lands as

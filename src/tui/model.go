@@ -4105,6 +4105,7 @@ func (d *listDialogue) selectEntry(m *Model) (dialogue, Cmd) {
 	if d.f.kind == "account" {
 		a := m.st.Config().Accounts[entry]
 		st.Account, st.From, st.PGPKey = entry, a.From, a.PGPKey
+		onAccountSwitch(st)
 		if st.Security.Signing() && st.PGPKey == "" {
 			onPGPKeyRequest(st.ID)
 		}

@@ -103,6 +103,35 @@ func TestMailtoCompose(t *testing.T) {
 	}
 }
 
+func TestSwitchAccountRederivesSettings(t *testing.T) {
+	root := t.TempDir()
+	old := sigDir
+	sigDir = t.TempDir()
+	defer func() { sigDir = old }()
+	if err := os.MkdirAll(filepath.Join(sigDir, "acme"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sigDir, "acme", "work"), []byte("-- \nAcme\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Default()
+	cfg.Accounts = map[string]config.Account{
+		"acme": {From: "me@acme.example", DefaultSignature: "work", Folders: map[string]string{"sent": "Sent"}},
+		"beta": {From: "me@beta.example", Folders: map[string]string{"sent": "Outbox"}},
+	}
+	st := newCompose(cfg, root, []string{"acme"}, nil)
+	st.Account = "beta"
+	switchAccount(cfg, root, st)
+	if st.Fcc != filepath.Join(root, "beta", "Outbox") || st.Signature != "" || st.SignatureBody != "" {
+		t.Fatalf("beta switch = fcc %q signature %q/%q", st.Fcc, st.Signature, st.SignatureBody)
+	}
+	st.Account = "acme"
+	switchAccount(cfg, root, st)
+	if st.Fcc != filepath.Join(root, "acme", "Sent") || st.Signature != "work" || st.SignatureBody != "-- \nAcme" {
+		t.Fatalf("acme switch = fcc %q signature %q/%q", st.Fcc, st.Signature, st.SignatureBody)
+	}
+}
+
 func TestResolveAccountChain(t *testing.T) {
 	cfg := config.Default()
 	cfg.Accounts = map[string]config.Account{"acme": {}, "globex": {}, "nimbus": {}}

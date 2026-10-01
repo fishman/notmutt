@@ -182,6 +182,14 @@ func SetDraftHandler(fn func(compose.State) error) {
 	onDraft = fn
 }
 
+// onAccountSwitch re-derives app-owned account settings (fcc, default
+// signature) after the account picker changes a dialogue's account.
+var onAccountSwitch = func(st *compose.State) {}
+
+func SetAccountSwitchHandler(fn func(*compose.State)) {
+	onAccountSwitch = fn
+}
+
 // onAddrRequest is the address-harvest request seam: the compose Tab completion fires it (lazy, debounced in the model); the app harvests the sender corpus and answers on the bus with AddressIndex.
 var onAddrRequest = func() {}
 

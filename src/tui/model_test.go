@@ -3721,6 +3721,21 @@ func TestFuzzyPickerSwitchesAccount(t *testing.T) {
 	}
 }
 
+func TestAccountSwitchRederivesAccountSettings(t *testing.T) {
+	SetAccountSwitchHandler(func(st *compose.State) { st.Fcc = "/mail/" + st.Account + "/Sent" })
+	defer SetAccountSwitchHandler(func(*compose.State) {})
+	m := openDialogue(t, model(), "t1")
+	m.tabs[0].Fcc = "/mail/gmail/Sent"
+	m = press(t, m, "A")
+	for _, r := range "alpha" {
+		m = press(t, m, string(r))
+	}
+	m = pressType(t, m, tcell.KeyEnter)
+	if m.tabs[0].Fcc != "/mail/alpha/Sent" {
+		t.Fatalf("Fcc = %q, want the switched account's sent folder", m.tabs[0].Fcc)
+	}
+}
+
 func TestEditorEditArmsExec(t *testing.T) {
 	m := openDialogue(t, model(), "t1")
 	m.formIdx = 1 // the redesign: e arms the body editor at any slot

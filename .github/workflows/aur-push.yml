@@ -59,7 +59,7 @@ jobs:
           # a tag-triggered run can leave the clone on a detached HEAD; land
           # on the remote default branch and push it by name so the push
           # never targets a detached commit
-          branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null)"; branch="${branch#origin/}"; branch="${branch:-master}"
+          branch="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)"; branch="${branch#origin/}"; branch="${branch:-master}"
           git checkout -B "$branch"
           git add PKGBUILD .SRCINFO
           git commit -m "notmutt $VERSION"

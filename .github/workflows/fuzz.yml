@@ -22,10 +22,14 @@ jobs:
         include:
           - target: FuzzRenderHTML
             pkg: ./mail/
+            fuzztime: 120s
           - target: FuzzCSSDeclarations
             pkg: ./lib/html/
+            fuzztime: 120s
+          # Go 1.26 can report its time limit as a fuzz error; cap executions instead.
           - target: FuzzLoadCommand
             pkg: ./app/aicmd/
+            fuzztime: 4000000x
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -48,4 +52,4 @@ jobs:
 
       - name: Fuzz ${{ matrix.target }}
         working-directory: src
-        run: go test -fuzz=${{ matrix.target }} -fuzztime=120s ${{ matrix.pkg }}
+        run: go test -fuzz=${{ matrix.target }} -fuzztime=${{ matrix.fuzztime }} ${{ matrix.pkg }}

@@ -46,9 +46,9 @@ notmuch's lastmod - startup touches only what changed. Folder state
 is derived, never authoritative. Your tags stay queryable by any
 notmuch tool.
 
-**Images in your terminal.** Sixel by default (most terminals support
-it), kitty opt-in. The pager decodes and paints inline images - on
-demand, only when you ask.
+**Images in your terminal.** Kitty graphics is detected automatically,
+with sixel as the fallback on capable terminals. The pager decodes and
+paints inline images on demand, only when you ask.
 
 **Configuration as data, not code.** TOML throughout: truecolor themes
 with palette indirection, declarative per-context keybindings (the

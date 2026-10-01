@@ -7,3 +7,6 @@ package tui
 
 // probeCellSize is a no-op on windows: the console has no TIOCGWINSZ pixel semantics, the 10x20 defaults stay.
 func probeCellSize() {}
+
+// The Windows console has no /dev/tty query path. Fail closed.
+func probeKittyGraphics() (bool, []byte) { return false, nil }

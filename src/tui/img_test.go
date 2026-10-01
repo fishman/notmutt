@@ -305,38 +305,32 @@ func (s stubCaps) Capabilities() tcell.Capabilities {
 }
 
 func TestDetectImageProtocol(t *testing.T) {
-	base := config.Default()
-	kitty := config.Default()
-	kitty.Pager.ImageProtocol = "kitty"
 	cases := []struct {
-		cfg  config.Pager
-		env  map[string]string
-		caps stubCaps
-		want string
+		env   map[string]string
+		caps  stubCaps
+		kitty bool
+		want  string
 	}{
-		// kitty is opt-in: the kitty environment alone never selects it
-		{base.Pager, map[string]string{"KITTY_WINDOW_ID": "1"}, stubCaps{}, ""},
-		{kitty.Pager, map[string]string{"KITTY_WINDOW_ID": "1"}, stubCaps{}, "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "wezterm"}, stubCaps{}, "kitty"},
-		{kitty.Pager, map[string]string{"TERM_PROGRAM": "ghostty"}, stubCaps{}, "kitty"},
-		{kitty.Pager, map[string]string{}, stubCaps{}, ""},
-		// sixel when the screen's DA negotiation reported it
-		{base.Pager, map[string]string{}, stubCaps{sixel: true}, "sixel"},
-		// a negative reply selects nothing
-		{base.Pager, map[string]string{}, stubCaps{}, ""},
+		{nil, stubCaps{}, true, "kitty"},
+		{nil, stubCaps{sixel: true}, true, "kitty"},
+		{nil, stubCaps{sixel: true}, false, "sixel"},
+		{map[string]string{"TERM_PROGRAM": "unknown"}, stubCaps{}, true, "kitty"},
+		{map[string]string{"KITTY_WINDOW_ID": "1"}, stubCaps{}, false, ""},
+		{map[string]string{"TERM_PROGRAM": "wezterm"}, stubCaps{}, false, ""},
+		{map[string]string{"TERM_PROGRAM": "ghostty"}, stubCaps{}, false, ""},
+		{map[string]string{"TERM": "foot"}, stubCaps{}, false, ""},
+		{nil, stubCaps{}, false, ""},
 	}
-	// the non-tmux cases must not inherit the ambient session's TMUX (the tmux query path is pinned separately in TestDetectImageProtocolTmux)
 	t.Setenv("TMUX", "")
 	for _, c := range cases {
-		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM"} {
+		for _, k := range []string{"KITTY_WINDOW_ID", "TERM_PROGRAM", "TERM"} {
 			t.Setenv(k, c.env[k])
 		}
-		if got := detectImageProtocol(c.cfg, c.caps); got != c.want {
-			t.Errorf("detectImageProtocol(%v, %+v) = %q, want %q", c.env, c.caps, got, c.want)
+		if got := detectImageProtocol(c.caps, c.kitty); got != c.want {
+			t.Errorf("detectImageProtocol(%v, %+v, %t) = %q, want %q", c.env, c.caps, c.kitty, got, c.want)
 		}
 	}
-	// a never-engaged screen (nil) selects nothing either
-	if got := detectImageProtocol(base.Pager, nil); got != "" {
+	if got := detectImageProtocol(nil, false); got != "" {
 		t.Errorf("detectImageProtocol(nil screen) = %q, want \"\"", got)
 	}
 }
@@ -350,23 +344,23 @@ func TestDetectImageProtocolTmux(t *testing.T) {
 	orig := tmuxSixel
 	defer func() { tmuxSixel = orig }()
 	tmuxSixel = func() bool { return true }
-	if got := detectImageProtocol(config.Default().Pager, stubCaps{}); got != "sixel" {
+	if got := detectImageProtocol(stubCaps{}, false); got != "sixel" {
 		t.Fatalf("tmux with sixel support: got %q, want sixel", got)
 	}
 	tmuxSixel = func() bool { return false }
-	if got := detectImageProtocol(config.Default().Pager, stubCaps{sixel: true}); got != "sixel" {
+	if got := detectImageProtocol(stubCaps{sixel: true}, false); got != "sixel" {
 		t.Fatalf("query false + negotiated sixel: got %q, want sixel (fallback)", got)
 	}
-	if got := detectImageProtocol(config.Default().Pager, stubCaps{}); got != "" {
+	if got := detectImageProtocol(stubCaps{}, false); got != "" {
 		t.Fatalf("tmux without sixel: got %q, want empty", got)
 	}
 }
 
 func TestKittyTransmit(t *testing.T) {
 	var buf bytes.Buffer
-	kittyTransmit(&buf, 0, testImg(600, 600))
+	kittyTransmit(&buf, 1, testImg(600, 600))
 	out := buf.String()
-	if !strings.HasPrefix(out, "\x1b_Ga=t,i=0,f=100,t=d,m=1;") {
+	if !strings.HasPrefix(out, "\x1b_Ga=t,i=1,f=100,t=d,m=1;") {
 		t.Fatalf("first chunk must open the transmit frame, got %q", show(out[:24]))
 	}
 	if !strings.HasSuffix(out, "\x1b\\") || !strings.Contains(out, "\x1b_Gm=0;") {
@@ -452,32 +446,24 @@ func TestBgHexOf(t *testing.T) {
 		t.Fatalf("nil color must be empty, got %q", got)
 	}
 }
-
-// TestModelRenderImagesToggle runs the full path: open an html-only message with an inline image, verify the placeholder gate, the alt+i toggle expansion, the terminal paint, and the toggle-off clear.
-func TestModelRenderImagesToggle(t *testing.T) {
+func imageModel() Model {
 	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
 	view := core.NewView("inbox", "tag:inbox")
 	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
 		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
 	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
+	m := New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(cfg), cfg.UI)
+	m.imgProto = "kitty"
 	m.width, m.height = 80, 100
+	return m
+}
+
+// TestModelRenderImagesToggle runs the full path: open an html-only message with an inline image, verify the placeholder gate, the alt+i toggle expansion, the terminal paint, and the toggle-off clear.
+func TestModelRenderImagesToggle(t *testing.T) {
+	m := imageModel()
 	png := testPNG(t, 100, 200)
 	body := "<p>before</p><img src=\"data:image/png;base64," + base64.StdEncoding.EncodeToString(png) + "\"><p>after</p>"
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: req.ThreadID,
-			Lines:    mail.RenderHTML(body, nil, 0),
-		}})
-		m = next
-	})
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
+	openLoaded(t, &m, core.ThreadLoaded{Lines: mail.RenderHTML(body, nil, 0)})
 
 	var buf bytes.Buffer
 	old := imageWriter
@@ -514,12 +500,12 @@ func TestModelRenderImagesToggle(t *testing.T) {
 	// the block sits at doc row 2 (before, blank, image) - screen row 4,
 	// flush-left in the 80-cell window (the block has no text-align; its
 	// lead Image.X is 0). The first sight transmits the full decode under
-	// id 0 (a=t), then places the visible slice at the cursor (a=p with
+	// id 1 (a=t), then places the visible slice at the cursor (a=p with
 	// the decode's crop rows) - no delete-all, no EL sweep
-	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,m=0;") {
+	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=1,f=100,t=d,m=0;") {
 		t.Fatalf("the paint must transmit the decode first, got %q", show(buf.String()[:min(36, buf.Len())]))
 	}
-	if !strings.Contains(buf.String(), "\x1b[4;1H\x1b_Ga=p,i=0,p=1,y=0,h=") {
+	if !strings.Contains(buf.String(), "\x1b[4;1H\x1b_Ga=p,i=1,p=1,y=0,h=") {
 		t.Fatalf("the paint must place the visible slice at the block lead, got %q", show(buf.String()))
 	}
 	if len(m.painted) != 1 {
@@ -549,15 +535,7 @@ func TestModelRenderImagesToggle(t *testing.T) {
 // the previous image frozen over the new frame. A scroll-away is NOT
 // this path: it deletes one placement by id and keeps the data.
 func TestKittyClearImageRectsFreeAll(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty"
+	m := imageModel()
 	img := &core.Image{Cols: 10, Rows: 5}
 	m.painted = map[*core.Image]cellRect{img: {x: 3, y: 4, w: 10, h: 5, bg: "#112233"}}
 	m.kimg = map[*core.Image]int{img: 3}
@@ -585,16 +563,7 @@ func TestKittyClearImageRectsFreeAll(t *testing.T) {
 // image sharing its row with text keeps its authored disp size and
 // flow offset.
 func TestModelStandaloneImageAlignsLeft(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	chart := testPNG(t, 2000, 1000)
 	narrow := testPNG(t, 200, 100)
 	img := func(b []byte) string { return "data:image/png;base64," + base64.StdEncoding.EncodeToString(b) }
@@ -602,19 +571,11 @@ func TestModelStandaloneImageAlignsLeft(t *testing.T) {
 		"<table><tr><td><img src=\"" + img(chart) + "\" width=\"550\"></td></tr></table>" +
 		"<table><tr><td><img src=\"" + img(narrow) + "\"></td></tr></table>" +
 		"<p>see <img src=\"" + img(chart) + "\" width=\"300\"> inline after</p>"
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Lines:      mail.RenderHTML(body, nil, 0),
-		}})
-		m = next
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      mail.RenderHTML(body, nil, 0),
 	})
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
 
 	// embedded bytes decode on the toggle - no fetch, no reopen reply needed
 	m = press(t, m, "alt+i")
@@ -688,16 +649,7 @@ func labelImgLine(label string, img *core.Image) core.Line {
 // fills like its unlabeled counterpart, seating at its row's flow offset
 // (after the label), never a hard center.
 func TestModelLabelLinkImageFillsAligned(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	chart := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: wideAuthW}
 	narrow := &core.Image{Data: testPNG(t, 200, 100), Alt: "[image]"}
 	content := []core.Line{
@@ -709,21 +661,13 @@ func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 		{Text: "", Kind: core.LineBody},
 		{Text: "after", Kind: core.LineBody},
 	}
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			LinkLabels: true,
-			Images:     true,
-			Lines:      content,
-		}})
-		m = next
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		LinkLabels: true,
+		Images:     true,
+		Lines:      content,
 	})
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
 
 	_ = m.View() // the decode trigger: prepareImages sizes the visible images
 
@@ -768,32 +712,15 @@ func TestModelLabelLinkImageFillsAligned(t *testing.T) {
 // cycled away drops - network data never decodes outside the remote
 // mode.
 func TestModelRenderImagesRemote(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	body := "<p>before</p><img src=\"http://example.com/x.png\"><p>after</p>"
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Lines:      mail.RenderHTML(body, nil, 0),
-		}})
-		m = next
-	})
 	var fetched []string
 	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      mail.RenderHTML(body, nil, 0),
+	})
 
 	// the first alt+i press arms the fetch (there is no local mode anymore - embedded cid:/data: bytes render, http(s) fetch on demand)
 	m = press(t, m, "alt+i")
@@ -851,31 +778,14 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Lines:      mail.RenderHTML(string(html), nil, 0),
-		}})
-		m = next
-	})
+	m := imageModel()
 	var fetched []string
 	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      mail.RenderHTML(string(html), nil, 0),
+	})
 
 	// the collapsed gate: placeholders render, nothing fetched
 	if out := m.View(); !strings.Contains(out, "[image]") {
@@ -953,15 +863,7 @@ func TestModelRenderSemianalysisImages(t *testing.T) {
 // back re-places with a bare a=p - never a retransmit, never a
 // full-window clear.
 func TestModelRenderImagesScrollCycle(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty"
+	m := imageModel()
 	m.width, m.height = 60, 30
 	var body strings.Builder
 	body.WriteString("<p>head</p>")
@@ -972,14 +874,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	for range 20 {
 		body.WriteString("<p>tail</p>")
 	}
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: req.ThreadID,
-			Lines:    mail.RenderHTML(body.String(), nil, 0),
-		}})
-		m = next
-	})
-	press(t, m, "enter")
+	openLoaded(t, &m, core.ThreadLoaded{Lines: mail.RenderHTML(body.String(), nil, 0)})
 	var fetched []string
 	SetImageFetchHandler(func(url string) { fetched = append(fetched, url) })
 	m = press(t, m, "alt+i")
@@ -1021,7 +916,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	}
 
 	// scroll into it: the decode expands the doc, the first sight transmits
-	// the full decode under id 0 (a=t) and places its visible slice
+	// the full decode under id 1 (a=t) and places its visible slice
 	m.pager.vp.offset = 25
 	m.View()
 	paint()
@@ -1032,7 +927,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	if len(m.painted) != 1 {
 		t.Fatalf("the visible image must paint one rect, got %d", len(m.painted))
 	}
-	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,m=0;") {
+	if !strings.HasPrefix(buf.String(), "\x1b_Ga=t,i=1,f=100,t=d,m=0;") {
 		t.Fatalf("the first sight must transmit the decode, got %q", show(buf.String()[:min(30, buf.Len())]))
 	}
 
@@ -1048,7 +943,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	if len(m.painted) != 0 {
 		t.Fatalf("the scrolled-past image must drop its rect, got %d", len(m.painted))
 	}
-	if !strings.Contains(buf.String(), "\x1b_Ga=d,d=i,i=0,p=1\x1b\\") {
+	if !strings.Contains(buf.String(), "\x1b_Ga=d,d=i,i=1,p=1\x1b\\") {
 		t.Fatalf("scroll-past must delete the placement by id (keeping the data), got %q", show(buf.String()))
 	}
 
@@ -1060,10 +955,10 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 	if len(m.painted) != 1 {
 		t.Fatalf("scrolling back must re-place the image, got %d rects", len(m.painted))
 	}
-	if got := strings.Count(buf.String(), "\x1b_Ga=t,i=0,f=100,t=d,"); got != 1 {
+	if got := strings.Count(buf.String(), "\x1b_Ga=t,i=1,f=100,t=d,"); got != 1 {
 		t.Fatalf("returning must not retransmit the decode, transmit count=%d", got)
 	}
-	if !strings.Contains(buf.String(), "\x1b_Ga=p,i=0,p=1,y=") {
+	if !strings.Contains(buf.String(), "\x1b_Ga=p,i=1,p=1,y=") {
 		t.Fatalf("returning must re-place the image, got %q", show(buf.String()))
 	}
 	if m.imgSuppress {
@@ -1079,14 +974,7 @@ func TestModelRenderImagesScrollCycle(t *testing.T) {
 // window once; and a paint that is NOT a pure translation - the first
 // decode, a rect leaving the window - never holds.
 func TestModelScrollSettleFSM(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m := imageModel()
 	m.imgProto = "sixel" // the hold FSM is sixel-only: kitty re-places in place and never holds
 	m.width, m.height = 60, 100
 	var body strings.Builder
@@ -1097,19 +985,11 @@ func TestModelScrollSettleFSM(t *testing.T) {
 	for range 60 {
 		body.WriteString("<p>tail</p>")
 	}
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Lines:      mail.RenderHTML(body.String(), nil, 0),
-		}})
-		m = next
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      mail.RenderHTML(body.String(), nil, 0),
 	})
-	press(t, m, "enter") // discard: the open handler rebinds m
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
 
 	m = press(t, m, "alt+i")
 	m, _ = m.Update(frameTick{})
@@ -1217,14 +1097,7 @@ func TestModelScrollSettleFSM(t *testing.T) {
 // while a second re-crop within the debounce window is a burst and enters
 // the hold. A settle repaint arms the lone path again.
 func TestModelCropScrollBurstHolds(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
+	m := imageModel()
 	m.imgProto = "sixel" // the re-crop burst hold is sixel-only
 	m.width, m.height = 60, 100
 	var body strings.Builder
@@ -1235,16 +1108,11 @@ func TestModelCropScrollBurstHolds(t *testing.T) {
 	for range 60 {
 		body.WriteString("<p>tail</p>")
 	}
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Lines:      mail.RenderHTML(body.String(), nil, 0),
-		}})
-		m = next
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Lines:      mail.RenderHTML(body.String(), nil, 0),
 	})
-	press(t, m, "enter") // discard: the open handler rebinds m
 	m = press(t, m, "alt+i")
 	m, _ = m.Update(frameTick{})
 
@@ -1315,15 +1183,7 @@ func TestModelCropScrollBurstHolds(t *testing.T) {
 	}
 }
 func TestModelImagesReopenCarriesFlag(t *testing.T) {
-	cfg := config.Default()
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	SetOpenHandler(func(req OpenReq) {
 		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
 			ThreadID:   req.ThreadID,
@@ -1395,15 +1255,7 @@ func TestModelImagesReopenCarriesFlag(t *testing.T) {
 // refine reply (images toggled off since) drops.
 func TestModelRefineRemoteSeats(t *testing.T) {
 	const u = "http://example.com/x.png"
-	cfg := config.Default()
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	content := []core.Line{
 		{Text: "alpha"},
 		{Text: "pic", Image: &core.Image{URL: u, Alt: "[image]"}},
@@ -1532,15 +1384,7 @@ func TestModelRefineRemoteSeats(t *testing.T) {
 // not lose its geometry when the link labels come up.
 func TestModelOpenLinksReopenKeepsSizes(t *testing.T) {
 	const u = "http://example.com/x.png"
-	cfg := config.Default()
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	content := []core.Line{
 		{Text: "alpha"},
 		{Text: "pic", Image: &core.Image{URL: u, Alt: "[image]"}},
@@ -1593,15 +1437,7 @@ func TestModelOpenLinksReopenKeepsSizes(t *testing.T) {
 // keeps the reader's place and pan; a fresh open of another message
 // starts at the top.
 func TestModelImagesKeepsScroll(t *testing.T) {
-	cfg := config.Default()
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty" // the engaged screen's negotiation (unit-stubbed)
-	m.width, m.height = 80, 100
+	m := imageModel()
 	content := make([]core.Line, 120)
 	for i := range content {
 		content[i] = core.Line{Text: "alpha"}
@@ -1717,16 +1553,7 @@ const wideAuthW = 550
 // sized small (a footer logo, a badge) decodes at its authored width
 // instead of swallowing the window.
 func TestModelStandaloneFillNeedsWideAuthor(t *testing.T) {
-	cfg := config.Default()
-	cfg.Pager.ImageProtocol = "kitty"
-	st := config.NewStore(cfg)
-	view := core.NewView("inbox", "tag:inbox")
-	view.MergeThreads([]*core.Thread{core.NewThread("t1", []*core.Message{
-		{ID: "a", Timestamp: 100, Tags: []string{"inbox"}},
-	})})
-	m := New(view, nil, testBindings(), testTagActions(), nil, st, cfg.UI)
-	m.imgProto = "kitty"
-	m.width, m.height = 80, 100
+	m := imageModel()
 	logo := &core.Image{Data: testPNG(t, 2000, 1000), Alt: "[image]", DispW: 300}
 	logoLine := core.Line{Text: logo.Alt,
 		Runs: []core.Run{{Text: logo.Alt, Image: logo}},
@@ -1738,20 +1565,12 @@ func TestModelStandaloneFillNeedsWideAuthor(t *testing.T) {
 		{Text: "", Kind: core.LineBody},
 		{Text: "after", Kind: core.LineBody},
 	}
-	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID:   req.ThreadID,
-			RenderMode: core.RenderHTML,
-			Mime:       "text/html",
-			Images:     true,
-			Lines:      content,
-		}})
-		m = next
+	openLoaded(t, &m, core.ThreadLoaded{
+		RenderMode: core.RenderHTML,
+		Mime:       "text/html",
+		Images:     true,
+		Lines:      content,
 	})
-	press(t, m, "enter")
-	if m.mode != "pager" {
-		t.Fatalf("open must switch to pager, mode=%q", m.mode)
-	}
 	_ = m.View()
 
 	var buf bytes.Buffer

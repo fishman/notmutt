@@ -145,10 +145,8 @@ keymap = "vim"        # or "emacs"
 search-open = "active"  # ctrl+f: "active" attaches the new tab, "background" runs the query behind the current surface
 
 [pager]
-# terminal image protocol: sixel by default (most terminals support
-# it), kitty opt-in. Fetched remote images decode and paint on the
-# alt+i key only.
-image-protocol = "sixel"
+# Kitty graphics is probed automatically, with sixel as the fallback.
+# Remote images decode and paint on the alt+i key only.
 # lift the 1x1 tracking-pixel block on fetched remote images
 allow-tracking-images = false
 # per-domain part preference for the open key:

@@ -102,10 +102,9 @@ binding is vendored and pinned.
 ## Does it support my terminal?
 
 Truecolor is the baseline; `COLORTERM=truecolor` resolves natively
-with no terminfo database. Images need a sixel-capable terminal
-(foot, mlterm, xterm -ti, ...) - tmux does not pass image protocols
-through, so images paint outside tmux. Kitty graphics is supported
-as an opt-in protocol for kitty-family terminals.
+with no terminfo database. Kitty graphics is probed automatically, with
+sixel as the fallback on capable terminals (foot, mlterm, xterm -ti,
+or a sixel-enabled tmux build). Unsupported terminals stay text-only.
 
 ## How do I report a bug?
 

@@ -514,8 +514,8 @@ leg uses. Empty resolves from the thread.
 : Sender domain to view name, resolved when a thread opens. Unmapped
 domains get the plain default view.
 
-**image-protocol** (string, default `"sixel"`)
-: The terminal image protocol: **"sixel"** or **"kitty"**.
+Image protocol selection is automatic: a successful Kitty graphics probe
+takes precedence, otherwise negotiated sixel support is used.
 
 **allow-tracking-images** (boolean, default `false`)
 : Permit remote images that are tracking pixels. Off by default: a 1x1

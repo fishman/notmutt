@@ -289,8 +289,8 @@ needs.
 
 - Truecolor (`COLORTERM=truecolor`); the R11 baseline is truecolor,
   no 256-color mapping
-- Images: a sixel-capable terminal (foot, mlterm, xterm with
-  `-ti 340`, ...) outside tmux - tmux does not pass image protocols
-  through. Kitty graphics is opt-in via `[pager] image-protocol`
-- The client detects the terminal image protocol from the environment;
-  nothing to configure for text-only use
+- Images: Kitty graphics is probed automatically at startup, with a
+  50 ms timeout. If the probe fails, negotiated sixel support is used
+  (foot, mlterm, xterm with `-ti 340`, or a sixel-enabled tmux build).
+- No image protocol setting is needed. Remove any existing
+  `[pager] image-protocol` entry; unsupported terminals remain text-only.

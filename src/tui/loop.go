@@ -10,21 +10,34 @@ import (
 	"github.com/gdamore/tcell/v3"
 )
 
+func newScreen() (tcell.Screen, string, error) {
+	probeCellSize()
+	tty, err := tcell.NewDevTty()
+	if err != nil {
+		return nil, "", err
+	}
+	probe := &kittyProbeTty{Tty: tty}
+	s, err := tcell.NewTerminfoScreenFromTty(probe, tcell.OptAdvancedKeys(true))
+	if err != nil {
+		return nil, "", err
+	}
+	if err := s.Init(); err != nil {
+		return nil, "", err
+	}
+	return s, detectImageProtocol(s, probe.supported), nil
+}
+
 // Run starts the loop: the real screen, then runLoop (tests drive
 // runLoop with a simulation screen). The image paint sink is /dev/tty
 // - the tcell screen cannot emit raw image protocols; the direct fd
 // writes after a frame flush are ordered and safe.
 func Run(model Model, quitCh <-chan struct{}) error {
-	probeCellSize()
-	s, err := tcell.NewScreen(tcell.OptAdvancedKeys(true))
+	s, protocol, err := newScreen()
 	if err != nil {
 		return err
 	}
-	if err := s.Init(); err != nil {
-		return err
-	}
 	defer s.Fini()
-	model.imgProto = detectImageProtocol(model.st.Config().Pager, s)
+	model.imgProto = protocol
 	if tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0); err == nil {
 		imageWriter = tty
 		defer func() {

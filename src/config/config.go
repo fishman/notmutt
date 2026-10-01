@@ -112,7 +112,6 @@ type Setup struct {
 type Pager struct {
 	DefaultView         string            `toml:"default-view" enum:"plain,html"`
 	DefaultViews        map[string]string `toml:"default-views"`
-	ImageProtocol       string            `toml:"image-protocol" enum:"sixel,kitty"`
 	AllowTrackingImages bool              `toml:"allow-tracking-images"`
 }
 
@@ -1645,9 +1644,6 @@ func validate(cfg Config) error {
 		if v != "plain" && v != "html" {
 			return fmt.Errorf("pager.default-views.%s: must be plain or html, got %q", d, v)
 		}
-	}
-	if v := cfg.Pager.ImageProtocol; v != "" && !slices.Contains(enumOf(reflect.TypeOf(Pager{}), "ImageProtocol"), v) {
-		return fmt.Errorf("pager.image-protocol: must be sixel or kitty, got %q", v)
 	}
 	if v := cfg.HTML.DarkMode; !slices.Contains(enumOf(reflect.TypeOf(HTMLSection{}), "DarkMode"), v) {
 		return fmt.Errorf("html.dark-mode: must be auto, on or off, got %q", v)

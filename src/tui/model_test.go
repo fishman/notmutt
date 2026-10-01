@@ -1881,26 +1881,43 @@ func loadedLines(t *testing.T, msgs []core.Message) []core.Line {
 	return lines
 }
 
-// openPager presses the open key with an open handler that injects the
-// loaded lines as a bus event, mirroring the app's worker publish
-// path; the handler updates the model synchronously, so the returned
-// model carries the pager state.
-func openPager(t *testing.T, m Model, path string) Model {
+// openLoaded injects the worker reply while opening the cursor message.
+func openLoaded(t *testing.T, m *Model, ev core.ThreadLoaded) {
 	t.Helper()
 	SetOpenHandler(func(req OpenReq) {
-		next, _ := m.Update(EventMsg{Event: core.ThreadLoaded{
-			ThreadID: req.ThreadID,
-			Lines:    loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
-		}})
-		m = next
+		ev.ThreadID = req.ThreadID
+		next, _ := m.Update(EventMsg{Event: ev})
+		*m = next
 	})
+	press(t, *m, "enter")
+	if m.mode != "pager" {
+		t.Fatalf("open must switch to pager, mode=%q", m.mode)
+	}
+}
+
+func openPager(t *testing.T, m *Model, path string) {
+	t.Helper()
+	openLoaded(t, m, core.ThreadLoaded{
+		Lines: loadedLines(t, []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}),
+	})
+}
+
+func TestOpenLoadedReopensCallerModel(t *testing.T) {
+	m := imageModel()
+	openLoaded(t, &m, core.ThreadLoaded{Lines: []core.Line{{Text: "alpha"}}})
+	m = press(t, m, "q")
+	if m.mode != "index" {
+		t.Fatalf("back must return to index, mode=%q", m.mode)
+	}
 	press(t, m, "enter")
-	return m
+	if m.mode != "pager" {
+		t.Fatalf("reopen must update the caller's model, mode=%q", m.mode)
+	}
 }
 
 func TestOpenSwitchesToPager(t *testing.T) {
 	m := model()
-	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	openPager(t, &m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
 	}
@@ -1913,7 +1930,7 @@ func TestOpenSwitchesToPager(t *testing.T) {
 
 func TestPagerBackReturnsToIndex(t *testing.T) {
 	m := model()
-	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	openPager(t, &m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
 		t.Fatalf("open must switch to pager mode, mode=%q", m.mode)
 	}
@@ -1926,7 +1943,7 @@ func TestPagerBackReturnsToIndex(t *testing.T) {
 func TestPagerKeyOnlyActiveInPager(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
-	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	openPager(t, &m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	if m.mode != "pager" || m.pager == nil {
 		t.Fatal("enter must open the pager")
 	}
@@ -1987,7 +2004,7 @@ func TestKeyhintRowInView(t *testing.T) {
 	if si, sh := strings.Index(strip, "$ apply"), strings.Index(strip, status); si < 0 || si > sh {
 		t.Fatalf("hint row must sit above the status line:\n%s", strip)
 	}
-	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	openPager(t, &m, fixtureMsg(t, "body line\n"))
 	strip = stripANSI(m.View())
 	if !strings.Contains(strip, "q back") || strings.Contains(strip, "j scroll-down") {
 		t.Fatalf("the pager hint must show the visible keys, not the hidden j/k:\n%s", strip)
@@ -2034,7 +2051,7 @@ func TestPagerKeysOnlyInPager(t *testing.T) {
 	if m.mode != "index" {
 		t.Fatalf("q unbound in index mode must not change mode, mode=%q", m.mode)
 	}
-	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	openPager(t, &m, fixtureMsg(t, "body line\n"))
 	if m.mode != "pager" {
 		t.Fatalf("enter must open the pager, mode=%q", m.mode)
 	}
@@ -2055,7 +2072,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 	// the index - both bound")
 	m := New(view, nil, map[string]map[string]string{"index": {"enter": "open"}, "pager": {"q": "quit"}}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
-	m = openPager(t, m, fixtureMsg(t, "body line\n"))
+	openPager(t, &m, fixtureMsg(t, "body line\n"))
 	_, cmd := m.Update(KeyPressMsg{Text: "q", Code: 'q'})
 	if cmd == nil {
 		t.Fatal("q bound to quit in pager mode must return a quit command")
@@ -2065,7 +2082,7 @@ func TestPagerQuitKeyExits(t *testing.T) {
 func TestPagerPageKeys(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
-	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	openPager(t, &m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	// a real ctrl+d key: KeyMsg.String() resolves to "ctrl+d" and the
 	// dispatch finds the half-page-down binding
 	next, _ := m.Update(KeyPressMsg{Text: "d", Code: tcell.KeyRune, Mod: tcell.ModCtrl})
@@ -2183,7 +2200,7 @@ func TestArrowKeysScrollPager(t *testing.T) {
 		"pager": {"up": "scroll-up", "down": "scroll-down", "q": "back"},
 	}, testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI)
 	m.width, m.height = 40, 10
-	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	openPager(t, &m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	m = pressType(t, m, tcell.KeyDown)
 	if m.pager.vp.offset != 1 {
 		t.Fatalf("down in pager mode must scroll down, offset=%d", m.pager.vp.offset)
@@ -2286,7 +2303,7 @@ func TestCountResetsOnOtherKey(t *testing.T) {
 func TestPagerLineScrollClamps(t *testing.T) {
 	m := model()
 	m.width, m.height = 40, 10
-	m = openPager(t, m, fixtureMsg(t, strings.Repeat("line\n", 30)))
+	openPager(t, &m, fixtureMsg(t, strings.Repeat("line\n", 30)))
 	h := m.pager.vp.height
 	for i := 0; i < h; i++ {
 		m = press(t, m, "j")
@@ -5759,7 +5776,7 @@ func TestHeadersTogglePager(t *testing.T) {
 	m := model()
 	path := fixtureMsg(t, "see the body\n")
 	msgs := []core.Message{{ID: "a", ThreadID: "t1", Paths: []string{path}}}
-	m = openPager(t, m, path)
+	openPager(t, &m, path)
 	var headersSeen []bool
 	SetOpenHandler(func(req OpenReq) {
 		if req.Mode != core.RenderAuto {
@@ -5800,7 +5817,7 @@ func TestHeadersTogglePager(t *testing.T) {
 // fuzzy picker, and selecting one opens it.
 func TestOpenLinksPlain(t *testing.T) {
 	m := model()
-	m = openPager(t, m, fixtureMsg(t, "see https://alpha.example.com/x\n"))
+	openPager(t, &m, fixtureMsg(t, "see https://alpha.example.com/x\n"))
 	m = press(t, m, "F")
 	p := picker(m)
 	if p == nil || p.kind != "openlink" {

@@ -6,7 +6,7 @@ package tui
 // Terminal image emission: the mail renderer's image lines are decoded
 // + scaled + emitted ONLY on the load-remote-images key (privacy gate
 // - the bytes stay inert until then) and only for the visible window.
-// Protocol: kitty opt-in via [pager] image-protocol (env match), sixel
+// Protocol: kitty when the graphics query succeeds, otherwise sixel
 // via the engaged screen's DA negotiation (under tmux a tmux query -
 // tmux answers DA itself); unsupported terminals keep the collapsed
 // Alt row. The writer is /dev/tty (the tcell screen cannot emit raw
@@ -35,7 +35,6 @@ import (
 	"github.com/mattn/go-sixel"
 	"golang.org/x/image/draw"
 
-	"notmutt/config"
 	"notmutt/core"
 )
 
@@ -55,21 +54,10 @@ var (
 // imageWriter is the paint sink: /dev/tty in Run, nil in tests (paint paths no-op, so frame tests never write to a terminal).
 var imageWriter io.Writer
 
-// detectImageProtocol picks the image protocol: kitty only when
-// [pager] image-protocol opts in and the kitty env matches; sixel when
-// the screen's DA negotiation reported it (tmux answers DA1 itself
-// with a build-time reply, so under tmux a tmux query replaces the
-// negotiation). "" = no image support.
-func detectImageProtocol(p config.Pager, s sixelCapable) string {
-	if p.ImageProtocol == "kitty" {
-		if os.Getenv("KITTY_WINDOW_ID") != "" {
-			return "kitty"
-		}
-		switch os.Getenv("TERM_PROGRAM") {
-		case "kitty", "wezterm", "alacritty", "ghostty":
-			return "kitty"
-		}
-		return ""
+// Prefer a successful Kitty probe; otherwise use existing sixel detection.
+func detectImageProtocol(s sixelCapable, kitty bool) string {
+	if kitty {
+		return "kitty"
 	}
 	if os.Getenv("TMUX") != "" && tmuxSixel() {
 		return "sixel"
@@ -698,8 +686,8 @@ func (m *Model) paintKitty(next map[*core.Image]imgPaint) {
 		prev, was := m.painted[img]
 		id, have := m.kimg[img]
 		if !have {
+			m.kimgNext++ // Kitty image IDs must be positive, including after a clear.
 			id = m.kimgNext
-			m.kimgNext++
 			m.kimg[img] = id
 			if w != nil {
 				kittyTransmit(w, id, p.img)

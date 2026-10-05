@@ -371,6 +371,35 @@ func TestFilterCursorMapping(t *testing.T) {
 	}
 }
 
+// TestFilterCursorRowKeepsIndexSpace: a CursorRow read (the paint
+// path) under an active filter must not shift the cursor index - it
+// once stored the filtered index into the full-space anchor.
+func TestFilterCursorRowKeepsIndexSpace(t *testing.T) {
+	v := NewView("inbox", "tag:inbox")
+	v.MergeThreads([]*Thread{
+		NewThread("t1", []*Message{{ID: "m1", ThreadID: "t1", Author: "Bob", Tags: []string{"inbox"}}}),
+		NewThread("t2", []*Message{{ID: "m2", ThreadID: "t2", Author: "Ann", Tags: []string{"inbox"}}}),
+		NewThread("t3", []*Message{{ID: "m3", ThreadID: "t3", Author: "Bob", Tags: []string{"inbox"}}}),
+		NewThread("t4", []*Message{{ID: "m4", ThreadID: "t4", Author: "Ann", Tags: []string{"inbox"}}}),
+	})
+	v.SetFilter("ann") // m2 and m4 remain
+	rows := v.Rows()
+	v.SetCursor("m4")
+	v.SetCursorIndex(1)
+	for range 2 {
+		if r, ok := v.CursorRow(); !ok || r.Msg.ID != "m4" {
+			t.Fatalf("CursorRow = %+v", r.Msg)
+		}
+		if idx := v.CursorRowIndex(); idx != 1 || rows[idx].Msg.ID != "m4" {
+			t.Fatalf("cursor index drifted after CursorRow: %d", idx)
+		}
+	}
+	// RevealMsg returns and anchors the filtered emission index
+	if at := v.RevealMsg("m2"); at != 0 || v.CursorRowIndex() != 0 {
+		t.Fatalf("RevealMsg = %d, index = %d", at, v.CursorRowIndex())
+	}
+}
+
 func TestCursorClamps(t *testing.T) {
 	v := NewView("inbox", "tag:inbox")
 	t1 := NewThread("t1", []*Message{msg("m1", 100)})

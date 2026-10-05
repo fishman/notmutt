@@ -352,7 +352,8 @@ func (v *View) RevealMsg(id string) int {
 		v.dirty = false
 		for i, r := range v.rows {
 			if r.Msg != nil && r.Msg.ID == id {
-				v.lastRow = i
+				// i is current-emission space; lastRow stores full-space
+				v.lastRow = v.toFullIndexLocked(i)
 				return i
 			}
 		}
@@ -786,6 +787,29 @@ func (v *View) SetCursor(id string) {
 	v.cursorID = id
 }
 
+// toFullIndexLocked converts a current-emission row index (filtered-
+// space, when a filter is active) to the full-space index lastRow
+// always stores. Identity when no filter is active. Caller holds v.mu.
+func (v *View) toFullIndexLocked(i int) int {
+	if v.filter != "" && v.filterIdx != nil && i >= 0 && i < len(v.filterIdx) {
+		return v.filterIdx[i]
+	}
+	return i
+}
+
+// toFilteredIndexLocked is the inverse of toFullIndexLocked: a full-
+// space index to its position in the current emission. A full index
+// the filter hides maps to the first visible row. Caller holds v.mu.
+func (v *View) toFilteredIndexLocked(i int) int {
+	if v.filter != "" && v.filterMap != nil {
+		if fi, ok := v.filterMap[i]; ok {
+			return fi
+		}
+		return 0
+	}
+	return i
+}
+
 // SetCursorIndex records the cursor's row index - the O(1) read the
 // paint path uses (moves write it, merges re-anchor it at
 // materialization). The id anchor survives: SetCursor(id) +
@@ -794,12 +818,8 @@ func (v *View) SetCursor(id string) {
 func (v *View) SetCursorIndex(idx int) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	// while a filter is active the caller steps in filtered space:
-	// store the full-space index
-	if v.filter != "" && v.filterIdx != nil && idx >= 0 && idx < len(v.filterIdx) {
-		idx = v.filterIdx[idx]
-	}
-	v.lastRow = idx
+	// the caller steps in current-emission space; lastRow stores full-space
+	v.lastRow = v.toFullIndexLocked(idx)
 }
 
 // CursorRowIndex returns the last known cursor row index - the
@@ -810,13 +830,7 @@ func (v *View) SetCursorIndex(idx int) {
 func (v *View) CursorRowIndex() int {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	if v.filter != "" && v.filterMap != nil {
-		if fi, ok := v.filterMap[v.lastRow]; ok {
-			return fi
-		}
-		return 0
-	}
-	return v.lastRow
+	return v.toFilteredIndexLocked(v.lastRow)
 }
 
 // CursorRow returns the row the cursor points at, or the row at the
@@ -838,13 +852,15 @@ func (v *View) CursorRow() (Row, bool) {
 	if v.cursorID != "" {
 		for i, r := range rows {
 			if r.Msg != nil && r.Msg.ID == v.cursorID {
-				v.lastRow = i
+				// i is current-emission space; lastRow stores full-space
+				v.lastRow = v.toFullIndexLocked(i)
 				return r, true
 			}
 		}
 	}
-	v.lastRow = min(v.lastRow, len(rows)-1)
-	return rows[v.lastRow], true
+	fi := min(v.toFilteredIndexLocked(v.lastRow), len(rows)-1)
+	v.lastRow = v.toFullIndexLocked(fi)
+	return rows[fi], true
 }
 
 // SetCollapsed toggles a thread's collapsed state under the view lock;

@@ -1024,6 +1024,48 @@ func TestFilterPrompt(t *testing.T) {
 	}
 }
 
+// TestFilterPromptCursorIndexMatchesRow pins the user-visible symptom:
+// under an active F filter, the row the paint path highlights
+// (CursorIndex, m.render) and the row status/pager actions read
+// (view.CursorRow) must name the same message after every move - a
+// regression where CursorRow stored a filtered-space index into the
+// view's full-space cursor anchor made them drift.
+func TestFilterPromptCursorIndexMatchesRow(t *testing.T) {
+	view := core.NewView("inbox", "tag:inbox")
+	view.MergeThreads([]*core.Thread{
+		core.NewThread("t1", []*core.Message{{ID: "a", Timestamp: 100, Author: "Bob", Subject: "hello", Tags: []string{"inbox"}}}),
+		core.NewThread("t2", []*core.Message{{ID: "b", Timestamp: 200, Author: "Ann", Subject: "lunch", Tags: []string{"inbox"}}}),
+		core.NewThread("t3", []*core.Message{{ID: "c", Timestamp: 300, Author: "Bob", Subject: "re: hello", Tags: []string{"inbox"}}}),
+		core.NewThread("t4", []*core.Message{{ID: "d", Timestamp: 400, Author: "Ann", Subject: "receipt", Tags: []string{"inbox"}}}),
+	})
+	m := sized(New(view, nil, testBindings(), testTagActions(), nil, config.NewStore(config.Default()), config.Default().UI))
+	m = press(t, m, "F")
+	m = press(t, m, "ann") // b and d remain, a non-contiguous subset
+	m = pressType(t, m, tcell.KeyEnter)
+	if len(m.rows) != 2 {
+		t.Fatalf("filter must narrow to Ann's 2 messages: %d rows", len(m.rows))
+	}
+	check := func(step string) {
+		t.Helper()
+		// status/pager actions (cursorThread) read CursorRow first;
+		// the next paint reads CursorIndex. Reversing this order hides
+		// the regression - CursorRow's corrupted lastRow write only
+		// shows up on a read that follows it with no intervening move.
+		row, ok := m.view.CursorRow()
+		paintID := m.rows[m.CursorIndex()].Msg.ID
+		if !ok || row.Msg == nil || row.Msg.ID != paintID {
+			t.Fatalf("%s: status/pager row %+v != paint row %q", step, row.Msg, paintID)
+		}
+	}
+	check("after filter")
+	m = press(t, m, "j")
+	check("after j")
+	m = press(t, m, "j")
+	check("after second j")
+	m = press(t, m, "k")
+	check("after k")
+}
+
 // TestCommandPromptRunsLua pins the : command line (R8): the key opens
 // the standard text dialogue, enter hands the chunk and the cursor
 // thread to the :lua seam.
